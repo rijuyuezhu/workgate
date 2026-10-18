@@ -197,13 +197,21 @@ def pack_directory(
 
 
 def _open_directory(
-    kernel: Any, parent: int, name: str, *, delete: bool = False
+    kernel: Any,
+    parent: int,
+    name: str,
+    *,
+    delete: bool = False,
+    read_control: bool = False,
 ) -> int:
     """Open a directory without following its final reparse point."""
     handle = open_child(
         parent,
         name,
-        access=_LIST_DIRECTORY | _READ_ATTRIBUTES | (0x10000 if delete else 0),
+        access=_LIST_DIRECTORY
+        | _READ_ATTRIBUTES
+        | (0x10000 if delete else 0)
+        | (0x20000 if read_control else 0),
         directory=True,
     )
     try:
@@ -214,8 +222,10 @@ def _open_directory(
         raise
 
 
-def move_directory(source: Path, destination: Path) -> None:
-    """Rename a verified directory relative to pinned source/target parents."""
+def move_directory(
+    source: Path, destination: Path, *, require_private_source: bool = False
+) -> None:
+    """Rename a native directory; additionally verify owner+DACL for staging."""
     from .nt_relative import rename_child
 
     kernel = cast(Any, ctypes).WinDLL("kernel32", use_last_error=True)
@@ -224,9 +234,20 @@ def move_directory(source: Path, destination: Path) -> None:
         pinned_parent(destination) as destination_parent,
     ):
         handle = _open_directory(
-            kernel, source_parent, source.name, delete=True
+            kernel,
+            source_parent,
+            source.name,
+            delete=True,
+            read_control=require_private_source,
         )
         try:
+            if require_private_source:
+                from .security import _libs, _sid, _verify
+
+                _, advapi = _libs()
+                _verify(
+                    kernel, advapi, handle, _sid(kernel, advapi), directory=True
+                )
             # A directory target must be absent. The caller manages any backup.
             try:
                 occupied = open_child(
@@ -245,14 +266,29 @@ def move_directory(source: Path, destination: Path) -> None:
             close_handle(kernel, handle)
 
 
-def remove_directory_tree(path: Path) -> None:
-    """Delete only a verified native tree using handle-relative operations."""
+def remove_directory_tree(
+    path: Path, *, require_private_root: bool = False
+) -> None:
+    """Delete a native tree; optionally require WorkGate owner/DACL at root."""
     from .nt_relative import delete_child
 
     kernel = cast(Any, ctypes).WinDLL("kernel32", use_last_error=True)
     with pinned_parent(path) as parent:
-        root = _open_directory(kernel, parent, path.name, delete=True)
+        root = _open_directory(
+            kernel,
+            parent,
+            path.name,
+            delete=True,
+            read_control=require_private_root,
+        )
         try:
+            if require_private_root:
+                from .security import _libs, _sid, _verify
+
+                _, advapi = _libs()
+                _verify(
+                    kernel, advapi, root, _sid(kernel, advapi), directory=True
+                )
 
             def remove_children(directory: int) -> None:
                 for name in _children(kernel, directory):
@@ -285,6 +321,55 @@ def remove_directory_tree(path: Path) -> None:
             close_handle(kernel, root)
 
 
+def _validated_members(
+    tar: tarfile.TarFile, *, max_entries: int, max_bytes: int
+) -> list[tarfile.TarInfo]:
+    """Reject unsafe metadata before allowing any filesystem mutation."""
+    from ..path import archive_member_key
+
+    members: list[tarfile.TarInfo] = []
+    seen: set[str] = set()
+    total_bytes = 0
+    for member in tar:
+        if len(members) >= max_entries:
+            raise ValueError("archive exceeds entries limit")
+        key = archive_member_key(member.name, system="Windows")
+        if key in seen:
+            raise ValueError("duplicate Windows archive member")
+        seen.add(key)
+        if not (member.isdir() or member.isfile()) or getattr(
+            member, "sparse", None
+        ):
+            raise ValueError("unsupported Windows archive member type")
+        if member.isfile():
+            total_bytes += max(0, int(member.size))
+            if total_bytes > max_bytes:
+                raise ValueError("archive exceeds unpacked byte limit")
+        members.append(member)
+    return members
+
+
+def inspect_archive(
+    archive: Path, *, max_entries: int, max_bytes: int
+) -> tuple[int, str]:
+    """Validate archive metadata and capture immutable receipt identity."""
+    import hashlib
+
+    from .security import open_regular_file_no_follow
+
+    fd = open_regular_file_no_follow(archive, share_write=False)
+    with os.fdopen(fd, "rb") as stream:
+        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        stream.seek(0)
+        with tarfile.open(fileobj=stream, mode="r:*") as tar:
+            count = len(
+                _validated_members(
+                    tar, max_entries=max_entries, max_bytes=max_bytes
+                )
+            )
+    return count, digest
+
+
 def extract_archive(
     archive: Path,
     staging: Path,
@@ -299,7 +384,6 @@ def extract_archive(
     import shutil
     from pathlib import PureWindowsPath
 
-    from ..path import archive_member_key
     from .security import (
         ensure_private_directory,
         open_private_file,
@@ -307,8 +391,6 @@ def extract_archive(
     )
 
     entries: list[tarfile.TarInfo] = []
-    seen: set[str] = set()
-    unpacked = 0
     archive_fd = open_regular_file_no_follow(archive, share_write=False)
     with os.fdopen(archive_fd, "rb") as stream:
         if (
@@ -326,22 +408,9 @@ def extract_archive(
                 )
             stream.seek(0)
         with tarfile.open(fileobj=stream, mode="r:*") as tar:
-            for member in tar:
-                if len(entries) >= max_entries:
-                    raise ValueError("archive exceeds entries limit")
-                key = archive_member_key(member.name, system="Windows")
-                if key in seen:
-                    raise ValueError("duplicate Windows archive member")
-                seen.add(key)
-                if not (member.isdir() or member.isfile()) or getattr(
-                    member, "sparse", None
-                ):
-                    raise ValueError("unsupported Windows archive member type")
-                if member.isfile():
-                    unpacked += max(0, int(member.size))
-                    if unpacked > max_bytes:
-                        raise ValueError("archive exceeds unpacked byte limit")
-                entries.append(member)
+            entries = _validated_members(
+                tar, max_entries=max_entries, max_bytes=max_bytes
+            )
             # Do not touch staging until all untrusted metadata is validated.
             ensure_private_directory(staging)
             for member in entries:
@@ -374,5 +443,24 @@ def is_empty_directory(path: Path) -> bool:
         handle = _open_directory(kernel, parent, path.name)
         try:
             return not _children(kernel, handle)
+        finally:
+            close_handle(kernel, handle)
+
+
+def verify_directory(path: Path, *, require_private: bool = False) -> None:
+    """Check a directory handle and optionally its WorkGate-owned ACL identity."""
+    kernel = cast(Any, ctypes).WinDLL("kernel32", use_last_error=True)
+    with pinned_parent(path) as parent:
+        handle = _open_directory(
+            kernel, parent, path.name, read_control=require_private
+        )
+        try:
+            if require_private:
+                from .security import _libs, _sid, _verify
+
+                _, advapi = _libs()
+                _verify(
+                    kernel, advapi, handle, _sid(kernel, advapi), directory=True
+                )
         finally:
             close_handle(kernel, handle)

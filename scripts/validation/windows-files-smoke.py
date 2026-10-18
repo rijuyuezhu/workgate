@@ -20,6 +20,7 @@ from workgate.executor.path import resolve_path
 from workgate.platform.path import path_lock_key, remote_path_name
 from workgate.platform.windows.archive import (
     extract_archive,
+    inspect_archive,
     move_directory,
     pack_directory,
     remove_directory_tree,
@@ -32,6 +33,7 @@ from workgate.platform.windows.nt_relative import (
     rename_child,
 )
 from workgate.platform.windows.security import (
+    delete_private_file,
     open_regular_file_no_follow,
     replace_workspace_file,
 )
@@ -88,6 +90,18 @@ def main() -> int:
         nested = ensure_private_directory(private / "new" / "nested")
         assert nested.is_dir()
         secret = private / "secret"
+        disposable = private / "cancelled-transfer.tmp"
+        write_private_bytes(disposable, b"aborted")
+        delete_private_file(disposable)
+        assert not disposable.exists()
+        try:
+            delete_private_file(disposable)
+        except FileNotFoundError:
+            pass
+        else:
+            raise AssertionError(
+                "NT private deletion did not report missing file"
+            )
         write_private_bytes(secret, b"first")
         append_private_bytes(secret, b"-appended")
         assert secret.read_bytes() == b"first-appended"
@@ -267,12 +281,17 @@ def main() -> int:
                 denied.stdout,
                 denied.stderr,
             )
+        inspected, archived_sha = inspect_archive(
+            archive_path, max_entries=12, max_bytes=1024
+        )
+        assert inspected == 4 and len(archived_sha) == 64
         staging = root / "unpack-staging"
         member_count = extract_archive(
             archive_path,
             staging,
             max_entries=12,
             max_bytes=1024,
+            expected_sha256=archived_sha,
         )
         assert member_count == 4
         assert (
@@ -280,16 +299,42 @@ def main() -> int:
         ).read_bytes() == b"native archive"
         assert (staging / "empty").is_dir()
         published = root / "published"
-        move_directory(staging, published)
+        move_directory(staging, published, require_private_source=True)
         assert not staging.exists()
         assert (
             published / "nested" / "note.txt"
         ).read_bytes() == b"native archive"
+        insecure_source = root / "insecure-source"
+        insecure_source.mkdir()
+        try:
+            move_directory(
+                insecure_source,
+                root / "unexpected-publish",
+                require_private_source=True,
+            )
+        except PermissionError:
+            assert insecure_source.is_dir()
+            assert not (root / "unexpected-publish").exists()
+        else:
+            raise AssertionError("Insecure substitute directory was published")
         backup = root / "backup"
         move_directory(published, backup)
         move_directory(backup, published)
-        remove_directory_tree(published)
+        remove_directory_tree(published, require_private_root=True)
         assert not published.exists()
+        nonprivate_tree = root / "normal-directory"
+        nonprivate_tree.mkdir()
+        (nonprivate_tree / "keep.txt").write_bytes(b"do not delete")
+        try:
+            remove_directory_tree(nonprivate_tree, require_private_root=True)
+        except PermissionError:
+            assert (
+                nonprivate_tree / "keep.txt"
+            ).read_bytes() == b"do not delete"
+        else:
+            raise AssertionError(
+                "Private-only NT cleanup deleted a normal directory"
+            )
 
         for bad_name in (
             "../escaped",
@@ -315,6 +360,36 @@ def main() -> int:
                 assert not hostile_staging.exists()
             else:
                 raise AssertionError(f"unsafe tar member accepted: {bad_name}")
+        tampered_archive = root / "tampered.tar"
+        pack_directory(
+            source_dir,
+            tampered_archive,
+            compression="none",
+            max_entries=12,
+            max_bytes=1024,
+        )
+        original_count, original_sha = inspect_archive(
+            tampered_archive, max_entries=12, max_bytes=1024
+        )
+        assert original_count == 4
+        with tampered_archive.open("ab") as stream:
+            stream.write(b"tamper")
+        tampered_stage = root / "tampered-staging"
+        try:
+            extract_archive(
+                tampered_archive,
+                tampered_stage,
+                max_entries=12,
+                max_bytes=1024,
+                expected_sha256=original_sha,
+            )
+        except ValueError:
+            assert not tampered_stage.exists()
+        else:
+            raise AssertionError(
+                "Altered archive accepted during receipt replay"
+            )
+
         collision_archive = root / "collision.tar"
         with tarfile.open(collision_archive, "w") as tar:
             from io import BytesIO

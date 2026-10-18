@@ -111,6 +111,7 @@ class _UnpackTransferReceipt(BaseModel):
     overwrite: bool
     cleanup_archive: bool
     entries: _ReceiptNonNegativeInt
+    archive_sha256: _ReceiptSha256 | None = None
     destination_existed: bool
     status: Literal[
         "extracting", "prepared", "backup_moved", "publishing", "completed"
@@ -668,6 +669,16 @@ def _abandon_final_write_receipt(
         ) from None
     temporary = _transfer_temp_path(destination, transfer_id)
     metadata_path = _transfer_metadata_path(temporary)
+
+    def remove_private(path: Path, *, missing_ok: bool = True) -> None:
+        _remove_transfer_private_file(path, missing_ok=missing_ok)
+
+    def remove_receipt() -> None:
+        if host_os() is HostOS.WINDOWS:
+            remove_private(receipt_path)
+        else:
+            context.store.state_store.remove(receipt_path)
+
     with path_locks([receipt_path, destination, temporary, metadata_path]):
         raw = context.store.state_store.read_json(
             receipt_path, max_bytes=64 * 1024
@@ -681,9 +692,9 @@ def _abandon_final_write_receipt(
                 raise RuntimeError(
                     "transfer write abandonment state is invalid"
                 )
-            temporary.unlink(missing_ok=True)
-            metadata_path.unlink(missing_ok=True)
-            context.store.state_store.remove(receipt_path)
+            remove_private(temporary)
+            remove_private(metadata_path)
+            remove_receipt()
             return True
         if abandonment_status == "discard_destination":
             if not discard_committed_destination or temporary.exists():
@@ -700,9 +711,9 @@ def _abandon_final_write_receipt(
                     digest = _sha256_handle(destination_handle)
                 if digest != current.final_sha256:
                     raise RuntimeError("committed transfer digest changed")
-                destination.unlink()
-            metadata_path.unlink(missing_ok=True)
-            context.store.state_store.remove(receipt_path)
+                remove_private(destination, missing_ok=False)
+            remove_private(metadata_path)
+            remove_receipt()
             return True
         if current.status == "receiving":
             current = current.model_copy(
@@ -716,9 +727,9 @@ def _abandon_final_write_receipt(
                 receipt_path,
                 current.model_dump(mode="python", exclude_none=True),
             )
-            temporary.unlink(missing_ok=True)
-            metadata_path.unlink(missing_ok=True)
-            context.store.state_store.remove(receipt_path)
+            remove_private(temporary)
+            remove_private(metadata_path)
+            remove_receipt()
             return True
         if current.status == "committing" and temporary.exists():
             if discard_committed_destination and os.path.lexists(destination):
@@ -736,9 +747,9 @@ def _abandon_final_write_receipt(
                 receipt_path,
                 current.model_dump(mode="python", exclude_none=True),
             )
-            temporary.unlink(missing_ok=True)
-            metadata_path.unlink(missing_ok=True)
-            context.store.state_store.remove(receipt_path)
+            remove_private(temporary)
+            remove_private(metadata_path)
+            remove_receipt()
             return True
         if temporary.exists():
             raise RuntimeError(
@@ -773,9 +784,9 @@ def _abandon_final_write_receipt(
                 receipt_path,
                 current.model_dump(mode="python", exclude_none=True),
             )
-            destination.unlink(missing_ok=consumed_by_unpack)
-        metadata_path.unlink(missing_ok=True)
-        context.store.state_store.remove(receipt_path)
+            remove_private(destination, missing_ok=consumed_by_unpack)
+        remove_private(metadata_path)
+        remove_receipt()
         return True
 
 
@@ -797,10 +808,12 @@ def _abandon_unpack_receipt(
             must_exist=False,
             follow_final_symlink=False,
         )
-        archive = _resolve_transfer_path(
-            receipt.archive,
-            must_exist=False,
-            context=context,
+        archive = (
+            _resolve_transfer_destination(receipt.archive, context=context)
+            if host_os() is HostOS.WINDOWS
+            else _resolve_transfer_path(
+                receipt.archive, must_exist=False, context=context
+            )
         )
     except OSError, ValueError, ValidationError:
         raise ValueError(
@@ -808,6 +821,34 @@ def _abandon_unpack_receipt(
         ) from None
     staging = destination.parent / f".{destination.name}.unpack-{transfer_id}"
     backup = destination.parent / f".{destination.name}.backup-{transfer_id}"
+    windows = host_os() is HostOS.WINDOWS
+
+    def verify_published(
+        message: str = "committed transfer directory is missing",
+    ) -> None:
+        if windows:
+            from ..platform.windows.archive import verify_directory
+
+            verify_directory(destination, require_private=True)
+        elif not destination.is_dir() or is_link_or_junction(destination):
+            raise RuntimeError(message)
+
+    def remove_stage() -> None:
+        if windows:
+            from ..platform.windows.archive import remove_directory_tree
+
+            remove_directory_tree(staging, require_private_root=True)
+        else:
+            shutil.rmtree(staging)
+
+    def remove_backup() -> None:
+        if windows:
+            from ..platform.windows.archive import remove_directory_tree
+
+            remove_directory_tree(backup)
+        else:
+            _remove_existing_path(backup)
+
     with path_locks([receipt_path, destination, staging, backup, archive]):
         raw = context.store.state_store.read_json(
             receipt_path, max_bytes=64 * 1024
@@ -871,12 +912,9 @@ def _abandon_unpack_receipt(
                         )
                     abandonment_status = "rollback"
                 else:
-                    if not destination.is_dir() or is_link_or_junction(
-                        destination
-                    ):
-                        raise RuntimeError(
-                            "transfer unpack publishing state cannot confirm commit"
-                        )
+                    verify_published(
+                        "transfer unpack publishing state cannot confirm commit"
+                    )
                     if current.destination_existed:
                         if not backup_exists:
                             raise RuntimeError(
@@ -888,10 +926,7 @@ def _abandon_unpack_receipt(
                         )
                     abandonment_status = "commit"
             elif status == "completed":
-                if not destination.is_dir() or is_link_or_junction(destination):
-                    raise RuntimeError(
-                        "committed transfer directory is missing"
-                    )
+                verify_published()
                 abandonment_status = "commit"
             else:
                 raise RuntimeError("transfer unpack recovery state is invalid")
@@ -911,7 +946,14 @@ def _abandon_unpack_receipt(
             if current.destination_existed:
                 if backup_exists and not destination_exists:
                     if abandonment_status == "rollback":
-                        os.replace(backup, destination)
+                        if windows:
+                            from ..platform.windows.archive import (
+                                move_directory,
+                            )
+
+                            move_directory(backup, destination)
+                        else:
+                            os.replace(backup, destination)
                 elif not (destination_exists and not backup_exists):
                     raise RuntimeError(
                         "transfer unpack rollback state cannot be safely abandoned"
@@ -921,19 +963,18 @@ def _abandon_unpack_receipt(
                     "transfer unpack rollback state cannot be safely abandoned"
                 )
             if abandonment_status == "rollback" and staging.exists():
-                shutil.rmtree(staging)
+                remove_stage()
         elif abandonment_status in {"commit", "commit_archive"}:
-            if not destination.is_dir() or is_link_or_junction(destination):
-                raise RuntimeError("committed transfer directory is missing")
+            verify_published()
             if current.destination_existed:
                 if abandonment_status == "commit" and os.path.lexists(backup):
-                    _remove_existing_path(backup)
+                    remove_backup()
             elif os.path.lexists(backup):
                 raise RuntimeError(
                     "transfer unpack commit state has an unexpected backup"
                 )
             if abandonment_status == "commit" and staging.exists():
-                shutil.rmtree(staging)
+                remove_stage()
         else:
             raise RuntimeError("transfer unpack abandonment state is invalid")
 
@@ -965,17 +1006,18 @@ def _abandon_unpack_receipt(
                 raise RuntimeError(
                     "transfer unpack rollback unexpectedly retained destination"
                 )
-        elif abandonment_status == "commit_archive" and (
-            not destination.is_dir() or is_link_or_junction(destination)
-        ):
-            raise RuntimeError("committed transfer directory is missing")
+        elif abandonment_status == "commit_archive":
+            verify_published()
         if os.path.lexists(backup) or staging.exists():
             raise RuntimeError(
                 "transfer unpack abandonment cleanup is incomplete"
             )
         if current.cleanup_archive:
-            archive.unlink(missing_ok=True)
-        context.store.state_store.remove(receipt_path)
+            _remove_transfer_private_file(archive)
+        if windows:
+            _remove_transfer_private_file(receipt_path)
+        else:
+            context.store.state_store.remove(receipt_path)
         return True, archive
 
 
@@ -1248,7 +1290,7 @@ def transfer_copy_file(
             else:
                 os.replace(temporary, destination)
         finally:
-            temporary.unlink(missing_ok=True)
+            _remove_transfer_private_file(temporary)
 
     return TransferCopyFileOutput(
         source_path=_display_user_path(
@@ -1363,8 +1405,8 @@ def _prune_stale_destination_transfers(
                 or temporary.stat().st_mtime > prune_before
             ):
                 continue
-            temporary.unlink(missing_ok=True)
-            _transfer_metadata_path(temporary).unlink(missing_ok=True)
+            _remove_transfer_private_file(temporary)
+            _remove_transfer_private_file(_transfer_metadata_path(temporary))
         except OSError:
             continue
     metadata_pattern = pattern + ".json"
@@ -1379,7 +1421,7 @@ def _prune_stale_destination_transfers(
                 or metadata_path.stat().st_mtime > prune_before
             ):
                 continue
-            metadata_path.unlink(missing_ok=True)
+            _remove_transfer_private_file(metadata_path)
         except OSError:
             continue
 
@@ -1469,7 +1511,9 @@ def transfer_begin_write(
                         receipt_path,
                         receipt.model_dump(mode="python", exclude_none=True),
                     )
-                _transfer_metadata_path(temporary).unlink(missing_ok=True)
+                _remove_transfer_private_file(
+                    _transfer_metadata_path(temporary)
+                )
                 return TransferBeginWriteOutput(
                     path=_display_user_path(
                         destination,
@@ -1571,7 +1615,7 @@ def transfer_begin_write(
                 },
             )
         except Exception:
-            temporary.unlink(missing_ok=True)
+            _remove_transfer_private_file(temporary)
             raise
     return TransferBeginWriteOutput(
         path=_display_user_path(
@@ -1825,7 +1869,7 @@ def transfer_finish_write(
             replace_workspace_file(temporary, destination)
         else:
             os.replace(temporary, destination)
-        metadata_path.unlink(missing_ok=True)
+        _remove_transfer_private_file(metadata_path)
         receipt = receipt.model_copy(
             update={"status": "completed", "committed_at": time.time()}
         )
@@ -1842,6 +1886,22 @@ def transfer_finish_write(
         sha256=digest,
         completed=True,
     )
+
+
+def _remove_transfer_private_file(
+    path: Path, *, missing_ok: bool = True
+) -> None:
+    """Remove private transfer state without following a Windows path replacement."""
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.security import delete_private_file
+
+        try:
+            delete_private_file(path)
+        except FileNotFoundError:
+            if not missing_ok:
+                raise
+    else:
+        path.unlink(missing_ok=missing_ok)
 
 
 def transfer_abort_write(
@@ -1897,11 +1957,14 @@ def transfer_abort_write(
                 deleted=False,
             )
         if temporary.exists():
-            temporary.unlink()
+            _remove_transfer_private_file(temporary, missing_ok=False)
             deleted = True
-        metadata_path.unlink(missing_ok=True)
+        _remove_transfer_private_file(metadata_path)
         if current is not None:
-            context.store.state_store.remove(receipt_path)
+            if host_os() is HostOS.WINDOWS:
+                _remove_transfer_private_file(receipt_path)
+            else:
+                context.store.state_store.remove(receipt_path)
     return TransferAbortWriteOutput(
         path=_display_user_path(
             destination, session_id=session_id, workdir=workdir, context=context
@@ -1962,7 +2025,12 @@ def transfer_delete_temp_path(
     if scratch.exists():
         if scratch.is_dir():
             raise IsADirectoryError(str(scratch))
-        scratch.unlink()
+        if host_os() is HostOS.WINDOWS:
+            from ..platform.windows.security import delete_private_file
+
+            delete_private_file(scratch)
+        else:
+            scratch.unlink()
         deleted = True
     return TransferDeleteTempPathOutput(
         path=_display(scratch, context), deleted=deleted
@@ -2102,9 +2170,35 @@ def _resumable_unpack_archive(
     receipt_path = _unpack_receipt_path(context, transfer_id)
     staging = destination.parent / f".{destination.name}.unpack-{transfer_id}"
     backup = destination.parent / f".{destination.name}.backup-{transfer_id}"
-    archive = _resolve_transfer_path(
-        archive_path, must_exist=False, context=context
+    windows = host_os() is HostOS.WINDOWS
+    archive = (
+        _resolve_transfer_destination(archive_path, context=context)
+        if windows
+        else _resolve_transfer_path(
+            archive_path, must_exist=False, context=context
+        )
     )
+
+    def move_tree(source: Path, target: Path) -> None:
+        if windows:
+            from ..platform.windows.archive import move_directory
+
+            move_directory(
+                source,
+                target,
+                require_private_source=(source == staging),
+            )
+        else:
+            os.replace(source, target)
+
+    def remove_staging() -> None:
+        if windows:
+            from ..platform.windows.archive import remove_directory_tree
+
+            if os.path.lexists(staging):
+                remove_directory_tree(staging)
+        else:
+            shutil.rmtree(staging, ignore_errors=True)
 
     with path_locks([destination, staging, backup, receipt_path]):
         resumed = receipt_path.exists()
@@ -2118,8 +2212,8 @@ def _resumable_unpack_archive(
                 cleanup_archive=cleanup_archive,
             )
         else:
-            if staging.exists():
-                shutil.rmtree(staging, ignore_errors=True)
+            if os.path.lexists(staging):
+                remove_staging()
             if os.path.lexists(backup):
                 raise RuntimeError(
                     "transfer unpack found an orphan backup without a receipt"
@@ -2127,36 +2221,59 @@ def _resumable_unpack_archive(
             if not archive.is_file():
                 raise FileNotFoundError(str(archive))
             exists = os.path.lexists(destination)
-            if (
-                exists
-                and not overwrite
-                and not (
-                    destination.is_dir()
-                    and not is_link_or_junction(destination)
-                    and not any(destination.iterdir())
+            if exists and not overwrite:
+                if windows:
+                    from ..platform.windows.archive import is_empty_directory
+
+                    acceptable = is_empty_directory(destination)
+                else:
+                    acceptable = (
+                        destination.is_dir()
+                        and not is_link_or_junction(destination)
+                        and not any(destination.iterdir())
+                    )
+                if not acceptable:
+                    raise FileExistsError(
+                        f"destination already exists: {destination}"
+                    )
+            if windows:
+                from ..platform.windows.archive import inspect_archive
+
+                entry_count, archive_sha256 = inspect_archive(
+                    archive,
+                    max_entries=max(
+                        1, context.config.max_transfer_archive_entries
+                    ),
+                    max_bytes=max(
+                        1, context.config.max_transfer_unpacked_bytes
+                    ),
                 )
-            ):
-                raise FileExistsError(
-                    f"destination already exists: {destination}"
-                )
-            with tarfile.open(archive, "r:*") as tar:
-                members = _safe_members(tar, staging, context)
+            else:
+                archive_sha256 = None
+                with tarfile.open(archive, "r:*") as tar:
+                    entry_count = len(_safe_members(tar, staging, context))
             receipt = {
                 "destination": str(destination),
                 "archive": str(archive),
                 "archive_display": _display(archive, context),
                 "overwrite": bool(overwrite),
                 "cleanup_archive": bool(cleanup_archive),
-                "entries": len(members),
+                "entries": entry_count,
                 "destination_existed": bool(exists),
                 "status": "extracting",
                 "created_at": time.time(),
             }
+            if archive_sha256 is not None:
+                receipt["archive_sha256"] = archive_sha256
             _write_unpack_receipt(context, receipt_path, receipt)
 
         status = str(receipt.get("status") or "")
         destination_existed = bool(receipt.get("destination_existed", False))
         if status == "extracting":
+            if windows and not receipt.get("archive_sha256"):
+                raise ValueError(
+                    "Windows unpack receipt is missing archive checksum"
+                )
             destination_exists = os.path.lexists(destination)
             backup_exists = os.path.lexists(backup)
             if destination_existed:
@@ -2170,40 +2287,54 @@ def _resumable_unpack_archive(
                 )
             if not archive.is_file():
                 raise FileNotFoundError(str(archive))
-            if staging.exists():
-                shutil.rmtree(staging, ignore_errors=True)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            staging.mkdir(parents=True, exist_ok=False)
-            extracted_members: list[tarfile.TarInfo] = []
+            if os.path.lexists(staging):
+                remove_staging()
             try:
-                with tarfile.open(archive, "r:*") as tar:
-                    extracted_members = _safe_members(tar, staging, context)
-                    if len(extracted_members) != int(receipt["entries"]):
-                        raise RuntimeError(
-                            "transfer unpack archive changed during extraction recovery"
-                        )
-                    for member in extracted_members:
-                        target = staging / member.name
-                        if member.isdir():
-                            target.mkdir(parents=True, exist_ok=True)
-                            continue
-                        if member.isfile():
-                            target.parent.mkdir(parents=True, exist_ok=True)
-                            source = tar.extractfile(member)
-                            if source is None:
-                                raise ValueError(
-                                    f"archive member has no file data: {member.name}"
-                                )
-                            with source, target.open("xb") as output:
-                                shutil.copyfileobj(source, output)
-                            if host_os() is not HostOS.WINDOWS:
+                if windows:
+                    from ..platform.windows.archive import extract_archive
+
+                    extracted_count = extract_archive(
+                        archive,
+                        staging,
+                        max_entries=max(
+                            1, context.config.max_transfer_archive_entries
+                        ),
+                        max_bytes=max(
+                            1, context.config.max_transfer_unpacked_bytes
+                        ),
+                        expected_sha256=receipt.get("archive_sha256"),
+                    )
+                else:
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    staging.mkdir(parents=True, exist_ok=False)
+                    with tarfile.open(archive, "r:*") as tar:
+                        extracted_members = _safe_members(tar, staging, context)
+                        extracted_count = len(extracted_members)
+                        for member in extracted_members:
+                            target = staging / member.name
+                            if member.isdir():
+                                target.mkdir(parents=True, exist_ok=True)
+                                continue
+                            if member.isfile():
+                                target.parent.mkdir(parents=True, exist_ok=True)
+                                source = tar.extractfile(member)
+                                if source is None:
+                                    raise ValueError(
+                                        f"archive member has no file data: {member.name}"
+                                    )
+                                with source, target.open("xb") as output:
+                                    shutil.copyfileobj(source, output)
                                 os.chmod(target, member.mode & 0o777)
-                            continue
-                        raise ValueError(
-                            f"unsupported archive member type: {member.name}"
-                        )
+                                continue
+                            raise ValueError(
+                                f"unsupported archive member type: {member.name}"
+                            )
+                if extracted_count != int(receipt["entries"]):
+                    raise RuntimeError(
+                        "transfer unpack archive changed during extraction recovery"
+                    )
             except BaseException:
-                shutil.rmtree(staging, ignore_errors=True)
+                remove_staging()
                 raise
             receipt["status"] = "prepared"
             receipt["updated_at"] = time.time()
@@ -2226,7 +2357,7 @@ def _resumable_unpack_archive(
                         raise RuntimeError(
                             "transfer unpack recovery lost the original destination"
                         )
-                    os.replace(destination, backup)
+                    move_tree(destination, backup)
                 receipt["status"] = "backup_moved"
                 _write_unpack_receipt(context, receipt_path, receipt)
                 status = "backup_moved"
@@ -2268,7 +2399,7 @@ def _resumable_unpack_archive(
                     raise RuntimeError(
                         "transfer unpack destination changed during publish"
                     )
-                os.replace(staging, destination)
+                move_tree(staging, destination)
             else:
                 if not os.path.lexists(destination):
                     raise RuntimeError(
@@ -2285,14 +2416,23 @@ def _resumable_unpack_archive(
 
         if status != "completed":
             raise RuntimeError("transfer unpack recovery state is invalid")
-        if not destination.is_dir() or is_link_or_junction(destination):
+        if windows:
+            from ..platform.windows.archive import verify_directory
+
+            verify_directory(destination, require_private=True)
+        elif not destination.is_dir() or is_link_or_junction(destination):
             raise RuntimeError("committed transfer directory is missing")
 
         cleanup_errors: list[str] = []
         backup_deleted = not os.path.lexists(backup)
         if not backup_deleted:
             try:
-                _remove_existing_path(backup)
+                if windows:
+                    from ..platform.windows.archive import remove_directory_tree
+
+                    remove_directory_tree(backup)
+                else:
+                    _remove_existing_path(backup)
             except OSError as exc:
                 cleanup_errors.append(
                     f"could not remove replaced destination backup {backup}: {exc}"
@@ -2303,7 +2443,12 @@ def _resumable_unpack_archive(
         archive_deleted = not archive.exists()
         if cleanup_archive and not archive_deleted:
             try:
-                archive.unlink(missing_ok=True)
+                if windows:
+                    from ..platform.windows.security import delete_private_file
+
+                    delete_private_file(archive)
+                else:
+                    archive.unlink(missing_ok=True)
             except OSError as exc:
                 cleanup_errors.append(
                     f"could not remove transfer archive {archive}: {exc}"
@@ -2391,7 +2536,9 @@ def _windows_unpack_archive(
                 move_directory(destination, backup)
                 backup_moved = True
             try:
-                move_directory(staging, destination)
+                move_directory(
+                    staging, destination, require_private_source=True
+                )
             except BaseException:
                 if backup_moved and not os.path.lexists(destination):
                     move_directory(backup, destination)
@@ -2448,12 +2595,7 @@ def transfer_unpack_archive(
     context: TransferContext,
 ) -> TransferUnpackArchiveOutput:
     """Validate in staging and transactionally replace a directory destination."""
-    if host_os() is HostOS.WINDOWS:
-        if transfer_id is not None:
-            raise NotImplementedError(
-                "Windows resumable archive transactions require native "
-                "durable recovery integration (#383)"
-            )
+    if host_os() is HostOS.WINDOWS and transfer_id is None:
         return _windows_unpack_archive(
             archive_path,
             dst_path,

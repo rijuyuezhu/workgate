@@ -2923,14 +2923,14 @@ def test_windows_archive_unpack_routes_through_native_backend(
     assert not (root / "destination").exists()
 
 
-def test_windows_resumable_archive_unpack_still_fails_closed_before_staging(
+def test_windows_resumable_archive_unpack_missing_source_has_no_staging_side_effects(
     tmp_path, monkeypatch
 ):
     from workgate.platform.host import HostOS
 
     root = _workspace(tmp_path, monkeypatch)
     monkeypatch.setattr(transfer_ops, "host_os", lambda: HostOS.WINDOWS)
-    with pytest.raises(NotImplementedError, match="resumable"):
+    with pytest.raises(FileNotFoundError, match="not-present.tar"):
         transfer_unpack_archive(
             "not-present.tar", str(root / "destination"), transfer_id="abc123"
         )
@@ -2958,7 +2958,7 @@ def test_windows_archive_unpacked_directory_commits_via_native_move(
         (staging / "new.txt").write_bytes(b"new")
         return 1
 
-    def move(source, dest):
+    def move(source, dest, **_kwargs):
         calls.append(("move", source.name, dest.name))
         source.rename(dest)
 
@@ -3000,7 +3000,7 @@ def test_windows_archive_unpack_rolls_back_failed_directory_publish(
         (staging / "new.txt").write_bytes(b"discard")
         return 1
 
-    def move(source, dest):
+    def move(source, dest, **_kwargs):
         if ".unpack-" in source.name:
             raise OSError("injected failure before publish")
         source.rename(dest)
@@ -3084,3 +3084,352 @@ def test_windows_archive_unpack_existing_destination_honors_no_overwrite(
         )
     assert (destination / "old.txt").read_bytes() == b"original"
     assert not list(root.glob(".target.unpack-*"))
+
+
+def _mock_native_windows_resume(monkeypatch):
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import archive as windows_archive
+    from workgate.platform.windows import security
+
+    monkeypatch.setattr(transfer_ops, "host_os", lambda: HostOS.WINDOWS)
+    monkeypatch.setattr(
+        windows_archive,
+        "inspect_archive",
+        lambda *_a, **_k: (1, "a" * 64),
+    )
+
+    def extract(_archive, staging, **_kwargs):
+        staging.mkdir()
+        (staging / "new.txt").write_bytes(b"native")
+        return 1
+
+    monkeypatch.setattr(windows_archive, "extract_archive", extract)
+    monkeypatch.setattr(
+        windows_archive,
+        "is_empty_directory",
+        lambda directory: not any(directory.iterdir()),
+    )
+    monkeypatch.setattr(
+        windows_archive,
+        "move_directory",
+        lambda source, destination, **_kwargs: source.rename(destination),
+    )
+    monkeypatch.setattr(
+        windows_archive,
+        "remove_directory_tree",
+        lambda path, **_kwargs: shutil.rmtree(path),
+    )
+    monkeypatch.setattr(
+        windows_archive,
+        "verify_directory",
+        lambda directory, **_kwargs: (
+            None
+            if directory.is_dir() and not directory.is_symlink()
+            else (_ for _ in ()).throw(PermissionError("unsafe directory"))
+        ),
+    )
+    monkeypatch.setattr(
+        security,
+        "delete_private_file",
+        lambda file: file.unlink(missing_ok=True),
+    )
+
+
+def test_windows_resumable_archive_receipt_commits_and_cleans(
+    tmp_path, monkeypatch
+):
+    root = _workspace(tmp_path, monkeypatch)
+    _mock_native_windows_resume(monkeypatch)
+    source = root / "source.tar"
+    source.write_bytes(b"archive-fixture")
+    dest = root / "target"
+    dest.mkdir()
+    (dest / "old.txt").write_bytes(b"old")
+
+    outcome = transfer_unpack_archive(
+        "source.tar",
+        "target",
+        overwrite=True,
+        cleanup_archive=True,
+        transfer_id="windows-resume-1",
+    )
+    assert outcome.completed is True
+    assert outcome.resumed is False
+    assert outcome.backup_deleted and outcome.archive_deleted
+    assert (dest / "new.txt").read_bytes() == b"native"
+    assert not list(root.glob(".target.backup-*"))
+    receipt = transfer_ops._load_unpack_receipt(
+        _context(),
+        transfer_ops._unpack_receipt_path(_context(), "windows-resume-1"),
+    )
+    assert receipt.status == "completed"
+
+
+def test_windows_resumable_archive_recovers_published_destination_after_ack_loss(
+    tmp_path, monkeypatch
+):
+    root = _workspace(tmp_path, monkeypatch)
+    _mock_native_windows_resume(monkeypatch)
+    (root / "source.tar").write_bytes(b"archive-fixture")
+    destination = root / "target"
+    destination.mkdir()
+    (destination / "old.txt").write_bytes(b"old")
+
+    real_write_receipt = transfer_ops._write_unpack_receipt
+
+    def lose_completed(context, path, receipt):
+        if receipt.get("status") == "completed":
+            raise OSError("injected lost Windows completion receipt")
+        real_write_receipt(context, path, receipt)
+
+    monkeypatch.setattr(transfer_ops, "_write_unpack_receipt", lose_completed)
+    with pytest.raises(OSError, match="lost Windows completion receipt"):
+        transfer_unpack_archive(
+            "source.tar",
+            "target",
+            overwrite=True,
+            cleanup_archive=True,
+            transfer_id="windows-resume-lost",
+        )
+    assert (destination / "new.txt").read_bytes() == b"native"
+    assert list(root.glob(".target.backup-*"))
+    monkeypatch.setattr(
+        transfer_ops, "_write_unpack_receipt", real_write_receipt
+    )
+    recovered = transfer_unpack_archive(
+        "source.tar",
+        "target",
+        overwrite=True,
+        cleanup_archive=True,
+        transfer_id="windows-resume-lost",
+    )
+    assert recovered.completed and recovered.resumed
+    assert recovered.backup_deleted and recovered.archive_deleted
+    assert (destination / "new.txt").read_bytes() == b"native"
+    assert not list(root.glob(".target.backup-*"))
+
+
+def test_windows_transfer_abandon_without_receipts_has_no_side_effects(
+    tmp_path, monkeypatch
+):
+    from workgate.platform.host import HostOS
+
+    root = _workspace(tmp_path, monkeypatch)
+    monkeypatch.setattr(transfer_ops, "host_os", lambda: HostOS.WINDOWS)
+    marker = root / "unaltered"
+    marker.write_bytes(b"protected")
+    for kind in ("file", "dir"):
+        output = transfer_ops.transfer_abandon_import(
+            "win-cancel", kind, context=_context()
+        )
+        assert output["safe_to_forget"] is True
+        assert marker.read_bytes() == b"protected"
+
+
+def test_windows_abort_write_deletes_verified_private_temp_and_metadata(
+    tmp_path, monkeypatch
+):
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import security
+
+    root = _workspace(tmp_path, monkeypatch)
+    monkeypatch.setattr(transfer_ops, "host_os", lambda: HostOS.WINDOWS)
+    destination = root / "target.bin"
+    temporary = transfer_ops._transfer_temp_path(destination, "win-abort")
+    metadata = transfer_ops._transfer_metadata_path(temporary)
+    temporary.write_bytes(b"temporary")
+    metadata.write_text("temporary metadata")
+    calls = []
+
+    def delete_private(path):
+        calls.append(path)
+        path.unlink()
+
+    monkeypatch.setattr(security, "delete_private_file", delete_private)
+    output = transfer_abort_write("target.bin", "win-abort")
+    assert output.deleted is True
+    assert calls == [temporary, metadata]
+    assert not temporary.exists()
+    assert not metadata.exists()
+    assert not destination.exists()
+
+
+def test_windows_abandon_prepared_unpublished_directory_preserves_destination(
+    tmp_path, monkeypatch
+):
+    root = _workspace(tmp_path, monkeypatch)
+    context = _context()
+    transfer_id = "win-abandon-prepared"
+    dest, archive, staging, backup = _write_unpack_state(
+        root,
+        transfer_id=transfer_id,
+        status="prepared",
+        destination_existed=True,
+    )
+    dest.mkdir()
+    (dest / "old.txt").write_bytes(b"preserved")
+    staging.mkdir()
+    (staging / "new.txt").write_bytes(b"not published")
+    archive.write_bytes(b"archive-fixture")
+    _mock_native_windows_resume(monkeypatch)
+
+    output = transfer_ops.transfer_abandon_import(
+        transfer_id, "dir", context=context
+    )
+    assert output["unpack_reconciled"]
+    assert output["safe_to_forget"]
+    assert (dest / "old.txt").read_bytes() == b"preserved"
+    assert not staging.exists() and not backup.exists()
+    assert not archive.exists()
+    assert not transfer_ops._unpack_receipt_path(context, transfer_id).exists()
+
+
+def test_windows_abandon_backup_moved_restores_original_before_cleanup(
+    tmp_path, monkeypatch
+):
+    root = _workspace(tmp_path, monkeypatch)
+    context = _context()
+    transfer_id = "win-abandon-rollback"
+    dest, archive, staging, backup = _write_unpack_state(
+        root,
+        transfer_id=transfer_id,
+        status="backup_moved",
+        destination_existed=True,
+    )
+    backup.mkdir()
+    (backup / "old.txt").write_bytes(b"original")
+    staging.mkdir()
+    (staging / "new.txt").write_bytes(b"discarded")
+    archive.write_bytes(b"archive-fixture")
+    _mock_native_windows_resume(monkeypatch)
+
+    output = transfer_ops.transfer_abandon_import(
+        transfer_id, "dir", context=context
+    )
+    assert output["unpack_reconciled"]
+    assert (dest / "old.txt").read_bytes() == b"original"
+    assert not staging.exists() and not backup.exists()
+    assert not archive.exists()
+
+
+def test_windows_abandon_completed_import_preserves_committed_tree(
+    tmp_path, monkeypatch
+):
+    root = _workspace(tmp_path, monkeypatch)
+    context = _context()
+    transfer_id = "win-abandon-completed"
+    dest, archive, staging, backup = _write_unpack_state(
+        root,
+        transfer_id=transfer_id,
+        status="completed",
+        destination_existed=True,
+    )
+    dest.mkdir()
+    (dest / "new.txt").write_bytes(b"committed")
+    backup.mkdir()
+    (backup / "old.txt").write_bytes(b"replaced")
+    archive.write_bytes(b"archive-fixture")
+    _mock_native_windows_resume(monkeypatch)
+
+    output = transfer_ops.transfer_abandon_import(
+        transfer_id, "dir", context=context
+    )
+    assert output["unpack_reconciled"]
+    assert (dest / "new.txt").read_bytes() == b"committed"
+    assert not backup.exists()
+    assert not archive.exists()
+
+
+def test_windows_abandon_completed_file_keeps_user_destination(
+    tmp_path, monkeypatch
+):
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import security
+
+    root = _workspace(tmp_path, monkeypatch)
+    context = _context()
+    destination = root / "user-file.bin"
+    payload = b"already committed"
+    destination.write_bytes(payload)
+    transfer_id = "win-user-done"
+    receipt_path = transfer_ops._write_receipt_path(context, transfer_id)
+    context.store.state_store.write_json(
+        receipt_path,
+        transfer_ops._WriteTransferReceipt(
+            destination=str(destination),
+            overwrite=True,
+            expected_bytes=len(payload),
+            destination_existed=False,
+            status="completed",
+            final_bytes=len(payload),
+            final_sha256=hashlib.sha256(payload).hexdigest(),
+            updated_at=time.time(),
+        ).model_dump(mode="python", exclude_none=True),
+    )
+
+    monkeypatch.setattr(transfer_ops, "host_os", lambda: HostOS.WINDOWS)
+    monkeypatch.setattr(
+        security,
+        "open_regular_file_no_follow",
+        lambda path: os.open(path, os.O_RDONLY),
+    )
+    removed = []
+    monkeypatch.setattr(
+        security,
+        "delete_private_file",
+        lambda path: (removed.append(path), path.unlink(missing_ok=True)),
+    )
+    output = transfer_ops.transfer_abandon_import(
+        transfer_id, "file", context=context
+    )
+    assert output["write_reconciled"] and output["safe_to_forget"]
+    assert destination.read_bytes() == payload
+    assert not receipt_path.exists()
+    assert destination not in removed
+
+
+def test_windows_abandon_committed_private_archive_deletes_verified_archive(
+    tmp_path, monkeypatch
+):
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import security
+
+    root = _workspace(tmp_path, monkeypatch)
+    context = _context()
+    archive = transfer_ops._scratch_dir(context) / "incoming.tar"
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    archive.write_bytes(b"committed archive")
+    transfer_id = "win-archive-done"
+    receipt_path = transfer_ops._write_receipt_path(context, transfer_id)
+    context.store.state_store.write_json(
+        receipt_path,
+        transfer_ops._WriteTransferReceipt(
+            destination=str(archive),
+            overwrite=True,
+            expected_bytes=archive.stat().st_size,
+            destination_existed=False,
+            status="completed",
+            final_bytes=archive.stat().st_size,
+            final_sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
+            updated_at=time.time(),
+        ).model_dump(mode="python", exclude_none=True),
+    )
+    monkeypatch.setattr(transfer_ops, "host_os", lambda: HostOS.WINDOWS)
+    monkeypatch.setattr(
+        security,
+        "open_regular_file_no_follow",
+        lambda path: os.open(path, os.O_RDONLY),
+    )
+    deleted = []
+    monkeypatch.setattr(
+        security,
+        "delete_private_file",
+        lambda path: (deleted.append(path), path.unlink(missing_ok=True)),
+    )
+    output = transfer_ops.transfer_abandon_import(
+        transfer_id, "dir", context=context
+    )
+    assert output["write_reconciled"] and output["safe_to_forget"]
+    assert archive in deleted
+    assert not archive.exists() and not receipt_path.exists()
+    assert root.is_dir()

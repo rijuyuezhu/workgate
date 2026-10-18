@@ -100,11 +100,28 @@ cover success, resource caps, junction rejection, malformed archive refusal,
 backup/recovery and parent-substitution attacks. Linux's existing archive
 semantics remain unchanged.
 
-**Still blocked (Draft #395):** The transfer_id resumable directory-transfer
-path is deliberately unsupported on Windows until the receipt-driven recovery
-state machine can use the same NT handle-relative operations. More adversarial
-crash/restart and file-sharing scenarios need direct native testing. Other
-filesystem entry points (Skill/MCP files, patch operations and remaining
-no-follow fallbacks) still require review and native Windows validation. Full
-Windows native CI/release integration belongs to #391. Do not merge #383
-until remaining security and parity checks converge.
+### Durable directory import
+
+The original receipt-driven unpack state machine now shares the native
+inspect/extract/move/cleanup backend on Windows. A protected directory staging
+source is verified by owner/DACL at publication. Its receipt records a SHA-256
+of the archive read from a write-denying NT handle; resume checks the digest
+before re-extracting. Failed publish, backed-up target restoration and lost
+completion acknowledgement are covered in regression tests.
+
+Windows transfer cancellation and abandonment now reuse existing durable
+write/unpack receipts. Private temporary files, metadata and receipts are
+deleted through verified NT handles. Directory abandonment performs
+handle-relative backup rollback, staging removal and committed-directory
+verification; cleanup of WorkGate-created staging requires its protected
+owner/DACL. Plain user-file destinations are preserved when their transfer
+receipts are retired. Native tests check verified private deletion and refusal
+to recursively delete a non-private directory.
+
+**Still blocked (Draft #395):** Final security review must cover remaining
+workspace filesystem entry points, native concurrent replacement and sharing
+races, process-level crash/restart recovery, and integration with Skill/MCP and
+patch operations. The tests in this slice exercise native Win32 filesystem
+primitives; full Windows Executor/Control integration and CI/release support
+remain separate work (#390–#392). Do not merge this Draft until the full
+acceptance scope is verified.
