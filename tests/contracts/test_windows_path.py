@@ -145,6 +145,14 @@ def test_windows_archive_member_keys_fold_case_and_separators():
     ) != archive_member_key(r"d\note.txt", system="Linux")
 
 
+def test_posix_archive_names_keep_original_pathlib_normalization():
+    from workgate.platform.path import archive_member_key
+
+    assert archive_member_key("dir/./note.txt", system="Linux") == (
+        archive_member_key("dir/note.txt", system="Linux")
+    )
+
+
 def test_cross_platform_directory_listing_is_ordinary_pathlib(tmp_path):
     from workgate.executor.files import FilesConfig, _list_files_local
 

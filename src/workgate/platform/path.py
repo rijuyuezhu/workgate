@@ -27,17 +27,10 @@ def path_lock_key(path: Path, *, system: str | None = None) -> str:
     )
 
 
-def is_link_or_junction(path: Path) -> bool:
-    """Include Windows directory junctions in symlink-style safety checks."""
-    return path.is_symlink() or (
-        host_os() is HostOS.WINDOWS and path.is_junction()
-    )
-
-
 def archive_member_key(name: str, *, system: str | None = None) -> str:
     """Validate one archive member against the destination host's path rules."""
     if host_os(system) is not HostOS.WINDOWS:
-        return name
+        return str(Path(name))
     member = PureWindowsPath(name)
     if (
         member.drive

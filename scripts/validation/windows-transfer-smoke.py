@@ -2,9 +2,11 @@
 
 import base64
 import hashlib
+import io
 import os
 import subprocess
 import sys
+import tarfile
 import tempfile
 from pathlib import Path
 
@@ -246,6 +248,43 @@ def run() -> None:
                 raise AssertionError(
                     "Directory transfer clobbered existing destination"
                 )
+            # Archive paths use Windows name rules, not POSIX name rules.
+            malicious = root / "invalid-windows-name.tar"
+            with tarfile.open(malicious, "w") as writer:
+                for filename in ("assets/Note.TXT", "assets/note.txt"):
+                    member = tarfile.TarInfo(filename)
+                    member.size = 1
+                    writer.addfile(member, io.BytesIO(b"x"))
+            try:
+                transfer_unpack_archive(
+                    "invalid-windows-name.tar",
+                    "unsafe-collision",
+                    context=context(),
+                )
+            except ValueError as exc:
+                assert "duplicate archive member" in str(exc)
+                assert not (root / "unsafe-collision").exists()
+            else:
+                raise AssertionError(
+                    "Windows archive case collision was accepted"
+                )
+
+            with tarfile.open(malicious, "w") as writer:
+                entry = tarfile.TarInfo("NUL")
+                entry.size = 1
+                writer.addfile(entry, io.BytesIO(b"x"))
+            try:
+                transfer_unpack_archive(
+                    "invalid-windows-name.tar",
+                    "unsafe-reserved",
+                    context=context(),
+                )
+            except ValueError as exc:
+                assert "unsafe Windows archive member" in str(exc)
+                assert not (root / "unsafe-reserved").exists()
+            else:
+                raise AssertionError("Windows reserved filename was accepted")
+
     print("Windows native transfer resume, identity and no-clobber: PASS")
 
 

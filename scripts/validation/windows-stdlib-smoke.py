@@ -1,6 +1,7 @@
 """Smoke core WorkGate file workflows on native Windows using Python stdlib."""
 
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -27,8 +28,21 @@ def run() -> None:
     with tempfile.TemporaryDirectory(prefix="workgate-stdlib-") as tmp:
         root = Path(tmp)
         ensure_private_directory(root / "private")
-        with private_file_lock(root / "private" / "test.lock"):
-            pass
+        locked = root / "private" / "test.lock"
+        with private_file_lock(locked):
+            contested = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    "--try-lock",
+                    str(locked),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=True,
+            )
+            assert "contended: PASS" in contested.stdout, contested.stderr
 
         credentials = AgentAuthStore(root / "auth")
         credentials.set_secret("server", "token", "secret")
@@ -84,4 +98,11 @@ def run() -> None:
 
 
 if __name__ == "__main__":
-    run()
+    if len(sys.argv) == 3 and sys.argv[1] == "--try-lock":
+        try:
+            with private_file_lock(Path(sys.argv[2]), timeout_s=0.1):
+                raise AssertionError("Concurrent Windows byte lock was allowed")
+        except TimeoutError:
+            print("Windows interprocess lock contended: PASS")
+    else:
+        run()
