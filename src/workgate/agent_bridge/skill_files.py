@@ -51,9 +51,11 @@ def _file_bytes(content: str | None) -> bytes:
     return data
 
 
-def _opened_file(parent: int, name: str) -> bytes:
+def _opened_file(parent: int, name: str) -> tuple[bytes, int]:
     try:
-        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent)
+        fd = os.open(
+            name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent
+        )
         try:
             info = os.fstat(fd)
             if (
@@ -76,7 +78,7 @@ def _opened_file(parent: int, name: str) -> bytes:
         text = bytes(data).decode("utf-8")
         if "\0" in text:
             raise ValueError("Auxiliary file is not ordinary UTF-8 text")
-        return bytes(data)
+        return bytes(data), stat.S_IMODE(info.st_mode) & 0o777
     except UnicodeError as exc:
         raise ValueError("Auxiliary file is not UTF-8 text") from exc
     except OSError as exc:
@@ -90,7 +92,13 @@ def _revision(data: bytes) -> str:
 
 
 def _write_atomic(
-    parent: int, staging_dir: int, name: str, data: bytes, *, create: bool
+    parent: int,
+    staging_dir: int,
+    name: str,
+    data: bytes,
+    *,
+    create: bool,
+    mode: int = 0o600,
 ) -> None:
     temporary = ".writing-" + uuid.uuid4().hex
     fd = os.open(
@@ -104,6 +112,7 @@ def _write_atomic(
             with os.fdopen(fd, "wb", closefd=False) as out:
                 out.write(data)
                 out.flush()
+                os.fchmod(fd, mode)
                 os.fsync(fd)
             if create:
                 # Hard-link publication cannot replace a concurrently created file.
@@ -230,9 +239,16 @@ def manage_skill_file(
             )
             stack.callback(os.close, skill_fd)
             # Validate SKILL.md through the same anchored directory.
-            _content_bytes(_opened_file(skill_fd, "SKILL.md").decode("utf-8"))
+            _content_bytes(
+                _opened_file(skill_fd, "SKILL.md")[0].decode("utf-8")
+            )
             if action == "list":
                 return {"files": _list_auxiliary_files(skill_fd)}
+            if (
+                action == "create"
+                and len(_list_auxiliary_files(skill_fd)) >= MAX_AUXILIARY_FILES
+            ):
+                raise ValueError("Too many Skill auxiliary files")
             assert relative is not None
             fd = skill_fd
             ancestors: list[tuple[int, str]] = []
@@ -250,7 +266,7 @@ def manage_skill_file(
                 fd = opened
             filename = relative.parts[-1]
             if action == "get":
-                text = _opened_file(fd, filename)
+                text, _mode = _opened_file(fd, filename)
                 return {
                     "path": relative.as_posix(),
                     "content": text.decode("utf-8"),
@@ -269,14 +285,16 @@ def manage_skill_file(
                     "path": relative.as_posix(),
                     "revision": _revision(data),
                 }
-            previous = _opened_file(fd, filename)
+            previous, mode = _opened_file(fd, filename)
             if _revision(previous) != expected_revision:
                 raise ValueError(
                     "Auxiliary file changed; reload before editing"
                 )
             if action == "update":
                 assert data is not None
-                _write_atomic(fd, managed_fd, filename, data, create=False)
+                _write_atomic(
+                    fd, managed_fd, filename, data, create=False, mode=mode
+                )
                 return {
                     "path": relative.as_posix(),
                     "revision": _revision(data),

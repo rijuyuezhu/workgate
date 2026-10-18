@@ -16,6 +16,8 @@ export function createSkillFileEditor({ request, onClose = () => {} }) {
   const closeButton = get("close");
   let context = null;
   let generation = 0;
+  let listGeneration = 0;
+  let loading = false;
   let current = { path: "", revision: "", baseline: "", existing: false };
   let busy = false;
 
@@ -34,16 +36,16 @@ export function createSkillFileEditor({ request, onClose = () => {} }) {
   }
 
   function updateButtons() {
-    path.readOnly = current.existing || busy;
-    content.readOnly = busy;
-    save.disabled = busy || !context;
+    path.readOnly = current.existing || busy || loading;
+    content.readOnly = busy || loading;
+    save.disabled = busy || loading || !context;
     remove.hidden = !current.existing;
     reload.hidden = !current.existing;
-    remove.disabled = busy;
-    reload.disabled = busy;
-    list.disabled = busy;
+    remove.disabled = busy || loading;
+    reload.disabled = busy || loading;
+    list.disabled = busy || loading;
     refresh.disabled = busy;
-    create.disabled = busy;
+    create.disabled = busy || loading;
     closeButton.disabled = busy;
     save.textContent = current.existing ? "Save changes" : "Create file";
   }
@@ -71,10 +73,10 @@ export function createSkillFileEditor({ request, onClose = () => {} }) {
   async function loadList() {
     if (!context) return;
     const ctx = context;
-    const seq = ++generation;
+    const seq = ++listGeneration;
     try {
       const result = await request(query("list"));
-      if (ctx !== context || seq !== generation) return;
+      if (ctx !== context || seq !== listGeneration) return;
       const selected = current.existing ? current.path : "";
       list.replaceChildren(new Option("Select file…", ""));
       for (const filename of result.files || []) {
@@ -83,21 +85,22 @@ export function createSkillFileEditor({ request, onClose = () => {} }) {
       list.value = selected;
       notice(result.files?.length ? "" : "No auxiliary files yet.");
     } catch (error) {
-      if (ctx === context && seq === generation) {
+      if (ctx === context && seq === listGeneration) {
         notice(error instanceof Error ? error.message : "Cannot list Skill files", true);
       }
     }
   }
 
-  async function openFile(filename, force = false) {
-    if (!context || !filename || (!force && !acceptDiscard())) {
+  async function openFile(filename) {
+    if (!context || busy || !filename || !acceptDiscard()) {
       list.value = current.existing ? current.path : "";
       return;
     }
     const ctx = context;
     const seq = ++generation;
+    loading = true;
     notice("Loading file…");
-    save.disabled = true;
+    updateButtons();
     try {
       const row = await request(query("get", filename));
       if (ctx !== context || seq !== generation) return;
@@ -111,12 +114,15 @@ export function createSkillFileEditor({ request, onClose = () => {} }) {
       list.value = current.existing ? current.path : "";
       notice(error instanceof Error ? error.message : "Cannot read file", true);
     } finally {
-      if (ctx === context && seq === generation) updateButtons();
+      if (ctx === context && seq === generation) {
+        loading = false;
+        updateButtons();
+      }
     }
   }
 
   async function mutate(action) {
-    if (!context || busy) return;
+    if (!context || busy || loading) return;
     const ctx = context;
     const filename = current.existing ? current.path : path.value.trim();
     if (!filename) {
@@ -167,6 +173,8 @@ export function createSkillFileEditor({ request, onClose = () => {} }) {
     if (!dialog.open) return;
     if (!force && (busy || !acceptDiscard())) return;
     generation++;
+    listGeneration++;
+    loading = false;
     context = null;
     dialog.close();
     if (!force) onClose();
@@ -176,6 +184,8 @@ export function createSkillFileEditor({ request, onClose = () => {} }) {
     if (dialog.open) return;
     context = { executorId, name };
     generation++;
+    listGeneration++;
+    loading = false;
     busy = false;
     title.textContent = name + " · Executor";
     current = { path: "", revision: "", baseline: "", existing: false };

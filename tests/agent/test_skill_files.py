@@ -503,3 +503,99 @@ def test_atomic_publication_never_scans_temporary_files(tmp_path, monkeypatch):
         file.name.startswith(".writing-")
         for file in (base / "skills").iterdir()
     )
+
+
+def test_auxiliary_fifo_get_does_not_block(tmp_path):
+    """An unsupported FIFO must be rejected before a blocking open()."""
+    import os
+    import subprocess
+    import sys
+
+    base = make_skill(tmp_path)
+    os.mkfifo(base / "skills/review/stream.fifo")
+    script = (
+        "from pathlib import Path\n"
+        "import sys\n"
+        "from workgate.agent_bridge.skill_files import manage_skill_file\n"
+        "try:\n"
+        "    manage_skill_file(Path(sys.argv[1]), 'get', name='review', path='stream.fifo')\n"
+        "except ValueError:\n"
+        "    print('rejected')\n"
+        "else:\n"
+        "    raise AssertionError('FIFO accepted')\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(base)],
+        capture_output=True,
+        text=True,
+        timeout=3,
+        check=True,
+    )
+    assert "rejected" in completed.stdout
+
+
+def test_auxiliary_update_keeps_executable_bits(tmp_path):
+    import stat
+
+    base = make_skill(tmp_path)
+    created = manage_skill_file(
+        base,
+        "create",
+        name="review",
+        path="scripts/check.sh",
+        content="#!/bin/sh\necho first\n",
+    )
+    script = base / "skills/review/scripts/check.sh"
+    script.chmod(0o755)
+    changed = manage_skill_file(
+        base,
+        "update",
+        name="review",
+        path="scripts/check.sh",
+        content="#!/bin/sh\necho second\n",
+        expected_revision=created["revision"],
+    )
+    assert changed["revision"] != created["revision"]
+    assert stat.S_IMODE(script.stat().st_mode) == 0o755
+    assert script.read_text() == "#!/bin/sh\necho second\n"
+
+
+def test_auxiliary_create_enforces_file_cap_before_mkdir(tmp_path, monkeypatch):
+    from workgate.agent_bridge import skill_files
+
+    base = make_skill(tmp_path)
+    monkeypatch.setattr(skill_files, "MAX_AUXILIARY_FILES", 2)
+    existing = []
+    for filename in ("a.txt", "b.txt"):
+        existing.append(
+            manage_skill_file(
+                base, "create", name="review", path=filename, content=filename
+            )
+        )
+    with pytest.raises(ValueError, match="Too many"):
+        manage_skill_file(
+            base,
+            "create",
+            name="review",
+            path="new/sub/file.txt",
+            content="excess",
+        )
+    assert not (base / "skills/review/new").exists()
+    assert manage_skill_file(base, "list", name="review")["files"] == [
+        "a.txt",
+        "b.txt",
+    ]
+    manage_skill_file(
+        base,
+        "delete",
+        name="review",
+        path="a.txt",
+        expected_revision=existing[0]["revision"],
+    )
+    manage_skill_file(
+        base, "create", name="review", path="new/sub/file.txt", content="okay"
+    )
+    assert manage_skill_file(base, "list", name="review")["files"] == [
+        "b.txt",
+        "new/sub/file.txt",
+    ]
