@@ -1470,3 +1470,61 @@ def test_agent_auth_store_clear_tokens_and_oauth_prune_entries(tmp_path):
     assert store.get_client_info("docs") is not None
     assert store.clear_oauth("docs") is True
     assert json.loads(store.path.read_text(encoding="utf-8"))["servers"] == {}
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        (PermissionError("unsafe ACL"), "invalid"),
+        (ValueError("too large"), "exceeds"),
+        (b"not-json", "invalid"),
+        (b"\xff", "invalid"),
+    ],
+)
+def test_windows_agent_credential_reader_fails_closed(
+    monkeypatch, tmp_path, payload, message
+):
+    from workgate.platform.host import HostOS
+
+    store = AgentAuthStore(tmp_path / "secrets")
+    monkeypatch.setattr(auth_store_module, "host_os", lambda: HostOS.WINDOWS)
+
+    def native_read(_path, *, max_bytes):
+        assert max_bytes > 0
+        if isinstance(payload, BaseException):
+            raise payload
+        return payload
+
+    monkeypatch.setattr(auth_store_module, "read_private_bytes", native_read)
+    with pytest.raises(AgentAuthStoreCorruptError, match=message):
+        store._read_unlocked()
+    assert not store.path.exists()
+
+
+def test_windows_agent_credential_missing_or_valid_private_store(
+    monkeypatch, tmp_path
+):
+    from workgate.platform.host import HostOS
+
+    store = AgentAuthStore(tmp_path / "secrets")
+    monkeypatch.setattr(auth_store_module, "host_os", lambda: HostOS.WINDOWS)
+
+    def missing(_path, *, max_bytes):
+        raise FileNotFoundError()
+
+    monkeypatch.setattr(auth_store_module, "read_private_bytes", missing)
+    assert store._read_unlocked()["servers"] == {}
+
+    monkeypatch.setattr(
+        auth_store_module,
+        "read_private_bytes",
+        lambda path, *, max_bytes: json.dumps(
+            {
+                "version": 1,
+                "servers": {},
+                "credential_revisions": {},
+                "credential_redaction_history": {},
+            }
+        ).encode(),
+    )
+    assert store._read_unlocked()["servers"] == {}

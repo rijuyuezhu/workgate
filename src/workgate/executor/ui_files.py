@@ -422,13 +422,23 @@ class UiFilesService:
             kind = self._entry_kind(source)
             self._validate_copy_destination(source, destination, kind)
             if host_os() is HostOS.WINDOWS:
-                if kind != "file":
-                    raise NotImplementedError(
-                        "Windows directory/link copy needs native handle-safe traversal"
-                    )
-                from ..platform.windows.security import copy_workspace_file
+                if kind == "file":
+                    from ..platform.windows.security import copy_workspace_file
 
-                copy_workspace_file(source, destination)
+                    copy_workspace_file(source, destination)
+                elif kind == "dir":
+                    from ..platform.windows.archive import copy_directory
+
+                    copy_directory(
+                        source,
+                        destination,
+                        max_entries=self.config.max_directory_entries,
+                        max_bytes=self.config.max_file_write_bytes * 100,
+                    )
+                else:
+                    raise NotImplementedError(
+                        "Windows link copy requires native reparse recreation"
+                    )
             else:
                 self._copy_entry_locked(source, destination, kind)
         return {

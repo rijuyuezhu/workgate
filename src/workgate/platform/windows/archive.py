@@ -4,7 +4,7 @@ import ctypes
 import os
 import tarfile
 from collections.abc import Iterator
-from contextlib import ExitStack
+from contextlib import ExitStack, suppress
 from ctypes import wintypes
 from pathlib import Path
 from typing import Any, cast
@@ -584,3 +584,192 @@ def list_tree(
         finally:
             close_handle(kernel, root)
     return output, truncated
+
+
+def copy_directory(
+    source: Path,
+    destination: Path,
+    *,
+    max_entries: int,
+    max_bytes: int,
+) -> None:
+    """Copy a native Windows tree into private staging, then publish atomically.
+
+    A directory remains owner-private until its complete copied tree is
+    published. Symlinks, junctions, special entries and changed files fail
+    closed; source security descriptors are copied through verified handles.
+    """
+    import msvcrt
+    import secrets
+    import shutil
+
+    from .security import (
+        _verify_regular_handle,
+        copy_handle_owner_dacl,
+        ensure_private_directory,
+        open_private_file,
+    )
+
+    if max_entries < 1 or max_bytes < 0:
+        raise ValueError("Invalid Windows directory copy limits")
+    try:
+        destination.relative_to(source)
+    except ValueError:
+        pass
+    else:
+        raise ValueError("A directory cannot be copied inside itself")
+
+    kernel = cast(Any, ctypes).WinDLL("kernel32", use_last_error=True)
+    staged_path = destination.with_name(
+        f".{destination.name}.copy-{secrets.token_hex(12)}"
+    )
+    count = 0
+    total = 0
+    with pinned_parent(source) as source_parent:
+        original = _open_directory(
+            kernel, source_parent, source.name, read_control=True
+        )
+        try:
+            ensure_private_directory(staged_path)
+            try:
+                with pinned_parent(staged_path) as stage_parent:
+                    stage_root = open_child(
+                        stage_parent,
+                        staged_path.name,
+                        access=_LIST_DIRECTORY
+                        | _READ_ATTRIBUTES
+                        | 0x20000
+                        | 0x40000
+                        | 0x80000,
+                        directory=True,
+                    )
+                    try:
+                        _assert_directory(kernel, stage_root)
+
+                        def walk(
+                            source_handle: int,
+                            target_handle: int,
+                            target_path: Path,
+                        ) -> None:
+                            nonlocal count, total
+                            for name in _children(kernel, source_handle):
+                                count += 1
+                                if count > max_entries:
+                                    raise ValueError(
+                                        "Windows directory copy exceeds entry limit"
+                                    )
+                                target_child_path = target_path / name
+                                try:
+                                    child = _open_directory(
+                                        kernel,
+                                        source_handle,
+                                        name,
+                                        read_control=True,
+                                    )
+                                except NotADirectoryError:
+                                    child = open_child(
+                                        source_handle,
+                                        name,
+                                        access=_GENERIC_READ | 0x20000,
+                                        directory=False,
+                                        share_access=5,
+                                    )
+                                    try:
+                                        _verify_regular_handle(kernel, child)
+                                    except BaseException:
+                                        close_handle(kernel, child)
+                                        raise
+                                    try:
+                                        src_fd = cast(
+                                            Any, msvcrt
+                                        ).open_osfhandle(
+                                            child,
+                                            os.O_RDONLY
+                                            | cast(Any, os).O_BINARY,
+                                        )
+                                    except BaseException:
+                                        close_handle(kernel, child)
+                                        raise
+                                    with os.fdopen(src_fd, "rb") as reader:
+                                        before = os.fstat(reader.fileno())
+                                        total += before.st_size
+                                        if total > max_bytes:
+                                            raise ValueError(
+                                                "Windows directory copy exceeds byte limit"
+                                            ) from None
+                                        with os.fdopen(
+                                            open_private_file(
+                                                target_child_path,
+                                                create=True,
+                                                exclusive=True,
+                                                write_security=True,
+                                            ),
+                                            "wb",
+                                        ) as writer:
+                                            shutil.copyfileobj(
+                                                reader,
+                                                writer,
+                                                length=1024 * 1024,
+                                            )
+                                            writer.flush()
+                                            os.fsync(writer.fileno())
+                                            copy_handle_owner_dacl(
+                                                cast(Any, msvcrt).get_osfhandle(
+                                                    reader.fileno()
+                                                ),
+                                                cast(Any, msvcrt).get_osfhandle(
+                                                    writer.fileno()
+                                                ),
+                                            )
+                                        after = os.fstat(reader.fileno())
+                                        if (
+                                            before.st_size,
+                                            before.st_mtime_ns,
+                                        ) != (after.st_size, after.st_mtime_ns):
+                                            raise RuntimeError(
+                                                "Windows directory copy source changed"
+                                            ) from None
+                                else:
+                                    try:
+                                        ensure_private_directory(
+                                            target_child_path
+                                        )
+                                        copied = open_child(
+                                            target_handle,
+                                            name,
+                                            access=_LIST_DIRECTORY
+                                            | _READ_ATTRIBUTES
+                                            | 0x20000
+                                            | 0x40000
+                                            | 0x80000,
+                                            directory=True,
+                                        )
+                                        try:
+                                            _assert_directory(kernel, copied)
+                                            walk(
+                                                child, copied, target_child_path
+                                            )
+                                            copy_handle_owner_dacl(
+                                                child, copied
+                                            )
+                                        finally:
+                                            close_handle(kernel, copied)
+                                    finally:
+                                        close_handle(kernel, child)
+
+                        walk(original, stage_root, staged_path)
+                        # Finalize *all* security metadata before publication,
+                        # so no ACL failure can leave a partially protected
+                        # destination visible to the user.
+                        copy_handle_owner_dacl(original, stage_root)
+                        move_directory(staged_path, destination)
+                    finally:
+                        close_handle(kernel, stage_root)
+            except BaseException:
+                # Only ever delete our private, unpredictable staging name:
+                # a failed no-clobber rename must not touch the user target.
+                with suppress(OSError):
+                    remove_directory_tree(staged_path)
+                raise
+        finally:
+            close_handle(kernel, original)

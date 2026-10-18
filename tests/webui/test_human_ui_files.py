@@ -1064,3 +1064,38 @@ def test_windows_webui_link_move_and_delete_keep_original_target(
     assert actions == ["move", "delete"]
     assert not (workspace / "renamed-link.txt").exists()
     assert target.read_bytes() == b"preserved"
+
+
+def test_windows_webui_directory_copy_uses_bounded_native_staging_backend(
+    tmp_path, monkeypatch
+):
+    import shutil
+
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import archive
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    source = workspace / "source"
+    source.mkdir()
+    (source / "keep.txt").write_bytes(b"original")
+    client = _client(monkeypatch, workspace)
+    monkeypatch.setattr(
+        executor_ui_files_module, "host_os", lambda: HostOS.WINDOWS
+    )
+    calls = []
+
+    def native_copy(old, new, *, max_entries, max_bytes):
+        calls.append((old, new, max_entries, max_bytes))
+        shutil.copytree(old, new)
+
+    monkeypatch.setattr(archive, "copy_directory", native_copy)
+    result = client.post(
+        "/api/ui/files/copy",
+        json={"path": "source", "destination": "copied"},
+    )
+    assert result.status_code == 200
+    assert (workspace / "copied/keep.txt").read_bytes() == b"original"
+    assert len(calls) == 1
+    assert calls[0][0:2] == (source, workspace / "copied")
+    assert calls[0][2] > 0 and calls[0][3] > 0

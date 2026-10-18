@@ -214,18 +214,13 @@ def private_file_lock(
 
 def read_private_bytes(path: Path, *, max_bytes: int | None = None) -> bytes:
     """Read verified owner-private data; enforce optional limit on the opened file."""
-    if host_os() is HostOS.WINDOWS:
-        from ..platform.windows.security import open_private_file
+    if host_os() is HostOS.WINDOWS:  # pragma: no cover - native Windows smoke
+        from ..platform.windows.security import (
+            read_private_bytes as native_read,
+        )
 
-        descriptor = open_private_file(path, create=False)
-        with os.fdopen(descriptor, "rb") as reader:
-            if (
-                max_bytes is not None
-                and os.fstat(reader.fileno()).st_size > max_bytes
-            ):
-                raise ValueError("Private file exceeds read size limit")
-            data = reader.read(max_bytes + 1 if max_bytes is not None else -1)
-    elif max_bytes is None:
+        return native_read(path, max_bytes=max_bytes)
+    if max_bytes is None:
         return path.read_bytes()
     else:
         with path.open("rb") as reader:

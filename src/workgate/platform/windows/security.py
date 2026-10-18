@@ -307,6 +307,7 @@ def open_private_file(
     create: bool,
     exclusive: bool = False,
     append: bool = False,
+    write_security: bool = False,
 ) -> int:
     import msvcrt
 
@@ -329,6 +330,7 @@ def open_private_file(
             exclusive=exclusive,
             attributes=security,
             append=append,
+            extra_access=0xC0000 if write_security else 0,
         )
     try:
         flags = (os.O_WRONLY | os.O_APPEND) if append else os.O_RDWR
@@ -559,13 +561,9 @@ def delete_open_workspace_file(descriptor: int) -> None:
     delete_child(handle)
 
 
-def _copy_workspace_security(source_fd: int, destination_fd: int) -> None:
-    """Preserve existing file owner, DACL, and protection during replacement."""
-    import msvcrt
-
+def copy_handle_owner_dacl(source: int, destination: int) -> None:
+    """Copy owner and protected/unprotected DACL between verified NT handles."""
     kernel, advapi = _libs()
-    source = cast(Any, msvcrt).get_osfhandle(source_fd)
-    destination = cast(Any, msvcrt).get_osfhandle(destination_fd)
     get_security = _api(
         advapi,
         "GetSecurityInfo",
@@ -591,14 +589,6 @@ def _copy_workspace_security(source_fd: int, destination_fd: int) -> None:
         wintypes.LPVOID,
         wintypes.LPVOID,
     )
-    control_info = _api(
-        advapi,
-        "GetSecurityDescriptorControl",
-        wintypes.BOOL,
-        wintypes.LPVOID,
-        ctypes.POINTER(wintypes.USHORT),
-        ctypes.POINTER(wintypes.DWORD),
-    )
     free = _api(kernel, "LocalFree", wintypes.HANDLE, wintypes.HANDLE)
     owner = wintypes.LPVOID()
     dacl = wintypes.LPVOID()
@@ -616,21 +606,26 @@ def _copy_workspace_security(source_fd: int, destination_fd: int) -> None:
     if code:
         raise OSError(code, cast(Any, ctypes).FormatError(code))
     try:
-        control = wintypes.USHORT()
-        revision = wintypes.DWORD()
-        if not control_info(
-            descriptor, ctypes.byref(control), ctypes.byref(revision)
-        ):
-            _fail()
-        # Preserve the protected/unprotected DACL control, not only its ACEs.
-        protection = 0x80000000 if control.value & 0x1000 else 0x20000000
+        # The source may have *inherited* ACEs. Letting Windows re-inherit
+        # from our owner-private staging parent would discard those entries,
+        # leaving an inaccessible copy. Protect the copied effective DACL
+        # until the destination can be published without changing its grants.
         code = set_security(
-            destination, 1, 5 | protection, owner, None, dacl, None
+            destination, 1, 5 | 0x80000000, owner, None, dacl, None
         )
         if code:
             raise OSError(code, cast(Any, ctypes).FormatError(code))
     finally:
         free(ctypes.cast(descriptor, wintypes.HANDLE))
+
+
+def _copy_workspace_security(source_fd: int, destination_fd: int) -> None:
+    import msvcrt
+
+    copy_handle_owner_dacl(
+        cast(Any, msvcrt).get_osfhandle(source_fd),
+        cast(Any, msvcrt).get_osfhandle(destination_fd),
+    )
 
 
 def atomic_write_workspace_bytes(
@@ -812,3 +807,17 @@ def move_workspace_link(source: Path, destination: Path) -> None:
             )
         finally:
             close_handle(kernel, handle)
+
+
+def read_private_bytes(path: Path, *, max_bytes: int | None = None) -> bytes:
+    """Bounded native Windows owner-only read from a single verified handle."""
+    with os.fdopen(open_private_file(path, create=False), "rb") as reader:
+        if (
+            max_bytes is not None
+            and os.fstat(reader.fileno()).st_size > max_bytes
+        ):
+            raise ValueError("Private file exceeds read size limit")
+        data = reader.read(max_bytes + 1 if max_bytes is not None else -1)
+    if max_bytes is not None and len(data) > max_bytes:
+        raise ValueError("Private file exceeds read size limit")
+    return data

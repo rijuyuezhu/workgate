@@ -16,6 +16,10 @@ from .models import AgentBridgeManifest, LoadedAgentManifest, SkillSource
 
 def agent_config_fingerprint(config_dir: Path) -> str:
     """Return a stable content fingerprint for the injected agent config tree."""
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.fingerprint import fingerprint_agent_config
+
+        return fingerprint_agent_config(config_dir)
 
     root = Path(config_dir)
     digest = hashlib.sha256()
@@ -60,36 +64,6 @@ def agent_config_fingerprint(config_dir: Path) -> str:
                     digest.update(chunk)
         except OSError as exc:
             update("read_error", type(exc).__name__, exc)
-
-    if host_os() is HostOS.WINDOWS:
-        from ..platform.windows.archive import list_tree
-        from ..platform.windows.security import open_regular_file_no_follow
-
-        try:
-            native_entries, truncated = list_tree(
-                root, recursive=True, max_entries=5000
-            )
-        except OSError as exc:
-            update(".", "native_list_error", type(exc).__name__, exc)
-            return digest.hexdigest()
-        for path, kind, size, modified in sorted(
-            native_entries, key=lambda row: row[0].as_posix()
-        ):
-            relative = relative_path(path)
-            update(relative, kind, size, modified)
-            if kind != "file":
-                continue
-            try:
-                with os.fdopen(
-                    open_regular_file_no_follow(path), "rb"
-                ) as source:
-                    while chunk := source.read(1024 * 1024):
-                        digest.update(chunk)
-            except OSError as exc:
-                update(relative, "native_read_error", type(exc).__name__, exc)
-        if truncated:
-            update("native_list_truncated", len(native_entries))
-        return digest.hexdigest()
 
     update_path(root, ".")
     try:

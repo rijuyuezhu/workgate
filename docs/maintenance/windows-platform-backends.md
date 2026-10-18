@@ -190,9 +190,20 @@ They do not traverse junctions, even when a junction is inside a Skill's assets.
 POSIX discovery retains its established symlink-following behavior. The
 windows-skill-smoke.py script also tests discovery and fingerprint changes.
 
-**Still blocked (Draft #395):** Windows directory copy and symlink/link copy
-are deliberately unsupported until they can preserve ACLs and roll back with
-no-follow handles. Native apply_patch also remains fail-closed pending a
+### Staged Windows directory copy
+
+WebUI directory copy now uses a bounded NT-handle-relative implementation:
+source entries and descriptors are verified without following junctions,
+files and directories are first built in an unpredictable private staging tree,
+and effective owner/DACL grants are transferred before a final atomic
+no-clobber directory rename. Inherited source ACEs must be protected during
+copy so they are not silently re-inherited from the private staging parent.
+The independent windows-directory-copy-smoke.py verifies nested public/private
+ACLs, duplicate destination refusal, resource limits, junction refusal,
+and failure cleanup. No partial destination is published during staging.
+
+**Still blocked (Draft #395):** Windows symlink/link copy remains unsupported
+pending no-follow reparse recreation. Native apply_patch remains fail-closed pending a
 handle-safe publisher that does not delegate unchecked path mutations to git.
 Cross-scope filesystem scanning beyond the Agent Bridge discovery entrypoints,
 concurrent untrusted replacement/share violations, process crash/restart recovery and
