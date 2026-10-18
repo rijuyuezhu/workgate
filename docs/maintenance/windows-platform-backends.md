@@ -150,10 +150,13 @@ the same pathname in a separate open. Binary/image preview samples also use
 no-follow native handles. The HTTP WebUI dispatch is covered in regression
 tests and basic operations run on native Windows 3.14.
 
-The apply_patch executor tool is explicitly disabled on Windows before
-touching session/patch state or invoking git apply. Git's path-based patch
-publication cannot yet be restricted by the native NT verified-handle API;
-the POSIX Git patch path is unchanged.
+Windows apply_patch uses the same trusted-workspace model as upstream
+fwerkor/local-shell-mcp: normalize patch envelopes, run git apply --check,
+then git apply. This is functional parity, not a security guarantee against
+untrusted concurrent junction/symlink or parent-directory substitution.
+Potential NT-handle-safe hardening is deferred to follow-up #402.
+scripts/validation/windows-patch-smoke.py tests native Windows Git with
+add/update/delete, unified diff and rejected preflight without modification.
 
 ### Native directory listing, links, and managed Skills
 
@@ -205,8 +208,8 @@ ACLs, duplicate destination refusal, resource limits, junction refusal,
 and failure cleanup. No partial destination is published during staging.
 
 **Still blocked (Draft #395):** Windows symlink/link copy remains unsupported
-pending no-follow reparse recreation. Native apply_patch remains fail-closed pending a
-handle-safe publisher that does not delegate unchecked path mutations to git.
+pending no-follow reparse recreation. Stronger patch isolation against hostile
+filesystem races is tracked separately in #402 and does not block #383.
 scripts/validation/windows-transfer-smoke.py exercises the real Executor
 transfer begin/read/write/finish/abort and directory pack/unpack APIs on native
 Windows Python 3.14, including a separate Windows Python process resuming
