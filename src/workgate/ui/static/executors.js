@@ -1,5 +1,6 @@
 import { renderResourceCards } from "./dashboard.js";
 import { createSkillFileEditor } from "./skill_file_editor.js";
+import { createExecutorTopology } from "./executor_topology.js";
 
 export function createExecutorsController({
   elements,
@@ -30,6 +31,12 @@ export function createExecutorsController({
     managementGeneration: 0,
     editor: null,
   };
+
+  const topology = createExecutorTopology({
+    request,
+    onAuthenticationRequired: () => void reloadApp(),
+    onClose: () => onNavigate("list", {replace: true}),
+  });
 
   const skillFileEditor = createSkillFileEditor({
     request,
@@ -890,6 +897,7 @@ export function createExecutorsController({
   function render(payload) {
     const previousId = state.selectedId;
     state.executors = Array.isArray(payload?.executors) ? payload.executors : [];
+    topology.update(state.executors);
     if (!state.executors.some((item) => item.executor_id === state.selectedId)) {
       state.selectedId = (state.executors.find((entry) => !entry.revoked_at) || state.executors[0])?.executor_id || "";
     }
@@ -1080,6 +1088,8 @@ export function createExecutorsController({
   }
 
   function bind() {
+    topology.bind();
+    document.getElementById("executor-topology-open").addEventListener("click", () => topology.open());
     elements.executorControlMcpAdd.addEventListener("click", () => void openEditor({owner: "control", kind: "mcp"}));
     elements.executorControlSkillsAdd.addEventListener("click", () => void openEditor({owner: "control", kind: "skill"}));
     elements.executorIntegrationTest.addEventListener("click", () => void testEditorMcp());
@@ -1309,6 +1319,7 @@ export function createExecutorsController({
 
   return {
     activate,
+    closeTopology: () => topology.close(),
     openManagement,
     bind,
     select,

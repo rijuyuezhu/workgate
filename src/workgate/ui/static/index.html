@@ -193,6 +193,7 @@
           <span id="executor-revoked-summary" hidden><strong id="executor-revoked">—</strong> revoked</span>
         </div>
         <div class="executors-actions">
+          <button id="executor-topology-open" type="button">Topology</button>
           <button id="executor-pair-open" class="primary-action" type="button">Pair executor</button>
           <span id="executor-state" class="muted">Not loaded</span>
         </div>
@@ -209,6 +210,46 @@
           <button type="button" id="executor-control-skills-add" disabled>+ Add Skill</button>
         </div>
         <div id="executor-control-skills-body" class="executor-subtab-content"></div>
+      </section>
+      <section id="executor-topology" class="executor-topology" aria-label="Peer topology" hidden>
+        <div class="topology-heading">
+          <div><button id="topology-back" type="button">← Executors</button><h2>Peer Direct topology</h2></div>
+          <span id="topology-summary" class="muted" role="status">No pairs</span>
+        </div>
+        <div class="topology-toolbar">
+          <div class="topology-pair-picker">
+            <span class="topology-toolbar-label">Inspect a connection</span>
+            <label>From <select id="topology-source" aria-label="Source Executor"></select></label>
+            <label>To <select id="topology-destination" aria-label="Destination Executor"></select></label>
+            <button id="topology-show-pair" type="button">Inspect</button>
+          </div>
+          <div class="topology-view-actions">
+            <button id="topology-reset" type="button">All nodes</button>
+            <button id="topology-refresh" type="button">Refresh</button>
+            <button id="topology-test-all" type="button" title="Test each visible link in both directions" disabled>Test all links</button>
+          </div>
+        </div>
+        <p id="topology-test-progress" class="muted" role="status" aria-live="polite" hidden></p>
+        <p id="topology-instructions" class="muted">Click a line to inspect the connection, or a node to focus its links.</p>
+        <div class="topology-legend" aria-label="Peer Direct link states">
+          <span><i data-status="verified"></i>Direct OK</span>
+          <span><i data-status="one-way"></i>One-way</span>
+          <span><i data-status="unreachable"></i>Failed or blocked</span>
+          <span><i data-status="untested"></i>Not tested</span>
+          <span><i data-status="unknown"></i>Unavailable</span>
+          <span><i data-status="stale"></i>Expired result</span>
+        </div>
+        <div id="topology-graph" class="topology-graph" aria-label="Executor connection graph">
+          <div id="topology-stage" class="topology-stage">
+            <svg id="topology-edges" class="topology-edges" aria-label="Executor connection edges"></svg>
+            <div id="topology-nodes" class="topology-nodes"></div>
+          </div>
+        </div>
+        <section id="topology-inspector" class="topology-inspector" aria-label="Selected peer connection" hidden>
+          <div class="topology-inspector-heading"><h3 id="topology-pair-title">Connection</h3><span id="topology-pair-status" class="topology-state"></span></div>
+          <div id="topology-direction-rows" class="topology-directions"></div>
+          <p id="topology-feedback" role="status" aria-live="polite"></p>
+        </section>
       </section>
       <div class="executors-layout">
         <nav id="executor-list" class="executor-list" aria-label="Paired executors" aria-live="polite">

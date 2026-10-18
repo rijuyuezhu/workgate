@@ -544,6 +544,7 @@ void (async () => {
     for (const panel of elements.appViews) {
       panel.hidden = panel.dataset.appView !== view;
     }
+    if (view !== "executors") executors.closeTopology();
     if (view !== "tasks") {
       guiViewer.close();
       integrationsViewer.close();
