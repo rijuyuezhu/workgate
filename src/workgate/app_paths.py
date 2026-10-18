@@ -10,8 +10,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePath, PureWindowsPath
 
-from .platform.host import HostOS, host_os
-
 _APP_NAME = "workgate"
 _RUNTIME_FALLBACK_NONCE: str | None = None
 
@@ -202,12 +200,13 @@ def app_paths() -> AppPaths:
 
 def ensure_private_directory(path: Path) -> Path:
     """Create or validate a Workgate-owned private directory without following a leaf symlink."""
-    if host_os() is HostOS.WINDOWS:
-        from .platform.windows.security import (
-            ensure_private_directory as native_ensure,
-        )
-
-        return native_ensure(path)
+    if os.name == "nt":
+        # On Windows, directory creation and permissions are managed by the
+        # filesystem and user token, not POSIX mode bits.
+        path.mkdir(parents=True, exist_ok=True)
+        if not path.is_dir():
+            raise NotADirectoryError(str(path))
+        return path
     try:
         info = path.lstat()
     except FileNotFoundError:

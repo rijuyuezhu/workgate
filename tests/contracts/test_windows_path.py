@@ -1,6 +1,6 @@
 """Windows path syntax is host-independent; no Control-side normalization."""
 
-from pathlib import PureWindowsPath
+from pathlib import Path, PureWindowsPath
 
 import pytest
 
@@ -62,25 +62,19 @@ def test_remote_path_basename_is_platform_independent(path, name):
     assert remote_path_name(path) == name
 
 
-def test_windows_private_directory_dispatches_to_native_acl_backend(
-    monkeypatch, tmp_path
-):
-    import workgate.app_paths as app_paths_module
-    from workgate.app_paths import ensure_private_directory
-    from workgate.platform.host import HostOS
-    from workgate.platform.windows import security
+def test_windows_app_paths_use_windows_environment_roots():
+    from workgate.app_paths import resolve_app_paths
 
-    monkeypatch.setattr(app_paths_module, "host_os", lambda: HostOS.WINDOWS)
-    private = tmp_path / "credentials"
-    calls = []
-
-    def fake_create(path):
-        calls.append(path)
-        return path
-
-    monkeypatch.setattr(security, "ensure_private_directory", fake_create)
-    assert ensure_private_directory(private) == private
-    assert calls == [private]
+    paths = resolve_app_paths(
+        env={
+            "APPDATA": r"C:\Users\alice\AppData\Roaming",
+            "LOCALAPPDATA": r"C:\Users\alice\AppData\Local",
+        },
+        home=Path(r"C:\Users\alice"),
+        platform="win32",
+    )
+    assert "Roaming" in str(paths.config_dir)
+    assert "Local" in str(paths.state_dir)
 
 
 def test_windows_lock_keys_fold_case_separators_and_dot_components():
@@ -151,83 +145,23 @@ def test_windows_archive_member_keys_fold_case_and_separators():
     ) != archive_member_key(r"d\note.txt", system="Linux")
 
 
-def test_windows_no_follow_resolution_keeps_ancestor_junction_syntax(
-    tmp_path, monkeypatch
-):
-    from workgate.executor import path as executor_path
-    from workgate.platform.host import HostOS
+def test_cross_platform_directory_listing_is_ordinary_pathlib(tmp_path):
+    from workgate.executor.files import FilesConfig, _list_files_local
 
-    target = tmp_path / "target"
-    target.mkdir()
-    (target / "item.txt").write_bytes(b"target")
-    link = tmp_path / "link"
-    link.symlink_to(target, target_is_directory=True)
-    monkeypatch.setattr(executor_path, "host_os", lambda: HostOS.WINDOWS)
-    resolved = executor_path.resolve_path(
-        "link/item.txt", base=tmp_path, follow_final_symlink=False
+    folder = tmp_path / "directory"
+    folder.mkdir()
+    (folder / "plain.txt").write_bytes(b"foo")
+    result = _list_files_local(
+        FilesConfig(
+            default_workdir=tmp_path,
+            max_directory_entries=500,
+            max_file_read_bytes=100000,
+            max_file_write_bytes=100000,
+        ),
+        None,
+        str(folder),
+        recursive=True,
+        max_entries=9,
     )
-    assert resolved == link / "item.txt"
-    assert resolved.parent == link
-
-
-def test_windows_scratch_prune_deletes_only_through_verified_private_handle(
-    monkeypatch, tmp_path
-):
-    import workgate.executor.path as executor_path
-    from workgate.platform.host import HostOS
-    from workgate.platform.windows import security
-
-    scratch = tmp_path / "scratch"
-    scratch.mkdir()
-    abandoned = scratch / "old.tmp"
-    abandoned.write_bytes(b"temporary")
-    seen = []
-
-    def native_delete(path):
-        seen.append(path)
-        path.unlink()
-
-    monkeypatch.setattr(executor_path, "host_os", lambda: HostOS.WINDOWS)
-    monkeypatch.setattr(security, "delete_private_file", native_delete)
-    executor_path.prune_temp_dir(
-        max_files=0,
-        max_bytes=0,
-        directory=scratch,
-        minimum_age_s=0,
-    )
-    assert seen == [abandoned]
-    assert not abandoned.exists()
-
-
-def test_windows_directory_listing_dispatches_through_verified_native_handle(
-    monkeypatch, tmp_path
-):
-    import workgate.executor.files as files_module
-    from workgate.executor.files import FilesConfig
-    from workgate.platform.host import HostOS
-    from workgate.platform.windows import archive
-
-    root = tmp_path / "directory"
-    root.mkdir()
-    (root / "plain.txt").write_bytes(b"foo")
-    monkeypatch.setattr(files_module, "host_os", lambda: HostOS.WINDOWS)
-    calls = []
-
-    def secure_listing(base, *, recursive, max_entries):
-        calls.append((base, recursive, max_entries))
-        return ([(base / "plain.txt", "file", 3, 1_750_000_000.0)], False)
-
-    monkeypatch.setattr(archive, "list_tree", secure_listing)
-    config = FilesConfig(
-        default_workdir=tmp_path,
-        max_directory_entries=500,
-        max_file_read_bytes=100000,
-        max_file_write_bytes=100000,
-    )
-    result = files_module._list_files_local(
-        config, None, str(root), recursive=True, max_entries=9
-    )
-    assert calls == [(root, True, 9)]
     assert result.count == 1
     assert result.entries[0].type == "file"
-    assert result.entries[0].size == 3

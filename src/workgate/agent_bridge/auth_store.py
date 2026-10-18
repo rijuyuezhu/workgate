@@ -15,13 +15,7 @@ from mcp.shared.auth import (
     OAuthToken,
 )
 
-from ..app_paths import ensure_private_directory
-from ..platform.host import HostOS, host_os
-from ..utils.private_files import (
-    atomic_write_private_text,
-    private_file_lock,
-    read_private_bytes,
-)
+from ..utils.private_files import atomic_write_private_text, private_file_lock
 
 _STORE_VERSION = 1
 _MAX_STORE_BYTES = 1_048_576
@@ -68,11 +62,7 @@ class AgentAuthStore:
     """Versioned, bounded, owner-only credential store with atomic mutation."""
 
     def __init__(self, root: Path) -> None:
-        self.root = (
-            Path(root).absolute()
-            if host_os() is HostOS.WINDOWS
-            else Path(root).resolve()
-        )
+        self.root = Path(root).resolve()
         self.path = self.root / "credentials.json"
         self.lock_path = self.root / "credentials.lock"
         self._thread_lock = threading.RLock()
@@ -180,50 +170,27 @@ class AgentAuthStore:
             return changed
 
     def _ensure_private_dir(self) -> None:
-        if host_os() is HostOS.WINDOWS:
-            ensure_private_directory(self.root)
-            return
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         with contextlib.suppress(OSError):
             self.root.chmod(0o700)
 
     def _read_unlocked(self) -> dict[str, Any]:
-        if host_os() is HostOS.WINDOWS:
-            # Native-only private read is validated by the Windows backend.
-            try:
-                raw = read_private_bytes(self.path, max_bytes=_MAX_STORE_BYTES)
-            except FileNotFoundError:
-                return _empty_store()
-            except ValueError as exc:
-                raise AgentAuthStoreCorruptError(
-                    f"Agent Bridge credential store exceeds {_MAX_STORE_BYTES} bytes"
-                ) from exc
-            except OSError as exc:
-                raise AgentAuthStoreCorruptError(
-                    f"Agent Bridge credential store is invalid: {exc}"
-                ) from exc
-        else:
-            if not self.path.exists():
-                return _empty_store()
-            try:
-                size = self.path.stat().st_size
-            except OSError as exc:
-                raise AgentAuthStoreError(
-                    f"unable to inspect Agent Bridge credential store: {exc}"
-                ) from exc
-            if size > _MAX_STORE_BYTES:
-                raise AgentAuthStoreCorruptError(
-                    f"Agent Bridge credential store exceeds {_MAX_STORE_BYTES} bytes"
-                )
-            try:
-                raw = self.path.read_bytes()
-            except OSError as exc:
-                raise AgentAuthStoreCorruptError(
-                    f"Agent Bridge credential store is invalid: {exc}"
-                ) from exc
+        if not self.path.exists():
+            return _empty_store()
         try:
+            size = self.path.stat().st_size
+        except OSError as exc:
+            raise AgentAuthStoreError(
+                f"unable to inspect Agent Bridge credential store: {exc}"
+            ) from exc
+        if size > _MAX_STORE_BYTES:
+            raise AgentAuthStoreCorruptError(
+                f"Agent Bridge credential store exceeds {_MAX_STORE_BYTES} bytes"
+            )
+        try:
+            raw = self.path.read_bytes()
             data = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise AgentAuthStoreCorruptError(
                 f"Agent Bridge credential store is invalid: {exc}"
             ) from exc

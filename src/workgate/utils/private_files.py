@@ -31,16 +31,6 @@ def _retry_private_lock_io(
 
 def _ensure_lock_file(path: Path, timeout_s: float | None = None) -> None:
     """Create or repair the one-byte lock file before any process opens it."""
-    if host_os() is HostOS.WINDOWS:
-        from ..platform.windows.security import open_private_file
-
-        descriptor = open_private_file(path, create=True)
-        with os.fdopen(descriptor, "r+b") as handle:
-            handle.seek(0, os.SEEK_END)
-            if handle.tell() == 0:
-                handle.write(b"\0")
-                handle.flush()
-        return
     path.parent.mkdir(parents=True, exist_ok=True)
     deadline = (
         None if timeout_s is None else time.monotonic() + max(0.0, timeout_s)
@@ -87,21 +77,6 @@ def _open_lock_handle(
         None if timeout_s is None else time.monotonic() + max(0.0, timeout_s)
     )
     while True:
-        if host_os() is HostOS.WINDOWS:
-            from ..platform.windows.security import open_private_file
-
-            try:
-                descriptor = open_private_file(path, create=False)
-            except FileNotFoundError:
-                _retry_private_lock_io(
-                    deadline,
-                    timeout_message="timed out opening private lock file",
-                    retry_interval_s=retry_interval_s,
-                )
-                continue
-            # An insecure DACL, owner or reparse point must fail immediately,
-            # never turn into an unbounded transient-open retry.
-            return os.fdopen(descriptor, "r+b")
         try:
             return path.open("r+b")
         except FileNotFoundError, PermissionError:
@@ -125,15 +100,16 @@ def _is_lock_contention_error(exc: OSError) -> bool:
 
 def _try_lock_handle(handle: BinaryIO) -> bool:
     """Attempt one non-blocking cross-platform file-lock acquisition."""
-    if host_os() is HostOS.WINDOWS:
-        from ..platform.windows.locks import try_lock_handle
-
-        return try_lock_handle(handle)
     handle.seek(0)
     try:
-        import fcntl
+        if host_os() is HostOS.WINDOWS:
+            import msvcrt
 
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)  # pyright: ignore[reportAttributeAccessIssue]
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError as exc:
         if _is_lock_contention_error(exc):
             return False
@@ -162,15 +138,15 @@ def _lock_handle(
 
 
 def _unlock_handle(handle: BinaryIO) -> None:
-    if host_os() is HostOS.WINDOWS:
-        from ..platform.windows.locks import unlock_handle
-
-        unlock_handle(handle)
-        return
     handle.seek(0)
-    import fcntl
+    if host_os() is HostOS.WINDOWS:
+        import msvcrt
 
-    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)  # pyright: ignore[reportAttributeAccessIssue]
+    else:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 @contextmanager
@@ -193,9 +169,8 @@ def private_file_lock(
         timeout_s=remaining,
         retry_interval_s=retry_interval_s,
     ) as handle:
-        if host_os() is not HostOS.WINDOWS:
-            with contextlib.suppress(OSError):
-                path.chmod(0o600)
+        with contextlib.suppress(OSError):
+            path.chmod(0o600)
         remaining = (
             None
             if timeout_s is None
@@ -212,44 +187,10 @@ def private_file_lock(
             _unlock_handle(handle)
 
 
-def read_private_bytes(path: Path, *, max_bytes: int | None = None) -> bytes:
-    """Read verified owner-private data; enforce optional limit on the opened file."""
-    if host_os() is HostOS.WINDOWS:  # pragma: no cover - native Windows smoke
-        from ..platform.windows.security import (
-            read_private_bytes as native_read,
-        )
-
-        return native_read(path, max_bytes=max_bytes)
-    if max_bytes is None:
-        return path.read_bytes()
-    else:
-        with path.open("rb") as reader:
-            if os.fstat(reader.fileno()).st_size > max_bytes:
-                raise ValueError("Private file exceeds read size limit")
-            data = reader.read(max_bytes + 1)
-    if max_bytes is not None and len(data) > max_bytes:
-        raise ValueError("Private file exceeds read size limit")
-    return data
-
-
-def read_private_text(path: Path, *, max_bytes: int | None = None) -> str:
-    """Read UTF-8 private content from the same verified file object."""
-    return read_private_bytes(path, max_bytes=max_bytes).decode("utf-8")
-
-
 def write_private_bytes(
     path: Path, data: bytes, *, exclusive: bool = False
 ) -> None:
     """Write or replace one private byte file using mode 0600."""
-    if host_os() is HostOS.WINDOWS:
-        from ..platform.windows.security import open_private_file
-
-        descriptor = open_private_file(path, create=True, exclusive=exclusive)
-        with os.fdopen(descriptor, "r+b") as handle:
-            handle.truncate(0)
-            handle.write(data)
-            handle.flush()
-        return
     path.parent.mkdir(parents=True, exist_ok=True)
     flags = os.O_WRONLY | os.O_CREAT
     flags |= os.O_EXCL if exclusive else os.O_TRUNC
@@ -263,14 +204,6 @@ def write_private_bytes(
 
 def append_private_bytes(path: Path, data: bytes) -> None:
     """Append bytes to one private file without changing existing content."""
-    if host_os() is HostOS.WINDOWS:
-        from ..platform.windows.security import open_private_file
-
-        descriptor = open_private_file(path, create=True, append=True)
-        with os.fdopen(descriptor, "ab") as handle:
-            handle.write(data)
-            handle.flush()
-        return
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     with os.fdopen(descriptor, "ab") as handle:
@@ -287,30 +220,17 @@ def write_private_text(path: Path, content: str) -> None:
 
 def atomic_write_private_bytes(path: Path, data: bytes) -> None:
     """Atomically replace one private file with new bytes."""
-    if host_os() is not HostOS.WINDOWS:
-        path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(
         f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
     )
     try:
         write_private_bytes(temporary, data, exclusive=True)
-        if host_os() is HostOS.WINDOWS:
-            from ..platform.windows.security import replace_private_file
-
-            replace_private_file(temporary, path)
-        else:
-            os.replace(temporary, path)
-        if host_os() is not HostOS.WINDOWS:
-            with contextlib.suppress(OSError):
-                path.chmod(0o600)
+        os.replace(temporary, path)
+        with contextlib.suppress(OSError):
+            path.chmod(0o600)
     finally:
-        if host_os() is HostOS.WINDOWS:
-            from ..platform.windows.security import delete_private_file
-
-            with contextlib.suppress(FileNotFoundError):
-                delete_private_file(temporary)
-        else:
-            temporary.unlink(missing_ok=True)
+        temporary.unlink(missing_ok=True)
 
 
 def atomic_write_private_text(path: Path, content: str) -> None:

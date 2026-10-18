@@ -137,10 +137,6 @@ omit = [
     "*/workgate/executor/gui/linux_atspi_helper.py",
     "*/workgate/executor/gui/linux_portal.py",
     "*/workgate/executor/gui/macos.py",
-    # Win32 ctypes calls require native Windows; verified by the native smoke.
-    "*/workgate/platform/windows/security.py",
-    "*/workgate/platform/windows/nt_relative.py",
-    "*/workgate/platform/windows/archive.py",
 ]
 precision = 2
 show_missing = true

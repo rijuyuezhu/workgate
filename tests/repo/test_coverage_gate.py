@@ -21,7 +21,7 @@ def test_coverage_paths_canonicalize_managed_runtime_sources() -> None:
     assert "*/runtimes/*/workgate" in paths
 
 
-def test_coverage_omits_only_platform_specific_native_backends() -> None:
+def test_coverage_omits_only_native_gui_platform_adapters() -> None:
     config = tomllib.loads(
         (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )
@@ -32,9 +32,6 @@ def test_coverage_omits_only_platform_specific_native_backends() -> None:
         "*/workgate/executor/gui/linux_atspi_helper.py",
         "*/workgate/executor/gui/linux_portal.py",
         "*/workgate/executor/gui/macos.py",
-        "*/workgate/platform/windows/security.py",
-        "*/workgate/platform/windows/nt_relative.py",
-        "*/workgate/platform/windows/archive.py",
     ]
 
 

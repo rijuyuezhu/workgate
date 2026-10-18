@@ -6,7 +6,6 @@ from pathlib import Path
 
 from ..app_paths import ensure_private_directory
 from ..errors import PathNotFoundError
-from ..platform.host import HostOS, host_os
 
 
 def resolve_default_workdir(path: Path) -> Path:
@@ -33,9 +32,6 @@ def resolve_path(
         raw = root / raw
     if follow_final_symlink:
         resolved = raw.resolve(strict=False)
-    elif host_os() is HostOS.WINDOWS:
-        # Preserve every reparse-point component for NT handle-relative validation.
-        resolved = Path(os.path.abspath(raw))
     else:
         resolved_parent = raw.parent.resolve(strict=False)
         resolved = resolved_parent / raw.name if raw.name else resolved_parent
@@ -112,12 +108,7 @@ def prune_temp_dir(
         if now - modified < max(0.0, minimum_age_s):
             continue
         try:
-            if host_os() is HostOS.WINDOWS:
-                from ..platform.windows.security import delete_private_file
-
-                delete_private_file(item)
-            else:
-                item.unlink()
+            item.unlink()
         except OSError:
             continue
 

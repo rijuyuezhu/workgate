@@ -3,7 +3,6 @@
 import codecs
 import contextlib
 import difflib
-import hashlib
 import os
 import re
 import shutil
@@ -13,7 +12,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..config.executor import ExecutorConfig
-from ..platform.host import HostOS, host_os
 from ..schemas.result_models.files import (
     DeleteFileOrDirOutput,
     EditContextOutput,
@@ -84,9 +82,7 @@ def _resolve_file_path(
         base=base,
         must_exist=must_exist,
         allow_missing_parent=allow_missing_parent,
-        follow_final_symlink=(
-            follow_final_symlink and host_os() is not HostOS.WINDOWS
-        ),
+        follow_final_symlink=follow_final_symlink,
     )
 
 
@@ -104,44 +100,8 @@ def _display_file(
     return display_path(path, base)
 
 
-def _read_edit_source(path: Path, max_bytes: int) -> tuple[int, str, str]:
-    """Read size, UTF-8 contents and hash from one verified Windows file object."""
-    from ..platform.windows.security import open_regular_file_no_follow
-
-    with os.fdopen(
-        open_regular_file_no_follow(path, share_write=False), "rb"
-    ) as source:
-        size = os.fstat(source.fileno()).st_size
-        if size > max_bytes:
-            raise ValueError(
-                f"Refusing to edit {size} bytes; max is {max_bytes}"
-            )
-        contents = source.read(max_bytes + 1)
-        if len(contents) > max_bytes:
-            raise ValueError(
-                f"Refusing to edit {len(contents)} bytes; max is {max_bytes}"
-            )
-        return (
-            size,
-            contents.decode("utf-8"),
-            hashlib.sha256(contents).hexdigest(),
-        )
-
-
-def _atomic_write_text(
-    path: Path, content: str, *, expected_sha256: str | None = None
-) -> None:
+def _atomic_write_text(path: Path, content: str) -> None:
     """Atomically replace one user text file while preserving its existing mode."""
-    if host_os() is HostOS.WINDOWS:
-        from ..platform.windows.security import atomic_write_workspace_bytes
-
-        atomic_write_workspace_bytes(
-            path,
-            content.encode("utf-8"),
-            overwrite=True,
-            expected_sha256=expected_sha256,
-        )
-        return
     path.parent.mkdir(parents=True, exist_ok=True)
     previous_mode = path.stat().st_mode & 0o777 if path.exists() else None
     descriptor, temporary_name = tempfile.mkstemp(
@@ -170,7 +130,7 @@ def _list_files_local(
 ) -> ListFilesOutput:
     """List files from explicit Files policy and an optional local binding."""
     base = _resolve_file_path(config, binding, path, must_exist=True)
-    if host_os() is not HostOS.WINDOWS and not base.is_dir():
+    if not base.is_dir():
         raise NotADirectoryError(str(base))
     filelist: list[EntryInfo] = []
     max_directory_entries = config.max_directory_entries
@@ -179,27 +139,6 @@ def _list_files_local(
             f"max_entries must be between 0 and {max_directory_entries}"
         )
     limit = min(max_entries, max_directory_entries)
-    if host_os() is HostOS.WINDOWS:
-        from ..platform.windows.archive import list_tree
-
-        items, truncated = list_tree(
-            base, recursive=recursive, max_entries=limit
-        )
-        return ListFilesOutput(
-            limit_count=limit,
-            count=len(items),
-            is_truncated=truncated,
-            entries=[
-                EntryInfo(
-                    path=_display_file(config, binding, item),
-                    type=kind,
-                    size=size,
-                    modified=modified,
-                    target=None,
-                )
-                for item, kind, size, modified in items
-            ],
-        )
     iterator = base.rglob("*") if recursive else base.iterdir()
 
     truncated = False
@@ -303,27 +242,12 @@ def read_file_explicit(
     display_file: Callable[[Path], str],
     snapshot_store: ToolSessionStore | None = None,
     snapshot_session_id: str | None = None,
-    hash_full_file: bool = False,
 ) -> ReadFileOutput:
     """Read and optionally ground a file from explicit path and snapshot dependencies."""
     p = resolve_file(path)
-    native_digest: str | None = None
-    if host_os() is HostOS.WINDOWS:
-        from ..platform.windows.security import open_regular_file_no_follow
-
-        descriptor = open_regular_file_no_follow(p)
-        with os.fdopen(descriptor, "rb") as fh:
-            size = os.fstat(fh.fileno()).st_size
-            data = fh.read(max_file_read_bytes + 1)
-            if hash_full_file or (
-                snapshot_store is not None and snapshot_session_id is not None
-            ):
-                fh.seek(0)
-                native_digest = hashlib.file_digest(fh, "sha256").hexdigest()
-    else:
-        size = p.stat().st_size
-        with p.open("rb") as fh:
-            data = fh.read(max_file_read_bytes + 1)
+    size = p.stat().st_size
+    with p.open("rb") as fh:
+        data = fh.read(max_file_read_bytes + 1)
 
     truncated = False
     if len(data) > max_file_read_bytes:
@@ -360,9 +284,7 @@ def read_file_explicit(
         snapshot_store.record_file_snapshot(
             session_id=snapshot_session_id,
             path=relative_path,
-            file_sha256=native_digest
-            if native_digest is not None
-            else file_sha256(p),
+            file_sha256=file_sha256(p),
             total_lines=total_lines,
             seen_ranges=seen_ranges,
         )
@@ -386,9 +308,7 @@ def read_file_explicit(
         ),
         session_id=record.session_id if record is not None else None,
         snapshot_id=record.snapshot_id if record is not None else None,
-        file_sha256=(
-            record.file_sha256 if record is not None else native_digest
-        ),
+        file_sha256=record.file_sha256 if record is not None else None,
         seen_ranges=seen_range_models if record is not None else [],
         truncated=truncated,
         content=text,
@@ -403,7 +323,6 @@ def _read_file_local(
     start_line: int | None = None,
     end_line: int | None = None,
     line_ranges: Sequence[_ReadLineRange] | None = None,
-    hash_full_file: bool = False,
 ) -> ReadFileOutput:
     """Read and ground a local file from explicit Files dependencies."""
     return read_file_explicit(
@@ -413,16 +332,11 @@ def _read_file_local(
         line_ranges=line_ranges,
         max_file_read_bytes=config.max_file_read_bytes,
         resolve_file=lambda value: _resolve_file_path(
-            config,
-            binding,
-            value,
-            must_exist=True,
-            follow_final_symlink=host_os() is not HostOS.WINDOWS,
+            config, binding, value, must_exist=True
         ),
         display_file=lambda value: _display_file(config, binding, value),
         snapshot_store=store if binding is not None else None,
         snapshot_session_id=binding.session_id if binding is not None else None,
-        hash_full_file=hash_full_file,
     )
 
 
@@ -446,27 +360,15 @@ def _write_file_local(
         raise ValueError("expected_sha256 must be a lowercase SHA-256 digest")
     p = _resolve_file_path(config, binding, path)
     with path_lock(p):
-        if host_os() is HostOS.WINDOWS:
-            from ..platform.windows.security import atomic_write_workspace_bytes
-
-            created = atomic_write_workspace_bytes(
-                p,
-                data,
-                overwrite=overwrite,
-                expected_sha256=expected_sha256,
-            )
-        else:
-            exists = p.exists()
-            if exists and not overwrite:
-                raise FileExistsError(str(p))
-            if expected_sha256 is not None and (
-                not exists
-                or not p.is_file()
-                or file_sha256(p) != expected_sha256
-            ):
-                raise ValueError("File changed; reload before saving")
-            created = not exists
-            _atomic_write_text(p, content)
+        exists = p.exists()
+        if exists and not overwrite:
+            raise FileExistsError(str(p))
+        if expected_sha256 is not None and (
+            not exists or not p.is_file() or file_sha256(p) != expected_sha256
+        ):
+            raise ValueError("File changed; reload before saving")
+        created = not exists
+        _atomic_write_text(p, content)
     return WriteFileOutput(
         path=_display_file(config, binding, p), bytes=len(data), created=created
     )
@@ -775,24 +677,18 @@ def _hashline_file_snapshot(
 ) -> _HashlineFileSnapshot:
     """Resolve a hashline path and capture current file state."""
     p = _resolve_file_path(config, binding, path, must_exist=True)
-    if host_os() is HostOS.WINDOWS:
-        _, original, current_sha256 = _read_edit_source(
-            p, config.max_file_write_bytes
+    size = p.stat().st_size
+    if size > config.max_file_write_bytes:
+        raise ValueError(
+            f"Refusing to edit {size} bytes; max is {config.max_file_write_bytes}"
         )
-    else:
-        size = p.stat().st_size
-        if size > config.max_file_write_bytes:
-            raise ValueError(
-                f"Refusing to edit {size} bytes; max is {config.max_file_write_bytes}"
-            )
-        original = p.read_text(encoding="utf-8")
-        current_sha256 = file_sha256(p)
+    original = p.read_text(encoding="utf-8")
     return _HashlineFileSnapshot(
         path_obj=p,
         relative_path=_display_file(config, binding, p),
         original=original,
         original_lines=tuple(original.splitlines(keepends=True)),
-        current_sha256=current_sha256,
+        current_sha256=file_sha256(p),
     )
 
 
@@ -929,11 +825,7 @@ def _apply_hashline_file_hunks(
             tofile=snapshot.relative_path,
         )
     )
-    _atomic_write_text(
-        snapshot.path_obj,
-        updated,
-        expected_sha256=snapshot.current_sha256,
-    )
+    _atomic_write_text(snapshot.path_obj, updated)
     return tuple(updated_lines), diff
 
 
@@ -1108,20 +1000,14 @@ def _edit_lines_local(
 
     p = _resolve_file_path(config, binding, path, must_exist=True)
     with path_lock(p):
-        if host_os() is HostOS.WINDOWS:
-            _, original, current_sha256 = _read_edit_source(
-                p, config.max_file_write_bytes
+        size = p.stat().st_size
+        if size > config.max_file_write_bytes:
+            raise ValueError(
+                f"Refusing to edit {size} bytes; max is {config.max_file_write_bytes}"
             )
-        else:
-            size = p.stat().st_size
-            if size > config.max_file_write_bytes:
-                raise ValueError(
-                    f"Refusing to edit {size} bytes; max is {config.max_file_write_bytes}"
-                )
-            current_sha256 = file_sha256(p)
-            original = p.read_text(encoding="utf-8")
 
         relative_path = _display_file(config, binding, p)
+        current_sha256 = file_sha256(p)
         _validate_snapshot_for_edit(
             store=store,
             binding=binding,
@@ -1132,6 +1018,7 @@ def _edit_lines_local(
             snapshot_id=snapshot_id,
         )
 
+        original = p.read_text(encoding="utf-8")
         original_lines = original.splitlines(keepends=True)
         total_lines = len(original_lines)
         if end_line > total_lines:
@@ -1168,7 +1055,7 @@ def _edit_lines_local(
                 tofile=relative_path,
             )
         )
-        _atomic_write_text(p, updated, expected_sha256=current_sha256)
+        _atomic_write_text(p, updated)
 
         replacement_line_count = len(replacement_lines)
         context_start = max(1, start_line - 3)
@@ -1207,32 +1094,9 @@ def _delete_file_or_dir_local(
         follow_final_symlink=False,
     )
     with path_lock(p):
-        if host_os() is HostOS.WINDOWS:
-            from ..platform.windows.archive import (
-                remove_directory_tree,
-                verify_directory,
-            )
-            from ..platform.windows.security import delete_workspace_file
-
-            if p.is_symlink() or p.is_junction():
-                from ..platform.windows.security import delete_workspace_link
-
-                delete_workspace_link(p)
-                deleted = "link"
-            elif p.is_dir():
-                verify_directory(p)
-                if not recursive:
-                    raise IsADirectoryError(
-                        "Set recursive=true to delete a directory"
-                    )
-                remove_directory_tree(p)
-                deleted = "directory"
-            else:
-                delete_workspace_file(p)
-                deleted = "file"
-        elif not os.path.lexists(p):
+        if not os.path.lexists(p):
             raise FileNotFoundError(str(p))
-        elif p.is_symlink():
+        if p.is_symlink():
             p.unlink()
             deleted = "link"
         elif p.is_dir():

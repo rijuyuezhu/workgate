@@ -9,17 +9,11 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from ..app_paths import ensure_private_directory
-from ..platform.host import HostOS, host_os
-from ..utils.private_files import read_private_bytes, read_private_text
 from .models import AgentBridgeManifest, LoadedAgentManifest, SkillSource
 
 
 def agent_config_fingerprint(config_dir: Path) -> str:
     """Return a stable content fingerprint for the injected agent config tree."""
-    if host_os() is HostOS.WINDOWS:
-        from ..platform.windows.fingerprint import fingerprint_agent_config
-
-        return fingerprint_agent_config(config_dir)
 
     root = Path(config_dir)
     digest = hashlib.sha256()
@@ -124,7 +118,7 @@ def agent_registry_fingerprint(
         digest.update(str(path).encode("utf-8", errors="replace"))
         digest.update(b"\0")
         try:
-            payload = read_private_bytes(path)
+            payload = path.read_bytes()
         except FileNotFoundError:
             payload = b"<missing>"
         except OSError as exc:
@@ -154,7 +148,7 @@ def load_agent_manifest(
             config_path=config_path, status="missing_config"
         )
     try:
-        raw = json.loads(read_private_text(config_path))
+        raw = json.loads(config_path.read_text(encoding="utf-8"))
         data = AgentBridgeManifest.model_validate(raw)
     except ValidationError as exc:
         return LoadedAgentManifest(

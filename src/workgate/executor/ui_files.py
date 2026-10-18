@@ -11,7 +11,6 @@ import stat
 from pathlib import Path
 from typing import Any
 
-from ..platform.host import HostOS, host_os
 from ..utils.path_locks import path_locks
 from .files import (
     FilesConfig,
@@ -142,15 +141,8 @@ class UiFilesService:
     @staticmethod
     def _file_sample(path: Path) -> tuple[bytes, bytes]:
         sample_bytes = max(4_096, UI_FILE_BINARY_PREVIEW_BYTES)
-        if host_os() is HostOS.WINDOWS:
-            from ..platform.windows.security import open_regular_file_no_follow
-
-            descriptor = open_regular_file_no_follow(path)
-            with os.fdopen(descriptor, "rb") as handle:
-                probe = handle.read(sample_bytes + 3)
-        else:
-            with path.open("rb") as handle:
-                probe = handle.read(sample_bytes + 3)
+        with path.open("rb") as handle:
+            probe = handle.read(sample_bytes + 3)
         return probe[:sample_bytes], probe[sample_bytes:]
 
     def preview(self, path: str) -> dict[str, Any]:
@@ -185,20 +177,7 @@ class UiFilesService:
                         f"{self.config.max_file_read_bytes} bytes"
                     ),
                 }
-            if host_os() is HostOS.WINDOWS:
-                from ..platform.windows.security import (
-                    open_regular_file_no_follow,
-                )
-
-                descriptor = open_regular_file_no_follow(resolved)
-                with os.fdopen(descriptor, "rb") as handle:
-                    data = handle.read(self.config.max_file_read_bytes + 1)
-                if len(data) > self.config.max_file_read_bytes:
-                    raise ValueError(
-                        "Image changed or exceeds inline preview limit"
-                    )
-            else:
-                data = resolved.read_bytes()
+            data = resolved.read_bytes()
             return {
                 "kind": "image",
                 "path": self._display(resolved),
@@ -252,13 +231,7 @@ class UiFilesService:
             raise ValueError(
                 "Binary files cannot be edited in the built-in editor"
             )
-        result = _read_file_local(
-            self.config,
-            self.store,
-            None,
-            str(resolved),
-            hash_full_file=host_os() is HostOS.WINDOWS,
-        )
+        result = _read_file_local(self.config, self.store, None, str(resolved))
         if result.truncated:
             raise ValueError(
                 "File exceeds the configured editor read limit; use a terminal or external editor"
@@ -266,11 +239,7 @@ class UiFilesService:
         return {
             "kind": "text",
             **result.model_dump(mode="json"),
-            "file_sha256": (
-                result.file_sha256
-                if host_os() is HostOS.WINDOWS
-                else file_sha256(resolved)
-            ),
+            "file_sha256": file_sha256(resolved),
         }
 
     def _ensure_mutable(
@@ -302,10 +271,6 @@ class UiFilesService:
 
     @staticmethod
     def _entry_kind(path: Path) -> str:
-        if host_os() is HostOS.WINDOWS and (
-            path.is_symlink() or path.is_junction()
-        ):
-            return "link"
         mode = path.lstat().st_mode
         if stat.S_ISLNK(mode):
             return "link"
@@ -421,26 +386,7 @@ class UiFilesService:
                 raise FileNotFoundError(str(source))
             kind = self._entry_kind(source)
             self._validate_copy_destination(source, destination, kind)
-            if host_os() is HostOS.WINDOWS:
-                if kind == "file":
-                    from ..platform.windows.security import copy_workspace_file
-
-                    copy_workspace_file(source, destination)
-                elif kind == "dir":
-                    from ..platform.windows.archive import copy_directory
-
-                    copy_directory(
-                        source,
-                        destination,
-                        max_entries=self.config.max_directory_entries,
-                        max_bytes=self.config.max_file_write_bytes * 100,
-                    )
-                else:
-                    raise NotImplementedError(
-                        "Windows link copy requires native reparse recreation"
-                    )
-            else:
-                self._copy_entry_locked(source, destination, kind)
+            self._copy_entry_locked(source, destination, kind)
         return {
             "action": "copy",
             "source": self._display(source),
@@ -462,38 +408,17 @@ class UiFilesService:
                 raise FileNotFoundError(str(source))
             kind = self._entry_kind(source)
             self._validate_copy_destination(source, destination, kind)
-            if host_os() is HostOS.WINDOWS:
-                if kind == "file":
-                    from ..platform.windows.security import (
-                        replace_workspace_file,
-                    )
-
-                    replace_workspace_file(
-                        source,
-                        destination,
-                        private_source=False,
-                        replace=False,
-                    )
-                elif kind == "dir":
-                    from ..platform.windows.archive import move_directory
-
-                    move_directory(source, destination)
-                else:
-                    from ..platform.windows.security import move_workspace_link
-
-                    move_workspace_link(source, destination)
-            else:
+            try:
+                os.rename(source, destination)
+            except OSError as exc:
+                if exc.errno != errno.EXDEV:
+                    raise
+                self._copy_entry_locked(source, destination, kind)
                 try:
-                    os.rename(source, destination)
-                except OSError as exc:
-                    if exc.errno != errno.EXDEV:
-                        raise
-                    self._copy_entry_locked(source, destination, kind)
-                    try:
-                        self._remove_entry(source)
-                    except BaseException:
-                        self._remove_entry(destination)
-                        raise
+                    self._remove_entry(source)
+                except BaseException:
+                    self._remove_entry(destination)
+                    raise
         return {
             "action": action,
             "source": self._display(source),
@@ -543,33 +468,17 @@ class UiFilesService:
             raise ValueError(f"Upload exceeds {limit} bytes")
         destination = self._destination_entry(path)
         with path_locks([destination]):
-            if host_os() is HostOS.WINDOWS:
-                from ..platform.windows.security import (
-                    create_workspace_file_no_follow,
-                    delete_open_workspace_file,
-                )
-
-                fd = create_workspace_file_no_follow(destination)
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            flags |= getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(destination, flags, 0o666)
+            try:
                 with os.fdopen(fd, "wb") as output:
-                    try:
-                        output.write(data)
-                        output.flush()
-                        os.fsync(output.fileno())
-                    except BaseException:
-                        delete_open_workspace_file(output.fileno())
-                        raise
-            else:
-                flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-                flags |= getattr(os, "O_NOFOLLOW", 0)
-                fd = os.open(destination, flags, 0o666)
-                try:
-                    with os.fdopen(fd, "wb") as output:
-                        output.write(data)
-                        output.flush()
-                        os.fsync(output.fileno())
-                except BaseException:
-                    destination.unlink(missing_ok=True)
-                    raise
+                    output.write(data)
+                    output.flush()
+                    os.fsync(output.fileno())
+            except BaseException:
+                destination.unlink(missing_ok=True)
+                raise
         return {"path": self._display(destination), "bytes": len(data)}
 
     def mkdir(self, path: str) -> dict[str, Any]:
