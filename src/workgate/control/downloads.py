@@ -14,6 +14,7 @@ from pydantic import JsonValue
 from ..audit import audit
 from ..config.control import ControlConfig
 from ..errors import exception_from_tool_error
+from ..platform.path import remote_path_name
 from ..protocol.ids import new_link_id
 from ..protocol.transfer import DEFAULT_TRANSFER_CHUNK_BYTES
 from ..schemas.result_models.downloads import (
@@ -89,7 +90,7 @@ def _coerce_max_downloads(
 
 
 def _safe_download_filename(filename: str | None, source: str | Path) -> str:
-    source_name = Path(source).name
+    source_name = remote_path_name(str(source))
     candidate = str(filename) if filename else source_name
     candidate = candidate.replace("/", "_").replace("\\", "_")
     candidate = "".join(
@@ -503,7 +504,9 @@ class ControlDownloadService:
                 raise RuntimeError(
                     "Executor file changed while creating snapshot"
                 )
-            source_name = Path(stat.path or path).name or Path(path).name
+            source_name = remote_path_name(
+                stat.path or path
+            ) or remote_path_name(path)
             return DownloadSnapshot(
                 staging_path=staging,
                 display_path=stat.path,

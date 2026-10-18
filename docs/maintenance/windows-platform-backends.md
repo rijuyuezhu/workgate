@@ -50,3 +50,24 @@ so a setup error cannot orphan a new attached child. It centralizes host
 selection for GUI/services without moving those implementations yet. It does not claim Windows or release support.
 Follow-up issues #383-#391 own their Windows implementations. Native Windows,
 Linux and macOS parity and final security/KISS review are in #392.
+
+## Windows filesystem migration (#383, in progress)
+
+The initial filesystem slice selects %APPDATA% for roaming configuration,
+%LOCALAPPDATA% for local state/data and %TEMP% for disposable runtime data.
+Windows roots are parsed using native drive/UNC rules. Display basenames
+received by a POSIX Control from a Windows Executor are parsed without using
+the Control host's Path class. Lock shards normalize Windows case and
+separators, and the Windows locking adapter uses msvcrt.locking on a one-byte
+sentinel. None of these changes assert completed Windows support.
+
+**Security gate:** POSIX chmod(0600/0700) does not establish owner-only
+Windows ACLs. Private directory creation, credential writes, and file-lock
+initialization currently reject Windows *before writing any data* until a
+handle-based Windows DACL implementation has been verified. This deliberate
+fail-closed guard must be replaced, not suppressed, before #383 can finish.
+Native security tests must cover ownership, inheritance, handle identity,
+junctions/reparse points, sharing violations, replace/rollback, and archive
+extraction. POSIX O_NOFOLLOW fallbacks elsewhere also require native Windows
+handle implementations; neither a pre-open symlink check nor mode bits provide
+equivalent security. No native Windows host has been validated yet.

@@ -10,6 +10,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import BinaryIO
 
+from ..platform.files import require_private_file_security
+from ..platform.host import HostOS, host_os
+
 
 def _retry_private_lock_io(
     deadline: float | None,
@@ -29,6 +32,7 @@ def _retry_private_lock_io(
 
 def _ensure_lock_file(path: Path, timeout_s: float | None = None) -> None:
     """Create or repair the one-byte lock file before any process opens it."""
+    require_private_file_security()
     path.parent.mkdir(parents=True, exist_ok=True)
     deadline = (
         None if timeout_s is None else time.monotonic() + max(0.0, timeout_s)
@@ -98,6 +102,10 @@ def _is_lock_contention_error(exc: OSError) -> bool:
 
 def _try_lock_handle(handle: BinaryIO) -> bool:
     """Attempt one non-blocking cross-platform file-lock acquisition."""
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.locks import try_lock_handle
+
+        return try_lock_handle(handle)
     handle.seek(0)
     try:
         import fcntl
@@ -131,6 +139,11 @@ def _lock_handle(
 
 
 def _unlock_handle(handle: BinaryIO) -> None:
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.locks import unlock_handle
+
+        unlock_handle(handle)
+        return
     handle.seek(0)
     import fcntl
 
@@ -179,6 +192,7 @@ def write_private_bytes(
     path: Path, data: bytes, *, exclusive: bool = False
 ) -> None:
     """Write or replace one private byte file using mode 0600."""
+    require_private_file_security()
     path.parent.mkdir(parents=True, exist_ok=True)
     flags = os.O_WRONLY | os.O_CREAT
     flags |= os.O_EXCL if exclusive else os.O_TRUNC
@@ -192,6 +206,7 @@ def write_private_bytes(
 
 def append_private_bytes(path: Path, data: bytes) -> None:
     """Append bytes to one private file without changing existing content."""
+    require_private_file_security()
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     with os.fdopen(descriptor, "ab") as handle:
@@ -208,6 +223,7 @@ def write_private_text(path: Path, content: str) -> None:
 
 def atomic_write_private_bytes(path: Path, data: bytes) -> None:
     """Atomically replace one private file with new bytes."""
+    require_private_file_security()
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(
         f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
