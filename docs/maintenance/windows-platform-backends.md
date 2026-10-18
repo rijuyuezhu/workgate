@@ -85,14 +85,26 @@ modules are excluded from Linux-only coverage reporting, like other native OS
 backends; the native script is the substantive platform test. Full Windows CI
 belongs to #391.
 
-**Still blocked (Draft #395):** Windows directory archive packing and
-unpacking now explicitly fail before filesystem mutation. The existing
-`tarfile.add` and directory-staging publication paths have pathname races,
-so claiming support for them without NT handle-relative enumeration and
-transactional directory publication would be unsafe. Regular file transfer
-copy/chunk completion already uses handle-relative publication. Skill/MCP
-files, patching, remaining no-follow fallbacks, unsupported sharing and
-rollback cases require review and real Windows tests. Creation of missing ancestors, directory transfer publication and
-adversarial concurrent filesystem mutation still need fuller integration
-verification. This slice does not assert full Windows support and must not
-be merged while security acceptance remains incomplete.
+### Native Windows archive transfer (#383)
+
+One-shot Windows archive pack and unpack now use verified NT handles. Packing
+enumerates children through FileIdBothDirectoryInfo while holding directory
+handles, checks each opened child for reparse points and types, and enforces the
+configured entry/byte limits. The archive is created under a protected DACL.
+Unpacking validates names/types, device names, ADS and case collisions before
+creating protected staging; it denies concurrent archive writes during
+validation/extraction. File creation and directory traversal are handle-relative.
+Directory commit uses NT relative rename to stage/backup/publish, with safe
+handle-relative rollback and recursive cleanup. Native Windows 3.14 smoke tests
+cover success, resource caps, junction rejection, malformed archive refusal,
+backup/recovery and parent-substitution attacks. Linux's existing archive
+semantics remain unchanged.
+
+**Still blocked (Draft #395):** The transfer_id resumable directory-transfer
+path is deliberately unsupported on Windows until the receipt-driven recovery
+state machine can use the same NT handle-relative operations. More adversarial
+crash/restart and file-sharing scenarios need direct native testing. Other
+filesystem entry points (Skill/MCP files, patch operations and remaining
+no-follow fallbacks) still require review and native Windows validation. Full
+Windows native CI/release integration belongs to #391. Do not merge #383
+until remaining security and parity checks converge.

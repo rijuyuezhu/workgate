@@ -34,6 +34,7 @@ def test_coverage_omits_only_platform_specific_native_backends() -> None:
         "*/workgate/executor/gui/macos.py",
         "*/workgate/platform/windows/security.py",
         "*/workgate/platform/windows/nt_relative.py",
+        "*/workgate/platform/windows/archive.py",
     ]
 
 

@@ -2831,28 +2831,254 @@ def test_windows_transfer_file_handles_use_native_verified_opens(
     ]
 
 
-def test_windows_archive_pack_requires_verified_native_directory_walk(
+def test_windows_archive_pack_uses_verified_native_directory_walk(
     tmp_path, monkeypatch
 ):
     from workgate.platform.host import HostOS
+    from workgate.platform.windows import archive as windows_archive
 
     root = _workspace(tmp_path, monkeypatch)
     directory = root / "pack"
     directory.mkdir()
     (directory / "keep.txt").write_text("untouched")
     monkeypatch.setattr(transfer_ops, "host_os", lambda: HostOS.WINDOWS)
-    with pytest.raises(NotImplementedError, match="handle-relative"):
+    calls = []
+
+    def native_pack(source, archive, *, compression, max_entries, max_bytes):
+        calls.append((source, compression, max_entries, max_bytes))
+        with tarfile.open(archive, "w:gz") as tar:
+            tar.add(source / "keep.txt", arcname="keep.txt", recursive=False)
+
+    monkeypatch.setattr(windows_archive, "pack_directory", native_pack)
+    response = transfer_pack_dir(str(directory))
+    assert response.bytes > 0
+    assert calls == [
+        (
+            directory,
+            "gz",
+            _context().config.max_transfer_archive_entries,
+            _context().config.max_transfer_unpacked_bytes,
+        )
+    ]
+    with tarfile.open(root / response.archive_path, "r:gz") as tar:
+        assert tar.extractfile("keep.txt").read() == b"untouched"
+
+
+def test_windows_archive_pack_error_uses_verified_private_cleanup(
+    tmp_path, monkeypatch
+):
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import archive as windows_archive
+    from workgate.platform.windows import security
+
+    root = _workspace(tmp_path, monkeypatch)
+    directory = root / "pack"
+    directory.mkdir()
+    monkeypatch.setattr(transfer_ops, "host_os", lambda: HostOS.WINDOWS)
+    paths = []
+
+    def fail_pack(source, archive, **_kw):
+        paths.append(archive)
+        archive.write_bytes(b"partial archive")
+        raise PermissionError("native child was a junction")
+
+    monkeypatch.setattr(windows_archive, "pack_directory", fail_pack)
+    monkeypatch.setattr(
+        security, "delete_private_file", lambda p: p.unlink(missing_ok=True)
+    )
+    with pytest.raises(PermissionError, match="junction"):
         transfer_pack_dir(str(directory))
-    assert (directory / "keep.txt").read_text() == "untouched"
+    assert len(paths) == 1
+    assert not paths[0].exists()
 
 
-def test_windows_archive_unpack_rejects_before_creating_staging(
+def test_windows_archive_unpack_routes_through_native_backend(
     tmp_path, monkeypatch
 ):
     from workgate.platform.host import HostOS
 
     root = _workspace(tmp_path, monkeypatch)
     monkeypatch.setattr(transfer_ops, "host_os", lambda: HostOS.WINDOWS)
-    with pytest.raises(NotImplementedError, match="handle-relative"):
-        transfer_unpack_archive("not-present.tar", str(root / "destination"))
+    calls = []
+
+    def native_unpack(archive_path, dst_path, **options):
+        calls.append((archive_path, dst_path, options))
+        return transfer_ops.TransferUnpackArchiveOutput(
+            path=dst_path,
+            archive_path=archive_path,
+            entries=1,
+            completed=True,
+            archive_deleted=True,
+            backup_deleted=True,
+        )
+
+    monkeypatch.setattr(transfer_ops, "_windows_unpack_archive", native_unpack)
+    result = transfer_unpack_archive("source.tar", str(root / "destination"))
+    assert result.entries == 1
+    assert len(calls) == 1
+    assert calls[0][2]["overwrite"] is True
+    assert calls[0][2]["cleanup_archive"] is True
     assert not (root / "destination").exists()
+
+
+def test_windows_resumable_archive_unpack_still_fails_closed_before_staging(
+    tmp_path, monkeypatch
+):
+    from workgate.platform.host import HostOS
+
+    root = _workspace(tmp_path, monkeypatch)
+    monkeypatch.setattr(transfer_ops, "host_os", lambda: HostOS.WINDOWS)
+    with pytest.raises(NotImplementedError, match="resumable"):
+        transfer_unpack_archive(
+            "not-present.tar", str(root / "destination"), transfer_id="abc123"
+        )
+    assert not (root / "destination").exists()
+
+
+def test_windows_archive_unpacked_directory_commits_via_native_move(
+    tmp_path, monkeypatch
+):
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import archive as windows_archive
+    from workgate.platform.windows import security
+
+    root = _workspace(tmp_path, monkeypatch)
+    source = root / "source.tar"
+    source.write_bytes(b"verified tar fixture")
+    destination = root / "target"
+    destination.mkdir()
+    (destination / "old.txt").write_bytes(b"old")
+    calls = []
+
+    def extract(path, staging, **_kwargs):
+        calls.append(("extract", path))
+        staging.mkdir()
+        (staging / "new.txt").write_bytes(b"new")
+        return 1
+
+    def move(source, dest):
+        calls.append(("move", source.name, dest.name))
+        source.rename(dest)
+
+    def delete_tree(path):
+        calls.append(("delete", path.name))
+        shutil.rmtree(path)
+
+    monkeypatch.setattr(transfer_ops, "host_os", lambda: HostOS.WINDOWS)
+    monkeypatch.setattr(windows_archive, "extract_archive", extract)
+    monkeypatch.setattr(windows_archive, "move_directory", move)
+    monkeypatch.setattr(windows_archive, "remove_directory_tree", delete_tree)
+    monkeypatch.setattr(
+        security, "delete_private_file", lambda p: p.unlink(missing_ok=True)
+    )
+    result = transfer_unpack_archive(
+        "source.tar", "target", overwrite=True, cleanup_archive=True
+    )
+    assert result.completed and result.backup_deleted and result.archive_deleted
+    assert (destination / "new.txt").read_bytes() == b"new"
+    assert not (destination / "old.txt").exists()
+    assert any(row[0] == "delete" for row in calls)
+
+
+def test_windows_archive_unpack_rolls_back_failed_directory_publish(
+    tmp_path, monkeypatch
+):
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import archive as windows_archive
+    from workgate.platform.windows import security
+
+    root = _workspace(tmp_path, monkeypatch)
+    (root / "source.tar").write_bytes(b"verified tar fixture")
+    destination = root / "target"
+    destination.mkdir()
+    (destination / "old.txt").write_bytes(b"keep")
+
+    def extract(_archive, staging, **_kwargs):
+        staging.mkdir()
+        (staging / "new.txt").write_bytes(b"discard")
+        return 1
+
+    def move(source, dest):
+        if ".unpack-" in source.name:
+            raise OSError("injected failure before publish")
+        source.rename(dest)
+
+    monkeypatch.setattr(transfer_ops, "host_os", lambda: HostOS.WINDOWS)
+    monkeypatch.setattr(windows_archive, "extract_archive", extract)
+    monkeypatch.setattr(windows_archive, "move_directory", move)
+    monkeypatch.setattr(windows_archive, "remove_directory_tree", shutil.rmtree)
+    monkeypatch.setattr(
+        security, "delete_private_file", lambda p: p.unlink(missing_ok=True)
+    )
+    with pytest.raises(OSError, match="injected failure"):
+        transfer_unpack_archive(
+            "source.tar", "target", overwrite=True, cleanup_archive=True
+        )
+    assert (destination / "old.txt").read_bytes() == b"keep"
+    assert not (destination / "new.txt").exists()
+    assert not list(root.glob(".target.unpack-*"))
+    assert not list(root.glob(".target.backup-*"))
+    assert (root / "source.tar").exists()
+
+
+def test_windows_archive_unpack_extraction_failure_removes_partial_staging(
+    tmp_path, monkeypatch
+):
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import archive as windows_archive
+
+    root = _workspace(tmp_path, monkeypatch)
+    (root / "source.tar").write_bytes(b"fixture")
+    destination = root / "target"
+    destination.mkdir()
+    (destination / "old.txt").write_bytes(b"original")
+    removed = []
+
+    def failed_extract(_archive, staging, **_kw):
+        staging.mkdir()
+        (staging / "partial").write_bytes(b"not committed")
+        raise PermissionError("unsafe archive member")
+
+    def clean(staging):
+        removed.append(staging.name)
+        shutil.rmtree(staging)
+
+    monkeypatch.setattr(transfer_ops, "host_os", lambda: HostOS.WINDOWS)
+    monkeypatch.setattr(windows_archive, "extract_archive", failed_extract)
+    monkeypatch.setattr(windows_archive, "remove_directory_tree", clean)
+    with pytest.raises(PermissionError, match="unsafe archive member"):
+        transfer_unpack_archive(
+            "source.tar", "target", overwrite=True, cleanup_archive=False
+        )
+    assert (destination / "old.txt").read_bytes() == b"original"
+    assert len(removed) == 1
+    assert not list(root.glob(".target.unpack-*"))
+
+
+def test_windows_archive_unpack_existing_destination_honors_no_overwrite(
+    tmp_path, monkeypatch
+):
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import archive as windows_archive
+
+    root = _workspace(tmp_path, monkeypatch)
+    (root / "source.tar").write_bytes(b"fixture")
+    destination = root / "target"
+    destination.mkdir()
+    (destination / "old.txt").write_bytes(b"original")
+
+    def stage(_archive, staging, **_kw):
+        staging.mkdir()
+        (staging / "new.txt").write_bytes(b"new")
+        return 1
+
+    monkeypatch.setattr(transfer_ops, "host_os", lambda: HostOS.WINDOWS)
+    monkeypatch.setattr(windows_archive, "extract_archive", stage)
+    monkeypatch.setattr(windows_archive, "is_empty_directory", lambda p: False)
+    monkeypatch.setattr(windows_archive, "remove_directory_tree", shutil.rmtree)
+    with pytest.raises(FileExistsError, match="destination"):
+        transfer_unpack_archive(
+            "source.tar", "target", overwrite=False, cleanup_archive=False
+        )
+    assert (destination / "old.txt").read_bytes() == b"original"
+    assert not list(root.glob(".target.unpack-*"))

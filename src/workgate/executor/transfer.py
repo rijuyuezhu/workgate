@@ -1978,11 +1978,6 @@ def transfer_pack_dir(
     context: TransferContext,
 ) -> TransferPackDirOutput:
     """Pack a directory into a bounded temporary archive for transfer."""
-    if host_os() is HostOS.WINDOWS:
-        raise NotImplementedError(
-            "Windows directory archive packing requires handle-relative "
-            "directory enumeration (#383)"
-        )
     _prune_transfer_scratch(context)
     if compression not in {"gz", "none"}:
         raise ValueError("compression must be 'gz' or 'none'")
@@ -1995,7 +1990,6 @@ def transfer_pack_dir(
     )
     if not source.is_dir():
         raise NotADirectoryError(str(source))
-    _assert_transferable_tree(source, context)
     suffix = ".tar.gz" if compression == "gz" else ".tar"
     mode = "w:gz" if compression == "gz" else "w"
     archive = (
@@ -2003,12 +1997,30 @@ def transfer_pack_dir(
     )
     archive.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with tarfile.open(archive, mode) as tar:
-            for child in source.iterdir():
-                tar.add(child, arcname=child.name, recursive=True)
+        if host_os() is HostOS.WINDOWS:
+            from ..platform.windows.archive import pack_directory
+
+            pack_directory(
+                source,
+                archive,
+                compression=compression,
+                max_entries=context.config.max_transfer_archive_entries,
+                max_bytes=context.config.max_transfer_unpacked_bytes,
+            )
+        else:
+            _assert_transferable_tree(source, context)
+            with tarfile.open(archive, mode) as tar:
+                for child in source.iterdir():
+                    tar.add(child, arcname=child.name, recursive=True)
         size = archive.stat().st_size
     except BaseException:
-        archive.unlink(missing_ok=True)
+        if host_os() is HostOS.WINDOWS:
+            from ..platform.windows.security import delete_private_file
+
+            with contextlib.suppress(FileNotFoundError):
+                delete_private_file(archive)
+        else:
+            archive.unlink(missing_ok=True)
         raise
     return TransferPackDirOutput(
         path=_display_user_path(
@@ -2324,6 +2336,104 @@ def _resumable_unpack_archive(
         )
 
 
+def _windows_unpack_archive(
+    archive_path: str,
+    dst_path: str,
+    *,
+    overwrite: bool,
+    cleanup_archive: bool,
+    expected_archive_bytes: int | None,
+    expected_archive_sha256: str | None,
+    session_id: str | None,
+    workdir: str | None,
+    context: TransferContext,
+) -> TransferUnpackArchiveOutput:
+    """One-shot native directory commit with verified NT handles and rollback."""
+    from ..platform.windows.archive import (
+        extract_archive,
+        is_empty_directory,
+        move_directory,
+        remove_directory_tree,
+    )
+    from ..platform.windows.security import delete_private_file
+
+    destination = _resolve_transfer_destination(
+        dst_path, session_id=session_id, workdir=workdir, context=context
+    )
+    archive = _resolve_transfer_path(
+        archive_path, must_exist=True, context=context
+    )
+    staging = (
+        destination.parent / f".{destination.name}.unpack-{uuid.uuid4().hex}"
+    )
+    backup = (
+        destination.parent / f".{destination.name}.backup-{uuid.uuid4().hex}"
+    )
+    entries = 0
+    committed = False
+    backup_moved = False
+
+    try:
+        entries = extract_archive(
+            archive,
+            staging,
+            max_entries=max(1, context.config.max_transfer_archive_entries),
+            max_bytes=max(1, context.config.max_transfer_unpacked_bytes),
+            expected_bytes=expected_archive_bytes,
+            expected_sha256=expected_archive_sha256,
+        )
+        with path_lock(destination):
+            if os.path.lexists(destination):
+                if not overwrite and not is_empty_directory(destination):
+                    raise FileExistsError(
+                        f"destination already exists: {destination}"
+                    )
+                move_directory(destination, backup)
+                backup_moved = True
+            try:
+                move_directory(staging, destination)
+            except BaseException:
+                if backup_moved and not os.path.lexists(destination):
+                    move_directory(backup, destination)
+                    backup_moved = False
+                raise
+            committed = True
+    finally:
+        if not committed and os.path.lexists(staging):
+            remove_directory_tree(staging)
+
+    cleanup_errors: list[str] = []
+    backup_deleted = not backup_moved
+    if backup_moved:
+        try:
+            remove_directory_tree(backup)
+        except OSError as exc:
+            cleanup_errors.append(f"could not remove directory backup: {exc}")
+        else:
+            backup_deleted = True
+
+    archive_deleted = not os.path.lexists(archive)
+    if cleanup_archive and not archive_deleted:
+        try:
+            delete_private_file(archive)
+        except OSError as exc:
+            cleanup_errors.append(f"could not remove transfer archive: {exc}")
+        else:
+            archive_deleted = True
+
+    return TransferUnpackArchiveOutput(
+        path=_display_user_path(
+            destination, session_id=session_id, workdir=workdir, context=context
+        ),
+        archive_path=_display(archive, context),
+        entries=entries,
+        completed=True,
+        archive_deleted=archive_deleted,
+        backup_deleted=backup_deleted,
+        cleanup_errors=cleanup_errors,
+    )
+
+
 def transfer_unpack_archive(
     archive_path: str,
     dst_path: str,
@@ -2339,9 +2449,21 @@ def transfer_unpack_archive(
 ) -> TransferUnpackArchiveOutput:
     """Validate in staging and transactionally replace a directory destination."""
     if host_os() is HostOS.WINDOWS:
-        raise NotImplementedError(
-            "Windows directory archive extraction and atomic publication "
-            "require native handle-relative tree operations (#383)"
+        if transfer_id is not None:
+            raise NotImplementedError(
+                "Windows resumable archive transactions require native "
+                "durable recovery integration (#383)"
+            )
+        return _windows_unpack_archive(
+            archive_path,
+            dst_path,
+            overwrite=overwrite,
+            cleanup_archive=cleanup_archive,
+            expected_archive_bytes=expected_archive_bytes,
+            expected_archive_sha256=expected_archive_sha256,
+            session_id=session_id,
+            workdir=workdir,
+            context=context,
         )
     if transfer_id is not None:
         receipt_path = _unpack_receipt_path(context, transfer_id)

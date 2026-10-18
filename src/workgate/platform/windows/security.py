@@ -464,8 +464,10 @@ def replace_workspace_file(source: Path, destination: Path) -> None:
             close_handle(kernel, source_handle)
 
 
-def open_regular_file_no_follow(path: Path, *, writable: bool = False) -> int:
-    """Open a regular workspace file through verified NT parent and child handles."""
+def open_regular_file_no_follow(
+    path: Path, *, writable: bool = False, share_write: bool = True
+) -> int:
+    """Open a verified regular file, optionally denying concurrent writers."""
     import msvcrt
 
     kernel, _advapi = _libs()
@@ -475,6 +477,7 @@ def open_regular_file_no_follow(path: Path, *, writable: bool = False) -> int:
             path.name,
             access=_GENERIC_READ | (_GENERIC_WRITE if writable else 0),
             directory=False,
+            share_access=7 if share_write else 5,
         )
         try:
             _verify_regular_handle(kernel, handle)

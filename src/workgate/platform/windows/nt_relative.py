@@ -78,6 +78,8 @@ def _nt_error(status: int) -> None:
         raise FileExistsError(error, detail)
     if error in {2, 3}:
         raise FileNotFoundError(error, detail)
+    if error == 267:
+        raise NotADirectoryError(error, detail)
     if error in {5, 32}:
         raise PermissionError(error, detail)
     raise OSError(error, detail)
@@ -92,6 +94,7 @@ def open_child(
     create: bool = False,
     exclusive: bool = False,
     security_descriptor: int | None = None,
+    share_access: int = _SHARE_ALL,
 ) -> int:
     """Open/create one child by name relative to the pinned directory handle."""
     if (
@@ -151,7 +154,7 @@ def open_child(
             ctypes.byref(status),
             None,
             0,
-            _SHARE_ALL,
+            share_access,
             disposition,
             options,
             None,

@@ -16,7 +16,14 @@ if sys.platform != "win32":
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from workgate.app_paths import ensure_private_directory, resolve_app_paths
+from workgate.executor.path import resolve_path
 from workgate.platform.path import path_lock_key, remote_path_name
+from workgate.platform.windows.archive import (
+    extract_archive,
+    move_directory,
+    pack_directory,
+    remove_directory_tree,
+)
 from workgate.platform.windows.locks import try_lock_handle, unlock_handle
 from workgate.platform.windows.nt_relative import (
     close_handle,
@@ -43,6 +50,13 @@ def main() -> int:
             if acquired:
                 unlock_handle(handle)
         return 1 if acquired else 0
+    if len(sys.argv) == 3 and sys.argv[1] == "--probe-archive-write":
+        try:
+            with Path(sys.argv[2]).open("r+b") as handle:
+                handle.write(b"mutated")
+        except PermissionError:
+            return 0
+        return 1
 
     paths = resolve_app_paths()
     assert paths.config_dir.is_absolute()
@@ -175,9 +189,179 @@ def main() -> int:
                 raise AssertionError(
                     "Windows parent junction permitted transfer read"
                 )
+            original_syntax = resolve_path(
+                "junction/secret",
+                base=Path(tmp),
+                follow_final_symlink=False,
+            )
+            assert original_syntax.parent == junction
+            try:
+                open_regular_file_no_follow(original_syntax)
+            except PermissionError:
+                pass
+            else:
+                raise AssertionError(
+                    "Windows resolver bypassed junction validation"
+                )
             junction.rmdir()
         else:
             print("WARNING: junction test unavailable")
+    with tempfile.TemporaryDirectory(prefix="workgate-archive-pack-") as temp:
+        import tarfile
+
+        root = Path(temp)
+        source_dir = root / "source"
+        source_dir.mkdir()
+        (source_dir / "nested").mkdir()
+        (source_dir / "nested" / "note.txt").write_bytes(b"native archive")
+        (source_dir / "empty").mkdir()
+        (source_dir / "zeros.bin").write_bytes(b"\\0" * 21)
+        archive_path = root / "packed.tar.gz"
+        pack_directory(
+            source_dir,
+            archive_path,
+            compression="gz",
+            max_entries=12,
+            max_bytes=1024,
+        )
+        with tarfile.open(archive_path, "r:gz") as tar:
+            assert set(tar.getnames()) == {
+                "nested",
+                "nested/note.txt",
+                "empty",
+                "zeros.bin",
+            }
+            assert (
+                tar.extractfile("nested/note.txt").read() == b"native archive"
+            )
+        for entries, total_bytes in ((2, 1024), (12, 10)):
+            try:
+                pack_directory(
+                    source_dir,
+                    root / f"limited-{entries}-{total_bytes}.tar",
+                    compression="none",
+                    max_entries=entries,
+                    max_bytes=total_bytes,
+                )
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("Archive resource limit not enforced")
+        with os.fdopen(
+            open_regular_file_no_follow(archive_path, share_write=False), "rb"
+        ):
+            denied = subprocess.run(
+                [
+                    sys.executable,
+                    __file__,
+                    "--probe-archive-write",
+                    str(archive_path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+            assert denied.returncode == 0, (
+                denied.returncode,
+                denied.stdout,
+                denied.stderr,
+            )
+        staging = root / "unpack-staging"
+        member_count = extract_archive(
+            archive_path,
+            staging,
+            max_entries=12,
+            max_bytes=1024,
+        )
+        assert member_count == 4
+        assert (
+            staging / "nested" / "note.txt"
+        ).read_bytes() == b"native archive"
+        assert (staging / "empty").is_dir()
+        published = root / "published"
+        move_directory(staging, published)
+        assert not staging.exists()
+        assert (
+            published / "nested" / "note.txt"
+        ).read_bytes() == b"native archive"
+        backup = root / "backup"
+        move_directory(published, backup)
+        move_directory(backup, published)
+        remove_directory_tree(published)
+        assert not published.exists()
+
+        for bad_name in (
+            "../escaped",
+            "file:ads",
+            "CON",
+            r"folder\..\escape",
+            "NUL.txt",
+        ):
+            hostile_archive = root / (f"malformed-{abs(hash(bad_name))}.tar")
+            with tarfile.open(hostile_archive, "w") as tar:
+                entry = tarfile.TarInfo(bad_name)
+                entry.size = 1
+                tar.addfile(entry, __import__("io").BytesIO(b"x"))
+            hostile_staging = root / "hostile-staging"
+            try:
+                extract_archive(
+                    hostile_archive,
+                    hostile_staging,
+                    max_entries=12,
+                    max_bytes=1024,
+                )
+            except ValueError:
+                assert not hostile_staging.exists()
+            else:
+                raise AssertionError(f"unsafe tar member accepted: {bad_name}")
+        collision_archive = root / "collision.tar"
+        with tarfile.open(collision_archive, "w") as tar:
+            from io import BytesIO
+
+            for name in ("Report.TXT", "report.txt"):
+                member = tarfile.TarInfo(name)
+                member.size = 1
+                tar.addfile(member, BytesIO(b"x"))
+        collision_staging = root / "collision-staging"
+        try:
+            extract_archive(
+                collision_archive,
+                collision_staging,
+                max_entries=12,
+                max_bytes=1024,
+            )
+        except ValueError:
+            assert not collision_staging.exists()
+        else:
+            raise AssertionError("Case-colliding Windows tar paths accepted")
+
+        junction = root / "source" / "junction"
+        result = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(junction), str(root)],
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+        if result.returncode == 0:
+            try:
+                pack_directory(
+                    source_dir,
+                    root / "unsafe.tar",
+                    compression="none",
+                    max_entries=12,
+                    max_bytes=1024,
+                )
+            except PermissionError:
+                pass
+            else:
+                raise AssertionError("Archive traversed a junction")
+            junction.rmdir()
+        else:
+            raise AssertionError(
+                "Windows junction creation unavailable for pack test"
+            )
+
     with tempfile.TemporaryDirectory(prefix="workgate-parent-swap-") as temp:
         original = ensure_private_directory(Path(temp) / "original")
         write_private_bytes(original / "source", b"original-secret")

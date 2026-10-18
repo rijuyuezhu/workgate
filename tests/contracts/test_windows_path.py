@@ -149,3 +149,22 @@ def test_windows_archive_member_keys_fold_case_and_separators():
     assert archive_member_key(
         "D/Note.TXT", system="Linux"
     ) != archive_member_key(r"d\note.txt", system="Linux")
+
+
+def test_windows_no_follow_resolution_keeps_ancestor_junction_syntax(
+    tmp_path, monkeypatch
+):
+    from workgate.executor import path as executor_path
+    from workgate.platform.host import HostOS
+
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "item.txt").write_bytes(b"target")
+    link = tmp_path / "link"
+    link.symlink_to(target, target_is_directory=True)
+    monkeypatch.setattr(executor_path, "host_os", lambda: HostOS.WINDOWS)
+    resolved = executor_path.resolve_path(
+        "link/item.txt", base=tmp_path, follow_final_symlink=False
+    )
+    assert resolved == link / "item.txt"
+    assert resolved.parent == link
