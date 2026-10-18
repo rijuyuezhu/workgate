@@ -1265,6 +1265,17 @@ export function createExecutorsController({
     elements.executorPairDialog.addEventListener("close", clearPairReview);
   }
 
+  async function openManagement(executorId, kind) {
+    if (!["mcp", "skills"].includes(kind)) return;
+    if (!state.executors.some((row) => row.executor_id === executorId)) {
+      await refresh({ force: true });
+    }
+    if (!state.executors.some((row) => row.executor_id === executorId)) return;
+    select(executorId);
+    setSubtab(kind);
+    onNavigate("detail");
+  }
+
   function activate() {
     if (!selectedExecutor()) return;
     void loadSkillSources(true);
@@ -1273,6 +1284,7 @@ export function createExecutorsController({
 
   return {
     activate,
+    openManagement,
     bind,
     select,
     refresh,

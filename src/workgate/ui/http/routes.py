@@ -77,6 +77,7 @@ def _ui_asset_revision() -> str:
         "audit_view.js",
         "audit.js",
         "tasks.js",
+        "session_integrations.js",
         "mobile_navigation.js",
         "terminal.js",
         "files.js",

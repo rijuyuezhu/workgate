@@ -1,5 +1,5 @@
 // Session-owned native GUI observation and explicitly armed one-shot input; no streaming or persistent frames.
-export function createGuiViewer({ request }) {
+export function createGuiViewer({ request, onOpen = () => {} }) {
   const panel = document.getElementById("session-gui");
   const layout = panel.closest(".task-sessions-layout");
   const openButton = document.getElementById("session-gui-open");
@@ -56,6 +56,7 @@ export function createGuiViewer({ request }) {
 
   function open() {
     if (!sessionId) return;
+    onOpen();
     layout.classList.add("gui-open");
     panel.hidden = false;
     void loadWindows();
