@@ -14,8 +14,10 @@ only when that capability is used; unimplemented backends must fail explicitly.
 The foundation currently provides:
 
 - host_os: normalized host identification, never assuming unknown OSes are POSIX.
-- new_process_group_kwargs: POSIX subprocess session creation. Windows fails
-  closed until native process-tree containment is implemented (#385).
+- new_process_group_kwargs and terminate_process_tree: POSIX subprocess
+  session creation and bounded process-group termination. The internal
+  bounded runner still owns cleanup of escaped descendants; Windows Job
+  Object containment remains to be implemented in #385.
 - TerminalAttachment: byte-stream protocol (read_wait, write_all, resize,
   close_sync) for one live WebUI client connection. The POSIX tmux/PTY
   attachment and tmux resolver now live in platform/posix/.
@@ -42,8 +44,9 @@ accurately until tested.
 
 ## Incremental migration
 
-The first foundation change moves one real boundary (raw terminal attachment)
-out of generic transport code and centralizes OS selection for GUI/service
-and POSIX process creation. It does not claim Windows or release support.
+The foundation extracts POSIX PTY attachment and process-group termination
+from generic shell transport. Nonblocking PTY setup now precedes child launch,
+so a setup error cannot orphan a new attached child. It centralizes host
+selection for GUI/services without moving those implementations yet. It does not claim Windows or release support.
 Follow-up issues #383-#391 own their Windows implementations. Native Windows,
 Linux and macOS parity and final security/KISS review are in #392.

@@ -59,6 +59,7 @@ class UnixTmuxAttach:
         self.master_fd = master_fd
         try:
             self.resize(cols, rows)
+            os.set_blocking(master_fd, False)
             env = tmux_env
             env["TERM"] = "xterm-256color"
             env["COLORTERM"] = "truecolor"
@@ -79,7 +80,6 @@ class UnixTmuxAttach:
         finally:
             with contextlib.suppress(OSError):
                 os.close(slave_fd)
-        os.set_blocking(master_fd, False)
 
     def resize(self, cols: int, rows: int) -> bool:
         if self._closed or self.master_fd < 0:

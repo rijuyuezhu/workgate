@@ -7,7 +7,6 @@ import os
 import re
 import shlex
 import shutil
-import signal
 import sys
 import time
 import uuid
@@ -22,7 +21,10 @@ from ..errors import (
     process_start_not_found_error,
 )
 from ..platform.posix.tmux import require_tmux, resolve_tmux, tmux_env_overrides
-from ..platform.process import new_process_group_kwargs
+from ..platform.process import (
+    new_process_group_kwargs,
+    terminate_process_tree,
+)
 from ..protocol.terminal import (
     PERSISTENT_SHELL_MAX_COLUMNS,
     PERSISTENT_SHELL_MAX_ROWS,
@@ -352,37 +354,13 @@ async def _read_stream_tail(
         tail.append(chunk)
 
 
-async def _wait_for_process_exit(
-    proc: asyncio.subprocess.Process, timeout_s: int
-) -> bool:
-    """Wait for process completion while converting timeout into structured result state."""
-    try:
-        await asyncio.wait_for(proc.wait(), timeout=timeout_s)
-        return True
-    except TimeoutError:
-        return False
-
-
-async def _terminate_process_group(proc: asyncio.subprocess.Process) -> str:
-    """Terminate an entire shell process group, escalating to kill when graceful shutdown times out."""
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-    except Exception:
-        proc.terminate()
-
-    output = await _wait_for_process_exit(proc, GRACEFUL_TERMINATION_TIMEOUT_S)
-    if output:
-        return ""
-
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except Exception:
-        proc.kill()
-
-    output = await _wait_for_process_exit(proc, KILL_TERMINATION_TIMEOUT_S)
-    if output:
-        return ""
-    return "Process did not exit after SIGKILL"
+async def _terminate_bounded_process(proc: asyncio.subprocess.Process) -> str:
+    """Apply the Executor timeout budget through native process cleanup."""
+    return await terminate_process_tree(
+        proc,
+        graceful_timeout_s=GRACEFUL_TERMINATION_TIMEOUT_S,
+        kill_timeout_s=KILL_TERMINATION_TIMEOUT_S,
+    )
 
 
 async def _finish_reader_tasks(
@@ -453,10 +431,10 @@ async def run_shell(
                 reader_tasks = []
                 termination_error = "Timed out while starting subprocess"
             else:
-                termination_error = await _terminate_process_group(proc)
+                termination_error = await _terminate_bounded_process(proc)
         except asyncio.CancelledError:
             if proc is not None:
-                await asyncio.shield(_terminate_process_group(proc))
+                await asyncio.shield(_terminate_bounded_process(proc))
             raise
     finally:
         if acquired:
@@ -610,10 +588,10 @@ async def _run_exec(
                 reader_tasks = []
                 termination_error = "Timed out while starting subprocess"
             else:
-                termination_error = await _terminate_process_group(proc)
+                termination_error = await _terminate_bounded_process(proc)
         except asyncio.CancelledError:
             if proc is not None:
-                await asyncio.shield(_terminate_process_group(proc))
+                await asyncio.shield(_terminate_bounded_process(proc))
             raise
     finally:
         if acquired:

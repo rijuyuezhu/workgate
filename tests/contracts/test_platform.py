@@ -1,10 +1,15 @@
 """Native backend selection must fail closed for unimplemented hosts."""
 
+from typing import Any, cast
+
 import pytest
 
 from workgate.platform.host import HostOS, host_os
 from workgate.platform.posix.terminal import UnixTmuxAttach
-from workgate.platform.process import new_process_group_kwargs
+from workgate.platform.process import (
+    new_process_group_kwargs,
+    terminate_process_tree,
+)
 from workgate.platform.terminal import (
     supports_raw_terminal_host,
     terminal_attachment_factory,
@@ -42,3 +47,9 @@ def test_unimplemented_backends_fail_closed(system):
         new_process_group_kwargs(system=system)
     with pytest.raises(TerminalBridgeUnsupportedError, match="unsupported"):
         terminal_attachment_factory(system=system)
+
+
+@pytest.mark.asyncio
+async def test_windows_termination_refuses_uncontained_process():
+    with pytest.raises(RuntimeError, match="termination is unsupported"):
+        await terminate_process_tree(cast(Any, None), system="Windows")

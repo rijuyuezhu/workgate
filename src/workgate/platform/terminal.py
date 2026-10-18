@@ -17,7 +17,7 @@ def terminal_attachment_factory(
 ) -> Callable[[str, int, int], TerminalAttachment]:
     """Return a native attachment type, or report an unavailable backend."""
     current = host_os(system)
-    if supports_raw_terminal_host(system=system):
+    if current in (HostOS.LINUX, HostOS.MACOS):
         from .posix.terminal import UnixTmuxAttach
 
         return UnixTmuxAttach
