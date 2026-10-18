@@ -3579,3 +3579,40 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .topology-stage { position: relative; width: 100%; height: 100%; }
 .topology-graph[data-layout="grid"] .topology-stage { height: auto; min-height: 265px; }
 .topology-graph[data-scrollable="true"] { overflow: auto; }
+
+/* Config uses the same neutral grouped rows as MCP / Skills. */
+#executors-panel .executor-config-view { margin: 0; padding: 18px 22px; background: #fff; border: 1px solid var(--line); border-radius: 8px; }
+#executors-panel .executor-config-view[hidden] { display: none !important; }
+#executors-panel .executor-config-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 14px; font-size: 11px; color: #8892a2; }
+#executors-panel .executor-config-file { font-family: var(--font-mono, monospace); overflow-wrap: anywhere; }
+#executors-panel .executor-config-warning { color: #936017; }
+#executors-panel .executor-config-list { display: grid; gap: 12px; }
+#executors-panel .executor-config-access { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 12px; }
+#executors-panel .executor-config-access button { padding: 6px 10px; }
+#executors-panel .executor-config-section { min-width: 0; overflow: hidden; }
+#executors-panel .executor-config-section > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 11px 15px; list-style: none; background: #fbfcfe; color: #626e84; font-size: 11px; }
+#executors-panel .executor-config-section > summary::-webkit-details-marker { display: none; }
+#executors-panel .executor-config-section > summary::before { content: '›'; color: #8c94a6; font-size: 17px; line-height: 12px; transform: rotate(0); }
+#executors-panel .executor-config-section[open] > summary::before { transform: rotate(90deg); }
+#executors-panel .executor-config-count { font-weight: 400; color: #9ba4b3; }
+#executors-panel .executor-config-row { display: grid; grid-template-columns: minmax(130px, 38%) minmax(0, 1fr); align-items: start; gap: 12px; padding: 10px 15px; min-height: 43px; border-top: 1px solid #edf0f5; }
+#executors-panel .executor-config-name { min-width: 0; overflow-wrap: anywhere; font-size: 12px; font-weight: 600; color: #31394f; line-height: 1.5; }
+#executors-panel .executor-config-info { display: grid; gap: 3px; min-width: 0; }
+#executors-panel .executor-config-primary { display: flex; align-items: start; justify-content: space-between; gap: 8px; min-width: 0; }
+#executors-panel .executor-config-value, #executors-panel .executor-config-file-value code { color: #414b60; background: none; padding: 0; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; min-width: 0; }
+#executors-panel .executor-config-source { color: #9ba4b3; font-size: 10px; white-space: nowrap; text-transform: uppercase; padding-top: 2px; }
+#executors-panel .executor-config-file-value { display: flex; flex-wrap: wrap; gap: 6px; color: #9ba4b3; font-size: 10px; min-width: 0; }
+#executors-panel .executor-config-file-value code { color: #8b94a5; }
+#executors-panel.control-config-open > .section-heading,
+#executors-panel.control-config-open > #executor-action-status,
+#executors-panel.control-config-open > .executors-layout,
+#executors-panel.control-config-open > .executor-control-standalone { display: none !important; }
+#executors-panel.control-config-open > .executor-config-view { margin-top: 4px; }
+#executors-panel .executor-config-view .executor-section-heading { justify-content: flex-start; gap: 16px; margin-bottom: 16px; }
+#executors-panel .executor-config-view .executor-section-heading h3 { margin: 0; font-size: 15px; }
+#executors-panel .executor-config-view .executor-section-heading button { padding: 6px 10px; }
+@media (max-width: 680px) {
+  #executors-panel .executor-config-view { padding: 13px 12px; }
+  #executors-panel .executor-config-row { grid-template-columns: minmax(0, 1fr); gap: 2px; padding: 10px 12px; }
+  #executors-panel .executor-config-primary { justify-content: space-between; }
+}

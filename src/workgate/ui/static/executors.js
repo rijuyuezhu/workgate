@@ -1,6 +1,7 @@
 import { renderResourceCards } from "./dashboard.js";
 import { createSkillFileEditor } from "./skill_file_editor.js";
 import { createExecutorTopology } from "./executor_topology.js";
+import { createConfigurationView } from "./config_inspector.js";
 
 export function createExecutorsController({
   elements,
@@ -38,10 +39,24 @@ export function createExecutorsController({
     onClose: () => onNavigate("list", {replace: true}),
   });
 
+  const controlConfigView = createConfigurationView({
+    root: document.getElementById("executor-control-config-body"), request,
+  });
+  const executorConfigView = createConfigurationView({
+    root: document.getElementById("executor-config-body"), request,
+  });
+
   const skillFileEditor = createSkillFileEditor({
     request,
     onClose: () => void loadManagement(true),
   });
+
+  function clearConfiguration() {
+    controlConfigView.clear();
+    executorConfigView.clear();
+    document.getElementById("executor-control-config-view").hidden = true;
+    document.getElementById("executors-panel").classList.remove("control-config-open");
+  }
 
   function selectedExecutor() {
     return state.executors.find((item) => item.executor_id === state.selectedId) || null;
@@ -83,9 +98,10 @@ export function createExecutorsController({
       state.management = null;
       notice(elements.executorActionStatus, "");
     }
-    if (changed) resetMetrics();
+    if (changed) { resetMetrics(); executorConfigView.clear(); }
     renderList();
     renderDetails();
+    if (changed && activeSubtab() === "config") void executorConfigView.open(state.selectedId);
     renderManagement();
     void loadSkillSources(true);
     void refreshMetrics();
@@ -165,9 +181,11 @@ export function createExecutorsController({
   }
 
   function setSubtab(tab) {
-    if (!selectedExecutor() || !["overview", "mcp", "skills"].includes(tab)) return;
+    if (!selectedExecutor() || !["overview", "mcp", "skills", "config"].includes(tab)) return;
     state.detailTabs.set(state.selectedId, tab);
     renderSubtabs();
+    if (tab === "config") void executorConfigView.open(state.selectedId);
+    else executorConfigView.clear();
     if (tab === "overview") void refreshMetrics();
     if (tab === "mcp" || tab === "skills") void loadManagement();
   }
@@ -1058,6 +1076,7 @@ export function createExecutorsController({
     state.loading = false;
     state.executors = [];
     state.selectedId = "";
+    clearConfiguration();
     state.skillSourceGeneration += 1;
     state.skillSourceId = "";
     state.skillSources = null;
@@ -1089,6 +1108,18 @@ export function createExecutorsController({
 
   function bind() {
     topology.bind();
+    document.getElementById("executor-control-config-open").addEventListener("click", () => {
+      document.getElementById("executor-control-config-view").hidden = false;
+      document.getElementById("executors-panel").classList.add("control-config-open");
+      void controlConfigView.open();
+    });
+    document.getElementById("executor-control-config-close").addEventListener("click", () => {
+      clearConfiguration();
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) return;
+      clearConfiguration();
+    });
     document.getElementById("executor-topology-open").addEventListener("click", () => topology.open());
     elements.executorControlMcpAdd.addEventListener("click", () => void openEditor({owner: "control", kind: "mcp"}));
     elements.executorControlSkillsAdd.addEventListener("click", () => void openEditor({owner: "control", kind: "skill"}));
@@ -1320,6 +1351,7 @@ export function createExecutorsController({
   return {
     activate,
     closeTopology: () => topology.close(),
+    clearConfiguration,
     openManagement,
     bind,
     select,

@@ -9,6 +9,7 @@ from typing import Any
 from ..app_paths import ensure_private_directory
 from ..config.cli import register_config_and_setting_args, settings_from_args
 from ..config.control import CONTROL_SETTING_NAMES
+from ..config.inspection import capture_startup_config
 from ..config.settings import configure_settings
 from ..supervisor import supervise_cli_role
 from ..utils.private_files import private_file_lock
@@ -71,6 +72,7 @@ def run_control_from_args(args: argparse.Namespace) -> None:
     if supervise_cli_role("control", args):
         return
     settings = settings_from_args(args)
+    capture_startup_config("control", args, settings)
     ensure_private_directory(settings.state_dir)
     ensure_private_directory(settings.data_dir)
     ensure_private_directory(settings.audit_log_path.parent)

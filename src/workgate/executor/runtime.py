@@ -325,6 +325,19 @@ class ExecutorRuntime:
             and command.session_id is not None
         ):
             raise ValueError("dashboard_snapshot must not carry session_id")
+        if command.op == "ui.config.inspect":
+            if command.session_id is not None or command.args:
+                raise ValueError(
+                    "config inspection cannot be session-bound or parameterized"
+                )
+            from ..config.inspection import current_startup_config
+
+            snapshot = current_startup_config("executor")
+            if snapshot is None:
+                raise RuntimeError(
+                    "Executor startup configuration is unavailable"
+                )
+            return await asyncio.to_thread(snapshot.describe)
         if command.op == "ui.executor_diagnostics":
             if command.session_id is not None or command.args:
                 raise ValueError(

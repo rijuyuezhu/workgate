@@ -918,12 +918,24 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     }
 
     page.locator("#session-audit-operation").select_option("")
+    # The operation select starts an asynchronous refresh. Wait for it before
+    # explicitly submitting the next filter, otherwise the in-flight guard
+    # can intentionally coalesce/drop the second click.
+    expect(page.locator("#session-audit-refresh")).to_be_enabled()
     page.locator("#session-audit-search").fill("create_file_link")
-    page.locator("#session-audit-refresh").click()
+    with page.expect_response(
+        lambda response: (
+            "/api/ui/audit?" in response.url
+            and "search=create_file_link" in response.url
+        )
+    ):
+        page.locator("#session-audit-refresh").click()
+    result = page.locator("#session-audit-list .audit-entry").first
+    expect(result).to_contain_text("create_file_link")
+    result.click()
     expect(
-        page.locator("#session-audit-list .audit-entry").first
+        page.locator("#session-audit-detail-body .audit-call-panel").first
     ).to_be_visible()
-    page.locator("#session-audit-list .audit-entry").first.click()
     page.locator(
         "#session-audit-detail-body .audit-call-panel"
     ).first.get_by_role("button", name="Raw").click()

@@ -9,6 +9,7 @@ from typing import Any
 from ..app_paths import app_paths
 from ..config.cli import register_config_and_setting_args, settings_from_args
 from ..config.executor import EXECUTOR_SETTING_NAMES, resolve_executor_config
+from ..config.inspection import capture_startup_config
 from ..config.settings import initialize_runtime_directories
 from ..persistence import FileStateStore
 from ..protocol.errors import ProtocolErrorCode
@@ -111,6 +112,7 @@ async def _run(args: argparse.Namespace) -> None:
             if name.startswith("WORKGATE_"):
                 os.environ.pop(name, None)
     settings = settings_from_args(args)
+    capture_startup_config("executor", args, settings)
     initialize_runtime_directories(settings)
     managed_service = bool(getattr(args, "managed_service", False))
     ownership_value = getattr(args, "runtime_ownership", None)
