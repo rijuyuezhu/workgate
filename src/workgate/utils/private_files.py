@@ -10,6 +10,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import BinaryIO
 
+from ..platform.host import HostOS, host_os
+
 
 def _retry_private_lock_io(
     deadline: float | None,
@@ -100,9 +102,14 @@ def _try_lock_handle(handle: BinaryIO) -> bool:
     """Attempt one non-blocking cross-platform file-lock acquisition."""
     handle.seek(0)
     try:
-        import fcntl
+        if host_os() is HostOS.WINDOWS:
+            import msvcrt
 
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)  # pyright: ignore[reportAttributeAccessIssue]
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError as exc:
         if _is_lock_contention_error(exc):
             return False
@@ -132,9 +139,14 @@ def _lock_handle(
 
 def _unlock_handle(handle: BinaryIO) -> None:
     handle.seek(0)
-    import fcntl
+    if host_os() is HostOS.WINDOWS:
+        import msvcrt
 
-    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)  # pyright: ignore[reportAttributeAccessIssue]
+    else:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 @contextmanager

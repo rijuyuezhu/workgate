@@ -8,7 +8,7 @@ import sys
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath, PureWindowsPath
 
 _APP_NAME = "workgate"
 _RUNTIME_FALLBACK_NONCE: str | None = None
@@ -30,6 +30,28 @@ def _absolute_env_path(value: str | None) -> Path | None:
     if not path.is_absolute():
         return None
     return path
+
+
+def _windows_absolute_base(value: str | None) -> PureWindowsPath | None:
+    """Accept only drive-absolute or UNC Windows environment roots."""
+    if not value:
+        return None
+    candidate = PureWindowsPath(value)
+    return candidate if candidate.is_absolute() else None
+
+
+def _windows_roots(
+    env: Mapping[str, str], home: PurePath
+) -> tuple[PureWindowsPath, PureWindowsPath]:
+    """Resolve independent roaming and machine-local Windows bases."""
+    windows_home = PureWindowsPath(str(home))
+    roaming = _windows_absolute_base(env.get("APPDATA"))
+    local = _windows_absolute_base(env.get("LOCALAPPDATA"))
+    if roaming is None:
+        roaming = windows_home / "AppData" / "Roaming"
+    if local is None:
+        local = windows_home / "AppData" / "Local"
+    return roaming, local
 
 
 def _uid_suffix(env: Mapping[str, str] | None = None) -> str:
@@ -133,6 +155,17 @@ def resolve_app_paths(
         Path(tempfile.gettempdir()) if temp_root is None else Path(temp_root)
     )
 
+    if active_platform == "win32":
+        roaming, local = _windows_roots(active_env, user_home)
+        # Paths are materialized only by the Windows host; the pure parser above
+        # also lets a POSIX Control validate Windows executor path *syntax*.
+        return AppPaths(
+            config_dir=Path(roaming / _APP_NAME / "config"),
+            state_dir=Path(local / _APP_NAME / "state"),
+            data_dir=Path(local / _APP_NAME / "data"),
+            runtime_dir=temporary / f"{_APP_NAME}-{_runtime_fallback_nonce()}",
+        )
+
     if active_platform == "darwin":
         support = user_home / "Library" / "Application Support" / _APP_NAME
         return AppPaths(
@@ -167,6 +200,13 @@ def app_paths() -> AppPaths:
 
 def ensure_private_directory(path: Path) -> Path:
     """Create or validate a Workgate-owned private directory without following a leaf symlink."""
+    if os.name == "nt":
+        # On Windows, directory creation and permissions are managed by the
+        # filesystem and user token, not POSIX mode bits.
+        path.mkdir(parents=True, exist_ok=True)
+        if not path.is_dir():
+            raise NotADirectoryError(str(path))
+        return path
     try:
         info = path.lstat()
     except FileNotFoundError:

@@ -149,3 +149,17 @@ def test_runtime_fallback_nonce_is_lazy_and_reused(
     assert calls == [8]
     assert first.runtime_dir == second.runtime_dir
     assert first.runtime_dir.name.endswith("-0123456789abcdef")
+
+
+def test_windows_private_directory_uses_stdlib_mkdir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    # Simulate the host test, not os.name globally: Python's pathlib itself
+    # must keep using the real local filesystem for this unit test.
+    monkeypatch.setattr(app_paths_module, "os", SimpleNamespace(name="nt"))
+    private = tmp_path / "private"
+    assert ensure_private_directory(private) == private
+    assert ensure_private_directory(private) == private
+    assert private.is_dir()
