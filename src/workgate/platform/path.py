@@ -25,3 +25,30 @@ def path_lock_key(path: Path, *, system: str | None = None) -> str:
         if host_os(system) is HostOS.WINDOWS
         else raw
     )
+
+
+def is_link_or_junction(path: Path) -> bool:
+    """Include Windows directory junctions in symlink-style safety checks."""
+    return path.is_symlink() or (
+        host_os() is HostOS.WINDOWS and path.is_junction()
+    )
+
+
+def archive_member_key(name: str, *, system: str | None = None) -> str:
+    """Validate one archive member against the destination host's path rules."""
+    if host_os(system) is not HostOS.WINDOWS:
+        return name
+    member = PureWindowsPath(name)
+    if (
+        member.drive
+        or member.root
+        or not member.parts
+        or any(
+            part in {".", ".."} or ntpath.isreserved(part)
+            for part in member.parts
+        )
+    ):
+        raise ValueError(f"unsafe Windows archive member path: {name}")
+    # Windows accepts both slash kinds, and most default volumes are
+    # case-insensitive; reject colliding archive members before extraction.
+    return ntpath.normcase(str(member))

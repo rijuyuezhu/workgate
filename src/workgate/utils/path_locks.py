@@ -1,6 +1,5 @@
 """Bounded thread/process locks for filesystem mutation paths."""
 
-import contextlib
 import hashlib
 import threading
 from collections.abc import Generator, Iterable
@@ -9,7 +8,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..persistence import get_state_store
-from ..platform.files import require_private_file_security
 from ..platform.path import path_lock_key
 from .private_files import private_file_lock
 
@@ -49,9 +47,9 @@ def _release_thread_lock(key: str, entry: _ThreadPathLock) -> None:
 
 def _lock_shard_path(path: Path) -> Path:
     directory = get_state_store().layout.locks_dir
-    directory.mkdir(parents=True, exist_ok=True)
-    with contextlib.suppress(OSError):
-        directory.chmod(0o700)
+    from ..app_paths import ensure_private_directory
+
+    ensure_private_directory(directory)
     digest = hashlib.sha256(path_lock_key(path).encode("utf-8")).hexdigest()
     return directory / f"shard-{digest[:2]}.lock"
 
@@ -59,7 +57,6 @@ def _lock_shard_path(path: Path) -> Path:
 @contextmanager
 def path_locks(paths: Iterable[Path]) -> Generator[None]:
     """Serialize mutations for normalized paths across threads and processes."""
-    require_private_file_security()
     unique = [
         path
         for _key, path in sorted(

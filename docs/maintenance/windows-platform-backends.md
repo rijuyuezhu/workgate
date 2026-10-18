@@ -61,16 +61,34 @@ the Control host's Path class. Lock shards normalize Windows case and
 separators, and the Windows locking adapter uses msvcrt.locking on a one-byte
 sentinel. None of these changes assert completed Windows support.
 
-**Security gate:** POSIX chmod(0600/0700) does not establish owner-only
-Windows ACLs. Private directory creation, credential writes, and file-lock
-initialization currently reject Windows *before writing any data* until a
-handle-based Windows DACL implementation has been verified. This deliberate
-fail-closed guard must be replaced, not suppressed, before #383 can finish.
-Native security tests must cover ownership, inheritance, handle identity,
-junctions/reparse points, sharing violations, replace/rollback, and archive
-extraction. POSIX O_NOFOLLOW fallbacks elsewhere also require native Windows
-handle implementations; neither a pre-open symlink check nor mode bits provide
-equivalent security. A native Windows 3.14 smoke now runs on the DOM
-Windows host through WSL interop, validating roaming/local paths, one-byte
-cross-process locks and fail-closed ACL guards. It does **not** validate
-ACL or reparse-point implementations, which remain blockers.
+### Implemented native security slice
+
+On Windows, WorkGate-private directory/file creation now specifies a protected
+DACL **at creation**, explicitly owning the object as the current user and
+granted only to that SID and LocalSystem. Existing objects are accepted only
+after handle-based owner/DACL/type verification. Private files, atomic
+replacement, lock files and transfer temporary files use the native backend.
+Windows file opens do not silently replace O_NOFOLLOW with zero: CreateFileW
+opens the final reparse point itself, GetFileInformationByHandleEx inspects the
+handle, and opens every parent component using NT RootDirectory-relative handles.
+Leaf opens and atomic rename also use a verified parent directory handle, so
+an adversarial parent rename cannot redirect the operation to a newly
+substituted path. Windows paths and archive members now
+reject native device names, ADS, traversal, case-colliding entries and
+symlink/junction directory sources. POSIX behavior remains unchanged.
+
+Native CPython 3.14 testing on the DOM Windows host is available through WSL
+interop: scripts/validation/windows-files-smoke.py tests private creation,
+owner/DACL checks, replacement, lock contention across processes, file and
+parent reparse rejection, and safe source/update handles. The Windows-only ctypes
+modules are excluded from Linux-only coverage reporting, like other native OS
+backends; the native script is the substantive platform test. Full Windows CI
+belongs to #391.
+
+**Still blocked (Draft #395):** transfer/archive directory extraction and
+publication need broader native handle/identity coverage; Skill/MCP files,
+patching, remaining no-follow fallbacks, unsupported sharing and rollback
+cases require review and real Windows tests. Creation of missing ancestors, directory transfer publication and
+adversarial concurrent filesystem mutation still need fuller integration
+verification. This slice does not assert full Windows support and must not
+be merged while security acceptance remains incomplete.

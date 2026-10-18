@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePath, PureWindowsPath
 
-from .platform.files import require_private_file_security
+from .platform.host import HostOS, host_os
 
 _APP_NAME = "workgate"
 _RUNTIME_FALLBACK_NONCE: str | None = None
@@ -202,7 +202,12 @@ def app_paths() -> AppPaths:
 
 def ensure_private_directory(path: Path) -> Path:
     """Create or validate a Workgate-owned private directory without following a leaf symlink."""
-    require_private_file_security()
+    if host_os() is HostOS.WINDOWS:
+        from .platform.windows.security import (
+            ensure_private_directory as native_ensure,
+        )
+
+        return native_ensure(path)
     try:
         info = path.lstat()
     except FileNotFoundError:

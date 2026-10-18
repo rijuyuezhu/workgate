@@ -1,5 +1,6 @@
 """Native Windows one-byte advisory exclusion on private lock handles."""
 
+import errno
 from typing import Any, cast
 
 
@@ -12,11 +13,16 @@ def try_lock_handle(handle) -> bool:
             handle.fileno(), cast(Any, msvcrt).LK_NBLCK, 1
         )
     except OSError as exc:
-        if exc.errno in {13, 11, 36} or getattr(exc, "winerror", None) in {
-            32,
-            33,
-            36,
-        }:
+        if (
+            isinstance(exc, BlockingIOError)
+            or exc.errno in {errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK}
+            or getattr(exc, "winerror", None)
+            in {
+                32,
+                33,
+                36,
+            }
+        ):
             return False
         raise
     return True

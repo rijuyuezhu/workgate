@@ -10,7 +10,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import BinaryIO
 
-from ..platform.files import require_private_file_security
 from ..platform.host import HostOS, host_os
 
 
@@ -32,7 +31,16 @@ def _retry_private_lock_io(
 
 def _ensure_lock_file(path: Path, timeout_s: float | None = None) -> None:
     """Create or repair the one-byte lock file before any process opens it."""
-    require_private_file_security()
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.security import open_private_file
+
+        descriptor = open_private_file(path, create=True)
+        with os.fdopen(descriptor, "r+b") as handle:
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     deadline = (
         None if timeout_s is None else time.monotonic() + max(0.0, timeout_s)
@@ -79,6 +87,21 @@ def _open_lock_handle(
         None if timeout_s is None else time.monotonic() + max(0.0, timeout_s)
     )
     while True:
+        if host_os() is HostOS.WINDOWS:
+            from ..platform.windows.security import open_private_file
+
+            try:
+                descriptor = open_private_file(path, create=False)
+            except FileNotFoundError:
+                _retry_private_lock_io(
+                    deadline,
+                    timeout_message="timed out opening private lock file",
+                    retry_interval_s=retry_interval_s,
+                )
+                continue
+            # An insecure DACL, owner or reparse point must fail immediately,
+            # never turn into an unbounded transient-open retry.
+            return os.fdopen(descriptor, "r+b")
         try:
             return path.open("r+b")
         except FileNotFoundError, PermissionError:
@@ -170,8 +193,9 @@ def private_file_lock(
         timeout_s=remaining,
         retry_interval_s=retry_interval_s,
     ) as handle:
-        with contextlib.suppress(OSError):
-            path.chmod(0o600)
+        if host_os() is not HostOS.WINDOWS:
+            with contextlib.suppress(OSError):
+                path.chmod(0o600)
         remaining = (
             None
             if timeout_s is None
@@ -192,7 +216,15 @@ def write_private_bytes(
     path: Path, data: bytes, *, exclusive: bool = False
 ) -> None:
     """Write or replace one private byte file using mode 0600."""
-    require_private_file_security()
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.security import open_private_file
+
+        descriptor = open_private_file(path, create=True, exclusive=exclusive)
+        with os.fdopen(descriptor, "r+b") as handle:
+            handle.truncate(0)
+            handle.write(data)
+            handle.flush()
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     flags = os.O_WRONLY | os.O_CREAT
     flags |= os.O_EXCL if exclusive else os.O_TRUNC
@@ -206,7 +238,14 @@ def write_private_bytes(
 
 def append_private_bytes(path: Path, data: bytes) -> None:
     """Append bytes to one private file without changing existing content."""
-    require_private_file_security()
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.security import open_private_file
+
+        descriptor = open_private_file(path, create=True, append=True)
+        with os.fdopen(descriptor, "ab") as handle:
+            handle.write(data)
+            handle.flush()
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     with os.fdopen(descriptor, "ab") as handle:
@@ -223,18 +262,30 @@ def write_private_text(path: Path, content: str) -> None:
 
 def atomic_write_private_bytes(path: Path, data: bytes) -> None:
     """Atomically replace one private file with new bytes."""
-    require_private_file_security()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    if host_os() is not HostOS.WINDOWS:
+        path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(
         f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
     )
     try:
         write_private_bytes(temporary, data, exclusive=True)
-        os.replace(temporary, path)
-        with contextlib.suppress(OSError):
-            path.chmod(0o600)
+        if host_os() is HostOS.WINDOWS:
+            from ..platform.windows.security import replace_private_file
+
+            replace_private_file(temporary, path)
+        else:
+            os.replace(temporary, path)
+        if host_os() is not HostOS.WINDOWS:
+            with contextlib.suppress(OSError):
+                path.chmod(0o600)
     finally:
-        temporary.unlink(missing_ok=True)
+        if host_os() is HostOS.WINDOWS:
+            from ..platform.windows.security import delete_private_file
+
+            with contextlib.suppress(FileNotFoundError):
+                delete_private_file(temporary)
+        else:
+            temporary.unlink(missing_ok=True)
 
 
 def atomic_write_private_text(path: Path, content: str) -> None:

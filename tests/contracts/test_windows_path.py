@@ -62,18 +62,25 @@ def test_remote_path_basename_is_platform_independent(path, name):
     assert remote_path_name(path) == name
 
 
-def test_windows_private_directory_fails_closed_before_creating(
+def test_windows_private_directory_dispatches_to_native_acl_backend(
     monkeypatch, tmp_path
 ):
+    import workgate.app_paths as app_paths_module
     from workgate.app_paths import ensure_private_directory
-    from workgate.platform import files as platform_files
     from workgate.platform.host import HostOS
+    from workgate.platform.windows import security
 
-    monkeypatch.setattr(platform_files, "host_os", lambda: HostOS.WINDOWS)
+    monkeypatch.setattr(app_paths_module, "host_os", lambda: HostOS.WINDOWS)
     private = tmp_path / "credentials"
-    with pytest.raises(PermissionError, match="user-only ACL"):
-        ensure_private_directory(private)
-    assert not private.exists()
+    calls = []
+
+    def fake_create(path):
+        calls.append(path)
+        return path
+
+    monkeypatch.setattr(security, "ensure_private_directory", fake_create)
+    assert ensure_private_directory(private) == private
+    assert calls == [private]
 
 
 def test_windows_lock_keys_fold_case_separators_and_dot_components():
@@ -108,3 +115,37 @@ def test_posix_filename_can_contain_literal_backslashes():
     assert (
         remote_path_name(r"/home/alice/notes\draft.txt") == r"notes\draft.txt"
     )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        r"C:\absolute\secret",
+        r"C:relative\secret",
+        r"..\escape.txt",
+        r"folder\..\escape.txt",
+        "/absolute/path",
+        r"\\server\share\file",
+        "NUL",
+        "CON.txt",
+        "file:secret-stream",
+        "filename.",
+        "filename ",
+    ],
+)
+def test_windows_archive_members_reject_native_path_escape_and_devices(name):
+    from workgate.platform.path import archive_member_key
+
+    with pytest.raises(ValueError, match="unsafe Windows archive member"):
+        archive_member_key(name, system="Windows")
+
+
+def test_windows_archive_member_keys_fold_case_and_separators():
+    from workgate.platform.path import archive_member_key
+
+    assert archive_member_key(
+        "D/Note.TXT", system="Windows"
+    ) == archive_member_key(r"d\note.txt", system="Windows")
+    assert archive_member_key(
+        "D/Note.TXT", system="Linux"
+    ) != archive_member_key(r"d\note.txt", system="Linux")

@@ -33,7 +33,9 @@ def test_windows_lock_and_unlock_use_initialized_first_byte(
         ]
 
 
-@pytest.mark.parametrize("error", [errno.EACCES, errno.EAGAIN])
+@pytest.mark.parametrize(
+    "error", [errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK]
+)
 def test_windows_lock_recognizes_byte_contention(monkeypatch, tmp_path, error):
     path = tmp_path / "lock"
     path.write_bytes(b"\0")
@@ -61,22 +63,117 @@ def test_windows_lock_does_not_swallow_unexpected_errors(monkeypatch, tmp_path):
         locks.try_lock_handle(handle)
 
 
-def test_windows_private_files_fail_closed_without_acl_backend(
+def test_windows_private_files_delegate_to_verified_native_backend(
     monkeypatch, tmp_path
 ):
-    from workgate.platform import files as platform_files
+    from workgate.platform.windows import security
 
-    monkeypatch.setattr(platform_files, "host_os", lambda: HostOS.WINDOWS)
-    target = tmp_path / "password"
-    with pytest.raises(PermissionError, match="user-only ACL"):
-        private_files.write_private_bytes(target, b"secret")
-    with pytest.raises(PermissionError, match="user-only ACL"):
-        private_files.atomic_write_private_bytes(target, b"secret")
-    with pytest.raises(PermissionError, match="user-only ACL"):
-        private_files.append_private_bytes(target, b"secret")
+    monkeypatch.setattr(private_files, "host_os", lambda: HostOS.WINDOWS)
+    calls = []
+
+    def fake_open(path, *, create, exclusive=False, append=False):
+        calls.append((path.name, create, exclusive))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        flags = private_files.os.O_RDWR | private_files.os.O_CREAT
+        if append:
+            flags = (
+                private_files.os.O_WRONLY
+                | private_files.os.O_APPEND
+                | private_files.os.O_CREAT
+            )
+        return private_files.os.open(path, flags, 0o600)
+
+    monkeypatch.setattr(security, "open_private_file", fake_open)
+    monkeypatch.setattr(
+        security, "replace_private_file", private_files.os.replace
+    )
+    monkeypatch.setattr(
+        security,
+        "delete_private_file",
+        lambda path: path.unlink(missing_ok=True),
+    )
+    target = tmp_path / "secret"
+    private_files.write_private_bytes(target, b"first")
+    private_files.append_private_bytes(target, b"-append")
+    private_files.atomic_write_private_bytes(target, b"replacement")
+    assert target.read_bytes() == b"replacement"
+    assert calls[0] == ("secret", True, False)
+    assert calls[1] == ("secret", True, False)
+    assert calls[2][1:] == (True, True)
+
+
+def test_windows_insecure_private_lock_does_not_retry_forever(
+    monkeypatch, tmp_path
+):
+    from workgate.platform.windows import security
+
+    monkeypatch.setattr(private_files, "host_os", lambda: HostOS.WINDOWS)
+    monkeypatch.setattr(
+        security,
+        "open_private_file",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            PermissionError("Windows private DACL mismatch")
+        ),
+    )
+    with pytest.raises(PermissionError, match="DACL mismatch"):
+        private_files._open_lock_handle(tmp_path / "insecure", timeout_s=0)
+
+
+def test_windows_private_lock_file_is_verified_before_locking(
+    monkeypatch, tmp_path
+):
+    from workgate.platform.windows import security
+
+    monkeypatch.setattr(private_files, "host_os", lambda: HostOS.WINDOWS)
+    calls = []
+
+    def verified_open(path, *, create, exclusive=False, append=False):
+        calls.append(("open", create, exclusive, append))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        flags = private_files.os.O_RDWR
+        if create:
+            flags |= private_files.os.O_CREAT
+        if exclusive:
+            flags |= private_files.os.O_EXCL
+        return private_files.os.open(path, flags, 0o600)
+
+    monkeypatch.setattr(security, "open_private_file", verified_open)
+    monkeypatch.setitem(
+        sys.modules,
+        "msvcrt",
+        SimpleNamespace(
+            LK_NBLCK=6,
+            LK_UNLCK=7,
+            locking=lambda _fd, op, size: calls.append(("lock", op, size)),
+        ),
+    )
+    path = tmp_path / "shard.lock"
+    with private_files.private_file_lock(path) as handle:
+        assert handle.read(1) == b"\0"
+        assert calls[:2] == [
+            ("open", True, False, False),
+            ("open", False, False, False),
+        ]
+    assert calls[-2:] == [("lock", 6, 1), ("lock", 7, 1)]
+    assert path.read_bytes() == b"\0"
+
+
+def test_windows_existing_insecure_lock_is_rejected_during_preparation(
+    monkeypatch, tmp_path
+):
+    from workgate.platform.windows import security
+
+    monkeypatch.setattr(private_files, "host_os", lambda: HostOS.WINDOWS)
+    path = tmp_path / "unsafe.lock"
+    path.write_bytes(b"\0")
+
+    def reject(_path, **_kwargs):
+        raise PermissionError("owner or DACL verification failed")
+
+    monkeypatch.setattr(security, "open_private_file", reject)
     with (
-        pytest.raises(PermissionError, match="user-only ACL"),
-        private_files.private_file_lock(tmp_path / "lock"),
+        pytest.raises(PermissionError, match="DACL verification failed"),
+        private_files.private_file_lock(path),
     ):
         pass
-    assert not target.exists()
+    assert path.read_bytes() == b"\0"

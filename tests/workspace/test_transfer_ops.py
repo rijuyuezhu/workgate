@@ -2734,3 +2734,98 @@ def test_abandon_invalid_unpack_receipt_fails_closed(tmp_path, monkeypatch):
         )
 
     assert receipt_path.exists()
+
+
+@pytest.mark.parametrize(
+    "members",
+    [
+        ["Report.TXT", "report.txt"],
+        ["folder/x.dat", r"folder\x.dat"],
+        ["normal.txt", "CON"],
+        ["data.bin", "file:stream"],
+        [r"a\..\escape.txt"],
+    ],
+)
+def test_windows_archive_members_reject_collisions_and_reserved_paths(
+    tmp_path, monkeypatch, members
+):
+    from workgate.platform import path as platform_path
+    from workgate.platform.host import HostOS
+
+    _workspace(tmp_path, monkeypatch)
+    real_host = platform_path.host_os
+    monkeypatch.setattr(
+        platform_path,
+        "host_os",
+        lambda system=None: (
+            HostOS.WINDOWS if system is None else real_host(system)
+        ),
+    )
+    archive = tmp_path / "archive.tar"
+    with tarfile.open(archive, "w") as tar:
+        for name in members:
+            member = tarfile.TarInfo(name)
+            member.size = 1
+            tar.addfile(member, io.BytesIO(b"x"))
+    with (
+        tarfile.open(archive, "r") as tar,
+        pytest.raises(ValueError),
+    ):
+        transfer_ops._safe_members(tar, tmp_path / "staging", _context())
+
+
+def test_windows_directory_pack_rejects_junction_before_tarfile_open(
+    tmp_path, monkeypatch
+):
+    root = _workspace(tmp_path, monkeypatch)
+    directory = root / "directory"
+    directory.mkdir()
+    junction = directory / "mounted"
+    junction.mkdir()
+    monkeypatch.setattr(
+        transfer_ops,
+        "is_link_or_junction",
+        lambda path: path == junction,
+    )
+    with pytest.raises(ValueError, match="refusing to pack"):
+        transfer_pack_dir(str(directory))
+
+
+def test_windows_transfer_file_handles_use_native_verified_opens(
+    tmp_path, monkeypatch
+):
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import security
+
+    monkeypatch.setattr(transfer_ops, "host_os", lambda: HostOS.WINDOWS)
+    source = tmp_path / "ordinary.txt"
+    source.write_bytes(b"initial")
+    calls = []
+
+    def native_open(path, *, writable=False):
+        calls.append(("regular", path.name, writable))
+        return os.open(path, os.O_RDWR if writable else os.O_RDONLY)
+
+    def native_private(path, *, create, exclusive=False):
+        calls.append(("private", path.name, create, exclusive))
+        return os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+
+    monkeypatch.setattr(security, "open_regular_file_no_follow", native_open)
+    monkeypatch.setattr(security, "open_private_file", native_private)
+
+    with transfer_ops._open_transfer_source(source) as handle:
+        assert handle.read() == b"initial"
+    with transfer_ops._open_transfer_for_update(source) as handle:
+        handle.seek(0)
+        handle.write(b"changed")
+    assert source.read_bytes() == b"changed"
+
+    destination = tmp_path / "private-partial"
+    with transfer_ops._open_private_transfer_file(destination) as handle:
+        handle.write(b"private")
+    assert destination.read_bytes() == b"private"
+    assert calls == [
+        ("regular", "ordinary.txt", False),
+        ("regular", "ordinary.txt", True),
+        ("private", "private-partial", True, True),
+    ]

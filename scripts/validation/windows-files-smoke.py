@@ -18,7 +18,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from workgate.app_paths import ensure_private_directory, resolve_app_paths
 from workgate.platform.path import path_lock_key, remote_path_name
 from workgate.platform.windows.locks import try_lock_handle, unlock_handle
-from workgate.utils.private_files import atomic_write_private_bytes
+from workgate.platform.windows.nt_relative import (
+    close_handle,
+    open_child,
+    pinned_parent,
+    rename_child,
+)
+from workgate.platform.windows.security import (
+    open_regular_file_no_follow,
+    replace_workspace_file,
+)
+from workgate.utils.private_files import (
+    append_private_bytes,
+    atomic_write_private_bytes,
+    private_file_lock,
+    write_private_bytes,
+)
 
 
 def main() -> int:
@@ -54,10 +69,18 @@ def main() -> int:
     )
 
     with tempfile.TemporaryDirectory(prefix="workgate-native-files-") as tmp:
-        path = Path(tmp) / "lock"
-        path.write_bytes(b"\0")
-        with path.open("r+b") as handle:
-            assert try_lock_handle(handle)
+        private = ensure_private_directory(Path(tmp) / "private")
+        assert ensure_private_directory(private) == private
+        nested = ensure_private_directory(private / "new" / "nested")
+        assert nested.is_dir()
+        secret = private / "secret"
+        write_private_bytes(secret, b"first")
+        append_private_bytes(secret, b"-appended")
+        assert secret.read_bytes() == b"first-appended"
+        atomic_write_private_bytes(secret, b"replaced")
+        assert secret.read_bytes() == b"replaced"
+        path = private / "lock"
+        with private_file_lock(path):
             child = subprocess.run(
                 [sys.executable, __file__, "--check-held-lock", str(path)],
                 capture_output=True,
@@ -70,27 +93,127 @@ def main() -> int:
                 child.stdout,
                 child.stderr,
             )
-            unlock_handle(handle)
-        with path.open("r+b") as handle:
-            assert try_lock_handle(handle)
-            unlock_handle(handle)
-
-        # Until Windows ACL support is implemented, never create unprotected
-        # private data. This must be replaced by positive ACL checks in #383.
-        for operation in (
-            lambda: atomic_write_private_bytes(Path(tmp) / "secret", b"secret"),
-            lambda: ensure_private_directory(Path(tmp) / "secret-dir"),
-        ):
+        assert path.read_bytes() == b"\0"
+        with private_file_lock(path):
+            pass
+        unsafe = Path(tmp) / "unsafe"
+        unsafe.write_bytes(b"unprotected")
+        try:
+            write_private_bytes(unsafe, b"must-not-write")
+        except PermissionError:
+            assert unsafe.read_bytes() == b"unprotected"
+        else:
+            raise AssertionError("Insecure existing file was modified")
+        try:
+            atomic_write_private_bytes(unsafe, b"must-not-publish")
+        except PermissionError:
+            assert unsafe.read_bytes() == b"unprotected"
+        else:
+            raise AssertionError(
+                "Atomic publish replaced insecure existing file"
+            )
+        assert list(Path(tmp).glob(".unsafe.*.tmp")) == []
+        staging = private / "transfer-staging"
+        write_private_bytes(staging, b"from-staging")
+        workspace_file = Path(tmp) / "workspace-destination"
+        workspace_file.write_bytes(b"existing")
+        replace_workspace_file(staging, workspace_file)
+        assert not staging.exists()
+        assert workspace_file.read_bytes() == b"from-staging"
+        public = Path(tmp) / "source.txt"
+        public.write_bytes(b"public")
+        with os.fdopen(open_regular_file_no_follow(public), "rb") as handle:
+            assert handle.read() == b"public"
+        with os.fdopen(
+            open_regular_file_no_follow(public, writable=True), "r+b"
+        ) as handle:
+            handle.seek(0, os.SEEK_END)
+            handle.write(b"-extended")
+        assert public.read_bytes() == b"public-extended"
+        symlink = Path(tmp) / "source-link"
+        try:
+            symlink.symlink_to(public)
+        except OSError:
+            print("WARNING: native file symlink unavailable")
+        else:
             try:
-                operation()
-            except PermissionError as exc:
-                assert "ACL" in str(exc)
+                open_regular_file_no_follow(symlink)
+            except PermissionError:
+                pass
+            else:
+                raise AssertionError("Windows transfer followed a file symlink")
+            symlink.unlink()
+        junction = Path(tmp) / "junction"
+        result = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(junction), str(private)],
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+        if result.returncode == 0:
+            try:
+                ensure_private_directory(junction)
+            except PermissionError:
+                pass
             else:
                 raise AssertionError(
-                    "Windows private data was written without ACL"
+                    "Reparse point accepted as private directory"
                 )
+            try:
+                write_private_bytes(junction / "must-not-appear", b"blocked")
+            except PermissionError:
+                assert not (private / "must-not-appear").exists()
+            else:
+                raise AssertionError(
+                    "Windows parent junction permitted private write"
+                )
+            try:
+                open_regular_file_no_follow(junction / "secret")
+            except PermissionError:
+                pass
+            else:
+                raise AssertionError(
+                    "Windows parent junction permitted transfer read"
+                )
+            junction.rmdir()
+        else:
+            print("WARNING: junction test unavailable")
+    with tempfile.TemporaryDirectory(prefix="workgate-parent-swap-") as temp:
+        original = ensure_private_directory(Path(temp) / "original")
+        write_private_bytes(original / "source", b"original-secret")
+        write_private_bytes(original / "replacement", b"new-secure-secret")
+        with pinned_parent(original / "source") as parent:
+            moved = Path(temp) / "moved"
+            original.rename(moved)
+            original.mkdir()
+            (original / "source").write_bytes(b"attacker-substitute")
+            imported = open_child(
+                parent, "source", access=0x80000000, directory=False
+            )
+            import msvcrt
 
-    print("Windows native paths, locks, and fail-closed security: PASS")
+            with os.fdopen(
+                msvcrt.open_osfhandle(imported, os.O_RDONLY | os.O_BINARY), "rb"
+            ) as source:
+                assert source.read() == b"original-secret"
+            rename_source = open_child(
+                parent,
+                "replacement",
+                access=0x80000000 | 0x10000,
+                directory=False,
+            )
+            from workgate.platform.windows.security import _libs
+
+            kernel, _ = _libs()
+            try:
+                rename_child(rename_source, parent, "source")
+            finally:
+                close_handle(kernel, rename_source)
+            assert (moved / "source").read_bytes() == b"new-secure-secret"
+            assert (original / "source").read_bytes() == b"attacker-substitute"
+    print(
+        "Windows native ACLs, atomic files, locks, reparse and transfer handles: PASS"
+    )
     return 0
 
 

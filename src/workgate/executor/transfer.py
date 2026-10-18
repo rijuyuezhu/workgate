@@ -25,6 +25,8 @@ from pydantic import (
 )
 
 from ..config.executor import ExecutorConfig
+from ..platform.host import HostOS, host_os
+from ..platform.path import archive_member_key, is_link_or_junction
 from ..protocol.transfer import (
     DEFAULT_TRANSFER_CHUNK_BYTES,
     normalize_chunk_size,
@@ -869,7 +871,9 @@ def _abandon_unpack_receipt(
                         )
                     abandonment_status = "rollback"
                 else:
-                    if not destination.is_dir() or destination.is_symlink():
+                    if not destination.is_dir() or is_link_or_junction(
+                        destination
+                    ):
                         raise RuntimeError(
                             "transfer unpack publishing state cannot confirm commit"
                         )
@@ -884,7 +888,7 @@ def _abandon_unpack_receipt(
                         )
                     abandonment_status = "commit"
             elif status == "completed":
-                if not destination.is_dir() or destination.is_symlink():
+                if not destination.is_dir() or is_link_or_junction(destination):
                     raise RuntimeError(
                         "committed transfer directory is missing"
                     )
@@ -919,7 +923,7 @@ def _abandon_unpack_receipt(
             if abandonment_status == "rollback" and staging.exists():
                 shutil.rmtree(staging)
         elif abandonment_status in {"commit", "commit_archive"}:
-            if not destination.is_dir() or destination.is_symlink():
+            if not destination.is_dir() or is_link_or_junction(destination):
                 raise RuntimeError("committed transfer directory is missing")
             if current.destination_existed:
                 if abandonment_status == "commit" and os.path.lexists(backup):
@@ -962,7 +966,7 @@ def _abandon_unpack_receipt(
                     "transfer unpack rollback unexpectedly retained destination"
                 )
         elif abandonment_status == "commit_archive" and (
-            not destination.is_dir() or destination.is_symlink()
+            not destination.is_dir() or is_link_or_junction(destination)
         ):
             raise RuntimeError("committed transfer directory is missing")
         if os.path.lexists(backup) or staging.exists():
@@ -1080,12 +1084,22 @@ def _record_received_range(
 
 
 def _open_private_transfer_file(path: Path) -> BinaryIO:
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.security import open_private_file
+
+        return os.fdopen(
+            open_private_file(path, create=True, exclusive=True), "wb"
+        )
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     descriptor = os.open(path, flags, 0o600)
     return os.fdopen(descriptor, "wb")
 
 
 def _open_transfer_source(path: Path) -> BinaryIO:
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.security import open_regular_file_no_follow
+
+        return os.fdopen(open_regular_file_no_follow(path), "rb")
     flags = os.O_RDONLY
     flags |= int(getattr(os, "O_NOFOLLOW", 0))
     descriptor = os.open(path, flags)
@@ -1182,7 +1196,11 @@ def transfer_copy_file(
             )
 
         exists = os.path.lexists(destination)
-        if exists and destination.is_dir() and not destination.is_symlink():
+        if (
+            exists
+            and destination.is_dir()
+            and not is_link_or_junction(destination)
+        ):
             raise IsADirectoryError(str(destination))
         if exists and not overwrite:
             raise FileExistsError(str(destination))
@@ -1223,7 +1241,12 @@ def transfer_copy_file(
                 raise ValueError("source sha256 changed before local copy")
             if not overwrite and os.path.lexists(destination):
                 raise FileExistsError(str(destination))
-            os.replace(temporary, destination)
+            if host_os() is HostOS.WINDOWS:
+                from ..platform.windows.security import replace_workspace_file
+
+                replace_workspace_file(temporary, destination)
+            else:
+                os.replace(temporary, destination)
         finally:
             temporary.unlink(missing_ok=True)
 
@@ -1472,7 +1495,11 @@ def transfer_begin_write(
             _prune_stale_destination_transfers(destination, context=context)
 
         exists = os.path.lexists(destination)
-        if exists and destination.is_dir() and not destination.is_symlink():
+        if (
+            exists
+            and destination.is_dir()
+            and not is_link_or_junction(destination)
+        ):
             raise IsADirectoryError(str(destination))
         if exists and not overwrite:
             raise FileExistsError(str(destination))
@@ -1562,7 +1589,13 @@ def transfer_begin_write(
 
 
 def _open_transfer_for_update(path: Path) -> BinaryIO:
-    if path.is_symlink():
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.security import open_regular_file_no_follow
+
+        return os.fdopen(
+            open_regular_file_no_follow(path, writable=True), "r+b"
+        )
+    if is_link_or_junction(path):
         raise ValueError("transfer temporary path must not be a symlink")
     flags = os.O_RDWR
     flags |= int(getattr(os, "O_NOFOLLOW", 0))
@@ -1786,7 +1819,12 @@ def transfer_finish_write(
             receipt_path,
             receipt.model_dump(mode="python", exclude_none=True),
         )
-        os.replace(temporary, destination)
+        if host_os() is HostOS.WINDOWS:
+            from ..platform.windows.security import replace_workspace_file
+
+            replace_workspace_file(temporary, destination)
+        else:
+            os.replace(temporary, destination)
         metadata_path.unlink(missing_ok=True)
         receipt = receipt.model_copy(
             update={"status": "completed", "committed_at": time.time()}
@@ -1877,12 +1915,12 @@ def transfer_abort_write(
 
 def _assert_transferable_tree(source: Path, context: TransferContext) -> None:
     """Reject symlinks and special files before creating an archive."""
-    if source.is_symlink():
+    if is_link_or_junction(source):
         raise ValueError(
             f"refusing to pack symlink: {_display(source, context)}"
         )
     for child in source.rglob("*"):
-        if child.is_symlink():
+        if is_link_or_junction(child):
             raise ValueError(
                 f"refusing to pack directory containing symlink: {_display(child, context)}"
             )
@@ -2003,7 +2041,7 @@ def _safe_members(
             raise ValueError(
                 f"sparse archive members are not supported: {member.name}"
             )
-        normalized_name = str(member_path)
+        normalized_name = archive_member_key(member.name)
         if normalized_name in seen_paths:
             raise ValueError(f"duplicate archive member path: {member.name}")
         seen_paths.add(normalized_name)
@@ -2026,7 +2064,7 @@ def _safe_members(
 
 
 def _remove_existing_path(path: Path) -> None:
-    if path.is_dir() and not path.is_symlink():
+    if path.is_dir() and not is_link_or_junction(path):
         shutil.rmtree(path)
     else:
         path.unlink(missing_ok=True)
@@ -2077,7 +2115,7 @@ def _resumable_unpack_archive(
                 and not overwrite
                 and not (
                     destination.is_dir()
-                    and not destination.is_symlink()
+                    and not is_link_or_junction(destination)
                     and not any(destination.iterdir())
                 )
             ):
@@ -2141,7 +2179,8 @@ def _resumable_unpack_archive(
                                 )
                             with source, target.open("xb") as output:
                                 shutil.copyfileobj(source, output)
-                            os.chmod(target, member.mode & 0o777)
+                            if host_os() is not HostOS.WINDOWS:
+                                os.chmod(target, member.mode & 0o777)
                             continue
                         raise ValueError(
                             f"unsupported archive member type: {member.name}"
@@ -2229,7 +2268,7 @@ def _resumable_unpack_archive(
 
         if status != "completed":
             raise RuntimeError("transfer unpack recovery state is invalid")
-        if not destination.is_dir() or destination.is_symlink():
+        if not destination.is_dir() or is_link_or_junction(destination):
             raise RuntimeError("committed transfer directory is missing")
 
         cleanup_errors: list[str] = []
@@ -2370,7 +2409,8 @@ def transfer_unpack_archive(
                         )
                     with source, target.open("xb") as output:
                         shutil.copyfileobj(source, output)
-                    os.chmod(target, member.mode & 0o777)
+                    if host_os() is not HostOS.WINDOWS:
+                        os.chmod(target, member.mode & 0o777)
                     continue
                 raise ValueError(
                     f"unsupported archive member type: {member.name}"
@@ -2394,7 +2434,7 @@ def transfer_unpack_archive(
                 and not overwrite
                 and not (
                     destination.is_dir()
-                    and not destination.is_symlink()
+                    and not is_link_or_junction(destination)
                     and not any(destination.iterdir())
                 )
             ):
