@@ -2861,7 +2861,9 @@ def test_windows_archive_pack_uses_verified_native_directory_walk(
         )
     ]
     with tarfile.open(root / response.archive_path, "r:gz") as tar:
-        assert tar.extractfile("keep.txt").read() == b"untouched"
+        content = tar.extractfile("keep.txt")
+        assert content is not None
+        assert content.read() == b"untouched"
 
 
 def test_windows_archive_pack_error_uses_verified_private_cleanup(
