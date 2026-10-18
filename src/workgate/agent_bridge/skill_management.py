@@ -19,7 +19,11 @@ import yaml
 from ..app_paths import ensure_private_directory
 from ..platform.host import HostOS, host_os
 from ..platform.windows.archive import list_tree
-from ..utils.private_files import atomic_write_private_text, private_file_lock
+from ..utils.private_files import (
+    atomic_write_private_text,
+    private_file_lock,
+    read_private_text,
+)
 from .models import AgentBridgeManifest
 from .skills import validate_skill_name
 from .state import load_agent_manifest
@@ -162,15 +166,6 @@ def _no_links(root: Path) -> None:
                 raise ValueError(
                     "Managed Skill contains a symlink or special file"
                 )
-
-
-def _read_manifest_text(path: Path) -> str:
-    if host_os() is HostOS.WINDOWS:
-        from ..platform.windows.security import open_private_file
-
-        with os.fdopen(open_private_file(path, create=False), "rb") as handle:
-            return handle.read().decode("utf-8")
-    return path.read_text(encoding="utf-8")
 
 
 def _remove_manifest(path: Path) -> None:
@@ -394,7 +389,7 @@ def manage_skill(
             previous_manifest: str | None = None
             if action == "stage":
                 previous_manifest = (
-                    _read_manifest_text(loaded.config_path)
+                    read_private_text(loaded.config_path)
                     if loaded.config_path.exists()
                     else None
                 )
@@ -447,7 +442,7 @@ def manage_skill(
             else:
                 disabled.discard(name)
             raw: dict[str, Any] = (
-                json.loads(_read_manifest_text(loaded.config_path))
+                json.loads(read_private_text(loaded.config_path))
                 if loaded.config_path.exists()
                 else {"version": 1}
             )
@@ -480,7 +475,7 @@ def manage_skill(
             try:
                 if name in disabled:
                     disabled.remove(name)
-                    raw = json.loads(_read_manifest_text(loaded.config_path))
+                    raw = json.loads(read_private_text(loaded.config_path))
                     raw.setdefault("skills", {})["disabled"] = sorted(disabled)
                     AgentBridgeManifest.model_validate(raw)
                     atomic_write_private_text(

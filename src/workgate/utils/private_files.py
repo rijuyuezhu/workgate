@@ -212,6 +212,36 @@ def private_file_lock(
             _unlock_handle(handle)
 
 
+def read_private_bytes(path: Path, *, max_bytes: int | None = None) -> bytes:
+    """Read verified owner-private data; enforce optional limit on the opened file."""
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.security import open_private_file
+
+        descriptor = open_private_file(path, create=False)
+        with os.fdopen(descriptor, "rb") as reader:
+            if (
+                max_bytes is not None
+                and os.fstat(reader.fileno()).st_size > max_bytes
+            ):
+                raise ValueError("Private file exceeds read size limit")
+            data = reader.read(max_bytes + 1 if max_bytes is not None else -1)
+    elif max_bytes is None:
+        return path.read_bytes()
+    else:
+        with path.open("rb") as reader:
+            if os.fstat(reader.fileno()).st_size > max_bytes:
+                raise ValueError("Private file exceeds read size limit")
+            data = reader.read(max_bytes + 1)
+    if max_bytes is not None and len(data) > max_bytes:
+        raise ValueError("Private file exceeds read size limit")
+    return data
+
+
+def read_private_text(path: Path, *, max_bytes: int | None = None) -> str:
+    """Read UTF-8 private content from the same verified file object."""
+    return read_private_bytes(path, max_bytes=max_bytes).decode("utf-8")
+
+
 def write_private_bytes(
     path: Path, data: bytes, *, exclusive: bool = False
 ) -> None:

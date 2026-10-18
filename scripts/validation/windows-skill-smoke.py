@@ -12,6 +12,8 @@ if os.name != "nt":
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from workgate.agent_bridge import skill_management as skills  # noqa: E402
+from workgate.agent_bridge import skills as discovery  # noqa: E402
+from workgate.agent_bridge.state import agent_config_fingerprint  # noqa: E402
 from workgate.platform.windows.security import open_private_file  # noqa: E402
 
 ENTRY = "---\ndescription: Windows managed Skill\n---\n# Native Skill\n"
@@ -24,6 +26,8 @@ def run() -> None:
             base, "create", name="first", content=ENTRY
         )["skill"]
         assert first["enabled"]
+        fingerprint_before = agent_config_fingerprint(base / "skills")
+        assert "first" in discovery.scan_agent_skills(base).skills
         with os.fdopen(
             open_private_file(base / "skills/first/SKILL.md", create=False),
             "rb",
@@ -62,6 +66,7 @@ def run() -> None:
             )
         else:
             raise AssertionError("stale Windows Skill revision was accepted")
+        assert agent_config_fingerprint(base / "skills") != fingerprint_before
         disabled = skills.manage_skill(
             base,
             "disable",
@@ -128,6 +133,15 @@ def run() -> None:
         )
         if result.returncode:
             raise AssertionError("Windows Skill junction test unavailable")
+        scanned_with_junction = discovery.scan_agent_skills(base)
+        assert "second" in scanned_with_junction.skills
+        assert "unsafe-junction" not in (
+            scanned_with_junction.skills["second"].related_files
+        )
+        assert not any(
+            "secret" in path
+            for path in scanned_with_junction.skills["second"].related_files
+        )
         try:
             skills.manage_skill(
                 base,

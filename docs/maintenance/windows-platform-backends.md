@@ -173,12 +173,29 @@ create/get/list/stage/update/enable/disable/delete, injected staging rollback,
 stale revisions, entry-only asset rejection, and junction refusal on Windows
 Python 3.14 with pydantic and pyyaml installed.
 
+### Native MCP credentials and Skill discovery
+
+A shared read_private_bytes/text utility opens native Windows private files
+through verified owner/DACL handles and enforces optional byte limits on the
+opened file object. Agent manifest, managed Skill manifest edits and MCP manifest
+management use this reader. OAuth credential storage creates native owner-only
+private directories and reads its JSON through the same bounded verified
+handle. Insecure inherited ACLs, symlink replacements, corrupt credentials and
+oversize payloads fail closed. scripts/validation/windows-auth-smoke.py
+exercises real native Windows 3.14 credential and MCP CRUD plus failure cases.
+
+Native Windows Skill discovery, related-file scans, activation and registry
+fingerprints use bounded NT directory enumeration and no-follow file handles.
+They do not traverse junctions, even when a junction is inside a Skill's assets.
+POSIX discovery retains its established symlink-following behavior. The
+windows-skill-smoke.py script also tests discovery and fingerprint changes.
+
 **Still blocked (Draft #395):** Windows directory copy and symlink/link copy
 are deliberately unsupported until they can preserve ACLs and roll back with
 no-follow handles. Native apply_patch also remains fail-closed pending a
 handle-safe publisher that does not delegate unchecked path mutations to git.
-Other MCP/Skill *discovery* and cross-scope filesystem scanning paths, concurrent
-untrusted replacement/share violations, process crash/restart recovery and
+Cross-scope filesystem scanning beyond the Agent Bridge discovery entrypoints,
+concurrent untrusted replacement/share violations, process crash/restart recovery and
 full cross-executor Windows integration still require review and tests.
 Do not merge until the remaining acceptance checks converge. Windows
 CI/release integration belongs to #391.

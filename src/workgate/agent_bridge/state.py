@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from ..app_paths import ensure_private_directory
 from ..platform.host import HostOS, host_os
+from ..utils.private_files import read_private_bytes, read_private_text
 from .models import AgentBridgeManifest, LoadedAgentManifest, SkillSource
 
 
@@ -59,6 +60,36 @@ def agent_config_fingerprint(config_dir: Path) -> str:
                     digest.update(chunk)
         except OSError as exc:
             update("read_error", type(exc).__name__, exc)
+
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.archive import list_tree
+        from ..platform.windows.security import open_regular_file_no_follow
+
+        try:
+            native_entries, truncated = list_tree(
+                root, recursive=True, max_entries=5000
+            )
+        except OSError as exc:
+            update(".", "native_list_error", type(exc).__name__, exc)
+            return digest.hexdigest()
+        for path, kind, size, modified in sorted(
+            native_entries, key=lambda row: row[0].as_posix()
+        ):
+            relative = relative_path(path)
+            update(relative, kind, size, modified)
+            if kind != "file":
+                continue
+            try:
+                with os.fdopen(
+                    open_regular_file_no_follow(path), "rb"
+                ) as source:
+                    while chunk := source.read(1024 * 1024):
+                        digest.update(chunk)
+            except OSError as exc:
+                update(relative, "native_read_error", type(exc).__name__, exc)
+        if truncated:
+            update("native_list_truncated", len(native_entries))
+        return digest.hexdigest()
 
     update_path(root, ".")
     try:
@@ -119,7 +150,7 @@ def agent_registry_fingerprint(
         digest.update(str(path).encode("utf-8", errors="replace"))
         digest.update(b"\0")
         try:
-            payload = path.read_bytes()
+            payload = read_private_bytes(path)
         except FileNotFoundError:
             payload = b"<missing>"
         except OSError as exc:
@@ -149,15 +180,7 @@ def load_agent_manifest(
             config_path=config_path, status="missing_config"
         )
     try:
-        if host_os() is HostOS.WINDOWS:
-            from ..platform.windows.security import open_private_file
-
-            with os.fdopen(
-                open_private_file(config_path, create=False), "rb"
-            ) as reader:
-                raw = json.loads(reader.read().decode("utf-8"))
-        else:
-            raw = json.loads(config_path.read_text(encoding="utf-8"))
+        raw = json.loads(read_private_text(config_path))
         data = AgentBridgeManifest.model_validate(raw)
     except ValidationError as exc:
         return LoadedAgentManifest(

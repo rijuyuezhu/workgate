@@ -10,7 +10,12 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..app_paths import ensure_private_directory
-from ..utils.private_files import atomic_write_private_text, private_file_lock
+from ..platform.host import HostOS, host_os
+from ..utils.private_files import (
+    atomic_write_private_text,
+    private_file_lock,
+    read_private_text,
+)
 from .auth_store import AgentAuthStore
 from .models import (
     AgentMcpAuthConfig,
@@ -193,7 +198,8 @@ def manage_mcp_manifest(
     config_dir = Path(config_dir)
     reading = action in {"list", "get"}
     if not reading:
-        config_dir.mkdir(parents=True, exist_ok=True)
+        if host_os() is not HostOS.WINDOWS:
+            config_dir.mkdir(parents=True, exist_ok=True)
         ensure_private_directory(config_dir)
     with (
         nullcontext()
@@ -299,7 +305,7 @@ def manage_mcp_manifest(
 
         path = loaded.config_path
         raw: dict[str, Any] = (
-            json.loads(path.read_text(encoding="utf-8"))
+            json.loads(read_private_text(path))
             if path.exists()
             else {"version": 1}
         )

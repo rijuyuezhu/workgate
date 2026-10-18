@@ -9,6 +9,7 @@ from typing import Any
 
 import yaml
 
+from ..platform.host import HostOS, host_os
 from .models import SkillRecord, SkillScanResult, validate_skill_name
 
 DEFAULT_MAX_SKILLS = 256
@@ -166,7 +167,11 @@ def _resolved_skills_directory(
     config_dir: Path, directory: str
 ) -> tuple[Path, Path]:
     """Return the resolved config root and lexical relative Skills root."""
-    config_root = config_dir.resolve()
+    config_root = (
+        config_dir.absolute()
+        if host_os() is HostOS.WINDOWS
+        else config_dir.resolve()
+    )
     directory_path = Path(directory)
     if not _is_relative_child_path(directory_path):
         raise ValueError(
@@ -176,12 +181,17 @@ def _resolved_skills_directory(
 
 
 def _open_regular_file(path: Path, max_bytes: int) -> tuple[str, int, Path]:
-    """Open a bounded regular Skill file, following filesystem symlinks."""
+    """Read a bounded Skill file; Windows validates a native no-follow handle."""
     limit = _bounded(max_bytes, DEFAULT_MAX_ENTRY_BYTES)
     flags = os.O_RDONLY
 
     try:
-        descriptor = os.open(path, flags)
+        if host_os() is HostOS.WINDOWS:
+            from ..platform.windows.security import open_regular_file_no_follow
+
+            descriptor = open_regular_file_no_follow(path)
+        else:
+            descriptor = os.open(path, flags)
     except OSError as exc:
         raise ValueError(
             f"Skill file must be a readable regular file: {exc}"
@@ -197,15 +207,20 @@ def _open_regular_file(path: Path, max_bytes: int) -> tuple[str, int, Path]:
                     f"Skill file is {opened_stat.st_size} bytes; maximum is {limit}"
                 )
 
-            resolved = path.resolve(strict=True)
-            current_stat = path.stat()
-            if (
-                opened_stat.st_ino
-                and current_stat.st_ino
-                and (opened_stat.st_dev, opened_stat.st_ino)
-                != (current_stat.st_dev, current_stat.st_ino)
-            ):
-                raise ValueError("Skill file changed while it was being opened")
+            if host_os() is HostOS.WINDOWS:
+                resolved = path.absolute()
+            else:
+                resolved = path.resolve(strict=True)
+                current_stat = path.stat()
+                if (
+                    opened_stat.st_ino
+                    and current_stat.st_ino
+                    and (opened_stat.st_dev, opened_stat.st_ino)
+                    != (current_stat.st_dev, current_stat.st_ino)
+                ):
+                    raise ValueError(
+                        "Skill file changed while it was being opened"
+                    )
 
             chunks: list[bytes] = []
             total = 0
@@ -236,6 +251,16 @@ def _resolve_skill_root(skills_dir: Path, name: str) -> Path:
     """Validate a Skill directory target while preserving its lexical path."""
     validated_name = validate_skill_name(name)
     candidate = skills_dir / validated_name
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.archive import verify_directory
+
+        try:
+            verify_directory(candidate)
+        except FileNotFoundError as exc:
+            raise ValueError(
+                f"Unknown skill: {validated_name}. Call list_agent_skills to see installed skills."
+            ) from exc
+        return candidate
     try:
         resolved = candidate.resolve(strict=True)
     except FileNotFoundError as exc:
@@ -280,6 +305,53 @@ def _scan_related_files(
         return related_files, warnings, scanned_entries, 0
 
     path_bytes = 0
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.archive import list_tree
+
+        try:
+            items, truncated = list_tree(
+                skill_root, recursive=True, max_entries=scan_limit
+            )
+        except OSError as exc:
+            _append_warning(warnings, f"Could not scan related files: {exc}")
+            return related_files, warnings, scanned_entries, path_bytes
+        for candidate, kind, *_ in items:
+            scanned_entries += 1
+            if kind != "file":
+                continue
+            relative = candidate.relative_to(skill_root).as_posix()
+            if relative == "SKILL.md":
+                continue
+            if any(
+                part in IGNORED_RELATED_DIRECTORIES
+                for part in candidate.relative_to(skill_root).parts[:-1]
+            ):
+                continue
+            try:
+                validate_skill_file_path(relative)
+            except ValueError as exc:
+                _append_warning(
+                    warnings, f"Skipping related path {relative}: {exc}"
+                )
+                continue
+            encoded = len(relative.encode("utf-8"))
+            if (
+                len(related_files) >= related_limit
+                or path_bytes + encoded > path_limit
+            ):
+                _append_warning(
+                    warnings, "Related file list truncated by budget"
+                )
+                break
+            related_files.append(relative)
+            path_bytes += encoded
+        if truncated:
+            _append_warning(
+                warnings,
+                f"Related file scan stopped after {scan_limit} entries",
+            )
+        return sorted(related_files), warnings, scanned_entries, path_bytes
+
     stack: list[tuple[Path, tuple[str, ...]]] = [(skill_root, ())]
     visited_directories: set[Path] = set()
     resolved_entry = entry_path.resolve(strict=True)
@@ -439,8 +511,23 @@ def scan_agent_skills(
         )
     except (OSError, RuntimeError, ValueError) as exc:
         return SkillScanResult(warnings=[str(exc)])
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.archive import verify_directory
+
+        try:
+            verify_directory(skills_dir)
+        except FileNotFoundError:
+            return SkillScanResult()
+        except OSError as exc:
+            return SkillScanResult(
+                warnings=[
+                    f"Could not inspect skills directory {directory}: {exc}"
+                ]
+            )
     try:
-        skills_stat = skills_dir.stat()
+        skills_stat = (
+            skills_dir.stat() if host_os() is not HostOS.WINDOWS else None
+        )
     except FileNotFoundError:
         if os.path.lexists(skills_dir):
             return SkillScanResult(
@@ -453,7 +540,7 @@ def scan_agent_skills(
         return SkillScanResult(
             warnings=[f"Could not inspect skills directory {directory}: {exc}"]
         )
-    if not stat.S_ISDIR(skills_stat.st_mode):
+    if skills_stat is not None and not stat.S_ISDIR(skills_stat.st_mode):
         return SkillScanResult(
             warnings=[f"Skills path is not a directory: {directory}"]
         )
@@ -466,34 +553,62 @@ def scan_agent_skills(
     warnings: list[str] = []
     candidates: list[str] = []
     scanned_entries = 0
-    try:
-        with os.scandir(skills_dir) as iterator:
-            for entry in iterator:
-                if scanned_entries >= scan_limit:
-                    _append_warning(
-                        warnings,
-                        f"Skill directory scan stopped after {scan_limit} entries",
-                    )
-                    break
-                scanned_entries += 1
-                try:
-                    entry_stat = entry.stat(follow_symlinks=True)
-                except OSError as exc:
-                    _append_warning(
-                        warnings, f"Skipping skill {entry.name!r}: {exc}"
-                    )
-                    continue
-                if (
-                    not stat.S_ISDIR(entry_stat.st_mode)
-                    or entry.name in excluded_names
-                ):
-                    continue
-                candidates.append(entry.name)
-    except OSError as exc:
-        return SkillScanResult(
-            warnings=[f"Could not scan skills directory {directory}: {exc}"],
-            scanned_entries=scanned_entries,
-        )
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.archive import list_tree
+
+        try:
+            rows, truncated = list_tree(
+                skills_dir, recursive=False, max_entries=scan_limit
+            )
+        except OSError as exc:
+            return SkillScanResult(
+                warnings=[
+                    f"Could not scan skills directory {directory}: {exc}"
+                ],
+                scanned_entries=scanned_entries,
+            )
+        scanned_entries = len(rows)
+        candidates = [
+            child.name
+            for child, kind, *_ in rows
+            if kind == "dir" and child.name not in excluded_names
+        ]
+        if truncated:
+            _append_warning(
+                warnings,
+                f"Skill directory scan stopped after {scan_limit} entries",
+            )
+    else:
+        try:
+            with os.scandir(skills_dir) as iterator:
+                for entry in iterator:
+                    if scanned_entries >= scan_limit:
+                        _append_warning(
+                            warnings,
+                            f"Skill directory scan stopped after {scan_limit} entries",
+                        )
+                        break
+                    scanned_entries += 1
+                    try:
+                        entry_stat = entry.stat(follow_symlinks=True)
+                    except OSError as exc:
+                        _append_warning(
+                            warnings, f"Skipping skill {entry.name!r}: {exc}"
+                        )
+                        continue
+                    if (
+                        not stat.S_ISDIR(entry_stat.st_mode)
+                        or entry.name in excluded_names
+                    ):
+                        continue
+                    candidates.append(entry.name)
+        except OSError as exc:
+            return SkillScanResult(
+                warnings=[
+                    f"Could not scan skills directory {directory}: {exc}"
+                ],
+                scanned_entries=scanned_entries,
+            )
 
     candidates.sort()
     if len(candidates) > skill_limit:
@@ -586,7 +701,11 @@ def activate_skill(
     max_entry_bytes: int = DEFAULT_MAX_ENTRY_BYTES,
 ) -> dict[str, Any]:
     """Load a previously discovered Skill record for legacy agent-bridge callers."""
-    config_root = config_dir.resolve()
+    config_root = (
+        config_dir.absolute()
+        if host_os() is HostOS.WINDOWS
+        else config_dir.resolve()
+    )
     entry_relative = Path(skill.entry_path)
     if not _is_relative_child_path(entry_relative):
         raise ValueError("Skill entry path must be inside config directory")

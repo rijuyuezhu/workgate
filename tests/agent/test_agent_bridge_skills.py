@@ -452,3 +452,37 @@ def test_scan_agent_skills_reports_scandir_failure(tmp_path, monkeypatch):
     assert result.warnings == [
         "Could not scan skills directory skills: racing directory"
     ]
+
+
+def test_windows_skill_discovery_reads_verified_open_handle_after_path_swap(
+    monkeypatch, tmp_path
+):
+    import os
+
+    from workgate.agent_bridge import skills
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import security
+
+    original = tmp_path / "SKILL.md"
+    original.write_bytes(b"# verified")
+    replacement = tmp_path / "replacement"
+    replacement.write_bytes(b"# attacker")
+    seen = []
+
+    def native_open(path):
+        seen.append(path)
+        fd = os.open(path, os.O_RDONLY)
+        path.rename(tmp_path / "moved-original")
+        replacement.rename(path)
+        return fd
+
+    monkeypatch.setattr(skills, "host_os", lambda: HostOS.WINDOWS)
+    monkeypatch.setattr(security, "open_regular_file_no_follow", native_open)
+    content, count, lexical = skills._open_regular_file(original, 128)
+    assert (content, count, lexical) == (
+        "# verified",
+        len(b"# verified"),
+        original,
+    )
+    assert original.read_bytes() == b"# attacker"
+    assert seen == [original]

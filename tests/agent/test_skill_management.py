@@ -391,7 +391,7 @@ def test_windows_agent_manifest_load_uses_native_private_nofollow_open(
 ):
     import os
 
-    import workgate.agent_bridge.state as manifest_state
+    import workgate.utils.private_files as private_files
     from workgate.platform.host import HostOS
     from workgate.platform.windows import security
 
@@ -405,7 +405,7 @@ def test_windows_agent_manifest_load_uses_native_private_nofollow_open(
         seen.append((path, create))
         return os.open(path, os.O_RDONLY)
 
-    monkeypatch.setattr(manifest_state, "host_os", lambda: HostOS.WINDOWS)
+    monkeypatch.setattr(private_files, "host_os", lambda: HostOS.WINDOWS)
     monkeypatch.setattr(security, "open_private_file", native_private_open)
     loaded = load_agent_manifest(base)
     assert loaded.status == "loaded"
