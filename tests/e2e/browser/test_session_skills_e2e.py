@@ -53,6 +53,18 @@ def test_session_skills_read_only_and_mobile(browser_harness: BrowserHarness):
         "browser-project"
     )
     expect(page.locator("#session-skills-list")).to_contain_text("Project")
+    expect(
+        page.locator("#session-skills-list .executor-manage-row").filter(
+            has_text="browser-project"
+        )
+    ).to_be_visible()
+    expect(
+        page.locator("#session-skills-list .executor-row-icon").first
+    ).to_be_visible()
+    expect(
+        page.locator("#session-skills-list .executor-manage-pill").first
+    ).to_have_text("Effective")
+    assert page.locator("#session-skills-list button").count() == 0
     assert (
         str(harness.executor_workspace)
         not in page.locator("#session-skills").inner_text()
@@ -68,6 +80,8 @@ def test_session_skills_read_only_and_mobile(browser_harness: BrowserHarness):
     expect(page.locator("#session-skills-list")).to_contain_text("on-refresh")
     page.set_viewport_size({"width": 390, "height": 844})
     expect(page.locator("#session-skills")).to_be_visible()
+    executor_box = page.locator("#session-detail-executor").bounding_box()
+    assert executor_box is not None and executor_box["height"] < 50
     assert page.evaluate(
         "document.documentElement.scrollWidth <= innerWidth + 1"
     )

@@ -87,19 +87,54 @@ export function createTasksController({
       const payload = await request(`/sessions/skills?session_id=${encodeURIComponent(sessionId)}`);
       if (token !== skillRequestToken || selectedSession()?.session_id !== sessionId) return;
       const rows = Array.isArray(payload.skills) ? payload.skills : [];
+      const groups = new Map();
+      let count = 0;
       for (const item of rows) {
         if (!Object.hasOwn(skillSourceLabels, item.source) || typeof item.name !== "string") continue;
-        const li = document.createElement("li");
+        let group = groups.get(item.source);
+        if (!group) {
+          group = document.createElement("section");
+          group.className = "executor-manage-group";
+          const heading = document.createElement("h4");
+          heading.textContent = `${skillSourceLabels[item.source]} · Priority ${item.priority}`;
+          group.append(heading);
+          skillList.append(group);
+          groups.set(item.source, group);
+        }
+        const row = document.createElement("div");
+        row.className = "executor-manage-row";
+        const mark = document.createElement("span");
+        mark.className = "executor-row-mark";
+        mark.dataset.kind = "skill";
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.classList.add("executor-row-icon");
+        svg.setAttribute("viewBox", "0 0 24 24");
+        svg.setAttribute("fill", "none");
+        svg.setAttribute("stroke", "currentColor");
+        svg.setAttribute("stroke-width", "1.8");
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", "M7 3h7l4 4v14H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM14 3v5h4M9 13h6M9 17h6");
+        svg.append(path);
+        mark.append(svg);
+        const info = document.createElement("div");
         const name = document.createElement("strong");
         name.textContent = item.name;
-        const source = document.createElement("span");
-        source.className = "muted";
-        source.textContent = `${skillSourceLabels[item.source]} · priority ${item.priority}`;
-        li.append(name, source);
-        skillList.append(li);
+        const detail = document.createElement("span");
+        detail.textContent = "SKILL.md";
+        info.append(name, detail);
+        const tail = document.createElement("div");
+        tail.className = "executor-manage-tail";
+        const badge = document.createElement("span");
+        badge.className = "executor-manage-pill";
+        badge.dataset.enabled = "true";
+        badge.textContent = "Effective";
+        tail.append(badge);
+        row.append(mark, info, tail);
+        group.append(row);
+        count += 1;
       }
-      skillStatus.textContent = skillList.childElementCount
-        ? `${skillList.childElementCount} effective Skills in this Session`
+      skillStatus.textContent = count
+        ? `${count} effective Skills · Read-only`
         : "No effective Skills for this Session.";
       skillLoaded = true;
     } catch (error) {
@@ -430,7 +465,7 @@ export function createTasksController({
     const createdNotice = document.getElementById("session-detail-task-created");
     createdNotice.hidden = !session?.task_created;
     createdNotice.textContent = session?.task_created
-      ? `Created Task ${session.task_id} automatically and attached this Session.` : "";
+      ? `Task ${session.task_id} created automatically` : "";
     syncSessionSkills(session);
     onSessionChange(session && { ...session, availability: sessionAvailability(session) });
     document.querySelector(".task-sessions-main").classList.toggle("has-session", Boolean(session));
