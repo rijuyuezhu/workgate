@@ -115,13 +115,15 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
   const instructions = document.getElementById("topology-instructions");
   const reset = document.getElementById("topology-reset");
   const refresh = document.getElementById("topology-refresh");
+  const testAll = document.getElementById("topology-test-all");
+  const testProgress = document.getElementById("topology-test-progress");
   const choosePair = document.getElementById("topology-show-pair");
   const back = document.getElementById("topology-back");
   const state = {
     rows: [], mode: "all", focusId: "", pair: null, open: false,
     centerOnDraw: false,
     results: new Map(), pending: new Map(), revisions: new Map(),
-    activeTest: "", requestGeneration: 0, renderedStatus: "",
+    activeTest: "", bulk: null, requestGeneration: 0, renderedStatus: "",
   };
 
   function names(id) {
@@ -181,6 +183,7 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
   }
 
   function focus(id) {
+    stopBulk();
     feedback.textContent = "";
     state.focusId = id;
     state.mode = "focus";
@@ -371,6 +374,8 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
     draw();
     renderInspector();
     choosePair.disabled = !source.value || !destination.value || source.value === destination.value;
+    testAll.textContent = state.bulk ? state.bulk.cancelled ? "Stopping…" : "Stop" : "Test all links";
+    testAll.disabled = state.bulk ? state.bulk.cancelled : Boolean(state.activeTest) || pairs().length === 0;
     if (focusedEdge) {
       const edge = [...edgeLayer.querySelectorAll("g[data-pair]")]
         .find((item) => item.dataset.pair === focusedEdge);
@@ -379,6 +384,70 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
       const node = [...nodeLayer.querySelectorAll(".topology-node")]
         .find((item) => item.dataset.executorId === focusedNode);
       node?.focus({ preventScroll: true });
+    }
+  }
+
+  function stopBulk() {
+    if (!state.bulk) return;
+    state.bulk.cancelled = true;
+    if (state.open) {
+      testAll.disabled = true;
+      testAll.textContent = "Stopping…";
+    }
+  }
+
+  function showBulkProgress(message) {
+    testProgress.hidden = !message;
+    testProgress.textContent = message;
+  }
+
+  async function probeDirection(a, b) {
+    const measured = await request("/executors/peer-link", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_executor_id: a, destination_executor_id: b }),
+    });
+    // POST is authoritative; an older cached GET must not replace its evidence.
+    const key = directedKey(a, b);
+    state.revisions.set(key, (state.revisions.get(key) || 0) + 1);
+    state.results.delete(key);
+    state.results.set(key, measured);
+    if (state.results.size > MAX_RESULTS) state.results.delete(state.results.keys().next().value);
+    if (state.open) render();
+  }
+
+  async function testVisibleLinks() {
+    if (!state.open || state.bulk || state.activeTest) return;
+    const directions = pairs().flatMap(([a, b]) => [[a, b], [b, a]]);
+    if (!directions.length) return;
+    const run = { total: directions.length, done: 0, errors: 0, cancelled: false, failure: "" };
+    state.bulk = run;
+    showBulkProgress(`Testing 0/${run.total} directions…`);
+    render();
+    for (const [a, b] of directions) {
+      if (run.cancelled) break;
+      try {
+        await probeDirection(a, b);
+      } catch (error) {
+        if (error.authenticationRequired) {
+          onAuthenticationRequired();
+        }
+        run.errors++;
+        if (error.authenticationRequired || [401, 403, 429].includes(error.status)) {
+          run.cancelled = true;
+          run.failure = error.status === 429 ? "Probe rate limit reached"
+            : error.status === 403 ? "Permission denied" : "Authentication required";
+        }
+      }
+      run.done++;
+      if (state.open) showBulkProgress(`Testing ${run.done}/${run.total} directions…`);
+    }
+    if (state.bulk === run) {
+      state.bulk = null;
+      if (state.open) {
+        showBulkProgress(`${run.cancelled ? "Stopped" : "Finished"}: ${run.done}/${run.total} directions${run.errors ? `, ${run.errors} could not be tested` : ""}${run.failure ? ` (${run.failure})` : ""}.`);
+        render();
+      }
     }
   }
 
@@ -423,27 +492,16 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
   }
 
   async function testDirection(a, b) {
-    if (!state.open || state.activeTest) return;
+    if (!state.open || state.activeTest || state.bulk) return;
     const generation = state.requestGeneration;
     const selection = state.pair ? pairKey(...state.pair) : "";
     const isSelected = () => state.open && generation === state.requestGeneration &&
       state.pair && pairKey(...state.pair) === selection;
     state.activeTest = directedKey(a, b);
     feedback.textContent = `Checking ${names(a)} → ${names(b)}…`;
-    renderInspector();
+    render();
     try {
-      const measured = await request("/executors/peer-link", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source_executor_id: a, destination_executor_id: b }),
-      });
-      // The POST is authoritative. Older GETs cannot overwrite its evidence.
-      const key = directedKey(a, b);
-      state.revisions.set(key, (state.revisions.get(key) || 0) + 1);
-      state.results.delete(key);
-      state.results.set(key, measured);
-      if (state.results.size > MAX_RESULTS) state.results.delete(state.results.keys().next().value);
-      if (state.open) render();
+      await probeDirection(a, b);
       if (isSelected()) feedback.textContent = `Measurement finished for ${names(a)} → ${names(b)}.`;
     } catch (error) {
       if (error.authenticationRequired) onAuthenticationRequired();
@@ -464,6 +522,7 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
       next.map((item) => item.executor_id).join("|");
     state.rows = next;
     if (changedIds) {
+      stopBulk();
       if (state.mode === "all" && next.length > SMALL_LIMIT) state.mode = "grid";
       const ids = new Set(next.map((item) => item.executor_id));
       if (!ids.has(state.focusId) && state.mode === "focus") state.mode = next.length <= SMALL_LIMIT ? "all" : "grid";
@@ -509,6 +568,7 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
   }
 
   function close() {
+    stopBulk();
     state.open = false;
     panel.classList.remove("topology-open");
     root.hidden = true;
@@ -521,6 +581,7 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
   function bind() {
     back.addEventListener("click", () => { close(); onClose(); });
     reset.addEventListener("click", () => {
+      stopBulk();
       feedback.textContent = "";
       state.mode = state.rows.length <= SMALL_LIMIT ? "all" : "grid";
       state.focusId = "";
@@ -532,6 +593,7 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
     destination.addEventListener("change", () => { choosePair.disabled = source.value === destination.value; });
     choosePair.addEventListener("click", () => {
       if (!source.value || !destination.value || source.value === destination.value) return;
+      stopBulk();
       feedback.textContent = "";
       state.mode = "pair";
       state.pair = [source.value, destination.value];
@@ -540,6 +602,10 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
       void fetchVisible();
     });
     refresh.addEventListener("click", () => void fetchVisible(true));
+    testAll.addEventListener("click", () => {
+      if (state.bulk) stopBulk();
+      else void testVisibleLinks();
+    });
     window.addEventListener("resize", () => {
       if (state.open && state.mode === "focus") {
         state.centerOnDraw = true;

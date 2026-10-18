@@ -411,6 +411,113 @@ def test_direction_expires_even_if_pair_summary_does_not_change(
     h.assert_clean_browser()
 
 
+@pytest.mark.parametrize(
+    ("denied_status", "reason"),
+    [(403, "Permission denied"), (429, "Probe rate limit reached")],
+)
+def test_bulk_stops_on_permission_denied_or_rate_limit(
+    browser_harness: BrowserHarness,
+    denied_status: int,
+    reason: str,
+):
+    h = browser_harness
+    h.login()
+    open_graph(h, 5)
+    page = h.page
+    attempts = []
+
+    def deny(route: Route):
+        attempts.append(route.request.method)
+        route.fulfill(
+            status=denied_status,
+            content_type="application/json",
+            body=json.dumps({"ok": False, "message": reason}),
+        )
+
+    page.route("**/api/ui/executors/peer-link", deny)
+    page.locator("#topology-test-all").click()
+    expect(page.locator("#topology-test-progress")).to_have_text(
+        f"Stopped: 1/20 directions, 1 could not be tested ({reason})."
+    )
+    assert attempts == ["POST"]
+    expect(page.locator("#topology-test-all")).to_be_enabled()
+    # Chromium logs intentional 4xx API responses as console resource errors.
+    assert all(
+        f"status of {denied_status}" in line for line in h.console_errors
+    )
+    h.console_errors.clear()
+    h.assert_clean_browser()
+
+
+def test_bulk_tests_every_visible_direction_only_after_explicit_click(
+    browser_harness: BrowserHarness,
+):
+    h = browser_harness
+    h.login()
+    rows, _, methods = open_graph(h, 5)
+    page = h.page
+    bulk = page.locator("#topology-test-all")
+    expect(bulk).to_be_enabled()
+    assert methods.count("POST") == 0
+    bulk.click()
+    expect(page.locator("#topology-test-progress")).to_have_text(
+        "Finished: 20/20 directions.", timeout=30000
+    )
+    assert methods.count("POST") == 20
+    expect(bulk).to_have_text("Test all links")
+    expect(page.locator("#topology-edges g[role=button]")).to_have_count(10)
+    page.locator("#topology-source").select_option(rows[0]["executor_id"])
+    page.locator("#topology-destination").select_option(rows[1]["executor_id"])
+    page.locator("#topology-show-pair").click()
+    expect(page.locator("#topology-edges g[role=button]")).to_have_count(1)
+    assert methods.count("POST") == 20
+    h.assert_clean_browser()
+
+
+def test_bulk_stop_and_sparse_fleet_only_tests_visible_links(
+    browser_harness: BrowserHarness,
+):
+    h = browser_harness
+    h.login()
+    _rows, _, methods = open_graph(h, 15)
+    page = h.page
+    bulk = page.locator("#topology-test-all")
+    expect(bulk).to_be_disabled()
+    assert methods.count("POST") == 0
+    page.locator("#topology-nodes .topology-node").first.click()
+    expect(page.locator("#topology-edges g[role=button]")).to_have_count(14)
+    expect(bulk).to_be_enabled()
+    page.evaluate("""() => {
+      const original = window.fetch.bind(window);
+      window.__bulkHeld = {pending: false, release: null};
+      window.fetch = async (...args) => {
+        if (new URL(String(args[0]), location.href).pathname.endsWith('/executors/peer-link') &&
+            String(args[1]?.method || 'GET').toUpperCase() === 'POST') {
+          const response = await original(...args);
+          window.__bulkHeld.pending = true;
+          return new Promise(resolve => {
+            window.__bulkHeld.release = () => resolve(response);
+          });
+        }
+        return original(...args);
+      };
+    }""")
+    bulk.click()
+    page.wait_for_function("window.__bulkHeld?.pending === true")
+    expect(bulk).to_have_text("Stop")
+    bulk.click()
+    expect(bulk).to_have_text("Stopping…")
+    page.evaluate("window.__bulkHeld.release()")
+    expect(page.locator("#topology-test-progress")).to_have_text(
+        "Stopped: 1/28 directions."
+    )
+    assert methods.count("POST") == 1
+    page.locator("#topology-reset").click()
+    expect(bulk).to_be_disabled()
+    assert methods.count("POST") == 1
+    h.assert_clean_browser()
+
+
 def test_many_nodes_default_sparse_focus_pair_keyboard_and_mobile(
     browser_harness: BrowserHarness,
 ):
