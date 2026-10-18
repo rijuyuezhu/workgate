@@ -4,7 +4,7 @@ import workgate.executor.shell as shell
 from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings
 from workgate.executor.runtime import build_executor_runtime
-from workgate.executor.terminal import tmux as tmux_helper
+from workgate.platform.posix import tmux as tmux_helper
 
 
 def test_detached_tmux_env_removes_enclosing_client_markers(

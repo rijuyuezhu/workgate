@@ -16,6 +16,8 @@ from pathlib import Path
 
 from .. import __version__
 from ..config.executor import ExecutorConfig
+from ..platform.posix.tmux import resolve_tmux
+from ..platform.terminal import supports_raw_terminal_host
 from ..schemas.result_models.session import (
     SessionCapabilitiesEnvironment,
     SessionEnvironment,
@@ -27,7 +29,6 @@ from ..schemas.result_models.session import (
 from ..version import package_version
 from .browser import browser_capability_available
 from .gui import gui_capability_available
-from .terminal.tmux import resolve_tmux
 
 _PROBE_TIMEOUT_S = 1.5
 _CACHE_TTL_S = 5.0
@@ -242,7 +243,7 @@ def collect_executor_session_environment(
         runtime=_runtime_environment(),
         tools=tools,
         capabilities=SessionCapabilitiesEnvironment(
-            raw_pty=tools.tmux.available,
+            raw_pty=supports_raw_terminal_host() and tools.tmux.available,
             browser=browser_capability_available(),
             gui=gui_capability_available(),
         ),
