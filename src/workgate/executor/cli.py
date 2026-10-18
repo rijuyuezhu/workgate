@@ -13,6 +13,7 @@ from ..config.settings import initialize_runtime_directories
 from ..persistence import FileStateStore
 from ..protocol.errors import ProtocolErrorCode
 from ..protocol.executor import ExecutorRuntimeOwnership
+from ..supervisor import supervise_cli_role
 from .control_client import ExecutorControlClient, ExecutorControlError
 from .pairing import (
     ExecutorPairingClient,
@@ -144,6 +145,8 @@ def _connect_from_args(args: argparse.Namespace) -> None:
 
 
 def _run_from_args(args: argparse.Namespace) -> None:
+    if supervise_cli_role("executor", args):
+        return
     _run_async(_run(args))
 
 

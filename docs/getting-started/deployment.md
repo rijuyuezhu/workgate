@@ -44,3 +44,6 @@ workgate executor run
 
 Use [Colocated local mode](colocate.md) when you want one command to manage
 both processes. For another machine, follow [Executors](../guides/executors.md).
+Each long-running CLI command has one stable Parent and one runtime Child;
+`colocate` has one Parent and two Children. Service managers supervise the
+Parent, whose shutdown also stops its Children.

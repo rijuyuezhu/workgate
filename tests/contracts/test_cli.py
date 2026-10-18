@@ -587,7 +587,6 @@ def test_main_dispatches_to_argparse_handler(monkeypatch):
         calls.append(args.mode)
 
     monkeypatch.setattr(server_cli, "run_control_from_args", run_from_args)
-
     cli.main(["control", "--mode", "stdio"])
 
     assert calls == ["stdio"]

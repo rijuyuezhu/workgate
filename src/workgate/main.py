@@ -1,6 +1,7 @@
 """Compose and dispatch the workgate command-line interface."""
 
 import argparse
+import sys
 
 from .agent_bridge.cli import register_mcp_cli
 from .colocate.cli import register_colocate_cli
@@ -40,7 +41,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> None:
     """Parse the complete argparse command tree and invoke its handler."""
-    args = _build_parser().parse_args(argv)
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    args = _build_parser().parse_args(arguments)
+    # Domain CLI handlers choose their own supervisor; main only composes.
+    args._workgate_argv = arguments
     args.handler(args)
 
 

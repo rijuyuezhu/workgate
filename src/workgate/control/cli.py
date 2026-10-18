@@ -10,6 +10,7 @@ from ..app_paths import ensure_private_directory
 from ..config.cli import register_config_and_setting_args, settings_from_args
 from ..config.control import CONTROL_SETTING_NAMES
 from ..config.settings import configure_settings
+from ..supervisor import supervise_cli_role
 from ..utils.private_files import private_file_lock
 from .http.app import run_http
 from .mcp.app import run_mcp
@@ -67,6 +68,8 @@ def _dispatch_control(settings: Any) -> None:
 
 def run_control_from_args(args: argparse.Namespace) -> None:
     """Load production control settings without acquiring executor machine authority."""
+    if supervise_cli_role("control", args):
+        return
     settings = settings_from_args(args)
     ensure_private_directory(settings.state_dir)
     ensure_private_directory(settings.data_dir)
