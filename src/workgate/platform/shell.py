@@ -30,19 +30,25 @@ def shell_argv(
     """Build argv without invoking another shell to quote a command."""
     if host_os(system) is HostOS.WINDOWS:
         if _windows_shell(shell) == "cmd":
-            return [shell, "/D", "/S", "/C", command]
+            # cmd inherits the OEM code page; Executor pipes are UTF-8.
+            return [shell, "/D", "/S", "/C", "chcp 65001 >NUL & " + command]
         # PowerShell -Command otherwise folds native child exit codes to 1.
         check_exit = (
             "; if (-not $?) { "
             "if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }; exit 1 "
             "}"
         )
+        # Windows PowerShell 5.1 pipes use the system code page by default.
+        # WorkGate decodes command output as UTF-8 on every platform.
+        utf8_output = (
+            "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); "
+        )
         return [
             shell,
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            command + check_exit,
+            utf8_output + command + check_exit,
         ]
     return [shell, "-lc" if login else "-c", command]
 

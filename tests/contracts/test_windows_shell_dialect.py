@@ -27,6 +27,7 @@ def test_windows_shell_argv_uses_native_flags() -> None:
         "-NoProfile",
         "-NonInteractive",
         "-Command",
+        "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); "
         "Write-Output 'ok'; if (-not $?) { "
         "if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }; exit 1 }",
     ]
@@ -35,7 +36,7 @@ def test_windows_shell_argv_uses_native_flags() -> None:
         "/D",
         "/S",
         "/C",
-        "echo ok",
+        "chcp 65001 >NUL & echo ok",
     ]
 
 
