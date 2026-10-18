@@ -10,6 +10,7 @@ import sys
 from functools import lru_cache
 
 from ...config.executor import ExecutorConfig
+from ...platform.host import HostOS, host_os
 from ..tool_session.store import ToolSessionStore
 from .base import GuiBackend, GuiService
 
@@ -19,12 +20,12 @@ def _backend_for_platform(
     niri_native_keyboard_enabled: bool = False,
     niri_native_pointer_enabled: bool = False,
 ) -> GuiBackend:
-    system = platform.system()
-    if system == "Darwin":
+    system = host_os()
+    if system is HostOS.MACOS:
         from .macos import MacOSGuiBackend
 
         return MacOSGuiBackend()
-    if system == "Linux":
+    if system is HostOS.LINUX:
         from .linux import LinuxGuiBackend
 
         return LinuxGuiBackend(
@@ -128,10 +129,10 @@ def _linux_desktop_environment_fallback() -> tuple[
 
 def gui_capability_available() -> bool:
     """Return whether this executor can expose the native desktop GUI backend."""
-    system = platform.system()
-    if system == "Darwin":
+    system = host_os()
+    if system is HostOS.MACOS:
         return _macos_gui_capability_available()
-    if system != "Linux":
+    if system is not HostOS.LINUX:
         return False
     display = os.environ.get("DISPLAY")
     wayland_display = os.environ.get("WAYLAND_DISPLAY")
