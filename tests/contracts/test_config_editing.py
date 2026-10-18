@@ -8,6 +8,8 @@ import pytest
 
 from workgate.config.editing import ConfigEditError, revision_for, save_config
 from workgate.config.inspection import (
+    Role,
+    StartupConfigInspection,
     capture_startup_config,
     current_startup_config,
 )
@@ -15,7 +17,7 @@ from workgate.config.roles import CONTROL_SETTING_NAMES, EXECUTOR_SETTING_NAMES
 from workgate.config.settings import load_settings
 
 
-def snapshot(path: Path, role="control"):
+def snapshot(path: Path, role: Role = "control") -> StartupConfigInspection:
     selected = (
         CONTROL_SETTING_NAMES if role == "control" else EXECUTOR_SETTING_NAMES
     )
@@ -26,6 +28,12 @@ def snapshot(path: Path, role="control"):
     return result
 
 
+def current_revision(snapshot: StartupConfigInspection) -> str:
+    revision = revision_for(snapshot)
+    assert revision is not None
+    return revision
+
+
 def set_field(name, value):
     return {name: {"op": "set", "value": value}}
 
@@ -34,7 +42,7 @@ def test_yaml_comment_backup_private_file_and_no_implicit_apply(tmp_path):
     path = tmp_path / "control.yaml"
     path.write_text("# Keep this comment\nport: 8765 # service port\n")
     old = snapshot(path)
-    rev = revision_for(old)
+    rev = current_revision(old)
     new = save_config(old, revision=rev, changes=set_field("port", 8877))
     assert new != rev
     assert "# Keep this comment" in path.read_text()
@@ -58,7 +66,7 @@ def test_json_role_fields_preserve_foreign_fields_and_unset(tmp_path):
     path.write_text(json.dumps({"max_jobs": 19, "port": 8765}))
     snap = snapshot(path, "executor")
     new = save_config(
-        snap, revision=revision_for(snap), changes=set_field("max_jobs", 32)
+        snap, revision=current_revision(snap), changes=set_field("max_jobs", 32)
     )
     saved = json.loads(path.read_text())
     assert saved == {"max_jobs": 32, "port": 8765}
@@ -71,7 +79,7 @@ def test_stale_revision_refused_no_overwrite(tmp_path):
     path = tmp_path / "control.yaml"
     path.write_text("port: 8001\n")
     snap = snapshot(path)
-    version = revision_for(snap)
+    version = current_revision(snap)
     path.write_text("port: 8002\n")
     with pytest.raises(ConfigEditError, match="RevisionConflict"):
         save_config(snap, revision=version, changes=set_field("port", 8003))
@@ -85,7 +93,9 @@ def test_invalid_values_never_written(tmp_path, value):
     snap = snapshot(path)
     with pytest.raises(ConfigEditError, match="InvalidConfigValue"):
         save_config(
-            snap, revision=revision_for(snap), changes=set_field("port", value)
+            snap,
+            revision=current_revision(snap),
+            changes=set_field("port", value),
         )
     assert path.read_text() == "port: 8001\n"
     assert not (tmp_path / "control.yaml.bak").exists()
@@ -98,13 +108,13 @@ def test_role_ownership_and_unsafe_path(tmp_path):
     with pytest.raises(ConfigEditError, match="InvalidEdit"):
         save_config(
             snap,
-            revision=revision_for(snap),
+            revision=current_revision(snap),
             changes=set_field("default_workdir", "/tmp"),
         )
     with pytest.raises(ConfigEditError, match="InvalidConfigValue"):
         save_config(
             snap,
-            revision=revision_for(snap),
+            revision=current_revision(snap),
             changes=set_field("state_dir", "relative/path"),
         )
     link = tmp_path / "alias.yaml"
@@ -115,7 +125,7 @@ def test_role_ownership_and_unsafe_path(tmp_path):
     with pytest.raises(ConfigEditError, match="UnsafeConfigPath"):
         save_config(
             replace(snap, config_path=link),
-            revision=revision_for(snap),
+            revision=current_revision(snap),
             changes=set_field("port", 9000),
         )
     path.chmod(0o666)
@@ -135,7 +145,9 @@ def test_atomic_write_error_does_not_corrupt_file(tmp_path, monkeypatch):
     )
     with pytest.raises(ConfigEditError, match="ConfigWriteFailed"):
         save_config(
-            snap, revision=revision_for(snap), changes=set_field("max_jobs", 42)
+            snap,
+            revision=current_revision(snap),
+            changes=set_field("max_jobs", 42),
         )
     assert json.loads(path.read_text()) == {"max_jobs": 31}
 
@@ -146,7 +158,7 @@ def test_concurrent_writers_one_wins(tmp_path):
     path = tmp_path / "control.yaml"
     path.write_text("port: 8001\n")
     snap = snapshot(path)
-    version = revision_for(snap)
+    version = current_revision(snap)
 
     def write(port):
         try:
@@ -184,7 +196,7 @@ def test_duplicate_yaml_key_falls_back_to_valid_mapping(tmp_path):
     snap = snapshot(path)
     save_config(
         snap,
-        revision=revision_for(snap),
+        revision=current_revision(snap),
         changes=set_field("log_level", "error"),
     )
     assert yaml.safe_load(path.read_text())["log_level"] == "error"

@@ -4,6 +4,7 @@ import argparse
 
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import CallToolResult
 
 from workgate.config.inspection import capture_startup_config
 from workgate.config.roles import CONTROL_SETTING_NAMES
@@ -24,11 +25,20 @@ async def test_authorized_model_tools_edit_selected_control_file(tmp_path):
     )
     mcp = build_mcp()
     listed = {tool.name: tool for tool in await mcp.list_tools()}
-    assert listed["config_inspect"].annotations.read_only_hint is True
-    assert listed["config_save"].annotations.read_only_hint is False
+    inspection_annotations = listed["config_inspect"].annotations
+    save_annotations = listed["config_save"].annotations
+    assert (
+        inspection_annotations is not None
+        and inspection_annotations.read_only_hint is True
+    )
+    assert (
+        save_annotations is not None
+        and save_annotations.read_only_hint is False
+    )
     token = bind_oauth_claims({"scope": default_scope()})
     try:
         inspected = await mcp.call_tool("config_inspect", {})
+        assert isinstance(inspected, CallToolResult)
         data = inspected.structured_content
         assert isinstance(data, dict)
         assert data["role"] == "control"
@@ -40,6 +50,8 @@ async def test_authorized_model_tools_edit_selected_control_file(tmp_path):
                 "changes": {"port": {"op": "set", "value": 9123}},
             },
         )
+        assert isinstance(saved, CallToolResult)
+        assert isinstance(saved.structured_content, dict)
         assert saved.structured_content["revision"] != revision
         assert "port: 9123" in file.read_text()
     finally:
