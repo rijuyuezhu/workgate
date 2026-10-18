@@ -70,4 +70,7 @@ Native security tests must cover ownership, inheritance, handle identity,
 junctions/reparse points, sharing violations, replace/rollback, and archive
 extraction. POSIX O_NOFOLLOW fallbacks elsewhere also require native Windows
 handle implementations; neither a pre-open symlink check nor mode bits provide
-equivalent security. No native Windows host has been validated yet.
+equivalent security. A native Windows 3.14 smoke now runs on the DOM
+Windows host through WSL interop, validating roaming/local paths, one-byte
+cross-process locks and fail-closed ACL guards. It does **not** validate
+ACL or reparse-point implementations, which remain blockers.
