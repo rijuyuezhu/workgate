@@ -3388,8 +3388,8 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 #session-skills .executor-manage-row > div:first-of-type { flex: 1 1 auto; }
 #session-skills .executor-row-mark { flex: 0 0 26px; }
 @media (max-width: 780px) {
-  .task-sessions-main .session-detail-heading { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
-  .task-sessions-main .session-detail-executor-identity { width: 100%; max-width: 100%; padding: 0; border-right: 0; }
+  .task-sessions-main .session-detail-heading { display: grid; grid-template-columns: minmax(135px, .46fr) minmax(0, 1fr); gap: 10px; align-items: start; }
+  .task-sessions-main .session-detail-executor-identity { max-width: 100%; width: 100%; min-width: 0; padding-right: 10px; border-right: 1px solid var(--line); }
   .task-sessions-main .session-detail-executor-identity strong { overflow-wrap: anywhere; word-break: normal; font-size: 13px; }
   #session-skills .executor-manage-row { padding: 9px 11px; }
 }

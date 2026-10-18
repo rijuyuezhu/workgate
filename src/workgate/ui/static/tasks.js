@@ -465,7 +465,7 @@ export function createTasksController({
     const createdNotice = document.getElementById("session-detail-task-created");
     createdNotice.hidden = !session?.task_created;
     createdNotice.textContent = session?.task_created
-      ? `Task ${session.task_id} created automatically` : "";
+      ? `Created Task ${session.task_id} automatically` : "";
     syncSessionSkills(session);
     onSessionChange(session && { ...session, availability: sessionAvailability(session) });
     document.querySelector(".task-sessions-main").classList.toggle("has-session", Boolean(session));
