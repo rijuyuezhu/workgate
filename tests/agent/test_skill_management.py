@@ -253,3 +253,160 @@ def test_delete_disabled_skill_rolls_back_on_manifest_write_error(
     assert not json.loads((base / "config.json").read_text())["skills"][
         "disabled"
     ]
+
+
+def test_windows_managed_skill_get_and_list_use_native_verified_handles(
+    tmp_path, monkeypatch
+):
+    import os
+
+    import workgate.agent_bridge.skill_management as skill_module
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import security
+
+    base = tmp_path / "agent"
+    created = manage_skill(base, "create", name="notes", content=ENTRY)["skill"]
+    monkeypatch.setattr(skill_module, "host_os", lambda: HostOS.WINDOWS)
+    paths = []
+
+    def native_open(path):
+        paths.append(path)
+        return os.open(path, os.O_RDONLY)
+
+    def native_list(root, *, recursive, max_entries):
+        assert not recursive
+        if root.name == "skills":
+            return ([(root / "notes", "dir", None, 1_750_000_000.0)], False)
+        assert root.name == "notes"
+        return ([(root / "SKILL.md", "file", 20, 1_750_000_000.0)], False)
+
+    monkeypatch.setattr(security, "open_regular_file_no_follow", native_open)
+    monkeypatch.setattr(skill_module, "list_tree", native_list)
+    row = manage_skill(base, "get", name="notes")["skill"]
+    assert row["content"] == ENTRY
+    assert row["revision"] == created["revision"]
+    assert manage_skill(base, "list")["skills"][0]["name"] == "notes"
+    assert paths == [base / "skills/notes/SKILL.md"] * 2
+
+
+def test_windows_managed_skill_native_backend_crud_and_staging(
+    tmp_path, monkeypatch
+):
+    import os
+    import shutil
+
+    import workgate.agent_bridge.skill_management as skill_module
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import archive, security
+
+    monkeypatch.setattr(skill_module, "host_os", lambda: HostOS.WINDOWS)
+    calls = []
+
+    def native_list(path, *, recursive, max_entries):
+        entries = path.rglob("*") if recursive else path.iterdir()
+        rows = []
+        for item in entries:
+            kind = (
+                "link"
+                if item.is_symlink()
+                else "dir"
+                if item.is_dir()
+                else "file"
+            )
+            rows.append((item, kind, None, 0.0))
+        return rows[:max_entries], len(rows) > max_entries
+
+    def native_move(source, destination, *, require_private_source=False):
+        calls.append(("move", source.name, require_private_source))
+        source.rename(destination)
+
+    def native_remove(path, *, require_private_root=False):
+        calls.append(("delete", path.name, require_private_root))
+        shutil.rmtree(path)
+
+    def native_read(path):
+        return os.open(path, os.O_RDONLY)
+
+    def native_manifest(path, *, create):
+        assert not create
+        return os.open(path, os.O_RDONLY)
+
+    def native_delete(path):
+        path.unlink()
+
+    monkeypatch.setattr(skill_module, "list_tree", native_list)
+    monkeypatch.setattr(archive, "move_directory", native_move)
+    monkeypatch.setattr(archive, "remove_directory_tree", native_remove)
+    monkeypatch.setattr(security, "open_regular_file_no_follow", native_read)
+    monkeypatch.setattr(security, "open_private_file", native_manifest)
+    monkeypatch.setattr(security, "delete_private_file", native_delete)
+
+    base = tmp_path / "agent"
+    created = manage_skill(base, "create", name="notes", content=ENTRY)["skill"]
+    assert created["content"] == ENTRY and created["enabled"]
+    assert ("move", "notes", True) not in calls
+    assert ("move", created["name"], True) not in calls
+    assert any(item[0] == "move" and item[2] is True for item in calls)
+
+    staged = manage_skill(base, "stage", name="other", content=ENTRY)["skill"]
+    assert staged["enabled"] is False
+    assert (base / "skills/other/SKILL.md").exists()
+    updated = manage_skill(
+        base,
+        "update",
+        name="notes",
+        content=ENTRY + "New!\\n",
+        expected_revision=created["revision"],
+    )["skill"]
+    disabled = manage_skill(
+        base,
+        "disable",
+        name="notes",
+        expected_revision=updated["revision"],
+    )["skill"]
+    assert not disabled["enabled"]
+    enabled = manage_skill(
+        base,
+        "enable",
+        name="notes",
+        expected_revision=disabled["revision"],
+    )["skill"]
+    assert enabled["enabled"]
+    assert (
+        manage_skill(
+            base,
+            "delete",
+            name="notes",
+            expected_revision=enabled["revision"],
+        )["deleted"]
+        == "notes"
+    )
+    assert not (base / "skills/notes").exists()
+    assert (base / "skills/other/SKILL.md").exists()
+    assert any(item[0] == "delete" and item[2] is True for item in calls)
+
+
+def test_windows_agent_manifest_load_uses_native_private_nofollow_open(
+    tmp_path, monkeypatch
+):
+    import os
+
+    import workgate.agent_bridge.state as manifest_state
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import security
+
+    base = tmp_path / "agent"
+    created = manage_skill(base, "create", name="notes", content=ENTRY)["skill"]
+    assert created["name"] == "notes"
+    (base / "config.json").write_text('{"version": 1}', encoding="utf-8")
+    seen = []
+
+    def native_private_open(path, *, create):
+        seen.append((path, create))
+        return os.open(path, os.O_RDONLY)
+
+    monkeypatch.setattr(manifest_state, "host_os", lambda: HostOS.WINDOWS)
+    monkeypatch.setattr(security, "open_private_file", native_private_open)
+    loaded = load_agent_manifest(base)
+    assert loaded.status == "loaded"
+    assert seen == [(base / "config.json", False)]

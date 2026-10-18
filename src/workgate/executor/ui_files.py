@@ -302,6 +302,10 @@ class UiFilesService:
 
     @staticmethod
     def _entry_kind(path: Path) -> str:
+        if host_os() is HostOS.WINDOWS and (
+            path.is_symlink() or path.is_junction()
+        ):
+            return "link"
         mode = path.lstat().st_mode
         if stat.S_ISLNK(mode):
             return "link"
@@ -465,9 +469,9 @@ class UiFilesService:
 
                     move_directory(source, destination)
                 else:
-                    raise NotImplementedError(
-                        "Windows symlink move requires native link handling"
-                    )
+                    from ..platform.windows.security import move_workspace_link
+
+                    move_workspace_link(source, destination)
             else:
                 try:
                     os.rename(source, destination)

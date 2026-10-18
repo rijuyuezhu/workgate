@@ -9,6 +9,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from ..app_paths import ensure_private_directory
+from ..platform.host import HostOS, host_os
 from .models import AgentBridgeManifest, LoadedAgentManifest, SkillSource
 
 
@@ -148,7 +149,15 @@ def load_agent_manifest(
             config_path=config_path, status="missing_config"
         )
     try:
-        raw = json.loads(config_path.read_text(encoding="utf-8"))
+        if host_os() is HostOS.WINDOWS:
+            from ..platform.windows.security import open_private_file
+
+            with os.fdopen(
+                open_private_file(config_path, create=False), "rb"
+            ) as reader:
+                raw = json.loads(reader.read().decode("utf-8"))
+        else:
+            raw = json.loads(config_path.read_text(encoding="utf-8"))
         data = AgentBridgeManifest.model_validate(raw)
     except ValidationError as exc:
         return LoadedAgentManifest(

@@ -753,3 +753,62 @@ def copy_workspace_file(source: Path, destination: Path) -> None:
             except BaseException:
                 delete_open_workspace_file(writer.fileno())
                 raise
+
+
+def _open_reparse_entry(kernel: Any, parent: int, name: str) -> int:
+    """Open only a link/junction object by NT handle, never follow its target."""
+    rights = 0x80 | 0x10000
+    try:
+        handle = open_child(parent, name, access=rights, directory=True)
+    except NotADirectoryError:
+        handle = open_child(parent, name, access=rights, directory=False)
+    try:
+        get_tag = _api(
+            kernel,
+            "GetFileInformationByHandleEx",
+            wintypes.BOOL,
+            wintypes.HANDLE,
+            ctypes.c_int,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+        )
+        tag = _AttributeTag()
+        if not get_tag(
+            handle, _ATTR_TAG_INFO, ctypes.byref(tag), ctypes.sizeof(tag)
+        ):
+            _fail()
+        if not tag.FileAttributes & _REPARSE:
+            raise PermissionError(
+                "Windows link changed to a normal object before mutation"
+            )
+        return handle
+    except BaseException:
+        close_handle(kernel, handle)
+        raise
+
+
+def delete_workspace_link(path: Path) -> None:
+    """Remove only a verified Windows reparse entry; leave its target untouched."""
+    kernel, _advapi = _libs()
+    with pinned_parent(path) as parent:
+        handle = _open_reparse_entry(kernel, parent, path.name)
+        try:
+            delete_child(handle)
+        finally:
+            close_handle(kernel, handle)
+
+
+def move_workspace_link(source: Path, destination: Path) -> None:
+    """Rename a verified link/junction without following or clobbering targets."""
+    kernel, _advapi = _libs()
+    with (
+        pinned_parent(source) as source_parent,
+        pinned_parent(destination) as destination_parent,
+    ):
+        handle = _open_reparse_entry(kernel, source_parent, source.name)
+        try:
+            rename_child(
+                handle, destination_parent, destination.name, replace=False
+            )
+        finally:
+            close_handle(kernel, handle)

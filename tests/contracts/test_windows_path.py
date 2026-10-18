@@ -197,3 +197,37 @@ def test_windows_scratch_prune_deletes_only_through_verified_private_handle(
     )
     assert seen == [abandoned]
     assert not abandoned.exists()
+
+
+def test_windows_directory_listing_dispatches_through_verified_native_handle(
+    monkeypatch, tmp_path
+):
+    import workgate.executor.files as files_module
+    from workgate.executor.files import FilesConfig
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import archive
+
+    root = tmp_path / "directory"
+    root.mkdir()
+    (root / "plain.txt").write_bytes(b"foo")
+    monkeypatch.setattr(files_module, "host_os", lambda: HostOS.WINDOWS)
+    calls = []
+
+    def secure_listing(base, *, recursive, max_entries):
+        calls.append((base, recursive, max_entries))
+        return ([(base / "plain.txt", "file", 3, 1_750_000_000.0)], False)
+
+    monkeypatch.setattr(archive, "list_tree", secure_listing)
+    config = FilesConfig(
+        default_workdir=tmp_path,
+        max_directory_entries=500,
+        max_file_read_bytes=100000,
+        max_file_write_bytes=100000,
+    )
+    result = files_module._list_files_local(
+        config, None, str(root), recursive=True, max_entries=9
+    )
+    assert calls == [(root, True, 9)]
+    assert result.count == 1
+    assert result.entries[0].type == "file"
+    assert result.entries[0].size == 3

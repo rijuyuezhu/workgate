@@ -10,13 +10,15 @@ import os
 import shutil
 import stat
 import uuid
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
 
 from ..app_paths import ensure_private_directory
+from ..platform.host import HostOS, host_os
+from ..platform.windows.archive import list_tree
 from ..utils.private_files import atomic_write_private_text, private_file_lock
 from .models import AgentBridgeManifest
 from .skills import validate_skill_name
@@ -85,9 +87,13 @@ def _safe_root(config_dir: Path, directory: str) -> Path:
     current = root
     for part in relative.parts:
         current = current / part
-        if current.is_symlink():
-            raise ValueError("Symlink in managed Skill directory")
-    if root.is_symlink():
+        if current.is_symlink() or (
+            host_os() is HostOS.WINDOWS and current.is_junction()
+        ):
+            raise ValueError("Symlink or junction in managed Skill directory")
+    if root.is_symlink() or (
+        host_os() is HostOS.WINDOWS and root.is_junction()
+    ):
         raise ValueError("Symlinked Agent configuration directory")
     return current
 
@@ -97,7 +103,11 @@ def _skill_path(root: Path, name: str, *, required: bool) -> Path:
     if len(name.encode("utf-8")) > 255:
         raise ValueError("Skill name exceeds filesystem limit")
     path = root / name
-    if path.is_symlink() or (path.exists() and not path.is_dir()):
+    if (
+        path.is_symlink()
+        or (host_os() is HostOS.WINDOWS and path.is_junction())
+        or (path.exists() and not path.is_dir())
+    ):
         raise ValueError("Managed Skill must be a non-symlink directory")
     if required and not path.is_dir():
         raise ValueError("Unknown Executor-managed Skill")
@@ -106,15 +116,20 @@ def _skill_path(root: Path, name: str, *, required: bool) -> Path:
 
 def _entry(skill_path: Path) -> bytes:
     path = skill_path / "SKILL.md"
-    if path.is_symlink() or not path.is_file():
-        raise ValueError("Skill entry must be a regular SKILL.md")
-    if path.stat().st_size > MAX_SKILL_CONTENT_BYTES:
-        raise ValueError("SKILL.md exceeds 128 KiB")
-    # O_NOFOLLOW closes a symlink race for the entry file on POSIX.
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.security import open_regular_file_no_follow
+
+        fd = open_regular_file_no_follow(path)
+    else:
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("Skill entry must be a regular SKILL.md")
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode):
             raise ValueError("Skill entry must be a regular file")
+        if metadata.st_size > MAX_SKILL_CONTENT_BYTES:
+            raise ValueError("SKILL.md exceeds 128 KiB")
         content = os.read(fd, MAX_SKILL_CONTENT_BYTES + 1)
     finally:
         os.close(fd)
@@ -124,6 +139,15 @@ def _entry(skill_path: Path) -> bytes:
 
 def _no_links(root: Path) -> None:
     """Reject symlinks and unusual nodes before destructive subtree operations."""
+    if host_os() is HostOS.WINDOWS:
+        entries, truncated = list_tree(root, recursive=True, max_entries=2049)
+        if truncated or len(entries) > 2048:
+            raise ValueError(
+                "Managed Skill directory is too large to delete safely"
+            )
+        if any(kind == "link" for _, kind, *_ in entries):
+            raise ValueError("Managed Skill contains a symlink or junction")
+        return
     checked = 0
     for here, dirs, files in os.walk(root, followlinks=False):
         for name in [*dirs, *files]:
@@ -138,6 +162,43 @@ def _no_links(root: Path) -> None:
                 raise ValueError(
                     "Managed Skill contains a symlink or special file"
                 )
+
+
+def _read_manifest_text(path: Path) -> str:
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.security import open_private_file
+
+        with os.fdopen(open_private_file(path, create=False), "rb") as handle:
+            return handle.read().decode("utf-8")
+    return path.read_text(encoding="utf-8")
+
+
+def _remove_manifest(path: Path) -> None:
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.security import delete_private_file
+
+        with suppress(FileNotFoundError):
+            delete_private_file(path)
+    else:
+        path.unlink(missing_ok=True)
+
+
+def _move_skill_directory(source: Path, destination: Path) -> None:
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.archive import move_directory
+
+        move_directory(source, destination, require_private_source=True)
+    else:
+        source.rename(destination)
+
+
+def _remove_skill_directory(path: Path) -> None:
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.archive import remove_directory_tree
+
+        remove_directory_tree(path, require_private_root=True)
+    else:
+        shutil.rmtree(path)
 
 
 def manage_skill(
@@ -195,9 +256,10 @@ def manage_skill(
             "name": name,
             "max_bytes": MAX_SKILL_CONTENT_BYTES,
         }
-
     config_dir = Path(config_dir)
-    if config_dir.is_symlink():
+    if config_dir.is_symlink() or (
+        host_os() is HostOS.WINDOWS and config_dir.is_junction()
+    ):
         raise ValueError("Symlinked Agent configuration directory")
     writing = action in {
         "create",
@@ -208,7 +270,8 @@ def manage_skill(
         "delete",
     }
     if writing:
-        config_dir.mkdir(parents=True, exist_ok=True)
+        if host_os() is not HostOS.WINDOWS:
+            config_dir.mkdir(parents=True, exist_ok=True)
         ensure_private_directory(config_dir)
     # Use the same private manifest lock as MCP management, so editing one
     # manifest cannot silently erase concurrent Skill toggle updates.
@@ -235,21 +298,41 @@ def manage_skill(
                 "configured_enabled": configured,
                 "revision": _revision(data, configured),
                 "content": data.decode("utf-8"),
-                "has_assets": any(
-                    child.name != "SKILL.md" for child in folder.iterdir()
+                "has_assets": (
+                    any(
+                        child.name != "SKILL.md"
+                        for child, *_ in list_tree(
+                            folder, recursive=False, max_entries=2
+                        )[0]
+                    )
+                    if host_os() is HostOS.WINDOWS
+                    else any(
+                        child.name != "SKILL.md" for child in folder.iterdir()
+                    )
                 ),
             }
 
         if action == "list":
             if not root.is_dir():
                 return {"skills": []}
-            entries = sorted(
-                p.name
-                for p in root.iterdir()
-                if p.is_dir()
-                and not p.is_symlink()
-                and not p.name.startswith(".")
-            )
+            native_truncated = False
+            if host_os() is HostOS.WINDOWS:
+                listed, native_truncated = list_tree(
+                    root, recursive=False, max_entries=MAX_MANAGED_SKILLS + 1
+                )
+                entries = sorted(
+                    p.name
+                    for p, kind, *_ in listed
+                    if kind == "dir" and not p.name.startswith(".")
+                )
+            else:
+                entries = sorted(
+                    p.name
+                    for p in root.iterdir()
+                    if p.is_dir()
+                    and not p.is_symlink()
+                    and not p.name.startswith(".")
+                )
             selected = []
             invalid = 0
             for skill_name in entries[:MAX_MANAGED_SKILLS]:
@@ -266,7 +349,9 @@ def manage_skill(
             return {
                 "skills": selected,
                 "invalid_entries": invalid,
-                "truncated": len(entries) > MAX_MANAGED_SKILLS,
+                "truncated": (
+                    native_truncated or len(entries) > MAX_MANAGED_SKILLS
+                ),
             }
         assert name is not None
         folder = _skill_path(
@@ -281,19 +366,35 @@ def manage_skill(
                 raise ValueError(
                     "Target Skill has an existing disabled setting"
                 )
-            if (
-                root.is_dir()
-                and sum(1 for p in root.iterdir() if p.is_dir())
-                >= MAX_MANAGED_SKILLS
-            ):
-                raise ValueError("Managed Skill limit reached")
-            root.mkdir(parents=True, exist_ok=True, mode=0o700)
+            if root.is_dir():
+                if host_os() is HostOS.WINDOWS:
+                    items, truncated = list_tree(
+                        root,
+                        recursive=False,
+                        max_entries=MAX_MANAGED_SKILLS + 1,
+                    )
+                    capacity_reached = (
+                        truncated
+                        or sum(1 for _, kind, *_ in items if kind == "dir")
+                        >= MAX_MANAGED_SKILLS
+                    )
+                else:
+                    capacity_reached = (
+                        sum(1 for p in root.iterdir() if p.is_dir())
+                        >= MAX_MANAGED_SKILLS
+                    )
+                if capacity_reached:
+                    raise ValueError("Managed Skill limit reached")
+            if host_os() is HostOS.WINDOWS:
+                ensure_private_directory(root)
+            else:
+                root.mkdir(parents=True, exist_ok=True, mode=0o700)
             # A staged Skill is disabled *before* its directory appears. A
             # concurrent scanner cannot activate half of a cross-owner move.
             previous_manifest: str | None = None
             if action == "stage":
                 previous_manifest = (
-                    loaded.config_path.read_text(encoding="utf-8")
+                    _read_manifest_text(loaded.config_path)
                     if loaded.config_path.exists()
                     else None
                 )
@@ -313,15 +414,18 @@ def manage_skill(
                 disabled.add(name)
             staged = root / (".creating-" + uuid.uuid4().hex)
             try:
-                staged.mkdir(mode=0o700)
+                if host_os() is HostOS.WINDOWS:
+                    ensure_private_directory(staged)
+                else:
+                    staged.mkdir(mode=0o700)
                 atomic_write_private_text(staged / "SKILL.md", content or "")
-                staged.rename(folder)
+                _move_skill_directory(staged, folder)
             except BaseException:
                 # If staging never became visible, roll the disabled marker
                 # back. Never enable a directory which may be left behind.
                 if not folder.exists():
                     if previous_manifest is None:
-                        loaded.config_path.unlink(missing_ok=True)
+                        _remove_manifest(loaded.config_path)
                     else:
                         atomic_write_private_text(
                             loaded.config_path, previous_manifest
@@ -329,7 +433,7 @@ def manage_skill(
                 raise
             finally:
                 if staged.exists():
-                    shutil.rmtree(staged)
+                    _remove_skill_directory(staged)
             return {"action": action, "skill": row(name)}
         previous = row(name)
         if previous["revision"] != expected_revision:
@@ -343,7 +447,7 @@ def manage_skill(
             else:
                 disabled.discard(name)
             raw: dict[str, Any] = (
-                json.loads(loaded.config_path.read_text(encoding="utf-8"))
+                json.loads(_read_manifest_text(loaded.config_path))
                 if loaded.config_path.exists()
                 else {"version": 1}
             )
@@ -355,20 +459,28 @@ def manage_skill(
             )
         else:
             _no_links(folder)
-            if entry_only and any(
-                child.name != "SKILL.md" for child in folder.iterdir()
-            ):
-                raise ValueError(
-                    "Skill contains auxiliary files; move the complete bundle separately"
-                )
+            if entry_only:
+                if host_os() is HostOS.WINDOWS:
+                    assets_exist = any(
+                        child.name != "SKILL.md"
+                        for child, *_ in list_tree(
+                            folder, recursive=False, max_entries=2
+                        )[0]
+                    )
+                else:
+                    assets_exist = any(
+                        child.name != "SKILL.md" for child in folder.iterdir()
+                    )
+                if assets_exist:
+                    raise ValueError(
+                        "Skill contains auxiliary files; move the complete bundle separately"
+                    )
             tombstone = root / (".deleting-" + uuid.uuid4().hex)
-            folder.rename(tombstone)
+            _move_skill_directory(folder, tombstone)
             try:
                 if name in disabled:
                     disabled.remove(name)
-                    raw = json.loads(
-                        loaded.config_path.read_text(encoding="utf-8")
-                    )
+                    raw = json.loads(_read_manifest_text(loaded.config_path))
                     raw.setdefault("skills", {})["disabled"] = sorted(disabled)
                     AgentBridgeManifest.model_validate(raw)
                     atomic_write_private_text(
@@ -376,8 +488,8 @@ def manage_skill(
                         json.dumps(raw, ensure_ascii=False, indent=2) + "\n",
                     )
             except BaseException:
-                tombstone.rename(folder)
+                _move_skill_directory(tombstone, folder)
                 raise
-            shutil.rmtree(tombstone)
+            _remove_skill_directory(tombstone)
             return {"action": action, "deleted": name}
         return {"action": action, "skill": row(name)}

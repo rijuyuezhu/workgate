@@ -21,6 +21,7 @@ from workgate.platform.path import path_lock_key, remote_path_name
 from workgate.platform.windows.archive import (
     extract_archive,
     inspect_archive,
+    list_tree,
     move_directory,
     pack_directory,
     remove_directory_tree,
@@ -39,6 +40,8 @@ from workgate.platform.windows.security import (
     delete_open_workspace_file,
     delete_private_file,
     delete_workspace_file,
+    delete_workspace_link,
+    move_workspace_link,
     open_regular_file_no_follow,
     replace_workspace_file,
 )
@@ -94,6 +97,22 @@ def main() -> int:
         assert ensure_private_directory(private) == private
         nested = ensure_private_directory(private / "new" / "nested")
         assert nested.is_dir()
+        skill_root = ensure_private_directory(private / "skills")
+        skill_folder = ensure_private_directory(skill_root / "notes")
+        skill_entry = skill_folder / "SKILL.md"
+        write_private_bytes(skill_entry, b"# Native safe skill")
+        with os.fdopen(
+            open_regular_file_no_follow(skill_entry), "rb"
+        ) as handle:
+            assert handle.read() == b"# Native safe skill"
+        from workgate.platform.windows.security import open_private_file
+
+        skill_manifest = private / "config.json"
+        write_private_bytes(skill_manifest, b'{"version": 1}')
+        with os.fdopen(
+            open_private_file(skill_manifest, create=False), "rb"
+        ) as handle:
+            assert handle.read() == b'{"version": 1}'
         secret = private / "secret"
         scratch = ensure_private_directory(private / "scratch")
         write_private_bytes(scratch / "orphan.tmp", b"unclaimed")
@@ -266,6 +285,26 @@ def main() -> int:
         (directory_to_remove / "child.txt").write_bytes(b"recursive")
         remove_directory_tree(directory_to_remove)
         assert not directory_to_remove.exists()
+        external = Path(tmp) / "external-preserved"
+        external.mkdir()
+        (external / "keep.txt").write_bytes(b"keep")
+        mixed = Path(tmp) / "recursive-with-link"
+        mixed.mkdir()
+        (mixed / "ordinary.txt").write_bytes(b"normal")
+        inner_link = mixed / "child-junction"
+        made = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(inner_link), str(external)],
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+        if made.returncode != 0:
+            raise AssertionError(
+                "Junction unavailable for recursive deletion test"
+            )
+        remove_directory_tree(mixed)
+        assert not mixed.exists()
+        assert (external / "keep.txt").read_bytes() == b"keep"
         public = Path(tmp) / "source.txt"
         public.write_bytes(b"public")
         with os.fdopen(open_regular_file_no_follow(public), "rb") as handle:
@@ -338,6 +377,87 @@ def main() -> int:
             junction.rmdir()
         else:
             print("WARNING: junction test unavailable")
+    with tempfile.TemporaryDirectory(prefix="workgate-native-link-") as temp:
+        root = Path(temp)
+        target = root / "target"
+        target.mkdir()
+        (target / "preserved.txt").write_bytes(b"retain")
+        link = root / "source-junction"
+        made = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+        if made.returncode != 0:
+            raise AssertionError(
+                "Windows junction creation unavailable for link test"
+            )
+        moved = root / "renamed-junction"
+        move_workspace_link(link, moved)
+        assert not link.exists() and moved.is_junction()
+        assert (target / "preserved.txt").read_bytes() == b"retain"
+        try:
+            delete_workspace_link(target / "preserved.txt")
+        except PermissionError:
+            pass
+        else:
+            raise AssertionError("Windows link delete accepted a normal file")
+        delete_workspace_link(moved)
+        assert not moved.exists()
+        assert (target / "preserved.txt").read_bytes() == b"retain"
+
+    with tempfile.TemporaryDirectory(prefix="workgate-native-list-") as temp:
+        root = Path(temp)
+        (root / "sub").mkdir()
+        (root / "sub" / "text.txt").write_bytes(b"abcd")
+        (root / "top.txt").write_bytes(b"top")
+        entries, truncated = list_tree(root, recursive=True, max_entries=10)
+        assert not truncated
+        assert {str(path.relative_to(root)) for path, *_ in entries} == {
+            "sub",
+            str(Path("sub") / "text.txt"),
+            "top.txt",
+        }
+        assert (
+            next(
+                size for path, _, size, _ in entries if path.name == "text.txt"
+            )
+            == 4
+        )
+        assert all(mtime > 1_700_000_000 for _, _, _, mtime in entries)
+        subset, truncated = list_tree(root, recursive=True, max_entries=1)
+        assert truncated and len(subset) == 1
+        empty, truncated = list_tree(root, recursive=False, max_entries=0)
+        assert truncated and not empty
+        junction = root / "unsafe-junction"
+        created = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(junction), str(root)],
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+        if created.returncode != 0:
+            raise AssertionError(
+                "Windows junction creation unavailable for list test"
+            )
+        linked_entries, linked_truncated = list_tree(
+            root, recursive=True, max_entries=20
+        )
+        assert not linked_truncated
+        assert (
+            next(kind for path, kind, *_ in linked_entries if path == junction)
+            == "link"
+        )
+        assert not any(junction in path.parents for path, *_ in linked_entries)
+        try:
+            list_tree(junction, recursive=True, max_entries=20)
+        except PermissionError:
+            pass
+        else:
+            raise AssertionError("Windows directory listing entered junction")
+        junction.rmdir()
+
     with tempfile.TemporaryDirectory(prefix="workgate-archive-pack-") as temp:
         import tarfile
 

@@ -170,7 +170,7 @@ def _list_files_local(
 ) -> ListFilesOutput:
     """List files from explicit Files policy and an optional local binding."""
     base = _resolve_file_path(config, binding, path, must_exist=True)
-    if not base.is_dir():
+    if host_os() is not HostOS.WINDOWS and not base.is_dir():
         raise NotADirectoryError(str(base))
     filelist: list[EntryInfo] = []
     max_directory_entries = config.max_directory_entries
@@ -179,6 +179,27 @@ def _list_files_local(
             f"max_entries must be between 0 and {max_directory_entries}"
         )
     limit = min(max_entries, max_directory_entries)
+    if host_os() is HostOS.WINDOWS:
+        from ..platform.windows.archive import list_tree
+
+        items, truncated = list_tree(
+            base, recursive=recursive, max_entries=limit
+        )
+        return ListFilesOutput(
+            limit_count=limit,
+            count=len(items),
+            is_truncated=truncated,
+            entries=[
+                EntryInfo(
+                    path=_display_file(config, binding, item),
+                    type=kind,
+                    size=size,
+                    modified=modified,
+                    target=None,
+                )
+                for item, kind, size, modified in items
+            ],
+        )
     iterator = base.rglob("*") if recursive else base.iterdir()
 
     truncated = False
@@ -1194,10 +1215,11 @@ def _delete_file_or_dir_local(
             from ..platform.windows.security import delete_workspace_file
 
             if p.is_symlink() or p.is_junction():
-                raise NotImplementedError(
-                    "Windows symlink/junction deletion requires native link unlink"
-                )
-            if p.is_dir():
+                from ..platform.windows.security import delete_workspace_link
+
+                delete_workspace_link(p)
+                deleted = "link"
+            elif p.is_dir():
                 verify_directory(p)
                 if not recursive:
                     raise IsADirectoryError(

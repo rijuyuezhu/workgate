@@ -3,6 +3,7 @@
 import ctypes
 import os
 import tarfile
+from collections.abc import Iterator
 from contextlib import ExitStack
 from ctypes import wintypes
 from pathlib import Path
@@ -44,8 +45,8 @@ class _IdBothDirectoryInfo(ctypes.Structure):
     ]
 
 
-def _children(kernel: Any, handle: int) -> list[str]:
-    """Read native FileIdBothDirectoryInfo entries from a directory handle."""
+def _children(kernel: Any, handle: int) -> Iterator[str]:
+    """Yield names from a verified directory handle without unbounded buffering."""
     list_names = _api(
         kernel,
         "GetFileInformationByHandleEx",
@@ -55,7 +56,6 @@ def _children(kernel: Any, handle: int) -> list[str]:
         wintypes.LPVOID,
         wintypes.DWORD,
     )
-    entries: list[str] = []
     buffer = ctypes.create_string_buffer(65536)
     while True:
         if not list_names(
@@ -84,7 +84,7 @@ def _children(kernel: Any, handle: int) -> list[str]:
                 "utf-16-le", errors="strict"
             )
             if name not in {".", ".."}:
-                entries.append(name)
+                yield name
             if next_offset == 0:
                 break
             if (
@@ -93,7 +93,6 @@ def _children(kernel: Any, handle: int) -> list[str]:
             ):
                 raise OSError("Malformed Windows directory entry offset")
             offset += next_offset
-    return entries
 
 
 def pack_directory(
@@ -261,7 +260,9 @@ def move_directory(
             else:
                 close_handle(kernel, occupied)
                 raise FileExistsError(str(destination))
-            rename_child(handle, destination_parent, destination.name)
+            rename_child(
+                handle, destination_parent, destination.name, replace=False
+            )
         finally:
             close_handle(kernel, handle)
 
@@ -290,12 +291,26 @@ def remove_directory_tree(
                     kernel, advapi, root, _sid(kernel, advapi), directory=True
                 )
 
+            def remove_link(directory: int, name: str) -> None:
+                from .security import _open_reparse_entry
+
+                handle = _open_reparse_entry(kernel, directory, name)
+                try:
+                    delete_child(handle)
+                finally:
+                    close_handle(kernel, handle)
+
             def remove_children(directory: int) -> None:
                 for name in _children(kernel, directory):
                     try:
                         child = _open_directory(
                             kernel, directory, name, delete=True
                         )
+                    except PermissionError:
+                        # The opened child was a reparse directory (or has
+                        # insufficient permissions). Reopen only its own
+                        # metadata and refuse if it is not really a reparse.
+                        remove_link(directory, name)
                     except NotADirectoryError:
                         child = open_child(
                             directory,
@@ -305,9 +320,14 @@ def remove_directory_tree(
                         )
                         try:
                             _verify_regular_handle(kernel, child)
-                            delete_child(child)
-                        finally:
+                        except PermissionError:
                             close_handle(kernel, child)
+                            remove_link(directory, name)
+                        else:
+                            try:
+                                delete_child(child)
+                            finally:
+                                close_handle(kernel, child)
                     else:
                         try:
                             remove_children(child)
@@ -442,7 +462,7 @@ def is_empty_directory(path: Path) -> bool:
     with pinned_parent(path) as parent:
         handle = _open_directory(kernel, parent, path.name)
         try:
-            return not _children(kernel, handle)
+            return next(_children(kernel, handle), None) is None
         finally:
             close_handle(kernel, handle)
 
@@ -464,3 +484,103 @@ def verify_directory(path: Path, *, require_private: bool = False) -> None:
                 )
         finally:
             close_handle(kernel, handle)
+
+
+class _WinFileTime(ctypes.Structure):
+    _fields_ = [
+        ("low", wintypes.DWORD),
+        ("high", wintypes.DWORD),
+    ]
+
+
+class _HandleFileInformation(ctypes.Structure):
+    _fields_ = [
+        ("attributes", wintypes.DWORD),
+        ("created", _WinFileTime),
+        ("accessed", _WinFileTime),
+        ("modified", _WinFileTime),
+        ("volume", wintypes.DWORD),
+        ("size_high", wintypes.DWORD),
+        ("size_low", wintypes.DWORD),
+        ("links", wintypes.DWORD),
+        ("index_high", wintypes.DWORD),
+        ("index_low", wintypes.DWORD),
+    ]
+
+
+def list_tree(
+    path: Path, *, recursive: bool, max_entries: int
+) -> tuple[list[tuple[Path, str, int | None, float]], bool]:
+    """List native directory entries through verified handles; never follow links.
+
+    Fail closed when a reparse entry is encountered rather than dereference it.
+    Limit total entries and stream native enumeration to bound memory usage.
+    """
+    if max_entries < 0:
+        raise ValueError("max_entries must be nonnegative")
+    kernel = cast(Any, ctypes).WinDLL("kernel32", use_last_error=True)
+    info_fn = _api(
+        kernel,
+        "GetFileInformationByHandle",
+        wintypes.BOOL,
+        wintypes.HANDLE,
+        ctypes.POINTER(_HandleFileInformation),
+    )
+    output: list[tuple[Path, str, int | None, float]] = []
+    truncated = False
+
+    def walk(handle: int, root: Path) -> None:
+        nonlocal truncated
+        for name in _children(kernel, handle):
+            if len(output) >= max_entries:
+                truncated = True
+                return
+            child_path = root / name
+            try:
+                child = open_child(
+                    handle,
+                    name,
+                    access=_READ_ATTRIBUTES | _LIST_DIRECTORY,
+                    directory=True,
+                )
+            except NotADirectoryError:
+                child = open_child(
+                    handle, name, access=_READ_ATTRIBUTES, directory=False
+                )
+            try:
+                info = _HandleFileInformation()
+                if not info_fn(child, ctypes.byref(info)):
+                    code = cast(Any, ctypes).get_last_error()
+                    raise OSError(code, cast(Any, ctypes).FormatError(code))
+                if info.attributes & 0x400:
+                    # Describe the link object only; never visit its target.
+                    kind = "link"
+                elif info.attributes & 0x10:
+                    _assert_directory(kernel, child)
+                    kind = "dir"
+                else:
+                    _verify_regular_handle(kernel, child)
+                    kind = "file"
+                timestamp = (
+                    int(info.modified.high) << 32 | int(info.modified.low)
+                ) / 10_000_000 - 11_644_473_600
+                size = (
+                    int(info.size_high) << 32 | int(info.size_low)
+                    if kind in {"file", "link"}
+                    else None
+                )
+                output.append((child_path, kind, size, timestamp))
+                if recursive and kind == "dir":
+                    walk(child, child_path)
+                    if truncated:
+                        return
+            finally:
+                close_handle(kernel, child)
+
+    with pinned_parent(path) as parent:
+        root = _open_directory(kernel, parent, path.name)
+        try:
+            walk(root, path)
+        finally:
+            close_handle(kernel, root)
+    return output, truncated

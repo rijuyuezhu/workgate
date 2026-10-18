@@ -153,18 +153,32 @@ touching session/patch state or invoking git apply. Git's path-based patch
 publication cannot yet be restricted by the native NT verified-handle API;
 the POSIX Git patch path is unchanged.
 
-**Still blocked (Draft #395):** Windows directory/link copy, symlink or
-junction delete/move, recursive ordinary filesystem enumeration, and
-Skill/MCP file operations still require native handle-safe semantics.
-Native apply_patch will remain fail-closed until its actual file mutation
-and rollback guarantees can be implemented and verified.
-Independent untrusted writers can still race final target replacement between
-an identity check and rename; further native concurrent-mutation and
-crash/restart testing must establish the intended guarantee before this
-is declared fully safe.
-Native concurrent replacement and sharing races, process-level crash/restart
-recovery, and cross-executor copy/download/upload integration also require
-further testing. The tests in this slice exercise native Win32 filesystem
-primitives; full Windows Executor/Control integration and CI/release support
-remain separate work (#390–#392). Do not merge this Draft until the full
-acceptance scope is verified.
+### Native directory listing, links, and managed Skills
+
+Windows directory listings now stream FileIdBothDirectoryInfo from verified
+directory handles and read file sizes/timestamps from each opened child handle.
+Recursive traversal is bounded. Junctions and symlinks appear as link objects
+but are never dereferenced or recursed into; directly opening one as a directory
+fails. Windows link move/unlink validates the reparse attribute from the opened
+source handle, and recursive deletion unlinks reparse children without touching
+their targets. Native tests confirm these behaviors including a directory
+containing a junction to an external target.
+
+Agent Bridge manifest and managed SKILL.md reads use protected/native no-follow
+handles. Managed Skill CRUD keeps the existing revision/CAS and lock/manifest
+transaction state machine, replacing filesystem-sensitive operations with
+private directory creation, NT handle-relative rename and recursive cleanup.
+The independent scripts/validation/windows-skill-smoke.py runs native
+create/get/list/stage/update/enable/disable/delete, injected staging rollback,
+stale revisions, entry-only asset rejection, and junction refusal on Windows
+Python 3.14 with pydantic and pyyaml installed.
+
+**Still blocked (Draft #395):** Windows directory copy and symlink/link copy
+are deliberately unsupported until they can preserve ACLs and roll back with
+no-follow handles. Native apply_patch also remains fail-closed pending a
+handle-safe publisher that does not delegate unchecked path mutations to git.
+Other MCP/Skill *discovery* and cross-scope filesystem scanning paths, concurrent
+untrusted replacement/share violations, process crash/restart recovery and
+full cross-executor Windows integration still require review and tests.
+Do not merge until the remaining acceptance checks converge. Windows
+CI/release integration belongs to #391.

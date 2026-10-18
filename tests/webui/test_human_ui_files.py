@@ -1016,3 +1016,51 @@ def test_browser_windows_content_hashes_same_native_handle_not_path(
         == hashlib.sha256(b"verified content\n").hexdigest()
     )
     assert opened.count("document.txt") >= 2
+
+
+def test_windows_webui_link_move_and_delete_keep_original_target(
+    tmp_path, monkeypatch
+):
+    import workgate.executor.files as files_module
+    from workgate.platform.host import HostOS
+    from workgate.platform.windows import security
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "target.txt"
+    target.write_bytes(b"preserved")
+    link = workspace / "link.txt"
+    link.symlink_to(target)
+    client = _client(monkeypatch, workspace)
+    monkeypatch.setattr(
+        executor_ui_files_module, "host_os", lambda: HostOS.WINDOWS
+    )
+    monkeypatch.setattr(files_module, "host_os", lambda: HostOS.WINDOWS)
+    actions = []
+
+    def native_move(source, destination):
+        assert source.is_symlink()
+        actions.append("move")
+        source.rename(destination)
+
+    def native_delete(path):
+        assert path.is_symlink()
+        actions.append("delete")
+        path.unlink()
+
+    monkeypatch.setattr(security, "move_workspace_link", native_move)
+    monkeypatch.setattr(security, "delete_workspace_link", native_delete)
+    moved = client.post(
+        "/api/ui/files/move",
+        json={"path": "link.txt", "destination": "renamed-link.txt"},
+    )
+    assert moved.status_code == 200
+    assert (workspace / "renamed-link.txt").is_symlink()
+    deleted = client.post(
+        "/api/ui/files/delete",
+        json={"path": "renamed-link.txt", "recursive": False},
+    )
+    assert deleted.status_code == 200
+    assert actions == ["move", "delete"]
+    assert not (workspace / "renamed-link.txt").exists()
+    assert target.read_bytes() == b"preserved"
