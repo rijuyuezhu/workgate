@@ -1,6 +1,7 @@
 """Launch ordinary Control and Executor CLI processes on one machine."""
 
 import argparse
+import os
 import signal
 import subprocess
 import sys
@@ -50,6 +51,17 @@ def run_colocate(args: argparse.Namespace) -> None:
         executor.extend(("--config", args.executor_config))
 
     children: list[subprocess.Popen[Any]] = []
+    if os.name == "nt":
+        from ..platform.windows_job import WindowsJob
+
+        job = WindowsJob()
+        try:
+            job.attach_current_process()
+        except BaseException:
+            job.close()
+            raise
+        # Keep the Job handle alive until this launcher process exits:
+        # its OS-close then kills any still-running role descendants.
     previous_sigterm = signal.getsignal(signal.SIGTERM)
 
     def terminate(_signal: int, _frame: Any) -> None:
@@ -57,8 +69,15 @@ def run_colocate(args: argparse.Namespace) -> None:
 
     signal.signal(signal.SIGTERM, terminate)
     try:
-        children.append(subprocess.Popen(_child_command(*control)))
-        children.append(subprocess.Popen(_child_command(*executor)))
+        popen_options = (
+            {"creationflags": 0x08000000} if os.name == "nt" else {}
+        )  # CREATE_NO_WINDOW for native Windows service launch
+        children.append(
+            subprocess.Popen(_child_command(*control), **popen_options)
+        )
+        children.append(
+            subprocess.Popen(_child_command(*executor), **popen_options)
+        )
         while True:
             for child in children:
                 status = child.poll()

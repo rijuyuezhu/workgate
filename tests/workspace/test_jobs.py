@@ -3079,3 +3079,93 @@ def test_job_runner_argv_carries_executor_environment_policy(tmp_path):
 
     assert argv[argv.index("--blocked-env-name") + 1] == "EXACT_SECRET"
     assert argv[argv.index("--blocked-env-prefix") + 1] == "PRIVATE_"
+
+
+@pytest.mark.parametrize("assignment_fails", [False, True])
+def test_windows_durable_runner_requires_job_assignment_before_release(
+    tmp_path, monkeypatch, assignment_fails
+):
+    import io
+    import subprocess
+    import types
+
+    from workgate.platform import windows_job
+
+    command = tmp_path / "command.txt"
+    command.write_text("Write-Output 'safe'", encoding="utf-8")
+    log = tmp_path / "job.log"
+    status = tmp_path / "job.status.json"
+    events: list[str] = []
+
+    class FakeJob:
+        def attach_waiting_process(self, pid):
+            events.append(f"attach:{pid}")
+            if assignment_fails:
+                raise OSError("Job binding failed")
+
+        def close(self):
+            events.append("close")
+
+    class FakeStdin(io.BytesIO):
+        def write(self, payload):
+            events.append(f"release:{payload!r}")
+            return super().write(payload)
+
+    class FakeProcess:
+        pid = 8123
+
+        def __init__(self, argv, **kwargs):
+            assert "--shell" in argv and "powershell.exe" in argv
+            assert kwargs["creationflags"] == 0x08000000
+            assert kwargs["stdin"] == subprocess.PIPE
+            events.append("spawn")
+            self.stdin = FakeStdin()
+            self.stdout = io.BytesIO(b"Windows job output\n")
+            self.killed = False
+
+        def poll(self):
+            return -9 if self.killed else (None if assignment_fails else 7)
+
+        def kill(self):
+            self.killed = True
+            events.append("kill")
+
+        def wait(self, timeout=None):
+            return -9 if self.killed else 7
+
+    holder: list[FakeProcess] = []
+
+    def spawn(argv, **kwargs):
+        process = FakeProcess(argv, **kwargs)
+        holder.append(process)
+        return process
+
+    monkeypatch.setattr(job_runner, "os", types.SimpleNamespace(name="nt"))
+    monkeypatch.setattr(windows_job, "WindowsJob", FakeJob)
+    monkeypatch.setattr(job_runner.subprocess, "Popen", spawn)
+
+    args = SimpleNamespace(
+        command_file=str(command),
+        log_file=str(log),
+        status_file=str(status),
+        cwd=str(tmp_path),
+        shell="powershell.exe",
+        max_log_bytes=1024,
+    )
+    with pytest.raises(SystemExit) as outcome:
+        job_runner.run_job_runner_from_args(args)
+
+    payload = json.loads(status.read_text(encoding="utf-8"))
+    assert events.index("spawn") < events.index("attach:8123")
+    if assignment_fails:
+        assert outcome.value.code == 1
+        assert payload["exit_code"] is None
+        assert "Job binding failed" in payload["error"]
+        assert holder[0].killed
+        assert not any(event.startswith("release:") for event in events)
+    else:
+        assert outcome.value.code == 7
+        assert payload["exit_code"] == 7 and payload["error"] is None
+        assert log.read_text(encoding="utf-8") == "Windows job output\n"
+        assert "release:b'\\x01'" in events
+    assert "close" in events
