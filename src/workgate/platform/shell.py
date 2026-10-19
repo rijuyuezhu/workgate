@@ -29,6 +29,13 @@ def _windows_shell(shell: str) -> str:
     raise ValueError(f"unsupported Windows shell dialect: {shell}")
 
 
+def interactive_shell_argv(shell: str) -> list[str]:
+    """Start only supported interactive Windows ConPTY shell dialects."""
+    if _windows_shell(shell) != "powershell":
+        raise ValueError("interactive ConPTY requires PowerShell or pwsh")
+    return [shell, "-NoLogo", "-NoProfile"]
+
+
 def shell_argv(
     shell: str, command: str, *, login: bool = False, system: str | None = None
 ) -> list[str]:

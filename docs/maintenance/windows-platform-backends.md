@@ -31,7 +31,7 @@ Optional stronger patch isolation is tracked separately in
 [#402](https://github.com/rijuyuezhu/workgate/issues/402). It does not
 justify native NT abstractions in #383.
 
-## Shell support (in progress, #384)
+## Shell support (#384)
 
 Windows defaults to PowerShell; native source installations use their Python
 interpreter, while frozen builds require an external Python on PATH (or an
@@ -50,8 +50,23 @@ its native completion and forced-stop descendant cleanup are covered by smoke
 tests. Native colocate attaches its parent process to a kill-on-close Job
 before launching Control and Executor; role descendants and nested bounded
 command Job Objects are covered when colocate exits, including forced stop. Full tracked-job
-recovery and service-level lifecycle still require validation before #385
-can close.
+recovery and service-level lifecycle remain separate work in #387 and #388.
+
+## Interactive terminal (#386)
+
+On native Windows, pywinpty supplies ConPTY for interactive PowerShell/pwsh.
+Existing persistent-shell operations and the WebUI terminal bridge share one
+Executor-owned ConPTY registry. Multiple raw WebUI attachments receive
+independent bounded output streams; connecting a new client replays the
+bounded recent output tail, while disconnecting one preserves the shell.
+The terminal runtime closes its ConPTY children on Executor shutdown and
+native abrupt-owner termination was verified as well.
+
+Unlike detached POSIX tmux sessions, these PTYs are **not restart-durable**:
+after Executor restart, their persisted reservations are reconciled against
+an empty live registry. Interactive cmd.exe is intentionally not supported;
+non-interactive cmd.exe commands still use the #384 shell adapter. No separate
+WebSocket protocol or session manager is introduced.
 
 ## Native Windows functional checks
 
@@ -70,5 +85,16 @@ can close.
   background descendant cleanup and forced stop.
 - scripts/validation/windows-colocate-job-smoke.py: launcher/role/grandchild
   containment on normal and forced colocate termination.
+- scripts/validation/windows-conpty-owner-smoke.py: abrupt Executor-owner
+  termination does not leave an interactive PowerShell behind.
+- scripts/validation/windows-conpty-transport-smoke.py: native Windows
+  Control + Executor, real WebUI API and two authenticated WebSocket terminal
+  clients sharing one PowerShell, with independent detach and continued use.
+- scripts/validation/windows-conpty-smoke.py: native terminal resize,
+  independent subscribers, detachment and natural EOF.
+- scripts/validation/windows-conpty-shell-smoke.py: WorkGate persistent
+  shell CRUD, two concurrent WebUI bridges, session limit and restart.
+- scripts/validation/windows-conpty-descendant-smoke.py: child and descendant
+  cleanup when an interactive ConPTY closes.
 
 Linux/macOS tests cover the shared implementation.

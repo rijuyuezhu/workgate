@@ -1,9 +1,11 @@
 """Executor-owned lifecycle for raw terminal bridge sessions."""
 
+import asyncio
 from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 
+from ...platform.windows_conpty import ConPtyRegistry, use_conpty_registry
 from .bridge import TerminalBridgeRegistry, use_terminal_bridge_registry
 
 
@@ -14,6 +16,7 @@ class TerminalRuntime:
     bridges: TerminalBridgeRegistry = field(
         default_factory=TerminalBridgeRegistry
     )
+    conpty: ConPtyRegistry = field(default_factory=ConPtyRegistry)
     _started: bool = field(default=False, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
     _close_complete: bool = field(default=False, init=False, repr=False)
@@ -41,7 +44,10 @@ class TerminalRuntime:
         self._closed = True
         self._started = False
         self.stop_admission()
-        await self.bridges.aclose()
+        try:
+            await self.bridges.aclose()
+        finally:
+            await asyncio.to_thread(self.conpty.close)
         self._close_complete = True
 
     @asynccontextmanager
@@ -55,7 +61,10 @@ class TerminalRuntime:
 
 @contextmanager
 def use_terminal_runtime(runtime: TerminalRuntime) -> Generator[None]:
-    with use_terminal_bridge_registry(runtime.bridges):
+    with (
+        use_terminal_bridge_registry(runtime.bridges),
+        use_conpty_registry(runtime.conpty),
+    ):
         yield
 
 

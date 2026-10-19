@@ -14,6 +14,7 @@ from workgate.platform.terminal import (
     supports_raw_terminal_host,
     terminal_attachment_factory,
 )
+from workgate.platform.windows_conpty import WindowsConPtyAttach
 from workgate.protocol.terminal import TerminalBridgeUnsupportedError
 
 
@@ -40,13 +41,31 @@ def test_posix_capability_contracts(system):
     assert terminal_attachment_factory(system=system) is UnixTmuxAttach
 
 
-@pytest.mark.parametrize("system", ["Windows", "Haiku"])
-def test_unimplemented_backends_fail_closed(system):
-    assert not supports_raw_terminal_host(system=system)
-    with pytest.raises(RuntimeError, match="containment is unsupported"):
-        new_process_group_kwargs(system=system)
+def test_windows_terminal_factory_reuses_native_attachment(monkeypatch):
+    from workgate.platform import windows_conpty
+
+    monkeypatch.setattr(windows_conpty, "is_available", lambda: True)
+    assert supports_raw_terminal_host(system="Windows")
+    assert terminal_attachment_factory(system="Windows") is WindowsConPtyAttach
+
+
+def test_windows_terminal_capability_missing_dependency_fails_closed(
+    monkeypatch,
+):
+    from workgate.platform import windows_conpty
+
+    monkeypatch.setattr(windows_conpty, "is_available", lambda: False)
+    assert not supports_raw_terminal_host(system="Windows")
     with pytest.raises(TerminalBridgeUnsupportedError, match="unsupported"):
-        terminal_attachment_factory(system=system)
+        terminal_attachment_factory(system="Windows")
+
+
+def test_unsupported_host_fails_closed():
+    assert not supports_raw_terminal_host(system="Haiku")
+    with pytest.raises(RuntimeError, match="containment is unsupported"):
+        new_process_group_kwargs(system="Haiku")
+    with pytest.raises(TerminalBridgeUnsupportedError, match="unsupported"):
+        terminal_attachment_factory(system="Haiku")
 
 
 @pytest.mark.asyncio
