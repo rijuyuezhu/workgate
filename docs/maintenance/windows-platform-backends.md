@@ -48,8 +48,8 @@ timeout or cancellation closes the job and kills surviving descendants.
 The durable job runner also uses a gated Job Object for command attempts;
 its native completion and forced-stop descendant cleanup are covered by smoke
 tests. Native colocate attaches its parent process to a kill-on-close Job
-before launching Control and Executor; all role descendants are then covered
-when the colocate process exits, including forced stop. Full tracked-job
+before launching Control and Executor; role descendants and nested bounded
+command Job Objects are covered when colocate exits, including forced stop. Full tracked-job
 recovery and service-level lifecycle still require validation before #385
 can close.
 

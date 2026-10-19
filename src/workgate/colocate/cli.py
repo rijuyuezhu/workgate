@@ -55,7 +55,11 @@ def run_colocate(args: argparse.Namespace) -> None:
         from ..platform.windows_job import WindowsJob
 
         job = WindowsJob()
-        job.attach_current_process()
+        try:
+            job.attach_current_process()
+        except BaseException:
+            job.close()
+            raise
         # Keep the Job handle alive until this launcher process exits:
         # its OS-close then kills any still-running role descendants.
     previous_sigterm = signal.getsignal(signal.SIGTERM)

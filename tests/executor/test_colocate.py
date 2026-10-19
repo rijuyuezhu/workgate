@@ -240,9 +240,14 @@ def test_windows_colocate_refuses_to_spawn_if_job_bind_fails(monkeypatch):
 
     from workgate.platform import windows_job
 
+    closed = []
+
     class BrokenJob:
         def attach_current_process(self):
             raise OSError("Job assignment failed")
+
+        def close(self):
+            closed.append(True)
 
     monkeypatch.setattr(colocate, "os", types.SimpleNamespace(name="nt"))
     monkeypatch.setattr(windows_job, "WindowsJob", BrokenJob)
@@ -255,3 +260,4 @@ def test_windows_colocate_refuses_to_spawn_if_job_bind_fails(monkeypatch):
         colocate.run_colocate(
             argparse.Namespace(control_config=None, executor_config=None)
         )
+    assert closed == [True]
