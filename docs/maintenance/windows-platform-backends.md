@@ -45,8 +45,10 @@ Bounded Windows commands now use a native kill-on-close Job Object (#385).
 The existing bounded-runner waits for a one-byte startup gate until it is
 attached to that job. Any binding failure refuses execution; normal return,
 timeout or cancellation closes the job and kills surviving descendants.
-Tracked-job recovery, process-wide shutdown and colocate lifecycle integration
-are still part of #385 and must be verified before the issue is closed.
+The durable job runner also uses a gated Job Object for command attempts;
+its native completion and forced-stop descendant cleanup are covered by smoke
+tests. Full tracked-job recovery, process-wide shutdown and colocate lifecycle
+integration still require validation before #385 can close.
 
 ## Native Windows functional checks
 
@@ -58,5 +60,10 @@ are still part of #385 and must be verified before the issue is closed.
   diffs, and failed preflight.
 - scripts/validation/windows-shell-smoke.py: PowerShell/cmd Unicode, quoted
   paths, batch execution, exit status and environment filters.
+- scripts/validation/windows-job-smoke.py: Job Object descendant teardown.
+- scripts/validation/windows-contained-shell-smoke.py: bounded command timeout,
+  cancellation, startup gate and refused assignment.
+- scripts/validation/windows-durable-job-smoke.py: tracked runner log/status,
+  background descendant cleanup and forced stop.
 
 Linux/macOS tests cover the shared implementation.

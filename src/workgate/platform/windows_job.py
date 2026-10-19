@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 import ctypes
 import os
+import threading
 from ctypes import wintypes
 from typing import Any
 
@@ -66,6 +67,7 @@ class WindowsJob:
     """Own one kill-on-close job; no unsafe late-attach convenience methods."""
 
     _kernel: Any
+    _close_lock: threading.Lock
 
     def __init__(self) -> None:
         if os.name != "nt":
@@ -94,6 +96,7 @@ class WindowsJob:
         kernel.CloseHandle.argtypes = [wintypes.HANDLE]
         kernel.CloseHandle.restype = wintypes.BOOL
         self._kernel = kernel
+        self._close_lock = threading.Lock()
         handle = kernel.CreateJobObjectW(None, None)
         if not handle:
             raise _win_error()
@@ -128,11 +131,12 @@ class WindowsJob:
             self._kernel.CloseHandle(process)
 
     def close(self) -> None:
-        """Terminate all attached processes and descendants, even if detached."""
-        handle = self._handle
-        if handle:
+        """Terminate all attached processes and descendants exactly once."""
+        with self._close_lock:
+            handle = self._handle
             self._handle = None
-            self._kernel.CloseHandle(handle)
+            if handle:
+                self._kernel.CloseHandle(handle)
 
     def __enter__(self) -> WindowsJob:
         return self
