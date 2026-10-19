@@ -488,8 +488,10 @@ def test_colocate_shared_file_failure_rolls_back_both(tmp_path, failed_role):
             hashlib.sha256(config.read_bytes()).hexdigest()
         )
         (tmp_path / "control.restart").touch()
-        after = _lines(record, 6)
         statuses = _lines(tmp_path / "ready.log", 4)
+        # A failed Child may exit before logging its candidate startup.
+        # Both recovered roles, not a fixed candidate count, are the contract.
+        after = _lines(record, 5)
         assert statuses[2][2] in {"starting", "applying"}  # Not success.
         assert all(row[4] == "first" for row in after[-2:])
         assert {row[0] for row in after[-2:]} == {"control", "executor"}
