@@ -1,6 +1,7 @@
 """Native WorkGate persistent ConPTY ShellService + existing WebUI bridge."""
 
 import asyncio
+import base64
 import os
 import sys
 import tempfile
@@ -85,9 +86,7 @@ async def main() -> None:
                         item = await read_terminal_bridge_execute(
                             bridge["bridge_id"]
                         )
-                        buffer += __import__("base64").b64decode(
-                            item["data_b64"]
-                        )
+                        buffer += base64.b64decode(item["data_b64"])
                         if b"WIN_BRIDGE_386" in buffer:
                             break
                     assert b"WIN_BRIDGE_386" in buffer, repr(buffer[-2000:])
@@ -114,7 +113,7 @@ async def main() -> None:
                     item = await read_terminal_bridge_execute(
                         second["bridge_id"]
                     )
-                    buffer += __import__("base64").b64decode(item["data_b64"])
+                    buffer += base64.b64decode(item["data_b64"])
                     if b"WIN_STILL_LIVE" in buffer:
                         break
                 assert b"WIN_STILL_LIVE" in buffer, repr(buffer[-2000:])

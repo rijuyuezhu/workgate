@@ -74,6 +74,13 @@ async def send(
 ) -> SendPersistentShellInputOutput:
     session = conpty_registry().get(shell_id)
     await asyncio.to_thread(session.write, text + ("\r" if enter else ""))
+    audit(
+        "send_persistent_shell_input",
+        shell_id=shell_id,
+        bytes=len(text.encode("utf-8")),
+        enter=enter,
+        backend="conpty",
+    )
     return SendPersistentShellInputOutput(
         shell_id=shell_id, sent_bytes=len(text.encode("utf-8")), enter=enter
     )
@@ -83,6 +90,13 @@ async def resize(
     shell_id: str, cols: int, rows: int
 ) -> ResizePersistentShellOutput:
     await asyncio.to_thread(conpty_registry().get(shell_id).resize, cols, rows)
+    audit(
+        "resize_persistent_shell",
+        shell_id=shell_id,
+        cols=cols,
+        rows=rows,
+        backend="conpty",
+    )
     return ResizePersistentShellOutput(
         shell_id=shell_id, cols=cols, rows=rows, resized=True, backend="conpty"
     )
@@ -112,6 +126,9 @@ async def kill(
     success = await asyncio.to_thread(conpty_registry().kill, shell_id)
     if success:
         store.release_persistent_shell(shell_id)
+    audit(
+        "kill_persistent_shell", shell_id=shell_id, ok=success, backend="conpty"
+    )
     return KillPersistentShellOutput(
         shell_id=shell_id,
         killed=success,
