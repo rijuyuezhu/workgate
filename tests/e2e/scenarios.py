@@ -488,6 +488,51 @@ async def exercise_shell_tools(client: ToolClient, workspace: Path) -> None:
     assert "shells" in list_persistent_shells
 
 
+def _e2e_log_excerpt(path: Path, limit: int = 2048) -> str:
+    """Read only a bounded file tail for a test-failure diagnostic."""
+    try:
+        with path.open("rb") as stream:
+            stream.seek(0, 2)
+            stream.seek(max(0, stream.tell() - limit))
+            return stream.read(limit).decode("utf-8", errors="replace")
+    except OSError as exc:
+        return type(exc).__name__
+
+
+def _failed_job_evidence(workspace: Path, job_id: str) -> str:
+    """Include bounded durable attempt evidence in the E2E failure report."""
+    for state_dir in workspace.parent.glob("executor-state-*"):
+        store = state_dir / "jobs.json"
+        try:
+            rows = json.loads(store.read_text(encoding="utf-8")).get("jobs", [])
+        except OSError, ValueError, AttributeError:
+            continue
+        for row in rows:
+            if not isinstance(row, dict) or row.get("job_id") != job_id:
+                continue
+            evidence = [f"job={job_id} status={row.get('status')}"]
+            for field in ("status_path", "log_path"):
+                path = Path(str(row.get(field) or ""))
+                if not row.get(field):
+                    evidence.append(f"{field}: not recorded")
+                    continue
+                evidence.append(f"{field} ({path}): {_e2e_log_excerpt(path)}")
+                if field == "status_path":
+                    stderr_path = path.with_suffix(".runner-stderr.log")
+                    evidence.append(
+                        f"runner_stderr ({stderr_path}): "
+                        f"{_e2e_log_excerpt(stderr_path, 4096)}"
+                    )
+            for process_log in workspace.parent.glob(
+                "process-logs-*/executor-*.stderr.log"
+            ):
+                evidence.append(
+                    f"executor_stderr ({process_log}): {_e2e_log_excerpt(process_log)}"
+                )
+            return "\n".join(evidence)
+    return f"job={job_id}: no durable Job row found"
+
+
 async def exercise_session_bound_job_tools(
     client: ToolClient, workspace: Path
 ) -> None:
@@ -575,7 +620,9 @@ async def exercise_session_bound_job_tools(
         await asyncio.sleep(0.25)
     assert completed_poll is not None
     completed_output = completed_poll["outputs"][0]
-    assert completed_output["job"]["status"] == "succeeded"
+    assert completed_output["job"]["status"] == "succeeded", (
+        f"{completed_output!r}\n{_failed_job_evidence(workspace, completed_job_id)}"
+    )
     assert completed_output["job"]["exit_code"] == 0
     assert "persisted-job-output" in completed_output["output"]
 

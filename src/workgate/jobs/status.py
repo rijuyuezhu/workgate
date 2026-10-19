@@ -1,10 +1,12 @@
 """Process-neutral durable job status observation and reconciliation helpers."""
 
+import contextlib
 import json
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, cast
 
+from ..audit import audit
 from ..config.role_config import get_role_config
 from .reconciliation import (
     JobObservation,
@@ -35,7 +37,7 @@ def _read_status_path(raw_path: Any) -> JobStatusPayload | None:
         return None
     try:
         payload = json.loads(Path(str(raw_path)).read_text(encoding="utf-8"))
-    except OSError, json.JSONDecodeError:
+    except OSError, UnicodeError, json.JSONDecodeError:
         return None
     return (
         cast(JobStatusPayload, payload) if isinstance(payload, dict) else None
@@ -44,6 +46,25 @@ def _read_status_path(raw_path: Any) -> JobStatusPayload | None:
 
 def _read_status(job: Mapping[str, Any]) -> JobStatusPayload | None:
     return _read_status_path(job.get("status_path"))
+
+
+def _missing_receipt_reason(raw_path: Any) -> str:
+    """Classify a missing completion receipt without exposing its contents."""
+    if not raw_path:
+        return "no_path"
+    try:
+        raw = Path(str(raw_path)).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return "missing"
+    except OSError:
+        return "unreadable"
+    except UnicodeError:
+        return "invalid_encoding"
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return "invalid_json"
+    return "valid" if isinstance(payload, dict) else "invalid_shape"
 
 
 def _clear_pending_retry(job: MutableJobRow) -> None:
@@ -177,6 +198,21 @@ def _refresh_job_status(
             managed_liveness=managed_liveness,
         ),
     )
+    if (
+        kind == "shell"
+        and status != "lost"
+        and transition.updates.get("status") == "lost"
+    ):
+        # One observation per transition, not on every later poll. Audit
+        # failures must not interrupt the durable job-state transition.
+        with contextlib.suppress(Exception):
+            audit(
+                "job_completion_receipt_unavailable",
+                job_id=job.get("job_id"),
+                session=job.get("session_id"),
+                attempt=job.get("attempts"),
+                receipt_state=_missing_receipt_reason(job.get("status_path")),
+            )
     return _apply_job_transition(job, transition)
 
 
