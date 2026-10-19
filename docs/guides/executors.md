@@ -83,6 +83,20 @@ sessions; remaining active without a logged-in user depends on the host's
 systemd linger policy, which Workgate does not change. macOS uses a LaunchAgent
 which starts after that user logs in, rather than before login.
 
+Native Windows source installations use a Task Scheduler task for the current
+logged-in user (interactive, non-elevated). The task runs `pythonw.exe` directly
+so stopping it stops its owning process; Colocate also uses its existing
+Windows Job Object to terminate Control and Executor children. Services start
+when that user logs in, not as machine-wide Windows services before login.
+`workgate executor` supports the ordinary `install-service`, `start`, `stop`,
+`restart`, `status`, `logs`, and `uninstall-service` operations; Colocate offers
+`install-service`, `start-service`, `stop-service`, `restart-service`,
+`status-service`, and `uninstall-service`. Installation requires a paired
+executor and durable role configuration. Frozen Windows bundles are not yet
+service-capable; their windowless launcher/release integration is tracked
+under #391 rather than hiding a console executable behind an unmanaged
+PowerShell child process.
+
 Temporary network or control outages reconnect with the same profile. Normal
 reboots or long periods offline do not require pairing again. If the executor
 was revoked or its credential was replaced, run `executor connect` again and

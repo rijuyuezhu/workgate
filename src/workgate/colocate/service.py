@@ -1,4 +1,4 @@
-"""Install the ordinary colocate launcher as a Linux systemd user service."""
+"""Install the ordinary colocate launcher as a native per-user service."""
 
 import argparse
 import os
@@ -7,16 +7,19 @@ import subprocess
 import sys
 from pathlib import Path
 
-from ..app_paths import app_paths
+from ..app_paths import app_paths, ensure_private_directory
 from ..config.executor import EXECUTOR_SETTING_NAMES
 from ..config.settings import load_settings
 from ..executor.profile import ExecutorProfileStore
 from ..persistence import FileStateStore
+from ..platform.windows_task import WindowsUserTask
 from ..utils.private_files import atomic_write_private_text
 from ..utils.systemd import systemd_quote, systemd_user_unit_path
 
 _SERVICE_NAME = "workgate-colocate.service"
 _MANAGED_HEADER = "# Managed by workgate colocate install-service"
+_WINDOWS_TASK_NAME = "Workgate Colocate"
+_WINDOWS_TASK_DESCRIPTION = "Managed by Workgate: colocate"
 
 
 def _systemctl(*arguments: str) -> subprocess.CompletedProcess[str]:
@@ -32,6 +35,28 @@ def _systemctl(*arguments: str) -> subprocess.CompletedProcess[str]:
     return result
 
 
+def _windows_task() -> WindowsUserTask:
+    def run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        result = subprocess.run(
+            command, capture_output=True, text=True, check=False, timeout=20
+        )
+        if result.returncode:
+            raise RuntimeError(
+                f"Task Scheduler command failed: {result.stderr or result.stdout}"
+            )
+        return result
+
+    return WindowsUserTask(
+        _WINDOWS_TASK_NAME,
+        description=_WINDOWS_TASK_DESCRIPTION,
+        run=run,
+    )
+
+
+def _windows_service_dir() -> Path:
+    return app_paths().state_dir / "colocate" / "service"
+
+
 def _config_file(value: str | None) -> Path | None:
     if value is None:
         return None
@@ -43,7 +68,14 @@ def _config_file(value: str | None) -> Path | None:
 
 def install_colocate_service(args: argparse.Namespace) -> None:
     """Create and start one systemd user unit, without introducing runtime state."""
-    if sys.platform != "linux" or shutil.which("systemctl") is None:
+    windows = sys.platform == "win32"
+    if windows:
+        if not WindowsUserTask.available():
+            raise RuntimeError(
+                "colocate install-service requires Windows Task Scheduler"
+            )
+        _windows_task().status()  # Fail closed on another account's task.
+    elif sys.platform != "linux" or shutil.which("systemctl") is None:
         raise RuntimeError(
             "colocate install-service requires Linux systemd --user"
         )
@@ -52,7 +84,8 @@ def install_colocate_service(args: argparse.Namespace) -> None:
             "colocate install-service requires durable YAML config, "
             "not WORKGATE_* environment overrides"
         )
-    _systemctl("show-environment")
+    if not windows:
+        _systemctl("show-environment")
 
     paths = app_paths()
     control_config = _config_file(args.control_config)
@@ -75,16 +108,54 @@ def install_colocate_service(args: argparse.Namespace) -> None:
             "pair the executor before installing colocate service"
         )
 
+    if windows and getattr(sys, "frozen", False):
+        raise RuntimeError(
+            "Windows frozen Colocate requires a windowless executable; "
+            "this frozen build is not yet service-capable"
+        )
     executable = str(Path(sys.executable).absolute())
-    command = (
-        [executable, "colocate"]
-        if getattr(sys, "frozen", False)
-        else [executable, "-m", "workgate.main", "colocate"]
-    )
+    colocate_args = ["colocate"]
     if control_config is not None:
-        command.extend(["--control-config", str(control_config)])
+        colocate_args.extend(["--control-config", str(control_config)])
     if executor_config is not None:
-        command.extend(["--executor-config", str(executor_config)])
+        colocate_args.extend(["--executor-config", str(executor_config)])
+    command = (
+        [executable, *colocate_args]
+        if getattr(sys, "frozen", False)
+        else [executable, "-m", "workgate.main", *colocate_args]
+    )
+
+    if windows:
+        pythonw = Path(executable).with_name("pythonw.exe")
+        if not pythonw.is_file():
+            raise RuntimeError(
+                "Windows source Colocate service requires pythonw.exe"
+            )
+        service_dir = ensure_private_directory(_windows_service_dir())
+        launcher = service_dir / "launcher.py"
+        log_path = service_dir / "colocate.log"
+        source = (
+            '"""Private Workgate Colocate service launcher."""\n'
+            "import contextlib\nimport os\nimport traceback\n"
+            "for key in list(os.environ):\n"
+            "    if key.startswith('WORKGATE_'):\n"
+            "        os.environ.pop(key, None)\n"
+            "os.environ['PYTHONUNBUFFERED'] = '1'\n"
+            f"with open({str(log_path)!r}, 'a', encoding='utf-8', buffering=1) as log:\n"
+            "    with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):\n"
+            "        try:\n"
+            "            from workgate.main import main\n"
+            f"            main({colocate_args!r})\n"
+            "        except BaseException:\n"
+            "            traceback.print_exc()\n"
+            "            raise\n"
+        )
+        atomic_write_private_text(launcher, source)
+        task = _windows_task()
+        task.install([str(pythonw), str(launcher)], cwd=str(service_dir))
+        task.start()
+        print(f"Installed and started {_WINDOWS_TASK_NAME} (Task Scheduler)")
+        return
 
     try:
         unit = systemd_user_unit_path(
@@ -123,3 +194,64 @@ def install_colocate_service(args: argparse.Namespace) -> None:
     _systemctl("enable", _SERVICE_NAME)
     _systemctl("restart", _SERVICE_NAME)
     print(f"Installed and started {_SERVICE_NAME} ({unit})")
+
+
+def manage_colocate_service(action: str) -> None:
+    """Manage only the installed Colocate service, never its paired identity."""
+    if sys.platform == "win32":
+        if not WindowsUserTask.available():
+            raise RuntimeError("Windows Task Scheduler requires PowerShell")
+        task = _windows_task()
+        state = task.status()
+        if action == "status":
+            print(
+                f"Colocate service: {state['state'] if state else 'not-installed'}"
+            )
+            return
+        if action == "uninstall":
+            task.uninstall()
+            directory = _windows_service_dir()
+            (directory / "launcher.py").unlink(missing_ok=True)
+            (directory / "colocate.log").unlink(missing_ok=True)
+            print("Uninstalled Workgate Colocate task")
+            return
+        if state is None:
+            raise RuntimeError("Colocate service is not installed")
+        if action in {"stop", "restart"}:
+            task.stop()
+        if action in {"start", "restart"}:
+            task.start()
+        print(f"Colocate service: {action}")
+        return
+
+    if sys.platform != "linux" or shutil.which("systemctl") is None:
+        raise RuntimeError(
+            "Colocate service requires Linux systemd or Windows Task Scheduler"
+        )
+    if action == "status":
+        result = subprocess.run(
+            ["systemctl", "--user", "is-active", _SERVICE_NAME],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+        print(f"Colocate service: {result.stdout.strip() or 'not-installed'}")
+        return
+    if action == "uninstall":
+        unit = systemd_user_unit_path(
+            _systemctl("show", "--property=UnitPath", "--value").stdout,
+            _SERVICE_NAME,
+        )
+        if unit.is_symlink() or (
+            unit.is_file() and not unit.read_text().startswith(_MANAGED_HEADER)
+        ):
+            raise RuntimeError(f"refusing to remove unmanaged service: {unit}")
+        if unit.exists():
+            _systemctl("disable", "--now", _SERVICE_NAME)
+            unit.unlink()
+            _systemctl("daemon-reload")
+        print("Uninstalled Workgate Colocate service")
+        return
+    _systemctl(action, _SERVICE_NAME)
+    print(f"Colocate service: {action}")

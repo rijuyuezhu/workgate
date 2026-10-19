@@ -85,6 +85,9 @@ WebSocket protocol or session manager is introduced.
   background descendant cleanup and forced stop.
 - scripts/validation/windows-tracked-jobs-smoke.py: job lifecycle,
   owner isolation, retries and new-process state reconciliation on native Windows.
+- scripts/validation/windows-user-service-smoke.py: native Task Scheduler
+  source `pythonw.exe`, least-privilege owner, Unicode/quote paths, stop/uninstall,
+  and Colocate Windows Job Object descendant cleanup.
 - scripts/validation/windows-colocate-job-smoke.py: launcher/role/grandchild
   containment on normal and forced colocate termination.
 - scripts/validation/windows-conpty-owner-smoke.py: abrupt Executor-owner
