@@ -9,7 +9,12 @@ from .host import HostOS, host_os
 
 def supports_raw_terminal_host(*, system: str | None = None) -> bool:
     """Whether this host has a native raw terminal implementation."""
-    return host_os(system) in (HostOS.LINUX, HostOS.MACOS)
+    current = host_os(system)
+    if current is HostOS.WINDOWS:
+        from .windows_conpty import is_available
+
+        return is_available()
+    return current in (HostOS.LINUX, HostOS.MACOS)
 
 
 def terminal_attachment_factory(
@@ -21,6 +26,10 @@ def terminal_attachment_factory(
         from .posix.terminal import UnixTmuxAttach
 
         return UnixTmuxAttach
+    if current is HostOS.WINDOWS and supports_raw_terminal_host(system=system):
+        from .windows_conpty import WindowsConPtyAttach
+
+        return WindowsConPtyAttach
     raise TerminalBridgeUnsupportedError(
         f"Raw terminal attachment is unsupported on {system or current or 'this host'}"
     )

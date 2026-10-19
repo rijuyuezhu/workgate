@@ -221,7 +221,7 @@ async def _persistent_shell_admission_lock():
     if _PERSISTENT_SHELL_ADMISSION_OWNER.get() is task:
         yield
         return
-    backend = "tmux"
+    backend = "conpty" if host_os() is HostOS.WINDOWS else "tmux"
     async with cross_process_lock("persistent-shell-admission", backend):
         token = _PERSISTENT_SHELL_ADMISSION_OWNER.set(task)
         try:
@@ -758,6 +758,26 @@ async def _start_persistent_shell_locked(
     forbidden_shell_ids: frozenset[str] = frozenset(),
 ) -> StartPersistentShellOutput:
     """Start a persistent shell while the creation lock is held."""
+    if host_os() is HostOS.WINDOWS:
+        from .terminal import conpty
+
+        shell_id = shell_id or _tmux_session_name(name)
+        if shell_id in forbidden_shell_ids:
+            raise ValueError(f"Persistent shell id is reserved: {shell_id}")
+        resolved_cwd = resolve_path(
+            cwd,
+            base=resolve_default_workdir(config.default_workdir),
+            must_exist=True,
+        )
+        return await conpty.start(
+            config,
+            store,
+            shell_id,
+            str(resolved_cwd),
+            command,
+            owner_session_id,
+            _subprocess_env(config),
+        )
     shell_id = shell_id or _tmux_session_name(name)
     if shell_id in forbidden_shell_ids:
         raise ValueError(
@@ -941,6 +961,10 @@ async def send_persistent_shell_input_execute(
     enter: bool = True,
 ) -> SendPersistentShellInputOutput:
     """Send input to a persistent shell, optionally appending Enter."""
+    if host_os() is HostOS.WINDOWS:
+        from .terminal import conpty
+
+        return await conpty.send(shell_id, input_text, enter)
     if input_text:
         result = await tmux(
             config, ["send-keys", "-l", "-t", shell_id, input_text]
@@ -990,6 +1014,10 @@ async def resize_persistent_shell_execute(
 ) -> ResizePersistentShellOutput:
     """Resize one persistent terminal when supported by its backend."""
     columns, lines = _validate_persistent_shell_size(cols, rows)
+    if host_os() is HostOS.WINDOWS:
+        from .terminal import conpty
+
+        return await conpty.resize(shell_id, columns, lines)
     result = await tmux(
         config,
         [
@@ -1028,6 +1056,10 @@ async def read_persistent_shell_output_execute(
     preserve_ansi: bool = False,
 ) -> ReadPersistentShellOutput:
     """Read recent output from a persistent shell."""
+    if host_os() is HostOS.WINDOWS:
+        from .terminal import conpty
+
+        return await conpty.read(shell_id, lines, preserve_ansi)
     capture_args = ["capture-pane", "-p"]
     if preserve_ansi:
         capture_args.append("-e")
@@ -1056,6 +1088,10 @@ async def kill_persistent_shell_execute(
     shell_id: str,
 ) -> KillPersistentShellOutput:
     """Terminate a persistent shell by its normalized shell id."""
+    if host_os() is HostOS.WINDOWS:
+        from .terminal import conpty
+
+        return await conpty.kill(store, shell_id)
     result = await tmux(config, ["kill-session", "-t", shell_id])
     audit(
         "kill_persistent_shell",
@@ -1080,6 +1116,10 @@ async def list_owned_persistent_shell_ids_execute(
     owner_session_id: str,
 ) -> list[str] | None:
     """Return owned shell ids, or None when discovery is non-authoritative."""
+    if host_os() is HostOS.WINDOWS:
+        from .terminal import conpty
+
+        return await conpty.owned(owner_session_id)
     selection = resolve_tmux(config.tmux_bin)
     if selection.path is None and selection.source == "unavailable":
         # A session that has never durably reserved a shell has nothing to
@@ -1116,6 +1156,10 @@ async def _persistent_shell_inventory_execute(
     preserve_shell_ids: set[str] | None = None,
 ) -> tuple[ListPersistentShellsOutput, bool]:
     """Return the shell inventory and whether an empty result is authoritative."""
+    if host_os() is HostOS.WINDOWS:
+        from .terminal import conpty
+
+        return await conpty.inventory(store, preserve_shell_ids)
     selection = resolve_tmux(config.tmux_bin)
     if selection.path is None and selection.source == "unavailable":
         return ListPersistentShellsOutput(shells=[]), False

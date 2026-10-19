@@ -100,7 +100,7 @@ async def test_terminal_bridge_unsupported_host_releases_pending_slot(
     from workgate.platform import host
     from workgate.protocol.terminal import TerminalBridgeUnsupportedError
 
-    monkeypatch.setattr(host.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(host.platform, "system", lambda: "Haiku")
     registry = bridge_module._bridge_registry()
     with pytest.raises(TerminalBridgeUnsupportedError):
         await open_terminal_bridge_execute("demo")
