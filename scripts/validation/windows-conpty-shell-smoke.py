@@ -140,11 +140,27 @@ async def main() -> None:
                     if b"WIN_STILL_LIVE" in buffer:
                         break
                 assert b"WIN_STILL_LIVE" in buffer, repr(buffer[-2000:])
-                await close_terminal_bridge_execute(second["bridge_id"])
+
+                # Closing the shell (rather than a client attachment) must
+                # tell every remaining WebUI client that its stream ended.
                 killed = await kill_persistent_shell_execute(
                     config, store, "win-smoke"
                 )
                 assert killed.killed and killed.backend == "conpty"
+                saw_eof = False
+                for _ in range(20):
+                    item = await read_terminal_bridge_execute(
+                        second["bridge_id"], wait_ms=100
+                    )
+                    if item["eof"]:
+                        saw_eof = True
+                        break
+                assert saw_eof, (
+                    "attached WebUI reader was not closed after kill"
+                )
+                assert not (
+                    await close_terminal_bridge_execute(second["bridge_id"])
+                )["closed"]
                 assert not (
                     await list_persistent_shells_execute(config, store)
                 ).shells
