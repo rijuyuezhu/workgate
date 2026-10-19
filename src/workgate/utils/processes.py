@@ -3,6 +3,8 @@
 import os
 import sys
 
+from ..platform.host import HostOS, host_os
+
 
 def _env_name(*parts: str) -> str:
     return "".join(parts)
@@ -27,6 +29,11 @@ def user_subprocess_env_name_blocked(
     blocked_prefixes: tuple[str, ...] = (),
 ) -> bool:
     """Return whether one environment variable is hidden from user subprocesses."""
+    if host_os() is HostOS.WINDOWS:
+        # Windows environment keys are case-insensitive.
+        name = name.upper()
+        blocked_names = tuple(item.upper() for item in blocked_names)
+        blocked_prefixes = tuple(item.upper() for item in blocked_prefixes)
     return (
         name in _BUILTIN_BLOCKED_ENV_NAMES
         or name in blocked_names

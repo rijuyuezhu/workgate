@@ -302,10 +302,9 @@ def test_role_scoped_load_ignores_foreign_yaml_and_environment(
     assert control.state_dir == executor_state
     assert control.oauth_admin_pin == "env-control-secret"
     assert control.default_workdir != workspace
-    assert (
-        control.shell_executable
-        == Settings.model_fields["shell_executable"].get_default()
-    )
+    assert control.shell_executable == Settings.model_fields[
+        "shell_executable"
+    ].get_default(call_default_factory=True)
 
 
 def test_role_scoped_load_ignores_foreign_invalid_yaml_path(
