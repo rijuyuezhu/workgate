@@ -12,9 +12,10 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..audit import audit
 from ..config.control import ControlConfig
+from ..config.role_config import use_role_config
 from ..errors import PublicToolValueError
 from ..oauth.core.context import current_oauth_claims
-from ..persistence import StateStore
+from ..persistence import StateStore, use_state_store
 from ..protocol.ids import TaskId, new_task_id
 from ..schemas.result_models.task import (
     TaskDeleteOutput,
@@ -71,6 +72,7 @@ class _StoredTask(BaseModel):
     task_id: TaskId
     subject: str = Field(min_length=1, max_length=512)
     document: TaskDocument
+    session_count: int | None = Field(default=None, ge=0)
     continuation: _TaskContinuation = Field(default_factory=_TaskContinuation)
 
 
@@ -82,7 +84,10 @@ class ControlTaskService:
         state: ControlState,
         store: StateStore,
         settings: ControlConfig,
+        *,
+        jobs_may_be_active: Callable[[tuple[str, ...]], bool] | None = None,
     ) -> None:
+        self._jobs_may_be_active = jobs_may_be_active
         self._state = state
         self._store = store
         self._settings = settings
@@ -260,6 +265,7 @@ class ControlTaskService:
     def _persist_stored(self, path: Any, stored: _StoredTask) -> None:
         data = stored.model_dump(mode="json")
         continuation = data.pop("continuation")
+        session_count = data.pop("session_count")
         user_bytes = len(
             json.dumps(
                 data,
@@ -276,6 +282,7 @@ class ControlTaskService:
             )
         if stored.continuation != _TaskContinuation():
             data["continuation"] = continuation
+        data["session_count"] = session_count
         total_bytes = len(
             json.dumps(
                 data,
@@ -323,6 +330,7 @@ class ControlTaskService:
         changed_fields: list[str],
         session_ids: list[str],
         step_changes: list[dict[str, str]] | None = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         fields: dict[str, Any] = {
             "task": task_id,
@@ -334,6 +342,8 @@ class ControlTaskService:
             fields["session_ids"] = session_ids
         if step_changes:
             fields["step_changes"] = step_changes
+        if details:
+            fields.update(details)
         try:
             audit("task_mutation", **fields)
         except Exception:
@@ -690,6 +700,109 @@ class ControlTaskService:
                 tasks.append(stored)
         return tasks
 
+    def _sweep_idle_sync(self, now: float) -> int:
+        """Block only provably idle Tasks, rechecking under their task locks."""
+        idle_s = self._settings.task_idle_block_after_s
+        if idle_s == 0:
+            return 0
+        blocked = 0
+        root = self._store.layout.control_tasks_dir
+        for path in self._store.iter_files(root):
+            if not path.name.startswith("task_") or path.suffix != ".json":
+                continue
+            with self._store.transaction(path):
+                raw = self._store.read_json(
+                    path, max_bytes=self._stored_task_max_bytes
+                )
+                if raw is None:
+                    continue
+                try:
+                    current = _StoredTask.model_validate(raw)
+                except ValidationError:
+                    continue
+                if path != self._path(str(current.task_id)):
+                    continue
+                document = current.document
+                if document.status != "active":
+                    continue
+                if current.continuation.pending_claim_id is not None:
+                    continue
+                sessions = tuple(
+                    record
+                    for record in self._state.snapshot_sessions().values()
+                    if str(record.task_id or "") == str(current.task_id)
+                )
+                # Keep the full attachment count: pruning just one of several
+                # Sessions must not make incomplete history look authoritative.
+                if current.session_count != len(sessions):
+                    continue
+                if any(
+                    record.status != "ended"
+                    or not record.executor_absence_confirmed
+                    for record in sessions
+                ):
+                    continue
+                session_ids = tuple(
+                    str(record.session_id) for record in sessions
+                )
+                # Without an authoritative job-store check, only sessionless
+                # Tasks are provably safe to transition.
+                if session_ids and (
+                    self._jobs_may_be_active is None
+                    or self._jobs_may_be_active(session_ids)
+                ):
+                    continue
+                last_activity = max(
+                    [self._continuation_last_activity(current)]
+                    + [record.updated_at for record in sessions]
+                )
+                if last_activity + idle_s > now:
+                    continue
+                reason = "Automatically blocked after confirmed inactivity."
+                updated_document = document.model_copy(deep=True)
+                updated_document.status = "blocked"
+                updated_document.updated_at = now
+                if (
+                    len(updated_document.progress.blockers)
+                    >= _REPORT_LIST_LIMIT
+                ):
+                    # Never discard user blockers or hide the transition reason.
+                    continue
+                updated_document.progress.blockers.append(reason)
+                continuation = current.continuation.model_copy(deep=True)
+                self._clear_continuation_claim(continuation)
+                self._persist_stored(
+                    path,
+                    current.model_copy(
+                        update={
+                            "document": updated_document,
+                            "continuation": continuation,
+                        }
+                    ),
+                )
+            with use_role_config(self._settings), use_state_store(self._store):
+                self._audit_mutation(
+                    str(current.task_id),
+                    operation="idle_block",
+                    changed_fields=["status", "progress.blockers"],
+                    session_ids=list(session_ids),
+                    details={
+                        "reason": reason,
+                        "last_activity_at": last_activity,
+                        "idle_threshold_s": idle_s,
+                    },
+                )
+            blocked += 1
+        return blocked
+
+    async def sweep_idle_tasks(self, *, now: float | None = None) -> int:
+        """Apply one bounded observation-based policy pass; no timer state."""
+        if self._settings.task_idle_block_after_s == 0:
+            return 0
+        return await asyncio.to_thread(
+            self._sweep_idle_sync, time.time() if now is None else now
+        )
+
     def _has_live_session(self, task_id: str) -> bool:
         return any(
             str(record.task_id or "") == task_id
@@ -794,6 +907,7 @@ class ControlTaskService:
                 task_id=task_id,
                 subject=subject,
                 document=document,
+                session_count=0,
             )
             self._persist_stored(self._path(task_id), stored)
         self._audit_mutation(
@@ -860,6 +974,35 @@ class ControlTaskService:
             raise
         return attached
 
+    def discard_failed_attachment(self, record: ControlSessionRecord) -> None:
+        """Undo only an unconfirmed create, preserving incomplete history safely."""
+        task_id = str(record.task_id or "")
+        path = self._path(task_id)
+        with self._store.transaction(path):
+            retained = self._state.snapshot_sessions().get(
+                str(record.session_id)
+            )
+            if retained is None or retained.status != "creating":
+                return
+            if retained.task_id is None:
+                # Task was deleted while creation was in flight. The detached
+                # Session still needs clearing, but its Task no longer exists.
+                self._state.remove_session(str(record.session_id))
+                return
+            if retained.task_id != record.task_id:
+                return
+            # Remove the session first: interruption before the counter write
+            # is a conservative overcount, never an unsafe undercount.
+            self._state.remove_session(str(record.session_id))
+            current = self._read_stored_unlocked(task_id)
+            if current.session_count is not None and current.session_count > 0:
+                self._persist_stored(
+                    path,
+                    current.model_copy(
+                        update={"session_count": current.session_count - 1}
+                    ),
+                )
+
     def discard_implicit_task(self, task_id: str) -> None:
         """Roll back a *definitely failed* implicit create, never a live binding."""
         path = self._path(task_id)
@@ -899,6 +1042,20 @@ class ControlTaskService:
                 raise ValueError(
                     "cannot attach a new execution session to a cancelled task"
                 )
+            self._persist_stored(
+                self._path(task_id),
+                task.model_copy(
+                    update={
+                        "session_count": (
+                            task.session_count + 1
+                            if task.session_count is not None
+                            else None
+                        )
+                    }
+                ),
+            )
+            # If publication is interrupted, keep the conservative overcount:
+            # a registry write may have reached disk before reporting failure.
             self._state.put_session(record)
 
     async def report_progress(
@@ -976,6 +1133,12 @@ class ControlTaskService:
                 if current not in {"blocked", "completed"}:
                     raise ValueError(f"cannot resume a {current} task")
                 document.status = "active"
+                document.progress.blockers = [
+                    item
+                    for item in document.progress.blockers
+                    if item
+                    != "Automatically blocked after confirmed inactivity."
+                ]
             elif action == "finish":
                 if current not in {"active", "blocked"}:
                     raise ValueError(f"cannot finish a {current} task")

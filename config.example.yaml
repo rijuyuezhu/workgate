@@ -131,6 +131,8 @@ max_glob_results: 5000
 max_tree_entries: 5000
 # Todo-list item limit.
 max_todos: 1000
+# Auto-block confirmed idle active Tasks after this interval; 0 disables.
+task_idle_block_after_s: 86400
 # Todo-list total byte limit.
 max_todo_bytes: 1000000
 # Maximum inbound HTTP request-body bytes; 0 disables the shared limit.

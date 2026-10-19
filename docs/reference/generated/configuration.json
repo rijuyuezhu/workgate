@@ -1178,6 +1178,26 @@
         ],
         [
           {
+            "code": "task_idle_block_after_s"
+          },
+          {
+            "lines": [
+              {
+                "code": "--task-idle-block-after-s"
+              }
+            ]
+          },
+          {
+            "code": "WORKGATE_TASK_IDLE_BLOCK_AFTER_S"
+          },
+          "integer",
+          {
+            "code": "86400"
+          },
+          "Auto-block confirmed idle active Tasks after this interval; 0 disables."
+        ],
+        [
+          {
             "code": "max_todo_bytes"
           },
           {
@@ -2773,6 +2793,19 @@
       "description": "Todo-list item limit.",
       "env": "WORKGATE_MAX_TODOS",
       "name": "max_todos",
+      "nullable": false,
+      "section": "Safety and resource limits",
+      "type": "integer",
+      "unset_cli": null
+    },
+    {
+      "choices": [],
+      "cli": "--task-idle-block-after-s",
+      "default": 86400,
+      "default_display": "86400",
+      "description": "Auto-block confirmed idle active Tasks after this interval; 0 disables.",
+      "env": "WORKGATE_TASK_IDLE_BLOCK_AFTER_S",
+      "name": "task_idle_block_after_s",
       "nullable": false,
       "section": "Safety and resource limits",
       "type": "integer",

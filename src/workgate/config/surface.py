@@ -330,6 +330,11 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
     ),
     SettingSpec("max_todos", "Safety and resource limits", metavar="COUNT"),
     SettingSpec(
+        "task_idle_block_after_s",
+        "Safety and resource limits",
+        metavar="SECONDS",
+    ),
+    SettingSpec(
         "max_todo_bytes", "Safety and resource limits", metavar="BYTES"
     ),
     SettingSpec(
