@@ -9,6 +9,9 @@ import stat
 import subprocess
 import sys
 import tarfile
+import zipfile
+from collections.abc import Callable
+from contextlib import ExitStack
 from enum import StrEnum
 from pathlib import Path
 
@@ -201,6 +204,8 @@ def _target_name() -> str:
         return "macos-x86_64"
     if system == "Darwin" and machine in {"aarch64", "arm64"}:
         return "macos-aarch64"
+    if system == "Windows" and machine in {"x86_64", "amd64"}:
+        return "windows-x86_64"
     raise RuntimeError(
         f"control-managed executor updates are unsupported on {system} {machine}"
     )
@@ -273,24 +278,37 @@ def _stage_executable(
     *,
     target_name: str,
 ) -> None:
-    expected_member = f"workgate-{target_name}/workgate"
+    windows = target_name == "windows-x86_64"
+    member_name = f"workgate-{target_name}/workgate" + (
+        ".exe" if windows else ""
+    )
     try:
-        with tarfile.open(archive, "r:gz") as bundle:
-            member = bundle.getmember(expected_member)
-            if not member.isfile() or member.size > _MAX_EXECUTABLE_BYTES:
+        with ExitStack() as opened:
+            if windows:
+                bundle = opened.enter_context(zipfile.ZipFile(archive))
+                member = bundle.getinfo(member_name)
+                valid = not member.is_dir()
+                size = member.file_size
+                source = opened.enter_context(bundle.open(member))
+            else:
+                bundle = opened.enter_context(tarfile.open(archive, "r:gz"))
+                member = bundle.getmember(member_name)
+                valid = member.isfile()
+                size = member.size
+                source = bundle.extractfile(member)
+                if source is None:
+                    raise RuntimeError(
+                        "executor runtime archive member is missing"
+                    )
+                opened.enter_context(source)
+            if not valid or size <= 0 or size > _MAX_EXECUTABLE_BYTES:
                 raise RuntimeError("executor runtime archive member is invalid")
-            source = bundle.extractfile(member)
-            if source is None:
-                raise RuntimeError("executor runtime archive member is missing")
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
             fd = os.open(staged, flags, 0o700)
             written = 0
             try:
                 with os.fdopen(fd, "wb") as output:
-                    while True:
-                        chunk = source.read(_CHUNK_BYTES)
-                        if not chunk:
-                            break
+                    while chunk := source.read(_CHUNK_BYTES):
                         written += len(chunk)
                         if written > _MAX_EXECUTABLE_BYTES:
                             raise RuntimeError(
@@ -302,14 +320,12 @@ def _stage_executable(
             except BaseException:
                 staged.unlink(missing_ok=True)
                 raise
-            finally:
-                source.close()
-            if written != member.size:
+            if written != size:
                 staged.unlink(missing_ok=True)
                 raise RuntimeError(
                     "executor runtime archive member is truncated"
                 )
-    except (KeyError, tarfile.TarError, OSError) as exc:
+    except (KeyError, zipfile.BadZipFile, tarfile.TarError, OSError) as exc:
         staged.unlink(missing_ok=True)
         raise RuntimeError("executor runtime archive is invalid") from exc
 
@@ -349,8 +365,9 @@ async def apply_control_managed_update(
     control_url: str,
     target_version: str,
     store: ExecutorRuntimeStateStore,
+    windows_activate: Callable[[Path, Path], None] | None = None,
 ) -> Path:
-    """Replace the explicit control-managed self-contained executable transactionally."""
+    """Publish the verified runtime; Windows switches its owned Task Scheduler action."""
     state = store._require_state()
     if (
         state.ownership is not ExecutorRuntimeOwnership.CONTROL_MANAGED
@@ -367,8 +384,11 @@ async def apply_control_managed_update(
         _validate_replace_target(target)
         target_name = _target_name()
         root = control_url.rstrip("/") + _BOOTSTRAP_PATH + f"/{target_name}"
+        windows = target_name == "windows-x86_64"
         archive = _temp_path(target.parent, "archive")
         staged = _temp_path(target.parent, "next")
+        if windows:
+            staged = Path(str(staged) + ".exe")
         try:
             async with httpx.AsyncClient(
                 follow_redirects=True,
@@ -382,9 +402,38 @@ async def apply_control_managed_update(
             staged.chmod(0o700)
             _validate_executable(staged, target_version)
 
-            # Runtime state is only local bookkeeping. Commit it before the
-            # one filesystem mutation so any state failure leaves the old
-            # executable untouched.
+            if windows:
+                if windows_activate is None:
+                    raise RuntimeError(
+                        "native Windows managed update requires an owned "
+                        "Task Scheduler service"
+                    )
+                published = Path(
+                    str(_temp_path(target.parent, "runtime")) + ".exe"
+                )
+                # Never overwrite the executable mapped by a live Windows process.
+                os.replace(staged, published)
+                old_state = store._require_state()
+                store.save(
+                    old_state.model_copy(
+                        update={
+                            "executable": str(published),
+                            "update_status": ExecutorRuntimeUpdateStatus.IDLE,
+                            "update_target_version": None,
+                            "update_detail": None,
+                        }
+                    )
+                )
+                try:
+                    windows_activate(target, published)
+                except Exception:
+                    store.save(old_state)
+                    # The validated new binary is retained: native task rollback
+                    # can fail if Windows still holds an image-section lock.
+                    raise
+                return published
+
+            # POSIX can atomically replace an executable still mapped by a process.
             store.set_update(ExecutorRuntimeUpdateStatus.IDLE)
             os.replace(staged, target)
             return target

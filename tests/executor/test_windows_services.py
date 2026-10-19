@@ -100,6 +100,9 @@ def test_windows_executor_install_uninstall_retains_profile(
             active = True
             commands.append(("start", None))
 
+        def cancel_runtime_restart(self):
+            commands.append(("cancel-restart", None))
+
         def stop(self):
             nonlocal active
             active = False
@@ -124,7 +127,11 @@ def test_windows_executor_install_uninstall_retains_profile(
     assert manager.metadata_path.is_file()
     assert commands[0][0] == "install"
     manager.restart()
-    assert commands[-2:][0][0] == "stop"
+    assert [item[0] for item in commands[-3:]] == [
+        "cancel-restart",
+        "stop",
+        "start",
+    ]
     manager.stop()
     assert manager.status().state.value == "stopped"
     manager.start()
@@ -430,3 +437,213 @@ def test_windows_task_errors_when_scheduler_is_unavailable(monkeypatch):
         task.status()
     with pytest.raises(ValueError, match="must not be empty"):
         task.install([], cwd="C:\\")
+
+
+def test_windows_task_updates_owned_executable_without_stopping_current(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "workgate.platform.windows_task.shutil.which",
+        lambda _: "powershell.exe",
+    )
+    scripts: list[str] = []
+
+    def run(argv):
+        script = argv[-1]
+        scripts.append(script)
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            '{"state":"Running","last_result":0}'
+            if "Get-ScheduledTaskInfo" in script
+            else "",
+            "",
+        )
+
+    task = WindowsUserTask(
+        "Test Workgate", description="Managed by Workgate: test", run=run
+    )
+    task.switch_runtime(
+        expected=r"C:\Program Files\Old Workgate\workgate.exe",
+        replacement=r"C:\Users\O'Brien\New Workgate\workgate.exe",
+    )
+    assert len(scripts) == 2
+    update = scripts[-1]
+    assert "Get-ScheduledTask -TaskPath" in update
+    assert "Set-ScheduledTask -TaskPath" in update
+    assert "expected a single logon trigger" in update
+    assert "executable changed unexpectedly" in update
+    assert "O''Brien" in update
+    assert "AddSeconds(45)" in update
+    assert "RepetitionDuration" in update
+    assert "Stop-ScheduledTask" not in update
+    assert "Unregister-ScheduledTask" not in update
+
+
+def test_windows_task_refuses_unowned_runtime_switch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "workgate.platform.windows_task.shutil.which",
+        lambda _: "powershell.exe",
+    )
+    scripts = []
+
+    def run(argv):
+        scripts.append(argv[-1])
+        return subprocess.CompletedProcess(argv, 0, "null", "")
+
+    task = WindowsUserTask(
+        "Missing Workgate", description="Managed by Workgate: test", run=run
+    )
+    with pytest.raises(RuntimeError, match="not installed"):
+        task.switch_runtime(expected=r"C:\old.exe", replacement=r"C:\new.exe")
+    assert len(scripts) == 1
+
+
+def test_windows_runtime_switch_preserves_existing_task_and_cli_arguments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager, _ = _paired_manager(tmp_path, system="Windows")
+    old = tmp_path / "original.exe"
+    new = tmp_path / "verified version.exe"
+    command = [
+        str(old),
+        "executor",
+        "run",
+        "--managed-service",
+        "--config",
+        str(tmp_path / "config.json"),
+    ]
+    manager._write_metadata("scheduled-task", command)
+    calls = []
+
+    class Task:
+        def switch_runtime(self, *, expected, replacement):
+            calls.append((expected, replacement))
+
+    monkeypatch.setattr(manager, "_windows_task", Task)
+    manager.activate_windows_runtime(old, new)
+    assert calls == [(str(old), str(new))]
+    metadata = manager._read_metadata()
+    assert metadata is not None
+    assert metadata["command"] == [str(new), *command[1:]]
+
+
+def test_windows_runtime_switch_recovers_task_on_metadata_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager, _ = _paired_manager(tmp_path, system="Windows")
+    old = tmp_path / "original.exe"
+    new = tmp_path / "verified.exe"
+    manager._write_metadata("scheduled-task", [str(old), "executor", "run"])
+    calls = []
+
+    class Task:
+        def switch_runtime(self, *, expected, replacement):
+            calls.append((expected, replacement))
+
+    monkeypatch.setattr(manager, "_windows_task", Task)
+    monkeypatch.setattr(
+        manager,
+        "_write_metadata",
+        lambda *_args: (_ for _ in ()).throw(OSError("denied")),
+    )
+    with pytest.raises(OSError, match="denied"):
+        manager.activate_windows_runtime(old, new)
+    assert calls == []  # A metadata write failure must not touch the task.
+    metadata = manager._read_metadata()
+    assert metadata is not None
+    assert metadata["command"][0] == str(old)
+
+
+def test_windows_runtime_switch_failure_restores_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager, _ = _paired_manager(tmp_path, system="Windows")
+    old = tmp_path / "old.exe"
+    new = tmp_path / "new.exe"
+    manager._write_metadata("scheduled-task", [str(old), "executor", "run"])
+
+    class Task:
+        def switch_runtime(self, *, expected, replacement):
+            assert (expected, replacement) == (str(old), str(new))
+            raise RuntimeError("Task Scheduler refused switch")
+
+    monkeypatch.setattr(manager, "_windows_task", Task)
+    with pytest.raises(RuntimeError, match="refused switch"):
+        manager.activate_windows_runtime(old, new)
+    metadata = manager._read_metadata()
+    assert metadata is not None
+    assert metadata["command"] == [str(old), "executor", "run"]
+
+
+def test_windows_runtime_switch_reports_failed_metadata_rollback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager, _ = _paired_manager(tmp_path, system="Windows")
+    old, new = tmp_path / "old.exe", tmp_path / "new.exe"
+    manager._write_metadata("scheduled-task", [str(old), "executor", "run"])
+    original_write = manager._write_metadata
+    writes = []
+
+    def record_write(backend, command):
+        writes.append(command)
+        if len(writes) == 2:
+            raise OSError("metadata rollback refused")
+        original_write(backend, command)
+
+    class Task:
+        def switch_runtime(self, *, expected, replacement):
+            raise RuntimeError("native switch failed")
+
+    monkeypatch.setattr(manager, "_write_metadata", record_write)
+    monkeypatch.setattr(manager, "_windows_task", Task)
+    with pytest.raises(RuntimeError, match="metadata rollback failed"):
+        manager.activate_windows_runtime(old, new)
+    assert writes == [
+        [str(new), "executor", "run"],
+        [str(old), "executor", "run"],
+    ]
+
+
+def test_windows_runtime_switch_rejects_wrong_owner_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager, _ = _paired_manager(tmp_path, system="Windows")
+    monkeypatch.setattr(
+        manager, "_windows_task", lambda: pytest.fail("must not update task")
+    )
+    with pytest.raises(RuntimeError, match="does not match"):
+        manager.activate_windows_runtime(
+            tmp_path / "old.exe", tmp_path / "new.exe"
+        )
+
+
+def test_windows_task_cancels_only_its_upgrade_timer(monkeypatch):
+    monkeypatch.setattr(
+        "workgate.platform.windows_task.shutil.which",
+        lambda _: "powershell.exe",
+    )
+    scripts = []
+
+    def run(argv):
+        scripts.append(argv[-1])
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            '{"state":"Running","last_result":0}'
+            if "Get-ScheduledTaskInfo" in argv[-1]
+            else "",
+            "",
+        )
+
+    task = WindowsUserTask(
+        "Test Workgate", description="Managed by Workgate: test", run=run
+    )
+    task.cancel_runtime_restart()
+    assert len(scripts) == 2
+    assert "-Trigger @($logon[0])" in scripts[1]
+    assert "unexpected scheduled task triggers" in scripts[1]
+    assert "PT1M" in scripts[1] and "PT5M" in scripts[1]
+    assert "Unregister-ScheduledTask" not in scripts[1]

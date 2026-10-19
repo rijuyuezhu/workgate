@@ -202,11 +202,20 @@ class ExecutorRuntime:
         profile = profile_store.load()
         if profile is None:
             raise RuntimeError("executor profile is unavailable")
+        from ..platform.host import HostOS, host_os
+        from .service import ExecutorServiceManager
+
+        windows_activate = (
+            ExecutorServiceManager(self.config).activate_windows_runtime
+            if host_os() is HostOS.WINDOWS
+            else None
+        )
         try:
             await apply_control_managed_update(
                 control_url=profile.control_url,
                 target_version=target,
                 store=self.runtime_state_store,
+                windows_activate=windows_activate,
             )
         except Exception:
             return RuntimePolicyAction.BLOCK

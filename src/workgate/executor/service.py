@@ -612,6 +612,41 @@ class ExecutorServiceManager:
         runtime_store.service_runtime_state(runtime_state.ownership)
         return self.status()
 
+    def activate_windows_runtime(self, old: Path, new: Path) -> None:
+        """Switch the existing owned task to a verified next executable."""
+        if host_os(self.system) is not HostOS.WINDOWS:
+            raise UnsupportedExecutorServiceError(
+                "native Windows task required"
+            )
+        metadata = self._read_metadata()
+        command = None if metadata is None else metadata.get("command")
+        if (
+            metadata is None
+            or metadata.get("backend") != "scheduled-task"
+            or not isinstance(command, list)
+            or not command
+            or not all(isinstance(arg, str) for arg in command)
+            or Path(command[0]) != old
+        ):
+            raise RuntimeError(
+                "managed Windows executable does not match installed service"
+            )
+        # Persist the new command *before* switching the native task: a
+        # metadata write error must not leave a task running an unrecorded exe.
+        self._write_metadata("scheduled-task", [str(new), *command[1:]])
+        try:
+            self._windows_task().switch_runtime(
+                expected=str(old), replacement=str(new)
+            )
+        except Exception:
+            try:
+                self._write_metadata("scheduled-task", command)
+            except Exception as exc:
+                raise RuntimeError(
+                    "Windows task switch failed and service metadata rollback failed"
+                ) from exc
+            raise
+
     def _systemd_native_state(self) -> dict[str, str]:
         result = self._run(
             [
@@ -758,7 +793,9 @@ class ExecutorServiceManager:
                         + (f": {detail}" if detail else "")
                     )
         elif backend == "scheduled-task":
-            self._windows_task().stop()
+            task = self._windows_task()
+            task.cancel_runtime_restart()
+            task.stop()
         return self.status()
 
     def restart(self) -> ExecutorServiceStatus:
@@ -794,6 +831,7 @@ class ExecutorServiceManager:
                 )
         elif backend == "scheduled-task":
             task = self._windows_task()
+            task.cancel_runtime_restart()
             task.stop()
             task.start()
         return self.status()
