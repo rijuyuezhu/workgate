@@ -175,3 +175,28 @@ def test_environment_selected_config_and_setting_schema_parity(
     before = path.stat().st_mtime_ns
     assert snapshot.describe()["startup_at"] == data["startup_at"]
     assert path.stat().st_mtime_ns == before  # Read-only, no implicit Apply.
+
+
+def test_full_role_schema_defaults_and_missing_file_values(tmp_path):
+    from workgate.config.roles import (
+        CONTROL_SETTING_NAMES,
+        EXECUTOR_SETTING_NAMES,
+    )
+    from workgate.config.surface import SETTING_SPECS
+
+    for role, names in (
+        ("control", CONTROL_SETTING_NAMES),
+        ("executor", EXECUTOR_SETTING_NAMES),
+    ):
+        path = tmp_path / f"{role}.yaml"
+        path.write_text("{}\n")
+        snapshot = _capture(role, path)
+        rows = snapshot.describe()["fields"]
+        assert len(rows) == len(names)
+        assert {row["name"] for row in rows} == set(names)
+        assert all("default_value" in row for row in rows)
+        assert all(not row["file_present"] for row in rows)
+        assert all(row["file_value"] is None for row in rows)
+        by_name = {row["name"]: row for row in rows}
+        assert by_name["max_jobs"]["default_value"] == 1000
+        assert not (names - {spec.name for spec in SETTING_SPECS})

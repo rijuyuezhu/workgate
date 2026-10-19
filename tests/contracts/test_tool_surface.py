@@ -20,6 +20,8 @@ LOCAL_MCP_TOOL_NAMES = {
     "browser_run_script",
     "browser_session",
     "browser_snapshot",
+    "config_inspect",
+    "config_save",
     "read",
     "search",
     "workspace_search",
@@ -161,7 +163,11 @@ async def test_model_facing_tools_require_explicit_semantic_identity(
     clear_settings_cache()
 
     tools = {tool.name: tool for tool in await build_mcp().list_tools()}
+    # Config tools address the local Control by default, with an optional
+    # Executor ID; they intentionally do not require Task/Session identity.
     identityless_allowlist = {
+        "config_inspect",
+        "config_save",
         "audit_tail",
         "executor",
         "session_start",

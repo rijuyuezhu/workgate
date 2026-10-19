@@ -325,6 +325,35 @@ class ExecutorRuntime:
             and command.session_id is not None
         ):
             raise ValueError("dashboard_snapshot must not carry session_id")
+        if command.op == "ui.config.save":
+            if command.session_id is not None or set(command.args) != {
+                "revision",
+                "changes",
+            }:
+                raise ValueError("Invalid config save request")
+            from ..config.editing import ConfigEditError, save_config
+            from ..config.inspection import current_startup_config
+
+            snapshot = current_startup_config("executor")
+            if snapshot is None:
+                raise RuntimeError(
+                    "Executor startup configuration is unavailable"
+                )
+            revision = command.args["revision"]
+            changes = command.args["changes"]
+            if not isinstance(revision, str) or not isinstance(changes, dict):
+                raise ValueError("Invalid config save request")
+            try:
+                return {
+                    "revision": await asyncio.to_thread(
+                        save_config,
+                        snapshot,
+                        revision=revision,
+                        changes=changes,
+                    )
+                }
+            except ConfigEditError as exc:
+                return {"error": exc.code, "status": exc.status}
         if command.op == "ui.config.inspect":
             if command.session_id is not None or command.args:
                 raise ValueError(

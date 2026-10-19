@@ -55,3 +55,66 @@ async def test_config_inspect_protocol_has_no_session_or_arguments(
         RuntimeError, match="startup configuration is unavailable"
     ):
         await runtime._execute_protocol_command_with_state(command)
+
+
+@pytest.mark.asyncio
+async def test_config_save_rpc_rejects_wrong_args_and_returns_safe_conflict(
+    tmp_path, monkeypatch
+):
+    from workgate.config import editing
+    from workgate.config.editing import ConfigEditError
+
+    runtime = build_executor_runtime(
+        resolve_executor_config(
+            Settings(
+                default_workdir=tmp_path / "workspace",
+                state_dir=tmp_path / "state",
+            )
+        )
+    )
+    snapshot = object()
+    monkeypatch.setattr(
+        inspection, "current_startup_config", lambda role: snapshot
+    )
+    calls = []
+
+    def save(selected, *, revision, changes):
+        calls.append((selected, revision, changes))
+        return "b" * 64
+
+    monkeypatch.setattr(editing, "save_config", save)
+    args = {
+        "revision": "a" * 64,
+        "changes": {"max_jobs": {"op": "set", "value": 22}},
+    }
+    result = await runtime._execute_protocol_command_with_state(
+        ExecutorCommand(id=new_command_id(), op="ui.config.save", args=args)
+    )
+    assert result == {"revision": "b" * 64}
+    assert calls == [(snapshot, "a" * 64, args["changes"])]
+    for wrong in (
+        ExecutorCommand(id=new_command_id(), op="ui.config.save", args={}),
+        ExecutorCommand(
+            id=new_command_id(),
+            op="ui.config.save",
+            args={"revision": 22, "changes": {}},
+        ),
+        ExecutorCommand(
+            id=new_command_id(),
+            op="ui.config.save",
+            args=args,
+            session_id=new_session_id(),
+        ),
+    ):
+        with pytest.raises(ValueError, match="Invalid config save request"):
+            await runtime._execute_protocol_command_with_state(wrong)
+    assert len(calls) == 1
+
+    def conflict(*args, **kwargs):
+        raise ConfigEditError("RevisionConflict", 409)
+
+    monkeypatch.setattr(editing, "save_config", conflict)
+    result = await runtime._execute_protocol_command_with_state(
+        ExecutorCommand(id=new_command_id(), op="ui.config.save", args=args)
+    )
+    assert result == {"error": "RevisionConflict", "status": 409}

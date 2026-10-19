@@ -11,7 +11,7 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, get_origin
 
 import yaml
 
@@ -97,6 +97,20 @@ class StartupConfigInspection:
                     "section": spec.section,
                     "description": spec.help,
                     "choices": spec.choices,
+                    "type": (
+                        "bool"
+                        if spec.non_none_annotation is bool
+                        else "int"
+                        if spec.non_none_annotation is int
+                        else "float"
+                        if spec.non_none_annotation is float
+                        else "json"
+                        if get_origin(spec.non_none_annotation)
+                        in {list, dict, tuple}
+                        else "str"
+                    ),
+                    "nullable": spec.is_nullable,
+                    "default_value": _json_value(spec.default),
                     "effective_value": effective[name],
                     "source": source,
                     "file_present": name in file_values,
@@ -107,7 +121,15 @@ class StartupConfigInspection:
                     and source in {"cli", "env"},
                 }
             )
+        from .editing import revision_for
+
+        revision = revision_for(self)
         return {
+            "revision": revision,
+            "editable": revision is not None and file_error is None,
+            "edit_reason": None
+            if revision is not None and file_error is None
+            else "Read-only configuration",
             "role": self.role,
             "status": "running",
             "startup_version": __version__,

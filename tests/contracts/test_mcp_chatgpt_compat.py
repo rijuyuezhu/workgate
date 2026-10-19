@@ -687,6 +687,7 @@ async def test_read_only_tools_are_annotated(tmp_path, monkeypatch):
 
     read_only_tool_names = {
         "audit_tail",
+        "config_inspect",
         "fetch",
         "glob_search",
         "list_file_links",

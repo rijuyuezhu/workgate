@@ -129,6 +129,7 @@ class BrowserHarness:
         playwright: Playwright,
         *,
         with_remote_executor: bool = False,
+        editable_configs: bool = False,
     ) -> BrowserHarness:
         artifacts.mkdir(parents=True, exist_ok=True)
         executor_workspace = root / "workspace-executor"
@@ -187,6 +188,10 @@ class BrowserHarness:
                 "WORKGATE_UI_TERMINAL_IDLE_TIMEOUT_S": "120",
             }
         )
+        if editable_configs:
+            control_file = root / "control.yaml"
+            control_file.write_text("log_level: warning\n")
+            env["WORKGATE_CONFIG"] = str(control_file)
         server = _start_logged_process(
             [
                 sys.executable,
@@ -219,6 +224,10 @@ class BrowserHarness:
                 state_dir=executor_state_dir,
             )
             executor_process_env["TMUX_TMPDIR"] = str(executor_tmux_tmpdir)
+            if editable_configs:
+                executor_file = root / "executor.json"
+                executor_file.write_text('{"max_jobs": 18}\n')
+                executor_process_env["WORKGATE_CONFIG"] = str(executor_file)
             executor = _start_logged_process(
                 [sys.executable, "-m", "workgate.main", "executor", "run"],
                 cwd=PROJECT_ROOT,
