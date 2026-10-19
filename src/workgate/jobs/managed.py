@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import math
 import time
 from collections.abc import Awaitable, Callable, Generator, Mapping
 from contextvars import ContextVar
@@ -1020,11 +1021,14 @@ def managed_job_has_active_reference(
     return False
 
 
-def managed_jobs_may_reference_sessions(session_ids: tuple[str, ...]) -> bool:
-    """Conservatively detect nonterminal work attached to ended sessions."""
+def managed_jobs_last_activity_for_sessions(
+    session_ids: tuple[str, ...],
+) -> float | None:
+    """Return latest durable Job activity, or None if completion is unconfirmed."""
     target = set(session_ids)
+    last_activity = 0.0
     if not target:
-        return False
+        return last_activity
     with _store_transaction() as store:
         for row in store.get("jobs", []):
             payload = row.get("managed_payload")
@@ -1037,8 +1041,19 @@ def managed_jobs_may_reference_sessions(session_ids: tuple[str, ...]) -> bool:
             if not target.intersection(referenced):
                 continue
             if row.get("status") not in CONFIRMED_TERMINAL_STATUSES:
-                return True
-    return False
+                return None
+            timestamps = [
+                float(value)
+                for value in (row.get("updated_at"), row.get("completed_at"))
+                if isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(value)
+                and value > 0
+            ]
+            if not timestamps:
+                return None
+            last_activity = max(last_activity, *timestamps)
+    return last_activity
 
 
 def managed_job_id_set(session_id: str, job_ids: list[str]) -> set[str]:

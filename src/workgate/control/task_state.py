@@ -85,9 +85,10 @@ class ControlTaskService:
         store: StateStore,
         settings: ControlConfig,
         *,
-        jobs_may_be_active: Callable[[tuple[str, ...]], bool] | None = None,
+        jobs_last_activity: Callable[[tuple[str, ...]], float | None]
+        | None = None,
     ) -> None:
-        self._jobs_may_be_active = jobs_may_be_active
+        self._jobs_last_activity = jobs_last_activity
         self._state = state
         self._store = store
         self._settings = settings
@@ -725,6 +726,8 @@ class ControlTaskService:
                 document = current.document
                 if document.status != "active":
                     continue
+                if self._expire_continuation_claim(current, now=now):
+                    self._persist_stored(path, current)
                 if current.continuation.pending_claim_id is not None:
                     continue
                 sessions = tuple(
@@ -745,15 +748,18 @@ class ControlTaskService:
                 session_ids = tuple(
                     str(record.session_id) for record in sessions
                 )
-                # Without an authoritative job-store check, only sessionless
-                # Tasks are provably safe to transition.
-                if session_ids and (
-                    self._jobs_may_be_active is None
-                    or self._jobs_may_be_active(session_ids)
-                ):
-                    continue
+                # One durable Job-store read supplies both completion evidence
+                # and activity time. Missing timestamps remain fail-closed.
+                job_activity = 0.0
+                if session_ids:
+                    if self._jobs_last_activity is None:
+                        continue
+                    observed = self._jobs_last_activity(session_ids)
+                    if observed is None:
+                        continue
+                    job_activity = observed
                 last_activity = max(
-                    [self._continuation_last_activity(current)]
+                    [self._continuation_last_activity(current), job_activity]
                     + [record.updated_at for record in sessions]
                 )
                 if last_activity + idle_s > now:

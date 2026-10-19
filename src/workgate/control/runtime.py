@@ -10,7 +10,7 @@ from ..config.control import ControlConfig, resolve_control_config
 from ..config.settings import Settings
 from ..jobs.managed import (
     ManagedJobsRuntime,
-    managed_jobs_may_reference_sessions,
+    managed_jobs_last_activity_for_sessions,
     use_managed_jobs_runtime,
 )
 from ..oauth.core.state import OAuthState, build_oauth_state
@@ -232,12 +232,12 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
     )
     managed_jobs_runtime = ManagedJobsRuntime(state_store, config)
 
-    def has_active_jobs(session_ids: tuple[str, ...]) -> bool:
+    def last_job_activity(session_ids: tuple[str, ...]) -> float | None:
         with use_managed_jobs_runtime(managed_jobs_runtime):
-            return managed_jobs_may_reference_sessions(session_ids)
+            return managed_jobs_last_activity_for_sessions(session_ids)
 
     task_service = ControlTaskService(
-        control_state, state_store, config, jobs_may_be_active=has_active_jobs
+        control_state, state_store, config, jobs_last_activity=last_job_activity
     )
     session_coordinator = ControlSessionCoordinator(
         control_state,
