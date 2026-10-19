@@ -130,3 +130,27 @@ def test_bootstrap_keeps_unhandled_runner_failure_and_prunes_it(
         }
     )
     assert not trace.exists()
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["runner_bootstrap.py"],
+        ["runner_bootstrap.py", "--status-file"],
+    ],
+)
+def test_runner_bootstrap_without_receipt_argument_still_raises_original_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    argv: list[str],
+) -> None:
+    monkeypatch.setattr(sys, "argv", argv)
+    monkeypatch.setattr(sys, "path", sys.path.copy())
+
+    def fail() -> None:
+        raise RuntimeError("original import or runner error")
+
+    monkeypatch.setattr(job_runner, "main", fail)
+    with pytest.raises(RuntimeError, match="original import or runner error"):
+        runner_bootstrap.main()
+    assert not list(tmp_path.glob("*.runner-stderr.log"))
