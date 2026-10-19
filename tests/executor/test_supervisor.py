@@ -1,5 +1,6 @@
 """Real POSIX subprocess tests for the CLI Parent/Child restart contract."""
 
+import hashlib
 import json
 import os
 import signal
@@ -26,21 +27,27 @@ roles = json.loads(sys.argv[1])
 raise SystemExit(supervise([ChildCommand(role,tuple(argv)) for role,argv in roles]))
 """
 CHILD_CODE = """\
-import os,sys,time,signal
+import os,sys,time,signal,hashlib
 from pathlib import Path
-from workgate.supervisor import is_child,request_restart,notify_ready,restart_status
+from workgate.supervisor import is_child,request_restart,notify_config_selected,notify_ready,restart_status
 record,config,role,behavior=map(str,sys.argv[1:5])
 if not is_child(): raise SystemExit(26)
 if behavior == 'ignore-term': signal.signal(signal.SIGTERM, signal.SIG_IGN)
+config_digest=hashlib.sha256(Path(config).read_bytes()).hexdigest()
 with open(record, 'a') as out:
     out.write(f'{role} {os.getpid()} {os.getppid()} {os.environ["SUPERVISOR_TEST_ENV"]} {Path(config).read_text().strip()}\\n')
     out.flush()
 if behavior == 'exit': raise SystemExit(7)
+notify_config_selected(Path(config), config_digest)
+(Path(record).parent / (role+'.registered')).touch()
 if os.getenv('SUPERVISOR_READY_TEST'):
+    if os.getenv('SUPERVISOR_DELAY_READY_ROLE') == role:
+        while not (Path(record).parent / ('allow-ready-'+role)).exists():
+            time.sleep(0.05)
     if Path(config).read_text().strip() in ('bad', 'bad-'+role): raise SystemExit(17)
     if Path(config).read_text().strip() in ('hang', 'hang-'+role):
         while True: time.sleep(0.05)
-    notify_ready(Path(config))
+    notify_ready(Path(config), config_digest)
     with open(Path(record).parent / 'ready.log', 'a') as out:
         out.write(f'{role} {os.getpid()} {restart_status()}\\n')
         out.flush()
@@ -66,6 +73,7 @@ def _launch(
     ready_test: bool = False,
     short_apply: bool = False,
     split_configs: bool = False,
+    delayed_ready_role: str = "",
 ):
     config = tmp_path / "config.yaml"
     config.write_text("first")
@@ -96,6 +104,8 @@ def _launch(
         env["SUPERVISOR_READY_TEST"] = "1"
     if short_apply:
         env["SUPERVISOR_SHORT_APPLY"] = "1"
+    if delayed_ready_role:
+        env["SUPERVISOR_DELAY_READY_ROLE"] = delayed_ready_role
     env["PYTHONPATH"] = (
         str(ROOT / "src") + os.pathsep + env.get("PYTHONPATH", "")
     )
@@ -430,6 +440,9 @@ def test_colocate_shared_file_applies_both_roles(tmp_path, requester):
         first = _lines(record, 2)
         assert len(_lines(tmp_path / "ready.log", 2)) == 2
         config.write_text("second")
+        (tmp_path / f"{requester}.revision").write_text(
+            hashlib.sha256(config.read_bytes()).hexdigest()
+        )
         (tmp_path / f"{requester}.restart").touch()
         after = _lines(record, 4)
         assert {row[0] for row in after[2:]} == {"control", "executor"}
@@ -439,7 +452,10 @@ def test_colocate_shared_file_applies_both_roles(tmp_path, requester):
         )
         statuses = _lines(tmp_path / "ready.log", 4)
         assert statuses[-1][2] == "healthy"
-        assert all(row[2] in {"applying", "healthy"} for row in statuses[2:])
+        assert all(
+            row[2] in {"starting", "applying", "healthy"}
+            for row in statuses[2:]
+        )
         assert process.poll() is None
     finally:
         _shutdown(process)
@@ -459,10 +475,13 @@ def test_colocate_shared_file_failure_rolls_back_both(tmp_path, failed_role):
         config.write_text("intermediate")
         (tmp_path / "config.yaml.bak").write_text("intermediate")
         config.write_text("bad-" + failed_role)
+        (tmp_path / "control.revision").write_text(
+            hashlib.sha256(config.read_bytes()).hexdigest()
+        )
         (tmp_path / "control.restart").touch()
         after = _lines(record, 6)
         statuses = _lines(tmp_path / "ready.log", 4)
-        assert statuses[2][2] == "applying"  # One healthy role is not success.
+        assert statuses[2][2] in {"starting", "applying"}  # Not success.
         assert all(row[4] == "first" for row in after[-2:])
         assert {row[0] for row in after[-2:]} == {"control", "executor"}
         assert statuses[-1][2] == "recovered"
@@ -482,6 +501,9 @@ def test_colocate_shared_file_timeout_recovers_both(tmp_path):
     try:
         assert len(_lines(tmp_path / "ready.log", 2)) == 2
         config.write_text("hang-executor")
+        (tmp_path / "control.revision").write_text(
+            hashlib.sha256(config.read_bytes()).hexdigest()
+        )
         (tmp_path / "control.restart").touch()
         after = _lines(record, 6)
         assert {row[0] for row in after[-2:]} == {"control", "executor"}
@@ -504,9 +526,15 @@ def test_colocate_shared_file_rolls_back_to_latest_jointly_healthy_config(
     try:
         assert len(_lines(tmp_path / "ready.log", 2)) == 2
         config.write_text("second")
+        (tmp_path / "executor.revision").write_text(
+            hashlib.sha256(config.read_bytes()).hexdigest()
+        )
         (tmp_path / "executor.restart").touch()
         assert len(_lines(tmp_path / "ready.log", 4)) == 4
         config.write_text("bad-executor")
+        (tmp_path / "control.revision").write_text(
+            hashlib.sha256(config.read_bytes()).hexdigest()
+        )
         (tmp_path / "control.restart").touch()
         after = _lines(record, 8)
         statuses = _lines(tmp_path / "ready.log", 6)
@@ -514,6 +542,124 @@ def test_colocate_shared_file_rolls_back_to_latest_jointly_healthy_config(
         assert {row[0] for row in after[-2:]} == {"control", "executor"}
         assert all(row[4] == "second" for row in after[-2:])
         assert config.read_text() == "second"
+        assert process.poll() is None
+    finally:
+        _shutdown(process)
+    for row in after:
+        _pid_gone(int(row[1]))
+
+
+def test_colocate_shared_file_waits_for_executor_ready_before_apply(tmp_path):
+    process, record, config = _launch(
+        tmp_path,
+        ("control", "executor"),
+        ready_test=True,
+        delayed_ready_role="executor",
+    )
+    try:
+        before = _lines(record, 2)
+        assert _lines(tmp_path / "ready.log", 1)[0][0] == "control"
+        config.write_text("second")
+        (tmp_path / "control.revision").write_text(
+            hashlib.sha256(config.read_bytes()).hexdigest()
+        )
+        (tmp_path / "control.restart").touch()
+        deadline = time.monotonic() + 5
+        while (
+            not (tmp_path / "control.rejected").exists()
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.05)
+        assert (tmp_path / "control.rejected").exists()
+        assert len(record.read_text().splitlines()) == 2
+        assert process.poll() is None
+        # Both roles must have fully loaded A before Apply may replace it.
+        config.write_text("first")
+        (tmp_path / "allow-ready-executor").touch()
+        assert len(_lines(tmp_path / "ready.log", 2)) == 2
+        config.write_text("second")
+        (tmp_path / "control.restart").touch()
+        after = _lines(record, 4)
+        assert {row[0] for row in after[2:]} == {"control", "executor"}
+        assert all(row[4] == "second" for row in after[2:])
+        assert {row[1] for row in before}.isdisjoint(
+            {row[1] for row in after[2:]}
+        )
+    finally:
+        _shutdown(process)
+    for row in after:
+        _pid_gone(int(row[1]))
+
+
+def test_colocate_independent_file_can_apply_while_executor_starts(tmp_path):
+    process, record, control_file = _launch(
+        tmp_path,
+        ("control", "executor"),
+        ready_test=True,
+        split_configs=True,
+        delayed_ready_role="executor",
+    )
+    try:
+        _lines(record, 2)
+        assert _lines(tmp_path / "ready.log", 1)[0][0] == "control"
+        deadline = time.monotonic() + 5
+        while (
+            not (tmp_path / "executor.registered").exists()
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.05)
+        assert (tmp_path / "executor.registered").exists()
+        control_file.write_text("second")
+        (tmp_path / "control.revision").write_text(
+            hashlib.sha256(control_file.read_bytes()).hexdigest()
+        )
+        (tmp_path / "control.restart").touch()
+        after = _lines(record, 3)
+        assert after[-1][0] == "control"
+        assert after[-1][4] == "second"
+        assert sum(row[0] == "executor" for row in after) == 1
+        assert process.poll() is None
+        (tmp_path / "allow-ready-executor").touch()
+    finally:
+        _shutdown(process)
+    for row in after:
+        _pid_gone(int(row[1]))
+
+
+def test_colocate_rejects_second_apply_while_first_is_running(tmp_path):
+    process, record, control_file = _launch(
+        tmp_path, ("control", "executor"), ready_test=True, split_configs=True
+    )
+    try:
+        _lines(record, 2)
+        assert len(_lines(tmp_path / "ready.log", 2)) == 2
+        control_file.write_text("hang-control")
+        (tmp_path / "control.revision").write_text(
+            hashlib.sha256(control_file.read_bytes()).hexdigest()
+        )
+        (tmp_path / "control.restart").touch()
+        after = _lines(record, 3)
+        assert after[-1][0] == "control"
+        executor_file = tmp_path / "executor.yaml"
+        executor_file.write_text("second")
+        (tmp_path / "executor.revision").write_text(
+            hashlib.sha256(executor_file.read_bytes()).hexdigest()
+        )
+        (tmp_path / "executor.restart").touch()
+        deadline = time.monotonic() + 5
+        while (
+            not (tmp_path / "executor.rejected").exists()
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.05)
+        assert (tmp_path / "executor.rejected").exists()
+        assert (
+            sum(
+                row.split()[0] == "executor"
+                for row in record.read_text().splitlines()
+            )
+            == 1
+        )
         assert process.poll() is None
     finally:
         _shutdown(process)

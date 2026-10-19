@@ -382,7 +382,7 @@ class ExecutorRuntime:
                 return {"error": exc.code, "status": exc.status}
             # The connection submits the successful result to Control *before*
             # triggering the Parent; this handler only validates and accepts.
-            return {"status": "accepted"}
+            return {"status": "queued"}
         if command.op == "ui.config.inspect":
             if command.session_id is not None or command.args:
                 raise ValueError(

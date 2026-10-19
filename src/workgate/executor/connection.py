@@ -493,7 +493,7 @@ class ExecutorConnection:
             delivered
             and result.ok
             and command.op == "ui.config.apply"
-            and result.result == {"status": "accepted"}
+            and result.result == {"status": "queued"}
             and isinstance(revision, str)
         ):
             from ..supervisor import request_restart

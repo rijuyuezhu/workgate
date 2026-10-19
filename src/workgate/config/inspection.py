@@ -185,6 +185,9 @@ def capture_startup_config(role: Role, args: Any, settings: Settings) -> None:
         startup_at=time.time(),
     )
     _current = result
+    from ..supervisor import notify_config_selected
+
+    notify_config_selected(result.config_path, result.startup_file_digest)
 
 
 def current_startup_config(role: Role) -> StartupConfigInspection | None:

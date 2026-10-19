@@ -96,7 +96,7 @@ export function createConfigurationView({ root, request }) {
               body: JSON.stringify({revision: data.revision}),
             });
             if (generation !== revision) return;
-            applyStatus.textContent = "Restart accepted · Reconnecting…";
+            applyStatus.textContent = "Restart requested · Reconnecting…";
             // Allow one bounded startup attempt and one bounded rollback.
             for (let attempt = 0; attempt < 60; attempt++) {
               await new Promise(resolve => setTimeout(resolve, 1000));

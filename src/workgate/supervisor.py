@@ -90,6 +90,30 @@ def request_restart(expected_revision: str | None = None) -> None:
         raise RuntimeError("Workgate Parent did not accept the restart")
 
 
+def notify_config_selected(
+    config_path: Path | None, file_digest: str | None
+) -> None:
+    """Register the file dependency at settings load, before runtime readiness."""
+    if not is_child():
+        return
+    selected = str(config_path) if config_path is not None else None
+    message = (
+        json.dumps({"config": selected, "digest": file_digest}).encode() + b"\n"
+    )
+    if _parent_message(message) != b"accepted\n":
+        raise RuntimeError("Workgate Parent did not confirm config selection")
+
+
+def restart_affects_executor() -> bool:
+    """Whether this Control Apply would also restart a colocated Executor."""
+    if not is_child():
+        return False
+    response = _parent_message(b"targets\n")
+    if response not in (b"self\n", b"both\n"):
+        raise RuntimeError("Workgate Parent cannot determine Apply targets")
+    return response == b"both\n"
+
+
 def notify_ready(
     config_path: Path | None = None, file_digest: str | None = None
 ) -> None:
@@ -193,6 +217,9 @@ class _Child:
     channel: socket.socket
     buffer: bytes = b""
     status: str = "starting"
+    config_path: Path | None = None
+    registered: bool = False
+    config_digest: str | None = None
 
 
 def _stop(children: list[_Child]) -> None:
@@ -221,8 +248,8 @@ def supervise(commands: list[ChildCommand]) -> int:
     environment = os.environ.copy()
     environment.pop(PARENT_FD_ENV, None)
     children: dict[str, _Child] = {}
-    good_files: dict[str, _GoodFile] = {}
-    applying: dict[str, _Applying] = {}
+    good_files: dict[Path, _GoodFile] = {}
+    applying: _Applying | None = None
     previous_sigterm = signal.getsignal(signal.SIGTERM)
     previous_sigint = signal.getsignal(signal.SIGINT)
 
@@ -264,8 +291,35 @@ def supervise(commands: list[ChildCommand]) -> int:
             for child in old:
                 spawn(child.command, status="applying")
 
-        def recover(role: str) -> bool:
-            progress = applying.get(role)
+        def record_healthy_files() -> None:
+            """Record a file only once all of its dependent roles are healthy."""
+            if not all(child.registered for child in children.values()):
+                return
+            paths = {
+                child.config_path
+                for child in children.values()
+                if child.config_path is not None
+            }
+            for path in paths:
+                peers = [
+                    child
+                    for child in children.values()
+                    if child.config_path == path
+                ]
+                if not all(
+                    child.status in {"healthy", "recovered"} for child in peers
+                ):
+                    continue
+                snapshot = _snapshot_file(str(path))
+                if snapshot is None:
+                    continue
+                digest = hashlib.sha256(snapshot.content).hexdigest()
+                if all(child.config_digest == digest for child in peers):
+                    good_files[path] = snapshot
+
+        def recover() -> bool:
+            nonlocal applying
+            progress = applying
             if progress is None or progress.recovering:
                 return False
             if not _restore_good(progress.good, progress.candidate):
@@ -286,18 +340,15 @@ def supervise(commands: list[ChildCommand]) -> int:
                         continue  # A sibling's shared-file Apply replaced it.
                     exit_code = child.process.poll()
                     if exit_code is not None:
-                        if recover(role):
+                        if recover():
                             continue
                         return 128 - exit_code if exit_code < 0 else exit_code
-                    pending = applying.get(role)
-                    if (
-                        pending
-                        and time.monotonic() - pending.started_at
-                        > _APPLY_TIMEOUT_SECONDS
-                    ):
-                        if recover(role):
-                            continue
-                        return 1
+                if (
+                    applying is not None
+                    and time.monotonic() - applying.started_at
+                    > _APPLY_TIMEOUT_SECONDS
+                ) and not recover():
+                    return 1
                 for key, _events in selector.select(timeout=0.2):
                     role: str = key.data
                     child = children[role]
@@ -319,10 +370,52 @@ def supervise(commands: list[ChildCommand]) -> int:
                     message, child.buffer = child.buffer.split(b"\n", 1)
                     if child.buffer:
                         raise RuntimeError("unsupported Parent IPC request")
-                    if message == b"status":
-                        child.channel.sendall(
-                            child.status.encode("ascii") + b"\n"
+                    if message in {b"status", b"targets"}:
+                        # Dependency information is only complete after each
+                        # Child has reported its startup config selection.
+                        known = all(c.registered for c in children.values())
+                        group = (
+                            tuple(
+                                member
+                                for member, peer in children.items()
+                                if peer.config_path == child.config_path
+                            )
+                            if child.config_path is not None
+                            else (role,)
                         )
+                        ready = known and all(
+                            children[member].status in {"healthy", "recovered"}
+                            for member in group
+                        )
+                        if not ready:
+                            result = (
+                                "busy" if message == b"targets" else "starting"
+                            )
+                        elif message == b"targets":
+                            result = (
+                                "both"
+                                if role == "control" and "executor" in group
+                                else "self"
+                            )
+                        else:
+                            result = child.status
+                        child.channel.sendall(result.encode("ascii") + b"\n")
+                        continue
+                    if message.startswith(b'{"config": '):
+                        payload = json.loads(message)
+                        selected = payload["config"]
+                        if selected is not None and not isinstance(
+                            selected, str
+                        ):
+                            raise RuntimeError("invalid config path")
+                        if child.registered:
+                            child.channel.sendall(b"stale\n")
+                            continue
+                        child.config_path = Path(selected) if selected else None
+                        child.config_digest = payload["digest"]
+                        child.registered = True
+                        record_healthy_files()
+                        child.channel.sendall(b"accepted\n")
                         continue
                     if message.startswith(b'{"ready": '):
                         payload = json.loads(message)
@@ -332,6 +425,10 @@ def supervise(commands: list[ChildCommand]) -> int:
                             selected, str
                         ):
                             raise RuntimeError("invalid ready path")
+                        path = Path(selected) if selected else None
+                        if not child.registered or path != child.config_path:
+                            child.channel.sendall(b"stale\n")
+                            continue
                         saved = _snapshot_file(selected)
                         if digest is not None and (
                             saved is None
@@ -340,16 +437,15 @@ def supervise(commands: list[ChildCommand]) -> int:
                         ):
                             child.channel.sendall(b"stale\n")
                             continue
-                        progress = applying.get(role)
-                        if progress is not None and len(progress.roles) > 1:
+                        progress = applying
+                        if progress is not None and role in progress.roles:
                             expected = (
                                 progress.good.content
                                 if progress.recovering and progress.good
                                 else progress.candidate
                             )
-                            if (
+                            if progress.good is not None and (
                                 saved is None
-                                or progress.good is None
                                 or saved.path != progress.good.path
                                 or saved.content != expected
                             ):
@@ -358,54 +454,62 @@ def supervise(commands: list[ChildCommand]) -> int:
                             progress.ready.add(role)
                             if len(progress.ready) == len(progress.roles):
                                 for member in progress.roles:
-                                    good_files[member] = saved
                                     children[member].status = (
                                         "recovered"
                                         if progress.recovering
                                         else "healthy"
                                     )
-                                    applying.pop(member, None)
+                                if saved is not None and all(
+                                    peer.config_digest == digest
+                                    for peer in children.values()
+                                    if peer.config_path == saved.path
+                                ):
+                                    good_files[saved.path] = saved
+                                applying = None
                         else:
-                            applying.pop(role, None)
-                            if saved is not None:
-                                good_files[role] = saved
-                            else:
-                                good_files.pop(role, None)
-                            child.status = (
-                                "recovered"
-                                if progress and progress.recovering
-                                else "healthy"
-                            )
+                            child.status = "healthy"
+                            record_healthy_files()
                         child.channel.sendall(b"accepted\n")
                         continue
                     if message != b"restart" and not message.startswith(
                         b"restart:"
                     ):
                         raise RuntimeError("unsupported Parent IPC request")
-                    if role in applying:
+                    if applying is not None:
                         child.channel.sendall(b"busy\n")
                         continue
-                    previous = good_files.get(role)
+                    # Bare restarts remain role-specific for the original
+                    # Parent IPC contract; file Apply groups all dependents.
                     roles = (role,)
-                    if previous is not None:
-                        peers = tuple(
-                            other
-                            for other, good in good_files.items()
-                            if other != role and good.path == previous.path
+                    previous = None
+                    if message.startswith(b"restart:"):
+                        if not all(c.registered for c in children.values()):
+                            child.channel.sendall(b"busy\n")
+                            continue
+                        path = child.config_path
+                        if path is None:
+                            child.channel.sendall(b"stale\n")
+                            continue
+                        roles = tuple(
+                            member
+                            for member, peer in children.items()
+                            if peer.config_path == path
                         )
-                        if peers:
-                            # A shared file has one recoverable version, not
-                            # independently roll-backable per-role versions.
-                            if any(
-                                good_files[peer].content != previous.content
-                                for peer in peers
-                            ):
-                                child.channel.sendall(b"stale\n")
-                                continue
-                            roles = (role, *peers)
-                    if any(member in applying for member in roles):
-                        child.channel.sendall(b"busy\n")
-                        continue
+                        if any(
+                            children[member].status
+                            not in {"healthy", "recovered"}
+                            for member in roles
+                        ):
+                            child.channel.sendall(b"busy\n")
+                            continue
+                        previous = good_files.get(path)
+                        if previous is None:
+                            child.channel.sendall(b"stale\n")
+                            continue
+                    else:
+                        path = child.config_path
+                        if path is not None:
+                            previous = good_files.get(path)
                     candidate = (
                         _snapshot_file(str(previous.path)) if previous else None
                     )
@@ -420,7 +524,7 @@ def supervise(commands: list[ChildCommand]) -> int:
                         ):
                             child.channel.sendall(b"stale\n")
                             continue
-                    progress = _Applying(
+                    applying = _Applying(
                         candidate=None
                         if candidate is None
                         else candidate.content,
@@ -428,11 +532,9 @@ def supervise(commands: list[ChildCommand]) -> int:
                         started_at=time.monotonic(),
                         roles=roles,
                     )
-                    for member in roles:
-                        applying[member] = progress
                     child.channel.sendall(b"accepted\n")
                     restart_roles(roles)
-                    progress.started_at = time.monotonic()
+                    applying.started_at = time.monotonic()
         except KeyboardInterrupt:
             return 130
         finally:

@@ -128,7 +128,7 @@ async def test_remote_apply_denies_offline_and_forwards_only_authorized(
 
     class Transport:
         online = False
-        result = {"status": "accepted"}
+        result = {"status": "queued"}
 
         async def is_online(self, executor_id):
             return self.online
@@ -159,3 +159,22 @@ async def test_remote_apply_denies_offline_and_forwards_only_authorized(
     assert calls == [
         (("exec_1", "ui.config.apply", payload), {"timeout_s": 12})
     ]
+
+
+@pytest.mark.asyncio
+async def test_shared_apply_requires_executor_scope(tmp_path, monkeypatch):
+    path, snap = startup(tmp_path)
+    path.write_text("port: 9217\n")
+    monkeypatch.setattr(config_inspection, "restart_status", lambda: "healthy")
+    monkeypatch.setattr(
+        config_inspection, "restart_affects_executor", lambda: True
+    )
+    revision = revision_for(snap)
+    denied = await invoke({"revision": revision}, scopes="shell:write")
+    assert denied.status_code == 403
+    assert denied.background is None
+    granted = await invoke(
+        {"revision": revision}, scopes="shell:write executor:use"
+    )
+    assert granted.status_code == 202
+    assert granted.background is not None

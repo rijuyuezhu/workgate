@@ -44,7 +44,7 @@ async def test_config_apply_validates_file_and_parent_before_ack(
         id=new_command_id(), op="ui.config.apply", args=args
     )
     assert await runtime._execute_protocol_command_with_state(command) == {
-        "status": "accepted"
+        "status": "queued"
     }
     assert calls == [(snapshot, "a" * 64)]
 
@@ -82,7 +82,7 @@ async def test_remote_parent_restart_follows_successful_control_delivery(
     connection = ExecutorConnection(
         cast(Any, client),
         hello_factory=cast(Any, lambda: None),
-        execute=lambda command: {"status": "accepted"},
+        execute=lambda command: {"status": "queued"},
         max_concurrent_commands=1,
     )
     command = ExecutorCommand(

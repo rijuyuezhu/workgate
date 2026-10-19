@@ -17,7 +17,11 @@ from ...oauth.core.scopes import (
     SCOPE_SHELL_READ,
     SCOPE_SHELL_WRITE,
 )
-from ...supervisor import request_restart, restart_status
+from ...supervisor import (
+    request_restart,
+    restart_affects_executor,
+    restart_status,
+)
 
 
 def _answer(data: Any, *, status_code: int = 200) -> JSONResponse:
@@ -243,6 +247,8 @@ def config_inspection_routes(*, api_prefix: str) -> list[BaseRoute]:
                 state = restart_status()
                 if state not in {"healthy", "recovered"}:
                     raise ConfigEditError("ParentUnavailable", 409)
+                if restart_affects_executor():
+                    require_oauth_scopes((SCOPE_EXECUTOR_USE,))
                 await asyncio.to_thread(
                     validate_apply, snapshot, revision=revision
                 )
@@ -250,7 +256,7 @@ def config_inspection_routes(*, api_prefix: str) -> list[BaseRoute]:
                     raise ConfigEditError("NothingToApply", 409)
                 # BackgroundTask runs only after the HTTP 202 response is sent.
                 return JSONResponse(
-                    {"ok": True, "data": {"status": "accepted"}},
+                    {"ok": True, "data": {"status": "queued"}},
                     status_code=202,
                     headers={"Cache-Control": "no-store"},
                     background=BackgroundTask(request_restart, revision),
@@ -282,10 +288,10 @@ def config_inspection_routes(*, api_prefix: str) -> list[BaseRoute]:
                 }:
                     raise ConfigEditError(code, 409)
                 raise ConfigEditError("ApplyRejected", 503)
-            if reply.result.get("status") != "accepted":
+            if reply.result.get("status") != "queued":
                 raise ConfigEditError("ApplyRejected", 503)
             return _answer(
-                {"ok": True, "data": {"status": "accepted"}}, status_code=202
+                {"ok": True, "data": {"status": "queued"}}, status_code=202
             )
         except ValueError, TypeError, json.JSONDecodeError:
             return _answer(
@@ -295,6 +301,8 @@ def config_inspection_routes(*, api_prefix: str) -> list[BaseRoute]:
             return _answer(
                 {"ok": False, "error": exc.code}, status_code=exc.status
             )
+        except MissingOAuthScopeError:
+            return _answer({"ok": False, "error": "Forbidden"}, status_code=403)
         except Exception:
             return _answer(
                 {"ok": False, "error": "ApplyUnavailable"}, status_code=503
