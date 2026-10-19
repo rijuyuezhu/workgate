@@ -127,9 +127,14 @@ def remove_attempt_paths(paths: JobAttemptPaths | None) -> None:
     """Remove one explicitly described set of attempt artifacts."""
     if not paths:
         return
-    for key in ("command", "log", "status"):
+    for path in (
+        paths["command"],
+        paths["log"],
+        paths["status"],
+        paths["status"].with_suffix(".runner-stderr.log"),
+    ):
         with contextlib.suppress(OSError):
-            paths[key].unlink(missing_ok=True)
+            path.unlink(missing_ok=True)
 
 
 def remove_attempt_files(job_id: str, keep_attempt: int | None = None) -> None:
