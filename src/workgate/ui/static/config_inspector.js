@@ -114,7 +114,7 @@ export function createConfigurationView({ root, request }) {
                 return;
               } catch { /* The Child may be temporarily unavailable. */ }
             }
-            applyStatus.textContent = "Still reconnecting · Reload or check the updated Control address";
+            applyStatus.textContent = "Restart not confirmed · Check Parent logs and the saved config";
           } catch (error) {
             if (generation !== revision) return;
             applyStatus.textContent = error.status === 409 ? "File changed or restart unavailable · Reload" : "Apply failed";

@@ -225,9 +225,12 @@ def config_inspection_routes(*, api_prefix: str) -> list[BaseRoute]:
                 {"ok": False, "error": "InvalidExecutorId"}, status_code=400
             )
         try:
-            if len(await request.body()) > 1024:
-                raise ConfigEditError("InvalidEdit")
-            payload = json.loads(await request.body())
+            body = bytearray()
+            async for chunk in request.stream():
+                if len(body) + len(chunk) > 1024:
+                    raise ConfigEditError("InvalidEdit")
+                body.extend(chunk)
+            payload = json.loads(body)
             if not isinstance(payload, dict) or set(payload) != {"revision"}:
                 raise ConfigEditError("InvalidEdit")
             revision = payload["revision"]

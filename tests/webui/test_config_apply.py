@@ -105,6 +105,8 @@ async def test_control_apply_rejects_unmanaged_stale_invalid_or_unchanged(
     assert response.status_code == 400
     assert b"90000" not in response.body
     assert (await invoke({"revision": 22})).status_code == 400
+    # Reject an oversized body before buffering or parsing its content.
+    assert (await invoke({"revision": "a" * 2048})).status_code == 400
 
 
 @pytest.mark.asyncio
