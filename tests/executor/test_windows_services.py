@@ -1,0 +1,346 @@
+"""Windows user-service contracts without changing the host's scheduled tasks."""
+
+import ast
+import os
+import subprocess
+from argparse import Namespace
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from tests.executor.test_executor_service import _paired_manager
+from workgate.colocate import service as colocate_service
+from workgate.executor import service as executor_service
+from workgate.executor.profile import ExecutorProfile, ExecutorProfileStore
+from workgate.persistence import FileStateStore
+from workgate.platform.windows_task import WindowsUserTask, _literal
+from workgate.protocol.credentials import new_executor_credential
+from workgate.protocol.ids import new_executor_id
+
+
+def test_windows_task_quotes_arguments_and_limits_identity(monkeypatch):
+    monkeypatch.setattr(
+        "workgate.platform.windows_task.shutil.which",
+        lambda _: "powershell.exe",
+    )
+    calls: list[list[str]] = []
+
+    def run(argv):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "null", "")
+
+    task = WindowsUserTask(
+        "Test Workgate", description="Managed by Workgate: test", run=run
+    )
+    task.install(
+        [r"C:\Program Files\python.exe", r"C:\O'Brien 中文\run.py"],
+        cwd=r"C:\Test",
+    )
+    script = calls[-1][-1]
+    assert "-RunLevel Limited" in script
+    assert "-LogonType Interactive" in script
+    assert "-AtLogOn -User $user" in script
+    assert "-RestartCount 3" in script
+    assert _literal(r"C:\Program Files\python.exe") in script
+    assert "O''Brien" in script
+    assert "-Argument '" in script
+    assert not any("cmd.exe" in arg.lower() for arg in calls[-1])
+
+
+@pytest.mark.parametrize(
+    "state,expected",
+    [
+        ("Running", "running"),
+        ("Ready", "stopped"),
+        ("Disabled", "failed"),
+    ],
+)
+def test_windows_executor_status_preserves_lifecycle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str, expected: str
+):
+    manager, _ = _paired_manager(tmp_path, system="Windows")
+    monkeypatch.setattr(
+        manager,
+        "_windows_task",
+        lambda: SimpleNamespace(
+            status=lambda: {"state": state, "last_result": 0},
+        ),
+    )
+    status = manager.status()
+    assert status.state.value == expected
+    assert status.backend == "scheduled-task"
+    assert status.installed
+
+
+def test_windows_executor_install_uninstall_retains_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    manager, profile = _paired_manager(tmp_path, system="Windows")
+    commands: list[tuple[str, object]] = []
+    active = False
+    installed = False
+
+    class Task:
+        def status(self):
+            return (
+                {"state": "Running" if active else "Ready", "last_result": 0}
+                if installed
+                else None
+            )
+
+        def install(self, command, *, cwd):
+            nonlocal installed
+            installed = True
+            commands.append(("install", (command, cwd)))
+
+        def start(self):
+            nonlocal active
+            active = True
+            commands.append(("start", None))
+
+        def stop(self):
+            nonlocal active
+            active = False
+            commands.append(("stop", None))
+
+        def uninstall(self):
+            nonlocal installed
+            installed = False
+            commands.append(("uninstall", None))
+
+    monkeypatch.setattr(manager, "_windows_task", Task)
+    monkeypatch.setattr(
+        executor_service.WindowsUserTask, "available", lambda: True
+    )
+    pythonw = manager.executable.with_name("pythonw.exe")
+    pythonw.parent.mkdir(parents=True, exist_ok=True)
+    pythonw.touch()
+    status = manager.install()
+    assert status.state.value == "running"
+    assert manager.config_path.is_file()
+    assert manager.launcher_path.is_file()
+    assert manager.metadata_path.is_file()
+    assert commands[0][0] == "install"
+    manager.restart()
+    assert commands[-2:][0][0] == "stop"
+    manager.stop()
+    assert manager.status().state.value == "stopped"
+    manager.start()
+    assert manager.status().state.value == "running"
+    assert manager.uninstall().state.value == "not-installed"
+    assert not manager.config_path.exists()
+    assert manager.state_store is not None
+    from workgate.executor.profile import ExecutorProfileStore
+
+    assert ExecutorProfileStore(manager.state_store).load() == profile
+
+
+def test_colocate_windows_lifecycle_reuses_task(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    monkeypatch.setattr(colocate_service.sys, "platform", "win32")
+    monkeypatch.setattr(
+        colocate_service.WindowsUserTask, "available", lambda: True
+    )
+    monkeypatch.setattr(
+        colocate_service, "_windows_service_dir", lambda: tmp_path
+    )
+    calls = []
+
+    class Task:
+        def status(self):
+            return {"state": "Ready", "last_result": 0}
+
+        def start(self):
+            calls.append("start")
+
+        def stop(self):
+            calls.append("stop")
+
+        def uninstall(self):
+            calls.append("uninstall")
+
+    monkeypatch.setattr(colocate_service, "_windows_task", Task)
+    colocate_service.manage_colocate_service("restart")
+    assert calls == ["stop", "start"]
+    colocate_service.manage_colocate_service("uninstall")
+    assert calls[-1] == "uninstall"
+
+
+def _paired_colocate_args(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    control_config = tmp_path / "control.yaml"
+    executor_config = tmp_path / "executor.yaml"
+    executor_state = tmp_path / "executor-state"
+    control_config.write_text("mode: mcp\n")
+    executor_config.write_text(f"state_dir: {executor_state}\n")
+    ExecutorProfileStore(FileStateStore(lambda: executor_state)).save(
+        ExecutorProfile(
+            control_url="http://127.0.0.1:9000",
+            executor_id=new_executor_id(),
+            credential=new_executor_credential(),
+        )
+    )
+    for key in tuple(os.environ):
+        if key.startswith("WORKGATE_"):
+            monkeypatch.delenv(key)
+    monkeypatch.setattr(colocate_service.sys, "platform", "win32")
+    monkeypatch.setattr(
+        colocate_service.WindowsUserTask, "available", lambda: True
+    )
+    python = tmp_path / "runtime" / "python.exe"
+    monkeypatch.setattr(colocate_service.sys, "executable", str(python))
+    return Namespace(
+        control_config=str(control_config), executor_config=str(executor_config)
+    ), python
+
+
+def test_windows_colocate_install_uses_direct_pythonw_with_role_configs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    args, python = _paired_colocate_args(tmp_path, monkeypatch)
+    pythonw = python.with_name("pythonw.exe")
+    pythonw.parent.mkdir(parents=True)
+    pythonw.touch()
+    monkeypatch.setattr(colocate_service.sys, "executable", str(python))
+    target = tmp_path / "colocate-service"
+    monkeypatch.setattr(
+        colocate_service, "_windows_service_dir", lambda: target
+    )
+    events = []
+
+    class Task:
+        def status(self):
+            return None
+
+        def install(self, command, *, cwd):
+            events.append((command, cwd))
+
+        def start(self):
+            events.append("start")
+
+    monkeypatch.setattr(colocate_service, "_windows_task", Task)
+    colocate_service.install_colocate_service(args)
+    assert events[0] == (
+        [str(pythonw), str(target / "launcher.py")],
+        str(target),
+    )
+    assert events[-1] == "start"
+    launcher = (target / "launcher.py").read_text(encoding="utf-8")
+    assert "colocate" in launcher
+    parsed = ast.parse(launcher)
+    invocations = [
+        call
+        for call in ast.walk(parsed)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == "main"
+    ]
+    assert len(invocations) == 1
+    argv = ast.literal_eval(invocations[0].args[0])
+    assert argv == [
+        "colocate",
+        "--control-config",
+        args.control_config,
+        "--executor-config",
+        args.executor_config,
+    ]
+    assert "WORKGATE_" in launcher
+    assert "redirect_stdout" in launcher
+
+
+def test_windows_executor_missing_pythonw_reports_stale_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    manager, _ = _paired_manager(tmp_path, system="Windows")
+    monkeypatch.setattr(
+        executor_service.WindowsUserTask, "available", lambda: True
+    )
+    monkeypatch.setattr(
+        manager,
+        "_windows_task",
+        lambda: SimpleNamespace(
+            status=lambda: {"state": "Running", "last_result": 0}
+        ),
+    )
+    manager.service_dir.mkdir(parents=True)
+    manager.launcher_path.write_text("# owned launcher")
+    manager._write_service_config()
+    manager._write_metadata("scheduled-task", ["pythonw.exe", "launcher.py"])
+    status = manager.status()
+    assert status.installed and status.running
+    assert not status.runtime_current
+
+
+def test_windows_executor_service_rejects_console_frozen_before_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    manager, _profile = _paired_manager(tmp_path, system="Windows")
+    monkeypatch.setattr(executor_service.sys, "frozen", True, raising=False)
+    with pytest.raises(
+        executor_service.UnsupportedExecutorServiceError, match="windowless"
+    ):
+        manager.install()
+    assert not manager.config_path.exists()
+    assert not manager.metadata_path.exists()
+
+
+def test_windows_colocate_requires_pythonw_before_writing_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    args, _python = _paired_colocate_args(tmp_path, monkeypatch)
+    target = tmp_path / "not-installed"
+    monkeypatch.setattr(
+        colocate_service, "_windows_service_dir", lambda: target
+    )
+
+    class Task:
+        def status(self):
+            return None
+
+    monkeypatch.setattr(colocate_service, "_windows_task", Task)
+    with pytest.raises(RuntimeError, match="pythonw.exe"):
+        colocate_service.install_colocate_service(args)
+    assert not target.exists()
+
+
+def test_windows_task_refuses_to_replace_unowned_task(monkeypatch):
+    monkeypatch.setattr(
+        "workgate.platform.windows_task.shutil.which",
+        lambda _: "powershell.exe",
+    )
+    calls = []
+
+    def run(argv):
+        calls.append(argv[-1])
+        if "Get-ScheduledTask" in argv[-1]:
+            raise RuntimeError("scheduled task belongs to another account")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    task = WindowsUserTask(
+        "Workgate Executor",
+        description="Managed by Workgate: executor",
+        run=run,
+    )
+    with pytest.raises(RuntimeError, match="another account"):
+        task.install([r"C:\pythonw.exe", r"C:\launcher.py"], cwd="C:\\")
+    assert all("Register-ScheduledTask" not in script for script in calls)
+
+
+def test_windows_colocate_frozen_requires_windowless_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    args, _python = _paired_colocate_args(tmp_path, monkeypatch)
+    target = tmp_path / "not-installed"
+    monkeypatch.setattr(
+        colocate_service, "_windows_service_dir", lambda: target
+    )
+    monkeypatch.setattr(colocate_service.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        colocate_service,
+        "_windows_task",
+        lambda: SimpleNamespace(status=lambda: None),
+    )
+    with pytest.raises(RuntimeError, match="windowless"):
+        colocate_service.install_colocate_service(args)
+    assert not target.exists()
