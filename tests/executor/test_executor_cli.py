@@ -147,6 +147,9 @@ async def test_run_raises_owner_action(
     owner_action = RuntimeError("executor replaced")
 
     class Connection:
+        async def wait_first_hello_or_owner_action(self) -> bool:
+            return False
+
         async def wait_owner_action(self) -> BaseException:
             return owner_action
 
