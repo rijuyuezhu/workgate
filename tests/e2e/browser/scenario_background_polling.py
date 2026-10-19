@@ -109,17 +109,21 @@ def run_background_polling(harness: BrowserHarness) -> None:
             expect(records).to_have_count(before + 1, timeout=10_000)
             expect(detail).to_have_attribute("data-audit-entry-id", identity)
             page.unroute("**/api/ui/audit?*", newer_record)
-        different = next(
+        different_id = next(
             (
-                record
+                record_id
                 for record in records.all()
-                if record.get_attribute("data-audit-id")
+                if (record_id := record.get_attribute("data-audit-id"))
                 not in (identity, "new-background-audit-entry")
             ),
             None,
         )
-        if different is not None:
-            different.click()
+        if different_id is not None:
+            # A background update can prepend/remove rows while Playwright is
+            # waiting to click. Follow the record identity, not its index.
+            page.locator(
+                f'{list_selector} .audit-entry[data-audit-id="{different_id}"]'
+            ).click()
             expect(detail).not_to_have_attribute(
                 "data-audit-entry-id", identity
             )

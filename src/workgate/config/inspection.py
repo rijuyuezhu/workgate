@@ -19,7 +19,12 @@ from .. import __version__
 from ..app_paths import app_paths
 from .cli import cli_overrides_from_args
 from .roles import CONTROL_SETTING_NAMES, EXECUTOR_SETTING_NAMES
-from .settings import Settings, env_overrides, read_config_file
+from .settings import (
+    LoadedConfigFile,
+    Settings,
+    env_overrides,
+    read_config_file,
+)
 from .surface import SETTING_SPECS
 
 Role = Literal["control", "executor"]
@@ -150,41 +155,55 @@ class StartupConfigInspection:
 _current: StartupConfigInspection | None = None
 
 
-def capture_startup_config(role: Role, args: Any, settings: Settings) -> None:
+def capture_startup_config(
+    role: Role,
+    args: Any,
+    settings: Settings,
+    loaded_file: LoadedConfigFile | None = None,
+) -> None:
     """Capture one Child's initial CLI/env/file precedence before it serves RPC."""
     global _current
     selected = (
         CONTROL_SETTING_NAMES if role == "control" else EXECUTOR_SETTING_NAMES
     )
-    explicit = getattr(args, "config", None)
-    configured = explicit or os.environ.get("WORKGATE_CONFIG")
-    if configured:
-        path: Path | None = Path(configured).expanduser().absolute()
+    if loaded_file is not None:
+        path = loaded_file.path
+        file_names = loaded_file.names
+        digest = loaded_file.digest
     else:
-        default = getattr(args, "_workgate_default_config_path", None)
-        path = (
-            Path(default).expanduser().absolute()
-            if default is not None
-            else (
-                app_paths().config_file
-                if role == "control"
-                else app_paths().executor_config_file
+        explicit = getattr(args, "config", None)
+        configured = explicit or os.environ.get("WORKGATE_CONFIG")
+        if configured:
+            path: Path | None = Path(configured).expanduser().absolute()
+        else:
+            default = getattr(args, "_workgate_default_config_path", None)
+            path = (
+                Path(default).expanduser().absolute()
+                if default is not None
+                else (
+                    app_paths().config_file
+                    if role == "control"
+                    else app_paths().executor_config_file
+                )
             )
-        )
-        if not path.is_file():
-            path = None
-    file_names = frozenset(read_config_file(path, setting_names=selected))
+            if not path.is_file():
+                path = None
+        file_names = frozenset(read_config_file(path, setting_names=selected))
+        digest = _file_digest(path)
     result = StartupConfigInspection(
         role=role,
         settings=settings,
         config_path=path,
         cli_values=cli_overrides_from_args(args),
         env_values=env_overrides(selected),
-        startup_file_digest=_file_digest(path),
+        startup_file_digest=digest,
         startup_file_names=file_names,
         startup_at=time.time(),
     )
     _current = result
+    from ..supervisor import notify_config_selected
+
+    notify_config_selected(result.config_path, result.startup_file_digest)
 
 
 def current_startup_config(role: Role) -> StartupConfigInspection | None:

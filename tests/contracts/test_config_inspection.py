@@ -200,3 +200,29 @@ def test_full_role_schema_defaults_and_missing_file_values(tmp_path):
         by_name = {row["name"]: row for row in rows}
         assert by_name["max_jobs"]["default_value"] == 1000
         assert not (names - {spec.name for spec in SETTING_SPECS})
+
+
+def test_startup_file_digest_comes_from_same_read_as_settings(tmp_path):
+    import argparse
+    import hashlib
+
+    from workgate.config.cli import settings_and_source_from_args
+    from workgate.config.roles import CONTROL_SETTING_NAMES
+
+    path = tmp_path / "control.yaml"
+    initial = b"port: 8911\n"
+    path.write_bytes(initial)
+    args = argparse.Namespace(
+        config=str(path),
+        _workgate_setting_names=CONTROL_SETTING_NAMES,
+        _workgate_setting_defaults={},
+        _workgate_default_config_path=None,
+    )
+    settings, source = settings_and_source_from_args(args)
+    path.write_text("port: 8912\n")
+    capture_startup_config("control", args, settings, source)
+    snapshot = current_startup_config("control")
+    assert snapshot is not None
+    assert settings.port == 8911
+    assert snapshot.startup_file_digest == hashlib.sha256(initial).hexdigest()
+    assert snapshot.describe()["file_changed_since_startup"]

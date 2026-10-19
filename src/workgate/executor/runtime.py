@@ -354,6 +354,35 @@ class ExecutorRuntime:
                 }
             except ConfigEditError as exc:
                 return {"error": exc.code, "status": exc.status}
+        if command.op == "ui.config.apply":
+            if command.session_id is not None or set(command.args) != {
+                "revision"
+            }:
+                raise ValueError("Invalid config apply request")
+            from ..config.editing import ConfigEditError, validate_apply
+            from ..config.inspection import current_startup_config
+            from ..supervisor import restart_status
+
+            snapshot = current_startup_config("executor")
+            if snapshot is None:
+                raise RuntimeError(
+                    "Executor startup configuration is unavailable"
+                )
+            state = restart_status()
+            if state not in {"healthy", "recovered"}:
+                return {"error": "ParentUnavailable", "status": 409}
+            revision = command.args["revision"]
+            if not isinstance(revision, str):
+                raise ValueError("Invalid config apply request")
+            try:
+                await asyncio.to_thread(
+                    validate_apply, snapshot, revision=revision
+                )
+            except ConfigEditError as exc:
+                return {"error": exc.code, "status": exc.status}
+            # The connection submits the successful result to Control *before*
+            # triggering the Parent; this handler only validates and accepts.
+            return {"status": "queued"}
         if command.op == "ui.config.inspect":
             if command.session_id is not None or command.args:
                 raise ValueError(
@@ -366,7 +395,10 @@ class ExecutorRuntime:
                 raise RuntimeError(
                     "Executor startup configuration is unavailable"
                 )
-            return await asyncio.to_thread(snapshot.describe)
+            from ..supervisor import restart_status
+
+            data = await asyncio.to_thread(snapshot.describe)
+            return {**data, "apply_status": restart_status()}
         if command.op == "ui.executor_diagnostics":
             if command.session_id is not None or command.args:
                 raise ValueError(

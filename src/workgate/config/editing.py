@@ -234,3 +234,26 @@ def save_config(
         raise
     except (OSError, TimeoutError) as exc:
         raise ConfigEditError("ConfigWriteFailed", 503) from exc
+
+
+def validate_apply(snapshot: ConfigSnapshot, *, revision: str) -> None:
+    """Check the exact saved revision and full role Settings before restart.
+
+    This is a read-only gate; Parent owns restart and recovery, not the UI.
+    """
+    if not isinstance(revision, str) or len(revision) != 64:
+        raise ConfigEditError("InvalidEdit")
+    path = _target(snapshot)
+    try:
+        with private_file_lock(
+            path.with_name(f".{path.name}.lock"), timeout_s=5
+        ):
+            _target(snapshot)
+            current = path.read_bytes()
+            if hashlib.sha256(current).hexdigest() != revision:
+                raise ConfigEditError("RevisionConflict", 409)
+            _validate(snapshot, _mapping(current))
+    except ConfigEditError:
+        raise
+    except OSError, TimeoutError:
+        raise ConfigEditError("ConfigReadFailed", 503) from None
