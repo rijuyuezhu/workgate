@@ -27,7 +27,6 @@ from ..platform.process import (
 )
 from ..platform.shell import (
     default_shell,
-    shell_argv,
     shell_env_prefix,
     shell_join_argv,
 )
@@ -294,9 +293,7 @@ def _command_with_env(
 
 
 def _bounded_runner_argv(shell: str, command: str) -> list[str]:
-    """Use shell-native argv; POSIX keeps its descendant-reaping runner."""
-    if host_os() is HostOS.WINDOWS:
-        return shell_argv(shell, command, system="Windows")
+    """Use the gated internal runner on all platforms."""
     return bounded_runner_argv(
         shell,
         command,
@@ -310,19 +307,10 @@ async def _spawn_process(
     cwd: str,
     env: dict[str, str] | None = None,
 ) -> asyncio.subprocess.Process:
-    """Start a bounded shell command in a descendant-reaping process group."""
+    """Start a bounded shell command under host-native descendant containment."""
     shell = _effective_shell_executable(config)
     child_env = _subprocess_env(config, internal_runner=True)
     child_env.update(_validated_env_overrides(config, env))
-    process_group = new_process_group_kwargs()
-    common: dict[str, Any] = {
-        "cwd": cwd,
-        "env": child_env,
-        "stdin": asyncio.subprocess.DEVNULL,
-        "stdout": asyncio.subprocess.PIPE,
-        "stderr": asyncio.subprocess.PIPE,
-        **process_group,
-    }
     shell_candidate = shell
     if not os.path.isabs(shell) and os.path.dirname(shell):
         shell_candidate = os.path.abspath(os.path.join(cwd, shell))
@@ -335,9 +323,19 @@ async def _spawn_process(
             "configured shell executable was not found or is not executable",
         )
     try:
+        argv = _bounded_runner_argv(resolved_shell, command)
+        if host_os() is HostOS.WINDOWS:
+            from ..platform.windows_job import spawn_bounded_runner
+
+            return await spawn_bounded_runner(argv, cwd=cwd, env=child_env)
         return await asyncio.create_subprocess_exec(
-            *_bounded_runner_argv(resolved_shell, command),
-            **common,
+            *argv,
+            cwd=cwd,
+            env=child_env,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            **new_process_group_kwargs(),
         )
     except FileNotFoundError as exc:
         raise process_start_not_found_error(
@@ -421,7 +419,13 @@ async def run_shell(
                 ),
             ]
         )
-        await proc.wait()
+        try:
+            await proc.wait()
+        finally:
+            if host_os() is HostOS.WINDOWS:
+                from ..platform.windows_job import close_process_job
+
+                close_process_job(proc)
 
     semaphore = _command_semaphore(config)
     acquired = False
