@@ -103,6 +103,15 @@ async def test_fleet_list_explains_eligibility_and_scale_up(
             "https://control.test/executor/v1/bootstrap"
         )
         assert offline.bootstrap.pairing_approval == "human_required"
+        assert (
+            offline.bootstrap.windows_url
+            == "https://control.test/executor/v1/bootstrap.ps1"
+        )
+        assert offline.bootstrap.windows_command is not None
+        assert (
+            "workgate-bootstrap.ps1 -Persist"
+            in offline.bootstrap.windows_command
+        )
         assert offline.executors[0].executor_id == executor_id
         assert offline.executors[0].session_admission is False
         assert offline.executors[0].session_admission_reasons == [

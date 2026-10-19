@@ -65,6 +65,36 @@ X server. Executors without supported bindings or a usable Linux graphical sessi
 omit `gui.v1`. Runtime permission or desktop-session failures are reported
 explicitly; GUI tools never fall back to the control machine.
 
+## Native Windows (PowerShell)
+
+On native Windows x86-64, use the ordinary Python 3.14 source checkout or the
+release-backed PowerShell bootstrap when the matching Windows release archive
+is available (the Windows self-contained release artifact is added in #391).
+Neither option requires Bash or WSL. For a source checkout:
+
+```powershell
+git clone https://github.com/rijuyuezhu/workgate.git
+Set-Location workgate
+uv sync
+uv run workgate executor connect https://control.example --name windows-laptop
+uv run workgate executor run
+```
+
+For a Control-provided native binary, replace the example hostname with the
+HTTPS Control URL you trust, then run in the logged-in user PowerShell:
+
+```powershell
+Invoke-WebRequest -UseBasicParsing 'https://control.example/executor/v1/bootstrap.ps1' -OutFile workgate-bootstrap.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\workgate-bootstrap.ps1 -Persist
+```
+
+The script downloads only the matching Windows x86-64 release asset from the
+Control's release proxy, verifies the release's SHA-256 checksum, extracts only
+the expected executable, checks its version, and prompts for normal pairing
+approval. `-Persist` installs the user-level Task Scheduler Executor; omit it
+to run in the foreground instead. An unattended service cannot use native GUI
+input unless the user's interactive desktop is accessible and unlocked.
+
 ## Release archive
 
 For a self-contained install, download the archive matching your operating

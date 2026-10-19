@@ -10,6 +10,7 @@ from starlette.responses import PlainTextResponse, Response, StreamingResponse
 from starlette.routing import BaseRoute, Route
 
 from .. import __version__
+from .bootstrap_windows import powershell_bootstrap_script
 
 _BOOTSTRAP_PATH = "/executor/v1/bootstrap"
 _MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
@@ -22,6 +23,7 @@ _SUPPORTED_TARGETS = frozenset(
         "linux-aarch64",
         "macos-x86_64",
         "macos-aarch64",
+        "windows-x86_64",
     }
 )
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -34,7 +36,8 @@ class _BootstrapUnavailable(RuntimeError):
 def _archive_name(target: str) -> str:
     if target not in _SUPPORTED_TARGETS:
         raise ValueError(f"unsupported executor bootstrap target: {target}")
-    return f"workgate-{target}.tar.gz"
+    extension = "zip" if target.startswith("windows-") else "tar.gz"
+    return f"workgate-{target}.{extension}"
 
 
 def _release_asset_url(target: str, *, checksum: bool = False) -> str:
@@ -270,6 +273,13 @@ def executor_bootstrap_routes(base_url: str) -> list[BaseRoute]:
             headers={"Cache-Control": "no-store"},
         )
 
+    async def script_windows(_request: Request) -> Response:
+        return PlainTextResponse(
+            powershell_bootstrap_script(base_url, _MAX_ARCHIVE_BYTES),
+            media_type="text/plain",
+            headers={"Cache-Control": "no-store"},
+        )
+
     async def checksum(request: Request) -> Response:
         target = request.path_params["target"]
         try:
@@ -293,13 +303,16 @@ def executor_bootstrap_routes(base_url: str) -> list[BaseRoute]:
             return Response(status_code=404)
         return StreamingResponse(
             _archive_stream(target),
-            media_type="application/gzip",
+            media_type="application/zip"
+            if target == "windows-x86_64"
+            else "application/gzip",
             headers={"Cache-Control": "no-store"},
         )
 
     root = _BOOTSTRAP_PATH + "/{target:str}"
     return [
         Route(_BOOTSTRAP_PATH, script, methods=["GET"]),
+        Route(_BOOTSTRAP_PATH + ".ps1", script_windows, methods=["GET"]),
         Route(root + "/sha256", checksum, methods=["GET"]),
         Route(root + "/archive", archive, methods=["GET"]),
     ]

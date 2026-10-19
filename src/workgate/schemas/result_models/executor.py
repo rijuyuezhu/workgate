@@ -43,6 +43,8 @@ class ExecutorBootstrapRecipe(BaseModel):
 
     url: str
     command: str
+    windows_url: str | None = None
+    windows_command: str | None = None
     pairing_approval: Literal["human_required"] = "human_required"
 
 
