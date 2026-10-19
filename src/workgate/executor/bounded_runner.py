@@ -1342,8 +1342,38 @@ def run_bounded_command(shell: str, command: str) -> int:
             tracker.close()
 
 
+def _run_windows_bounded_command(shell: str, command: str) -> int:
+    """Wait for parent Job Object assignment before launching any user code."""
+    from workgate.platform.shell import shell_argv
+
+    if sys.stdin.buffer.read(1) != b"\x01":
+        print(
+            "Bounded command containment registration failed", file=sys.stderr
+        )
+        return 125
+    try:
+        process = subprocess.Popen(
+            shell_argv(shell, command),
+            stdin=subprocess.DEVNULL,
+            stdout=None,
+            stderr=None,
+            env=user_subprocess_env(),
+        )
+    except OSError as exc:
+        print(
+            f"Unable to start configured shell {shell!r}: {exc}",
+            file=sys.stderr,
+        )
+        return 127
+    return process.wait()
+
+
 def run_bounded_runner_from_args(args: argparse.Namespace) -> None:
     """Argparse handler for the private bounded-runner subcommand."""
+    if os.name == "nt":
+        raise SystemExit(
+            _run_windows_bounded_command(str(args.shell), str(args.command))
+        )
     launchd_child_status = getattr(args, "launchd_child_status", None)
     if launchd_child_status is not None:
         launchd_child_started = getattr(args, "launchd_child_started", None)

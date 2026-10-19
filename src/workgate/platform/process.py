@@ -33,6 +33,10 @@ async def terminate_process_tree(
     descendant containment remains owned by that runner (see #385).
     """
     current = host_os(system)
+    if current is HostOS.WINDOWS:
+        from .windows_job import terminate_process_job
+
+        return await terminate_process_job(proc, timeout_s=kill_timeout_s)
     if current in (HostOS.LINUX, HostOS.MACOS):
         from .posix.process import terminate_process_group
 

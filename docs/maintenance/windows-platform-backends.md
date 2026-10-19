@@ -41,8 +41,12 @@ programs may still emit different encodings. PowerShell preserves native
 executable exit codes; Python subprocess handles trusted .exe, .cmd and .bat
 without a custom launcher.
 
-Bounded Windows command execution is still unavailable until #385 provides
-real process-tree containment; shell syntax support is not a substitute.
+Bounded Windows commands now use a native kill-on-close Job Object (#385).
+The existing bounded-runner waits for a one-byte startup gate until it is
+attached to that job. Any binding failure refuses execution; normal return,
+timeout or cancellation closes the job and kills surviving descendants.
+Tracked-job recovery, process-wide shutdown and colocate lifecycle integration
+are still part of #385 and must be verified before the issue is closed.
 
 ## Native Windows functional checks
 
