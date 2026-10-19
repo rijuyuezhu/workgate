@@ -134,3 +134,20 @@ focus, mouse, keyboard and scroll within that window. If an otherwise logged-in
 session cannot take foreground input (for instance while disconnected), the
 script reports a **skip** for physical input rather than claiming it passed.
 It always unregisters the disposable task and removes the temporary files.
+
+## PowerShell enrollment and global Agent Skills (#390)
+
+Native Windows uses the public `/executor/v1/bootstrap.ps1` PowerShell endpoint
+and the same checksum/release proxy as POSIX, with a
+`workgate-windows-x86_64.zip` archive containing
+`workgate-windows-x86_64/workgate.exe`. Only the expected ZIP entry is
+extracted, with a bounded decompression budget. The Windows release build that
+produces this artifact belongs to #391; the endpoint otherwise fails closed
+instead of providing a mismatched POSIX runtime. Persistent fresh-machine
+bootstrap installs a per-user Task Scheduler service; it does not require
+administrator elevation, WSL, or Bash.
+
+For global Agent Skills discovery, Windows defaults to
+`%APPDATA%\agents\skills` rather than a POSIX `~/.config` path. An absolute
+`XDG_CONFIG_HOME` override remains supported, consistent with the existing
+source priority (project > managed > global).

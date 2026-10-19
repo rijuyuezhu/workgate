@@ -5240,6 +5240,30 @@
               "url": {
                 "title": "Url",
                 "type": "string"
+              },
+              "windows_command": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Windows Command"
+              },
+              "windows_url": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Windows Url"
               }
             },
             "required": [
