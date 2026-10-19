@@ -25,6 +25,10 @@ def _backend_for_platform(
         from .macos import MacOSGuiBackend
 
         return MacOSGuiBackend()
+    if system is HostOS.WINDOWS:
+        from .windows import WindowsGuiBackend
+
+        return WindowsGuiBackend()
     if system is HostOS.LINUX:
         from .linux import LinuxGuiBackend
 
@@ -127,11 +131,23 @@ def _linux_desktop_environment_fallback() -> tuple[
     )
 
 
+def _windows_gui_capability_available() -> bool:
+    if sys.platform != "win32":
+        return False
+    if importlib.util.find_spec("uiautomation") is None:
+        return False
+    from .windows import windows_desktop_available
+
+    return windows_desktop_available()
+
+
 def gui_capability_available() -> bool:
     """Return whether this executor can expose the native desktop GUI backend."""
     system = host_os()
     if system is HostOS.MACOS:
         return _macos_gui_capability_available()
+    if system is HostOS.WINDOWS:
+        return _windows_gui_capability_available()
     if system is not HostOS.LINUX:
         return False
     display = os.environ.get("DISPLAY")

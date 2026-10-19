@@ -103,3 +103,34 @@ WebSocket protocol or session manager is introduced.
   cleanup when an interactive ConPTY closes.
 
 Linux/macOS tests cover the shared implementation.
+
+## Desktop GUI automation (#389)
+
+Native Windows Executors reuse the existing session-owned GUI service with a
+Windows UI Automation backend (`uiautomation`, selected only on Windows). GUI
+capability is offered only when the Windows process belongs to a logged-in
+user session with an accessible Default input desktop and a foreground window.
+Session 0, WSL, locked/disconnected sessions and inaccessible secure desktops
+do not offer desktop automation. The Executor itself remains available when GUI
+is unavailable; native GUI calls then report an explicit unavailable error.
+
+The backend reads UIA window/element identities, bounds and semantic patterns on
+one COM-initialized worker. HWND reuse, changed UIA identities, stale elements
+and moved windows invalidate observations. Physical input additionally requires
+the selected HWND to become foreground; failing focus never silently sends
+keystrokes to another application. Coordinates are in per-monitor physical
+pixels, including negative origins for other monitors.
+
+Screenshots use a short-lived, timeout-bounded Win32 `PrintWindow` child to
+capture **only the requested window**, rather than cropping a full-desktop image.
+The shared GUI service enforces session ownership, screenshot/element bounds,
+action limits and snapshot cleanup. Source Python is supported; frozen Windows
+window-capture entrypoint integration is deferred to #391.
+
+`python scripts/validation/windows-gui-task-smoke.py` can run on **native**
+Windows in a disposable logged-in Task Scheduler user task. It creates a
+temporary Tk window, tests UIA enumeration and isolated capture, then attempts
+focus, mouse, keyboard and scroll within that window. If an otherwise logged-in
+session cannot take foreground input (for instance while disconnected), the
+script reports a **skip** for physical input rather than claiming it passed.
+It always unregisters the disposable task and removes the temporary files.

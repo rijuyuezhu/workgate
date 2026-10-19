@@ -97,6 +97,12 @@ service-capable; their windowless launcher/release integration is tracked
 under #391 rather than hiding a console executable behind an unmanaged
 PowerShell child process.
 
+Windows GUI automation also requires a logged-in, unlocked foreground
+desktop. It uses native UI Automation and isolated per-window screenshots;
+Windows service processes with no accessible input desktop still expose
+non-GUI Executor operations. GUI capture in frozen Windows bundles awaits
+#391 integration.
+
 Temporary network or control outages reconnect with the same profile. Normal
 reboots or long periods offline do not require pairing again. If the executor
 was revoked or its credential was replaced, run `executor connect` again and
