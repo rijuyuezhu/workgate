@@ -34,7 +34,7 @@ class FakePty:
     def isalive(self):
         return self.alive
 
-    def read(self):
+    def read(self) -> str | bytes:
         self.entered.wait(timeout=1)
         self.entered.clear()
         return "first\n" if self.alive else ""
@@ -300,3 +300,41 @@ def test_late_attach_tail_replay_keeps_room_for_new_output():
     subscriber.feed(b"new output")
     assert subscriber.read_wait(100, 0) == (b"new output", False)
     session.close()
+
+
+def test_conpty_reader_drains_buffered_output_after_child_exits():
+    class ExitedWithBufferedOutput(FakePty):
+        def __init__(self):
+            super().__init__()
+            self.alive = False
+            self.pending = [b"FINAL_OUTPUT\n", b""]
+
+        def read(self):
+            return self.pending.pop(0)
+
+    process = ExitedWithBufferedOutput()
+    session = ConPtySession(process)
+    session.reader.join(timeout=2)
+    assert not session.reader.is_alive()
+    with session.lock:
+        assert bytes(session.tail) == b"FINAL_OUTPUT\n"
+    session.close()
+
+
+def test_conpty_empty_reads_do_not_busy_spin():
+    import time
+
+    class EmptyPty(FakePty):
+        calls = 0
+
+        def read(self) -> str | bytes:
+            self.calls += 1
+            return b""
+
+    process = EmptyPty()
+    session = ConPtySession(process)
+    try:
+        time.sleep(0.085)
+        assert process.calls < 30
+    finally:
+        session.close()

@@ -1,6 +1,7 @@
 """Small native ConPTY I/O core. Session ownership stays with the Executor."""
 
 import threading
+import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -76,9 +77,12 @@ class ConPtySession:
 
     def _read(self) -> None:
         try:
-            while not self.closed and self.process.isalive():
+            while not self.closed:
                 data = self.process.read()
                 if not data:
+                    if not self.process.isalive():
+                        break
+                    time.sleep(0.01)  # Avoid spinning on a live, empty PTY.
                     continue
                 chunk = (
                     data.encode("utf-8", errors="replace")
