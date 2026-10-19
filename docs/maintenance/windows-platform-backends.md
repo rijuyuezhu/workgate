@@ -31,7 +31,7 @@ Optional stronger patch isolation is tracked separately in
 [#402](https://github.com/rijuyuezhu/workgate/issues/402). It does not
 justify native NT abstractions in #383.
 
-## Shell support (in progress, #384)
+## Shell support (#384)
 
 Windows defaults to PowerShell; native source installations use their Python
 interpreter, while frozen builds require an external Python on PATH (or an
@@ -50,10 +50,9 @@ its native completion and forced-stop descendant cleanup are covered by smoke
 tests. Native colocate attaches its parent process to a kill-on-close Job
 before launching Control and Executor; role descendants and nested bounded
 command Job Objects are covered when colocate exits, including forced stop. Full tracked-job
-recovery and service-level lifecycle still require validation before #385
-can close.
+recovery and service-level lifecycle remain separate work in #387 and #388.
 
-## Interactive terminal (in progress, #386)
+## Interactive terminal (#386)
 
 On native Windows, pywinpty supplies ConPTY for interactive PowerShell/pwsh.
 Existing persistent-shell operations and the WebUI terminal bridge share one
@@ -86,8 +85,6 @@ WebSocket protocol or session manager is introduced.
   background descendant cleanup and forced stop.
 - scripts/validation/windows-colocate-job-smoke.py: launcher/role/grandchild
   containment on normal and forced colocate termination.
-- scripts/validation/windows-conpty-shell-smoke.py: persistent Shell API,
-  two WebUI bridge attachments, Unicode input, limits and restart.
 - scripts/validation/windows-conpty-owner-smoke.py: abrupt Executor-owner
   termination does not leave an interactive PowerShell behind.
 - scripts/validation/windows-conpty-transport-smoke.py: native Windows
