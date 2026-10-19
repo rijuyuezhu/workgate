@@ -882,11 +882,9 @@ class ControlTaskService:
                     remaining.discard(task_id)
                 if len(remaining) < _TASK_HISTORY_LIMIT_PER_PRINCIPAL:
                     break
-        if len(remaining) >= _TASK_HISTORY_LIMIT_PER_PRINCIPAL:
-            raise RuntimeError(
-                "task history limit reached; finish or cancel existing tasks "
-                "before creating another"
-            )
+        # The history limit is a retention target, not an admission cap.
+        # Active, blocked, and session-owned Tasks must never be evicted to
+        # admit a new Task; allowing their count to exceed the target is safe.
 
     def _create_sync(
         self, *, label: str | None, objective: str | None

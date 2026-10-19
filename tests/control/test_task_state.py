@@ -511,8 +511,8 @@ async def test_task_retention_never_prunes_terminal_task_with_live_session(
     session_id = str(started["session_id"])
     await service.cancel_task(task.task_id)
 
-    with pytest.raises(RuntimeError, match="task history limit reached"):
-        await service.create_task(label="must not evict live task")
+    accepted = await service.create_task(label="must not evict live task")
+    assert accepted.label == "must not evict live task"
     assert (await service.read_task(task.task_id)).session_ids == [session_id]
 
     await harness.control.session_coordinator.end_session(session_id)
@@ -520,6 +520,36 @@ async def test_task_retention_never_prunes_terminal_task_with_live_session(
     assert replacement.label == "replacement"
     with pytest.raises(ValueError, match="unknown task_id"):
         await service.read_task(task.task_id)
+
+
+@pytest.mark.asyncio
+async def test_task_history_limit_does_not_block_new_implicit_work(
+    tmp_path, monkeypatch
+):
+    _settings, harness = _harness(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "workgate.control.task_state._TASK_HISTORY_LIMIT_PER_PRINCIPAL", 2
+    )
+    service = harness.control.task_service
+    first = await service.create_task(label="ongoing")
+    second = await service.create_task(label="blocked")
+    await service.block_task(second.task_id)
+
+    third = await service.create_task(label="new work")
+    assert third.label == "new work"
+    # A session without task_id implicitly creates a Task through the same
+    # retention seam: old active/blocked Tasks must not block this admission.
+    started = await harness.control.session_coordinator.start_session(
+        workdir="project-a",
+        executor_id=harness.executor_id,
+    )
+    assert isinstance(started, dict)
+    assert started["task_created"] is True
+    assert (
+        await service.read_task(str(started["task_id"]))
+    ).task_id == started["task_id"]
+    assert (await service.read_task(first.task_id)).label == "ongoing"
+    assert (await service.read_task(second.task_id)).label == "blocked"
 
 
 @pytest.mark.asyncio
