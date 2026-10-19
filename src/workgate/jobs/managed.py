@@ -1020,6 +1020,27 @@ def managed_job_has_active_reference(
     return False
 
 
+def managed_jobs_may_reference_sessions(session_ids: tuple[str, ...]) -> bool:
+    """Conservatively detect nonterminal work attached to ended sessions."""
+    target = set(session_ids)
+    if not target:
+        return False
+    with _store_transaction() as store:
+        for row in store.get("jobs", []):
+            payload = row.get("managed_payload")
+            referenced = {str(row.get("session_id") or "")}
+            if isinstance(payload, dict):
+                referenced.update(
+                    str(payload.get(key) or "")
+                    for key in ("src_session_id", "dst_session_id")
+                )
+            if not target.intersection(referenced):
+                continue
+            if row.get("status") not in CONFIRMED_TERMINAL_STATUSES:
+                return True
+    return False
+
+
 def managed_job_id_set(session_id: str, job_ids: list[str]) -> set[str]:
     """Return requested identifiers owned by control-managed jobs."""
     requested = set(job_ids)

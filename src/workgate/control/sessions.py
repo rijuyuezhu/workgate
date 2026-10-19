@@ -362,7 +362,7 @@ class ControlSessionCoordinator:
         payload = self._unwrap(result)
         if not isinstance(payload, dict) or payload.get("absent") is not True:
             raise RuntimeError("executor did not confirm session absence")
-        self._mark_ended(record)
+        self._mark_ended(record, confirmed=True)
         executor_stopped_jobs = payload.get("stopped_jobs", [])
         stopped_jobs = list(
             dict.fromkeys(
@@ -566,7 +566,7 @@ class ControlSessionCoordinator:
             item = reported.get(session_id)
             if record.status == "terminating":
                 if item is None:
-                    self._mark_ended(record)
+                    self._mark_ended(record, confirmed=True)
                 else:
                     self._schedule_termination(record)
                 continue
@@ -790,7 +790,9 @@ class ControlSessionCoordinator:
         except Exception:
             return
 
-    def _mark_ended(self, record: ControlSessionRecord) -> None:
+    def _mark_ended(
+        self, record: ControlSessionRecord, *, confirmed: bool = False
+    ) -> None:
         self._activity_by_session.pop(str(record.session_id), None)
         missing = self._missing_by_executor.get(str(record.executor_id))
         if missing is not None:
@@ -798,7 +800,10 @@ class ControlSessionCoordinator:
             if not missing:
                 self._missing_by_executor.pop(str(record.executor_id), None)
         self._state.update_session(
-            str(record.session_id), status="ended", updated_at=self._clock()
+            str(record.session_id),
+            status="ended",
+            executor_absence_confirmed=confirmed,
+            updated_at=self._clock(),
         )
 
     async def _require_available(self, record: ControlSessionRecord) -> None:

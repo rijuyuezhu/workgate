@@ -261,3 +261,28 @@ async def test_executor_runtime_close_can_retry_failed_owned_cleanup(
     assert calls == 2
     with pytest.raises(RuntimeError, match="cannot be restarted"):
         await runtime.start()
+
+
+@pytest.mark.asyncio
+async def test_control_idle_sweep_starts_and_stops_with_runtime(tmp_path):
+    runtime = build_control_runtime(
+        Settings(
+            state_dir=tmp_path / "idle-control",
+            auth_mode="none",
+            task_idle_block_after_s=86400,
+        )
+    )
+    async with runtime.lifespan():
+        assert runtime._idle_sweep_task is not None
+        assert not runtime._idle_sweep_task.done()
+    assert runtime._idle_sweep_task is None
+
+    disabled = build_control_runtime(
+        Settings(
+            state_dir=tmp_path / "disabled-control",
+            auth_mode="none",
+            task_idle_block_after_s=0,
+        )
+    )
+    async with disabled.lifespan():
+        assert disabled._idle_sweep_task is None

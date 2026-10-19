@@ -58,6 +58,7 @@ class ControlSessionRecord(BaseModel):
     workdir: str | None = Field(default=None, max_length=4096)
     label: str | None = Field(default=None, max_length=256)
     status: Literal["creating", "active", "terminating", "ended"]
+    executor_absence_confirmed: bool = False
     created_at: Timestamp
     updated_at: Timestamp
 
@@ -203,6 +204,7 @@ class ControlState:
             "status",
             "workdir",
             "updated_at",
+            "executor_absence_confirmed",
         }
         unsupported = set(changes) - allowed
         if unsupported:

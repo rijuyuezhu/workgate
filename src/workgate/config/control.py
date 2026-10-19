@@ -51,6 +51,7 @@ class ControlConfig(SharedRoleConfig):
     tool_timeout_s: float
     max_http_request_bytes: int
     max_todos: int
+    task_idle_block_after_s: int
     max_todo_bytes: int
     max_transfer_payload_bytes: int
     max_transfer_payload_store_bytes: int
@@ -138,6 +139,7 @@ def resolve_control_config(settings: Settings) -> ControlConfig:
         max_audit_payload_store_bytes=settings.max_audit_payload_store_bytes,
         audit_payload_retention_s=settings.audit_payload_retention_s,
         max_todos=settings.max_todos,
+        task_idle_block_after_s=settings.task_idle_block_after_s,
         max_todo_bytes=settings.max_todo_bytes,
         max_transfer_payload_bytes=settings.max_transfer_payload_bytes,
         max_transfer_payload_store_bytes=settings.max_transfer_payload_store_bytes,

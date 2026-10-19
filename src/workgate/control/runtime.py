@@ -1,12 +1,18 @@
 """Control composition owner for long-lived server processes."""
 
+import asyncio
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 
 from ..config.control import ControlConfig, resolve_control_config
 from ..config.settings import Settings
-from ..jobs.managed import ManagedJobsRuntime
+from ..jobs.managed import (
+    ManagedJobsRuntime,
+    managed_jobs_may_reference_sessions,
+    use_managed_jobs_runtime,
+)
 from ..oauth.core.state import OAuthState, build_oauth_state
 from ..persistence import FileStateStore
 from ..tools.catalog import ToolCatalog
@@ -28,6 +34,8 @@ from .streams import ControlStreamHub
 from .task_state import ControlTaskService
 from .tool_composition import build_control_tool_catalog
 from .transfer_gateway import ControlTransferGateway
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -74,6 +82,9 @@ class ControlRuntime:
     """Control-owned public tool catalog."""
     agent_bridge: ControlAgentBridgeService
     """Shared MCP discovery and management authority for tools and WebUI."""
+    _idle_sweep_task: asyncio.Task[None] | None = field(
+        default=None, init=False, repr=False
+    )
     _started: bool = field(default=False, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
     _close_complete: bool = field(default=False, init=False, repr=False)
@@ -129,6 +140,27 @@ class ControlRuntime:
             raise
 
         self._started = True
+        if self.config.task_idle_block_after_s:
+            self._idle_sweep_task = asyncio.create_task(
+                self._run_idle_sweep(), name="workgate-task-idle-sweep"
+            )
+
+    async def _run_idle_sweep(self) -> None:
+        while True:
+            sweep = asyncio.create_task(self.task_service.sweep_idle_tasks())
+            try:
+                await asyncio.shield(sweep)
+            except asyncio.CancelledError:
+                # asyncio.to_thread is not cancellable: finish the file-lock
+                # pass before ControlState and the Job store are closed.
+                try:
+                    await sweep
+                except Exception:
+                    logger.exception("Task idle sweep failed during shutdown")
+                raise
+            except Exception:
+                logger.exception("Task idle sweep failed")
+            await asyncio.sleep(60 * 60)
 
     async def aclose(self) -> None:
         """Close every control-owned service; repeated close is harmless."""
@@ -136,6 +168,12 @@ class ControlRuntime:
             return
         self._closed = True
         errors: list[BaseException] = []
+
+        if self._idle_sweep_task is not None:
+            self._idle_sweep_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._idle_sweep_task
+            self._idle_sweep_task = None
 
         async def close_async(close) -> None:
             try:
@@ -192,7 +230,15 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         max_pending_attempts=config.executor_pairing_max_pending,
         ttl_s=config.executor_pairing_ttl_s,
     )
-    task_service = ControlTaskService(control_state, state_store, config)
+    managed_jobs_runtime = ManagedJobsRuntime(state_store, config)
+
+    def has_active_jobs(session_ids: tuple[str, ...]) -> bool:
+        with use_managed_jobs_runtime(managed_jobs_runtime):
+            return managed_jobs_may_reference_sessions(session_ids)
+
+    task_service = ControlTaskService(
+        control_state, state_store, config, jobs_may_be_active=has_active_jobs
+    )
     session_coordinator = ControlSessionCoordinator(
         control_state,
         executor_transport,
@@ -248,7 +294,6 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
     download_service = ControlDownloadService(
         session_coordinator, executor_transport, config
     )
-    managed_jobs_runtime = ManagedJobsRuntime(state_store, config)
     job_service = ControlJobService(
         session_coordinator,
         managed_jobs_runtime,

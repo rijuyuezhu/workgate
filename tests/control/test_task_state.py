@@ -955,3 +955,302 @@ async def test_task_continuation_expired_claim_can_be_replaced(
     assert stale["reported"] is False
     assert stale["accepted"] is None
     assert stale["continuation"]["pending"] is True
+
+
+@pytest.mark.asyncio
+async def test_idle_policy_blocks_only_after_confirmed_24h(
+    tmp_path, monkeypatch
+):
+    settings, harness = _harness(monkeypatch, tmp_path)
+    service = harness.control.task_service
+    task = await service.create_task(label="idle")
+    assert settings.task_idle_block_after_s == 24 * 60 * 60
+    assert await service.sweep_idle_tasks(now=task.updated_at + 86400 - 1) == 0
+    assert await service.sweep_idle_tasks(now=task.updated_at + 86401) == 1
+    blocked = await service.read_task(task.task_id)
+    assert blocked.status == "blocked"
+    assert any("Automatically blocked" in x for x in blocked.progress.blockers)
+    assert await service.sweep_idle_tasks(now=task.updated_at + 86402) == 0
+    resumed = await service.resume_task(task.task_id)
+    assert resumed.status == "active"
+    assert all(
+        "Automatically blocked" not in x for x in resumed.progress.blockers
+    )
+    assert await service.sweep_idle_tasks(now=resumed.updated_at + 1) == 0
+
+
+@pytest.mark.asyncio
+async def test_idle_policy_observes_agent_heartbeat_and_claim(
+    tmp_path, monkeypatch
+):
+    _settings, harness = _harness(monkeypatch, tmp_path)
+    service = harness.control.task_service
+    task = await service.create_task(label="active heartbeat")
+    await service.observe_agent_activity(
+        (task.task_id,), observed_at=task.updated_at + 600
+    )
+    assert await service.sweep_idle_tasks(now=task.updated_at + 86401) == 0
+    assert (
+        await service.sweep_idle_tasks(now=task.updated_at + 86400 + 601) == 1
+    )
+    assert (await service.read_task(task.task_id)).status == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_idle_policy_skips_live_and_unconfirmed_sessions(
+    tmp_path, monkeypatch
+):
+    _settings, harness, task_id, session_id = await _task_with_session(
+        monkeypatch, tmp_path
+    )
+    service = harness.control.task_service
+    task = await service.read_task(task_id)
+    later = task.updated_at + 5 * 86400
+    assert await service.sweep_idle_tasks(now=later) == 0
+
+    harness.control.control_state.update_session(
+        session_id,
+        status="ended",
+        executor_absence_confirmed=False,
+        updated_at=task.updated_at + 60,
+    )
+    assert await service.sweep_idle_tasks(now=later) == 0
+    assert (await service.read_task(task_id)).status == "active"
+
+
+@pytest.mark.asyncio
+async def test_idle_policy_checks_jobs_after_confirmed_end(
+    tmp_path, monkeypatch
+):
+    _settings, harness, task_id, session_id = await _task_with_session(
+        monkeypatch, tmp_path
+    )
+    service = harness.control.task_service
+    ended = await harness.control.session_coordinator.end_session(session_id)
+    assert ended["ended"] is True
+    record = harness.control.control_state.snapshot_sessions()[session_id]
+    assert record.executor_absence_confirmed
+
+    # Persisted Session ending is more recent than Task's own updated_at.
+    assert (
+        await service.sweep_idle_tasks(now=record.updated_at + 86400 - 1) == 0
+    )
+    service._jobs_may_be_active = lambda sessions: True
+    assert await service.sweep_idle_tasks(now=record.updated_at + 86401) == 0
+    service._jobs_may_be_active = lambda sessions: False
+    assert await service.sweep_idle_tasks(now=record.updated_at + 86401) == 1
+    assert (await service.read_task(task_id)).status == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_idle_policy_respects_explicit_disable(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKGATE_TASK_IDLE_BLOCK_AFTER_S", "0")
+    _settings, harness = _harness(monkeypatch, tmp_path)
+    service = harness.control.task_service
+    task = await service.create_task()
+    assert await service.sweep_idle_tasks(now=task.updated_at + 10 * 86400) == 0
+    assert (await service.read_task(task.task_id)).status == "active"
+
+
+@pytest.mark.asyncio
+async def test_idle_policy_uses_real_durable_job_states(tmp_path, monkeypatch):
+    from workgate.jobs import managed as managed_jobs
+    from workgate.jobs.managed import use_managed_jobs_runtime
+
+    _settings, harness, task_id, session_id = await _task_with_session(
+        monkeypatch, tmp_path
+    )
+    service = harness.control.task_service
+    await harness.control.session_coordinator.end_session(session_id)
+    ended = harness.control.control_state.snapshot_sessions()[session_id]
+    later = ended.updated_at + 86401
+    with (
+        use_managed_jobs_runtime(harness.control.managed_jobs_runtime),
+        managed_jobs._store_transaction() as store,
+    ):
+        store["jobs"].append(
+            {
+                "job_id": "job_active_copy",
+                "kind": "managed",
+                "session_id": "another-session",
+                "managed_payload": {"dst_session_id": session_id},
+                "status": "running",
+            }
+        )
+    assert await service.sweep_idle_tasks(now=later) == 0
+    with (
+        use_managed_jobs_runtime(harness.control.managed_jobs_runtime),
+        managed_jobs._store_transaction() as store,
+    ):
+        store["jobs"][0]["status"] = "lost"  # Not confirmed terminal.
+    assert await service.sweep_idle_tasks(now=later) == 0
+    with (
+        use_managed_jobs_runtime(harness.control.managed_jobs_runtime),
+        managed_jobs._store_transaction() as store,
+    ):
+        store["jobs"][0]["status"] = "succeeded"
+    assert await service.sweep_idle_tasks(now=later) == 1
+    assert (await service.read_task(task_id)).status == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_idle_policy_rechecks_heartbeat_under_task_file_lock(
+    tmp_path, monkeypatch
+):
+    _settings, harness = _harness(monkeypatch, tmp_path)
+    service = harness.control.task_service
+    task = await service.create_task(label="concurrent update")
+    now = task.updated_at + 86401
+    path = service._path(task.task_id)
+    with service._store.transaction(path):
+        sweep = asyncio.create_task(service.sweep_idle_tasks(now=now))
+        await asyncio.sleep(0.05)
+        raw = service._store.read_json(path)
+        assert raw is not None
+        raw["continuation"] = {"last_agent_activity": now - 1}
+        service._store.write_json(path, raw)
+    assert await sweep == 0
+    assert (await service.read_task(task.task_id)).status == "active"
+
+
+@pytest.mark.asyncio
+async def test_idle_policy_uses_persisted_task_across_control_restart(
+    tmp_path, monkeypatch
+):
+    settings, harness = _harness(monkeypatch, tmp_path)
+    original = await harness.control.task_service.create_task(label="restart")
+    harness.control.control_state.close()
+    restarted = build_control_runtime(settings)
+    restarted.control_state.start()
+    assert (
+        await restarted.task_service.sweep_idle_tasks(
+            now=original.updated_at + 86401
+        )
+        == 1
+    )
+    assert (
+        await restarted.task_service.read_task(original.task_id)
+    ).status == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_idle_policy_custom_threshold(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKGATE_TASK_IDLE_BLOCK_AFTER_S", "3600")
+    settings, harness = _harness(monkeypatch, tmp_path)
+    assert settings.task_idle_block_after_s == 3600
+    task = await harness.control.task_service.create_task()
+    assert (
+        await harness.control.task_service.sweep_idle_tasks(
+            now=task.updated_at + 3599
+        )
+        == 0
+    )
+    assert (
+        await harness.control.task_service.sweep_idle_tasks(
+            now=task.updated_at + 3601
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_idle_policy_audit_is_bound_to_own_control_store(
+    tmp_path, monkeypatch
+):
+    from workgate.config.role_config import get_role_config
+    from workgate.control import task_state
+    from workgate.persistence import (
+        FileStateStore,
+        get_state_store,
+        use_state_store,
+    )
+
+    _settings, harness = _harness(monkeypatch, tmp_path)
+    service = harness.control.task_service
+    task = await service.create_task(label="audit context")
+    unrelated = FileStateStore(lambda: tmp_path / "unrelated-state")
+    events = []
+
+    def capture(event, **fields):
+        events.append((event, fields, get_state_store(), get_role_config()))
+
+    monkeypatch.setattr(task_state, "audit", capture)
+    with use_state_store(unrelated):
+        assert await service.sweep_idle_tasks(now=task.updated_at + 86401) == 1
+        assert get_state_store() is unrelated
+    assert [item[0] for item in events] == [
+        "task_mutation",
+        "task_idle_blocked",
+    ]
+    assert all(item[2] is harness.control.state_store for item in events)
+    assert all(item[3] is harness.control.config for item in events)
+    assert events[-1][1]["last_activity_at"] == task.updated_at
+    assert events[-1][1]["idle_threshold_s"] == 86400
+
+
+@pytest.mark.asyncio
+async def test_idle_policy_does_not_forget_pruned_session_history(
+    tmp_path, monkeypatch
+):
+    _settings, harness, task_id, session_id = await _task_with_session(
+        monkeypatch, tmp_path
+    )
+    service = harness.control.task_service
+    await harness.control.session_coordinator.end_session(session_id)
+    ending = harness.control.control_state.snapshot_sessions()[session_id]
+    assert ending.executor_absence_confirmed
+    harness.control.control_state.remove_session(session_id)
+    assert (await service.read_task(task_id)).session_ids == []
+    assert (
+        await service.sweep_idle_tasks(now=ending.updated_at + 3 * 86400) == 0
+    )
+    assert (await service.read_task(task_id)).status == "active"
+
+
+@pytest.mark.asyncio
+async def test_idle_policy_does_not_guess_legacy_task_history(
+    tmp_path, monkeypatch
+):
+    _settings, harness = _harness(monkeypatch, tmp_path)
+    service = harness.control.task_service
+    created = await service.create_task(label="legacy")
+    path = service._path(created.task_id)
+    with service._store.transaction(path):
+        raw = service._store.read_json(path)
+        assert raw is not None
+        raw.pop("session_count")
+        service._store.write_json(path, raw)
+    assert (
+        await service.sweep_idle_tasks(now=created.updated_at + 4 * 86400) == 0
+    )
+    assert (await service.read_task(created.task_id)).status == "active"
+
+
+@pytest.mark.asyncio
+async def test_idle_policy_requires_all_historical_sessions_retained(
+    tmp_path, monkeypatch
+):
+    _settings, harness = _harness(monkeypatch, tmp_path)
+    service = harness.control.task_service
+    task = await service.create_task(label="two sessions")
+    first = await harness.control.session_coordinator.start_session(
+        workdir="project-a",
+        executor_id=harness.executor_id,
+        task_id=task.task_id,
+    )
+    second = await harness.control.session_coordinator.start_session(
+        workdir="project-b",
+        executor_id=harness.executor_id,
+        task_id=task.task_id,
+    )
+    await harness.control.session_coordinator.end_session(first["session_id"])
+    await harness.control.session_coordinator.end_session(second["session_id"])
+    records = harness.control.control_state.snapshot_sessions()
+    now = (
+        max(records[x["session_id"]].updated_at for x in (first, second))
+        + 86401
+    )
+    harness.control.control_state.remove_session(first["session_id"])
+    assert len((await service.read_task(task.task_id)).session_ids) == 1
+    assert await service.sweep_idle_tasks(now=now) == 0
+    assert (await service.read_task(task.task_id)).status == "active"
