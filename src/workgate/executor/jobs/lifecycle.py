@@ -9,7 +9,7 @@ from ...jobs import status as job_status
 from ...jobs.persistence import attempt_paths as _attempt_paths
 from ...jobs.state import JobAttemptPaths, MutableJobRow
 from ...platform.shell import shell_join_argv
-from ...utils.private_files import write_private_text
+from ...utils.private_files import atomic_write_private_text
 
 _adopt_pending_retry = job_status._adopt_pending_retry
 _clear_pending_retry = job_status._clear_pending_retry
@@ -90,7 +90,7 @@ def _prepare_attempt(
     runner_command = shell_join_argv(
         _runner_argv(config, paths, cwd), shell=config.shell_executable
     )
-    write_private_text(paths["command"], command)
     paths["log"].unlink(missing_ok=True)
     paths["status"].unlink(missing_ok=True)
+    atomic_write_private_text(paths["command"], command)
     return paths, runner_command

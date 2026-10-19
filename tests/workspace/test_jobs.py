@@ -265,6 +265,29 @@ def test_windows_job_runner_rejected_shell_leaves_no_attempt_files(
     assert all(not paths[key].exists() for key in ("command", "log", "status"))
 
 
+def test_job_attempt_failed_status_cleanup_does_not_write_command(
+    tmp_path, monkeypatch
+):
+    config = resolve_executor_config(get_settings())
+    paths = _attempt_paths_untyped("job_cleanup_failure", 1)
+    paths["status"].write_text("old status", encoding="utf-8")
+    monkeypatch.setattr(job_lifecycle, "_attempt_paths", lambda *_: paths)
+    original_unlink = Path.unlink
+
+    def fail_status_cleanup(path, *args, **kwargs):
+        if path == paths["status"]:
+            raise PermissionError("status is still open")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_status_cleanup)
+    with pytest.raises(PermissionError, match="still open"):
+        job_lifecycle._prepare_attempt(
+            config, "job_test", 1, "echo hi", tmp_path
+        )
+    assert not paths["command"].exists()
+    assert paths["status"].read_text(encoding="utf-8") == "old status"
+
+
 def test_runner_bootstrap_anchors_runtime_and_delegates(monkeypatch):
     delegated: list[bool] = []
     isolated_path = ["sentinel"]
@@ -2205,6 +2228,28 @@ async def test_job_stop_confirms_lost_shell_absent_without_kill(monkeypatch):
     assert result.killed is False
     assert result.job.status == "stopped"
     assert row["error"] is None
+
+
+@pytest.mark.asyncio
+async def test_job_start_inventory_failure_does_not_create_attempt_files(
+    tmp_path, monkeypatch
+):
+    _configure_job_state(tmp_path, monkeypatch)
+    session_id = _create_session(str(tmp_path))
+
+    async def failed_inventory(*_args):
+        raise RuntimeError("inventory unavailable")
+
+    monkeypatch.setattr(
+        job_shell,
+        "authoritative_persistent_shell_ids_execute",
+        failed_inventory,
+    )
+    with pytest.raises(RuntimeError, match="inventory unavailable"):
+        await _test_job_start_execute(session_id, "echo new")
+
+    assert _load_store_untyped()["jobs"] == []
+    assert not list(job_persistence.job_runtime_dir().glob("*-attempt-*"))
 
 
 @pytest.mark.asyncio
