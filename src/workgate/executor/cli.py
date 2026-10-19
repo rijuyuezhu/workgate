@@ -108,8 +108,10 @@ async def _connect(args: argparse.Namespace) -> None:
 
 async def _run(args: argparse.Namespace) -> None:
     if bool(getattr(args, "managed_service", False)):
+        from ..supervisor import PARENT_FD_ENV
+
         for name in tuple(os.environ):
-            if name.startswith("WORKGATE_"):
+            if name.startswith("WORKGATE_") and name != PARENT_FD_ENV:
                 os.environ.pop(name, None)
     settings = settings_from_args(args)
     capture_startup_config("executor", args, settings)
@@ -136,6 +138,19 @@ async def _run(args: argparse.Namespace) -> None:
             raise RuntimeError(
                 "executor is not paired; run `workgate executor connect <control-url>` first"
             )
+        from ..config.inspection import current_startup_config
+        from ..supervisor import notify_ready
+
+        if not await connection.wait_first_hello_or_owner_action():
+            owner_action = await connection.wait_owner_action()
+            if managed_service and connection.restart_requested:
+                return
+            raise owner_action
+        snapshot = current_startup_config("executor")
+        notify_ready(
+            None if snapshot is None else snapshot.config_path,
+            None if snapshot is None else snapshot.startup_file_digest,
+        )
         owner_action = await connection.wait_owner_action()
         if managed_service and connection.restart_requested:
             return

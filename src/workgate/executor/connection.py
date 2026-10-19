@@ -178,6 +178,7 @@ class ExecutorConnection:
         self._random_value = random_value
         self._stop = asyncio.Event()
         self._owner_action = asyncio.Event()
+        self._first_hello = asyncio.Event()
         self._owner_action_error: ExecutorOwnerActionRequired | None = None
         self._command_tasks: set[asyncio.Task[None]] = set()
         self._inventory_mutations: set[asyncio.Future[None]] = set()
@@ -225,6 +226,21 @@ class ExecutorConnection:
             self.run_forever(), name="workgate-executor-connection"
         )
 
+    async def wait_first_hello_or_owner_action(self) -> bool:
+        """First compatible Control hello, or an owner-action failure."""
+        connected = asyncio.create_task(self._first_hello.wait())
+        blocked = asyncio.create_task(self._owner_action.wait())
+        try:
+            await asyncio.wait(
+                (connected, blocked), return_when=asyncio.FIRST_COMPLETED
+            )
+            return connected.done() and connected.result()
+        finally:
+            for task in (connected, blocked):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(connected, blocked, return_exceptions=True)
+
     async def wait_owner_action(self) -> ExecutorOwnerActionRequired:
         await self._owner_action.wait()
         assert self._owner_action_error is not None
@@ -258,6 +274,7 @@ class ExecutorConnection:
                     if action is RuntimePolicyAction.BLOCK:
                         await self._stop.wait()
                         break
+                self._first_hello.set()
                 await self._run_connected(
                     policy, delivery_progress=delivery_progress
                 )
@@ -470,7 +487,18 @@ class ExecutorConnection:
             ):
                 inventory_completion.set_result(None)
                 self._inventory_mutations.discard(inventory_completion)
-        await self._submit_result_until_terminal(result)
+        delivered = await self._submit_result_until_terminal(result)
+        revision = command.args.get("revision")
+        if (
+            delivered
+            and result.ok
+            and command.op == "ui.config.apply"
+            and result.result == {"status": "accepted"}
+            and isinstance(revision, str)
+        ):
+            from ..supervisor import request_restart
+
+            await asyncio.to_thread(request_restart, revision)
 
     async def _execute_command(self, command: ExecutorCommand) -> Any:
         if inspect.iscoroutinefunction(self._execute):
@@ -482,20 +510,21 @@ class ExecutorConnection:
 
     async def _submit_result_until_terminal(
         self, result: ExecutorResult
-    ) -> None:
+    ) -> bool:
         attempt = 0
         while not self._stop.is_set() and self._owner_action_error is None:
             try:
                 await self._client.submit_result(result)
-                return
+                return True
             except ExecutorControlError as exc:
                 if exc.code is ProtocolErrorCode.UNKNOWN_COMMAND:
-                    return
+                    return False
                 if not exc.retryable:
                     self._require_owner_action(exc)
-                    return
+                    return False
                 await self._sleep(self._retry_delay(attempt))
                 attempt += 1
+        return False
 
     def _require_owner_action(self, exc: ExecutorControlError) -> None:
         if self._owner_action_error is not None:

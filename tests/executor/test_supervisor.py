@@ -20,13 +20,15 @@ ROOT = Path(__file__).resolve().parents[2]
 PARENT_CODE = """\
 import json,sys
 from workgate.supervisor import ChildCommand,supervise
+import os, workgate.supervisor as supervisor
+if os.environ.get('SUPERVISOR_SHORT_APPLY'): supervisor._APPLY_TIMEOUT_SECONDS = 1
 roles = json.loads(sys.argv[1])
 raise SystemExit(supervise([ChildCommand(role,tuple(argv)) for role,argv in roles]))
 """
 CHILD_CODE = """\
 import os,sys,time,signal
 from pathlib import Path
-from workgate.supervisor import is_child,request_restart
+from workgate.supervisor import is_child,request_restart,notify_ready,restart_status
 record,config,role,behavior=map(str,sys.argv[1:5])
 if not is_child(): raise SystemExit(26)
 if behavior == 'ignore-term': signal.signal(signal.SIGTERM, signal.SIG_IGN)
@@ -34,11 +36,23 @@ with open(record, 'a') as out:
     out.write(f'{role} {os.getpid()} {os.getppid()} {os.environ["SUPERVISOR_TEST_ENV"]} {Path(config).read_text().strip()}\\n')
     out.flush()
 if behavior == 'exit': raise SystemExit(7)
+if os.getenv('SUPERVISOR_READY_TEST'):
+    if Path(config).read_text().strip() == 'bad': raise SystemExit(17)
+    if Path(config).read_text().strip() == 'hang':
+        while True: time.sleep(0.05)
+    notify_ready(Path(config))
+    with open(Path(record).parent / 'ready.log', 'a') as out:
+        out.write(f'{role} {os.getpid()} {restart_status()}\\n')
+        out.flush()
 request_file = Path(record).parent / (role+'.restart')
 while True:
     if request_file.exists():
         request_file.unlink()
-        request_restart()
+        revision_file = Path(record).parent / (role+'.revision')
+        try:
+            request_restart(revision_file.read_text() if revision_file.exists() else None)
+        except RuntimeError:
+            (Path(record).parent / (role+'.rejected')).touch()
     time.sleep(0.05)
 """
 
@@ -49,6 +63,8 @@ def _launch(
     *,
     exit_role: str = "",
     ignore_term_role: str = "",
+    ready_test: bool = False,
+    short_apply: bool = False,
 ):
     config = tmp_path / "config.yaml"
     config.write_text("first")
@@ -72,6 +88,10 @@ def _launch(
         commands.append([role, command])
     env = os.environ.copy()
     env["SUPERVISOR_TEST_ENV"] = "parent-startup"
+    if ready_test:
+        env["SUPERVISOR_READY_TEST"] = "1"
+    if short_apply:
+        env["SUPERVISOR_SHORT_APPLY"] = "1"
     env["PYTHONPATH"] = (
         str(ROOT / "src") + os.pathsep + env.get("PYTHONPATH", "")
     )
@@ -291,3 +311,100 @@ def test_root_cli_supervises_only_running_roles(monkeypatch):
     assert [call[0].role for call in calls] == ["control", "executor"]
     assert calls[0][0].argv[-3:] == ("control", "--mode", "http")
     assert calls[1][0].argv[-2:] == ("executor", "run")
+
+
+def test_apply_failure_restores_healthy_child_config_not_last_backup(tmp_path):
+    process, record, config = _launch(tmp_path, ("control",), ready_test=True)
+    try:
+        ready_log = tmp_path / "ready.log"
+        assert _lines(ready_log, 1)[0][2] == "healthy"
+        assert _lines(record, 1)[0][4] == "first"
+        # Two saves before Apply: the latest .bak is NOT last-known-good.
+        config.write_text("intermediate")
+        (tmp_path / "config.yaml.bak").write_text("intermediate")
+        config.write_text("bad")
+        (tmp_path / "control.restart").touch()
+        rows = _lines(ready_log, 2)
+        assert rows[1][2] == "recovered"
+        assert rows[0][1] != rows[1][1]
+        assert config.read_text() == "first"
+        assert (tmp_path / "config.yaml.bak").read_text() == "intermediate"
+        assert process.poll() is None
+    finally:
+        _shutdown(process)
+    for row in _lines(record, 3):
+        _pid_gone(int(row[1]))
+
+
+def test_rollback_refuses_to_overwrite_newer_concurrent_file(tmp_path):
+    from workgate.supervisor import _GoodFile, _restore_good
+
+    config = tmp_path / "config.yaml"
+    config.write_text("changed again")
+    assert not _restore_good(_GoodFile(config, b"last-good"), b"failed-apply")
+    assert config.read_text() == "changed again"
+
+
+def test_parent_rejects_stale_apply_revision_without_stopping_child(tmp_path):
+    process, record, config = _launch(tmp_path, ("control",), ready_test=True)
+    try:
+        assert _lines(tmp_path / "ready.log", 1)[0][2] == "healthy"
+        first = _lines(record, 1)[0]
+        config.write_text("updated")
+        (tmp_path / "control.revision").write_text("0" * 64)
+        (tmp_path / "control.restart").touch()
+        deadline = time.monotonic() + 6
+        while (
+            not (tmp_path / "control.rejected").exists()
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.05)
+        assert (tmp_path / "control.rejected").exists()
+        assert _lines(record, 1) == [first]
+        assert process.poll() is None
+        assert config.read_text() == "updated"
+    finally:
+        _shutdown(process)
+    _pid_gone(int(first[1]))
+
+
+def test_colocate_apply_failure_recovers_only_target_role(tmp_path):
+    process, record, config = _launch(
+        tmp_path, ("control", "executor"), ready_test=True
+    )
+    try:
+        before = _lines(record, 2)
+        assert len(_lines(tmp_path / "ready.log", 2)) == 2
+        original_executor = next(row for row in before if row[0] == "executor")
+        config.write_text("bad")
+        (tmp_path / "control.restart").touch()
+        statuses = _lines(tmp_path / "ready.log", 3)
+        assert statuses[-1][0] == "control"
+        assert statuses[-1][2] == "recovered"
+        assert config.read_text() == "first"
+        assert process.poll() is None
+        assert os.kill(int(original_executor[1]), 0) is None
+        after = _lines(record, 4)
+        assert [row[0] for row in after].count("executor") == 1
+    finally:
+        _shutdown(process)
+    for row in after:
+        _pid_gone(int(row[1]))
+
+
+def test_apply_health_timeout_rolls_back_to_last_healthy_child(tmp_path):
+    process, record, config = _launch(
+        tmp_path, ("executor",), ready_test=True, short_apply=True
+    )
+    try:
+        ready_log = tmp_path / "ready.log"
+        assert _lines(ready_log, 1)[0][2] == "healthy"
+        config.write_text("hang")
+        (tmp_path / "executor.restart").touch()
+        assert _lines(ready_log, 2)[-1][2] == "recovered"
+        assert config.read_text() == "first"
+        assert process.poll() is None
+    finally:
+        _shutdown(process)
+    for row in _lines(record, 3):
+        _pid_gone(int(row[1]))

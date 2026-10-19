@@ -33,7 +33,10 @@ async def test_config_inspect_protocol_has_no_session_or_arguments(
 
     monkeypatch.setattr(inspection, "current_startup_config", snapshot)
     command = ExecutorCommand(id=new_command_id(), op="ui.config.inspect")
-    assert await runtime._execute_protocol_command_with_state(command) == result
+    assert await runtime._execute_protocol_command_with_state(command) == {
+        **result,
+        "apply_status": "unmanaged",
+    }
     assert observed == ["executor"]
 
     for forbidden in (

@@ -9,7 +9,7 @@ export function createConfigurationView({ root, request }) {
   };
   const display = value => value === null ? "null" : value === "" ? '""' : typeof value === "string" ? value : JSON.stringify(value);
   function clear() { generation++; root.replaceChildren(); }
-  async function open(executorId = "") {
+  async function open(executorId = "", retry = 0) {
     const revision = ++generation;
     root.replaceChildren(text("span", "Loading…", "muted"));
     const path = executorId ? `?executor_id=${encodeURIComponent(executorId)}` : "";
@@ -17,7 +17,18 @@ export function createConfigurationView({ root, request }) {
       const data = await request(`/config${path}`);
       if (revision !== generation) return;
       root.replaceChildren();
-      if (data.status === "offline") { root.append(text("span", "Executor offline", "muted")); return; }
+      if (data.status === "offline") {
+        root.append(text("span", "Executor offline", "muted"));
+        if (retry < 5) {
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          if (generation === revision) await open(executorId, retry + 1);
+        } else {
+          const again = text("button", "Retry"); again.type = "button";
+          again.addEventListener("click", () => open(executorId));
+          root.append(again);
+        }
+        return;
+      }
       if (data.status !== "running" || !Array.isArray(data.fields)) throw new Error("No config");
       const pending = new Map();
       const rows = new Map();
@@ -52,6 +63,63 @@ export function createConfigurationView({ root, request }) {
       const discard = text("button", "Discard"); discard.type = "button";
       const status = text("span", "", "executor-config-status");
       toolbar.append(save, discard, status); root.append(toolbar);
+      const applyActions = text("div", "", "executor-config-actions");
+      const apply = text("button", "Apply saved file"); apply.type = "button";
+      const cancelApply = text("button", "Cancel"); cancelApply.type = "button";
+      const applyStatus = text("span", "", "executor-config-status");
+      const canApply = data.editable && data.file_changed_since_startup &&
+        ["healthy", "recovered"].includes(data.apply_status);
+      if (canApply) {
+        let confirmed = false;
+        cancelApply.hidden = true;
+        applyActions.append(apply, cancelApply, applyStatus);
+        root.append(applyActions);
+        cancelApply.addEventListener("click", () => {
+          confirmed = false; apply.textContent = "Apply saved file";
+          cancelApply.hidden = true; applyStatus.textContent = "";
+        });
+        apply.addEventListener("click", async () => {
+          if (generation !== revision) return;
+          if (pending.size) { applyStatus.textContent = "Save or discard edits first"; return; }
+          if (!confirmed) {
+            confirmed = true; apply.textContent = "Confirm restart";
+            cancelApply.hidden = false;
+            applyStatus.textContent = "This role will restart. CLI / ENV changes require restarting Parent.";
+            return;
+          }
+          apply.disabled = true;
+          cancelApply.hidden = true;
+          applyStatus.textContent = "Requesting restart…";
+          try {
+            await request(`/config/apply${path}`, {
+              method: "POST", headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({revision: data.revision}),
+            });
+            if (generation !== revision) return;
+            applyStatus.textContent = "Restart accepted · Reconnecting…";
+            for (let attempt = 0; attempt < 30; attempt++) {
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              if (generation !== revision) return;
+              try {
+                const fresh = await request(`/config${path}`);
+                if (fresh.status !== "running" || fresh.startup_at === data.startup_at) continue;
+                await open(executorId);
+                if (generation === revision + 1) {
+                  root.prepend(text("div",
+                    fresh.apply_status === "recovered" ? "Previous configuration restored" : "Configuration applied",
+                    fresh.apply_status === "recovered" ? "executor-config-warning" : "executor-config-success"));
+                }
+                return;
+              } catch { /* The Child may be temporarily unavailable. */ }
+            }
+            applyStatus.textContent = "Still reconnecting · Reload or check the updated Control address";
+          } catch (error) {
+            if (generation !== revision) return;
+            applyStatus.textContent = error.status === 409 ? "File changed or restart unavailable · Reload" : "Apply failed";
+            apply.disabled = false;
+          }
+        });
+      }
       const controls = new Map();
       const empty = text("p", "No unsaved changes", "executor-config-empty");
       empty.hidden = true;

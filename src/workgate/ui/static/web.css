@@ -3647,6 +3647,7 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 #executors-panel .executor-config-editor button { font-size: 11px; padding: 6px 10px; }
 #executors-panel .executor-config-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
 #executors-panel .executor-config-actions[hidden] { display: none; }
+#executors-panel .executor-config-actions button[hidden] { display: none; }
 #executors-panel .executor-config-actions button { padding: 6px 10px; font-size: 12px; }
 #executors-panel .executor-config-status { font-size: 11px; color: var(--muted); }
 #executors-panel .executor-config-success { display: block; margin-bottom: 10px; font-size: 12px; color: #447759; }
