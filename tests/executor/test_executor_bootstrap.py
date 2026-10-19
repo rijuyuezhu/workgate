@@ -264,3 +264,62 @@ def test_nonpersistent_bootstrap_runs_foreground_without_installing(
         "executor run --default-workdir /srv/work",
     ]
     assert not _persistent_runtime_dir(tmp_path).exists()
+
+
+def test_windows_bootstrap_script_route_and_release_asset_names() -> None:
+    client = TestClient(
+        Starlette(
+            routes=bootstrap.executor_bootstrap_routes("https://ctrl.example")
+        )
+    )
+    response = client.get("/executor/v1/bootstrap.ps1")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    script = response.text
+    assert "$Target = 'windows-x86_64'" in script
+    assert "Get-FileHash" in script
+    assert "Executor runtime checksum mismatch" in script
+    assert "workgate-$Target/workgate.exe" in script
+    assert "$source.Read($buffer" in script
+    assert "executor-bootstrap" in script
+    assert "--runtime-ownership" in script
+    assert "Invoke-Expression" not in script
+    assert "Expand-Archive" not in script
+    assert "Start-Process -Verb RunAs" not in script
+    assert "github.com" not in script
+    assert "https://ctrl.example/executor/v1/bootstrap" in script
+    assert (
+        bootstrap._archive_name("windows-x86_64")
+        == "workgate-windows-x86_64.zip"
+    )
+    assert bootstrap._release_asset_url("windows-x86_64").endswith(
+        "/workgate-windows-x86_64.zip"
+    )
+    assert bootstrap._release_asset_url(
+        "windows-x86_64", checksum=True
+    ).endswith("/workgate-windows-x86_64.sha256")
+    assert bootstrap._archive_name("linux-x86_64").endswith(".tar.gz")
+
+
+def test_windows_bootstrap_escapes_control_url_quotes() -> None:
+    script = bootstrap.powershell_bootstrap_script("https://it's.test", 12345)
+    assert "$Control = 'https://it''s.test'" in script
+
+
+@pytest.mark.asyncio
+async def test_windows_archive_proxy_preserves_zip_content_type(
+    monkeypatch,
+) -> None:
+    async def get_archive(_target):
+        yield b"PK\x03\x04"
+
+    monkeypatch.setattr(bootstrap, "_archive_stream", get_archive)
+    client = TestClient(
+        Starlette(
+            routes=bootstrap.executor_bootstrap_routes("https://ctrl.example")
+        )
+    )
+    response = client.get("/executor/v1/bootstrap/windows-x86_64/archive")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"
+    assert response.content == b"PK\x03\x04"

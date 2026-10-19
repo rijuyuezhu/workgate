@@ -1,6 +1,7 @@
 """Ordered Skill registry sources for local and session-scoped discovery."""
 
 import os
+import platform
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -20,6 +21,11 @@ def _global_config_home(environ: Mapping[str, str] | None = None) -> Path:
         candidate = Path(configured).expanduser()
         if candidate.is_absolute():
             return candidate.resolve()
+    if platform.system() == "Windows":
+        roaming = active.get("APPDATA")
+        if roaming and Path(roaming).is_absolute():
+            return Path(roaming).resolve()
+        return (Path.home() / "AppData" / "Roaming").resolve()
     return (Path.home() / ".config").resolve()
 
 

@@ -435,3 +435,37 @@ def test_registry_fingerprint_tracks_project_and_global_sources(
 
     assert before != after_project
     assert after_project != after_global
+
+
+def test_global_skill_sources_respect_windows_roaming_config_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(source_module.platform, "system", lambda: "Windows")
+    roaming = tmp_path / "Roaming Data"
+    result = skill_sources(
+        project_root=tmp_path / "project",
+        managed_config_dir=tmp_path / "managed",
+        managed_directory="skills",
+        environ={"APPDATA": str(roaming)},
+    )
+    assert result[2].path == roaming / "agents/skills"
+    # Windows still honors an explicitly supplied XDG root.
+    xdg = tmp_path / "xdg"
+    result = skill_sources(
+        project_root=tmp_path / "project",
+        managed_config_dir=tmp_path / "managed",
+        managed_directory="skills",
+        environ={"APPDATA": str(roaming), "XDG_CONFIG_HOME": str(xdg)},
+    )
+    assert result[2].path == xdg / "agents/skills"
+    # A relative APPDATA may not redirect discovery into the current workdir.
+    result = skill_sources(
+        project_root=tmp_path / "project",
+        managed_config_dir=tmp_path / "managed",
+        managed_directory="skills",
+        environ={"APPDATA": "relative/path"},
+    )
+    assert (
+        result[2].path
+        == (Path.home() / "AppData/Roaming/agents/skills").resolve()
+    )
