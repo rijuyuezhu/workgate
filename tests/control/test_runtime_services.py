@@ -315,3 +315,39 @@ async def test_retention_uses_existing_control_maintenance_loop(
         assert runtime._idle_sweep_task is not None
         await asyncio.wait_for(called.wait(), timeout=3)
     assert runtime._idle_sweep_task is None
+
+
+@pytest.mark.asyncio
+async def test_shutdown_waits_for_in_flight_session_retention_cleanup(
+    tmp_path, monkeypatch
+):
+    import asyncio
+
+    runtime = build_control_runtime(
+        Settings(
+            auth_mode="none",
+            state_dir=tmp_path / "retention-shutdown",
+            task_idle_block_after_s=0,
+            agent_session_retention_s=10,
+        )
+    )
+    entered = asyncio.Event()
+    released = asyncio.Event()
+    finished = asyncio.Event()
+
+    async def reaper():
+        entered.set()
+        await released.wait()
+        finished.set()
+
+    monkeypatch.setattr(
+        runtime.session_coordinator, "reap_expired_sessions", reaper
+    )
+    await runtime.start()
+    await asyncio.wait_for(entered.wait(), timeout=3)
+    closing = asyncio.create_task(runtime.aclose())
+    await asyncio.sleep(0)
+    assert not closing.done()
+    released.set()
+    await asyncio.wait_for(closing, timeout=3)
+    assert finished.is_set()

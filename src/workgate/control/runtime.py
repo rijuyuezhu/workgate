@@ -169,8 +169,21 @@ class ControlRuntime:
                 except Exception:
                     logger.exception("Task idle sweep failed")
             if self.config.agent_session_retention_s:
+                sweep = asyncio.create_task(
+                    self.session_coordinator.reap_expired_sessions()
+                )
                 try:
-                    await self.session_coordinator.reap_expired_sessions()
+                    await asyncio.shield(sweep)
+                except asyncio.CancelledError:
+                    # Finish any in-flight session termination before closing
+                    # transport; otherwise it can remain stuck in terminating.
+                    try:
+                        await sweep
+                    except Exception:
+                        logger.exception(
+                            "Session retention sweep failed during shutdown"
+                        )
+                    raise
                 except Exception:
                     logger.exception("Session retention sweep failed")
             await asyncio.sleep(60 * 60)

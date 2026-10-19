@@ -873,18 +873,20 @@ class ControlTaskService:
                 task_id, stale_before=stale_before
             ):
                 remaining.discard(task_id)
-        if len(remaining) >= _TASK_HISTORY_LIMIT_PER_PRINCIPAL:
+        # Active/blocked Tasks do not consume the terminal-history budget.
+        # This is a retention target, never a new-work admission cap.
+        terminal_count = sum(
+            str(task.task_id) in remaining for task in terminal
+        )
+        if terminal_count > _TASK_HISTORY_LIMIT_PER_PRINCIPAL:
             for task in terminal:
                 task_id = str(task.task_id)
                 if task_id not in remaining:
                     continue
                 if self._remove_retained_terminal(task_id):
-                    remaining.discard(task_id)
-                if len(remaining) < _TASK_HISTORY_LIMIT_PER_PRINCIPAL:
+                    terminal_count -= 1
+                if terminal_count <= _TASK_HISTORY_LIMIT_PER_PRINCIPAL:
                     break
-        # The history limit is a retention target, not an admission cap.
-        # Active, blocked, and session-owned Tasks must never be evicted to
-        # admit a new Task; allowing their count to exceed the target is safe.
 
     def _create_sync(
         self, *, label: str | None, objective: str | None

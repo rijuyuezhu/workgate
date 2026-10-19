@@ -407,6 +407,16 @@ class ControlSessionCoordinator:
         for index in range(count):
             record = records[(start + index) % len(records)]
             try:
+                # A cached missing observation may be stale after a reconnect.
+                # Never terminate a recovered session based only on that hint.
+                if (
+                    str(record.session_id)
+                    in self._missing_by_executor.get(
+                        str(record.executor_id), {}
+                    )
+                    and await self._lookup_session_summary(record) is None
+                ):
+                    continue
                 await self._auto_end_if_eligible(record, cutoff=cutoff)
             except Exception:
                 logger.exception(

@@ -1336,3 +1336,79 @@ async def test_periodic_retention_preserves_control_owned_active_jobs(
     await coordinator.reap_expired_sessions()
     assert state.snapshot_sessions()[session].status == "active"
     assert not transport.calls
+
+
+@pytest.mark.asyncio
+async def test_periodic_retention_rechecks_a_previously_missing_session(
+    tmp_path: Path,
+) -> None:
+    """A stale missing hint must not terminate a recovered Executor session."""
+    state = _state(tmp_path)
+    executor = new_executor_id()
+    _trust(state, executor)
+    session = new_session_id()
+    state.put_session(_active_record(executor, session))
+    transport = FakeTransport()
+    transport.online.add(executor)
+    coordinator = _coordinator(
+        state,
+        transport,  # type: ignore[arg-type]
+        max_agent_sessions=None,
+        agent_session_retention_s=10,
+        clock=lambda: 100.0,
+    )
+    # Old observation: Executor reported the session missing.
+    coordinator._missing_by_executor[executor] = {session: 1.0}
+
+    async def recovered(_executor_id, op, _args, session_id, _timeout):
+        assert session_id == session
+        if op == "session.lookup":
+            return _ok(
+                {
+                    "session_id": session,
+                    "workdir": "/workspace/project",
+                    "last_active_at": 99.0,
+                    "has_persistent_shells": True,
+                    "has_active_jobs": False,
+                }
+            )
+        pytest.fail("recovered Session must not be terminated")
+
+    transport.call_impl = recovered
+    await coordinator.reap_expired_sessions()
+    assert state.snapshot_sessions()[session].status == "active"
+    assert [call[1] for call in transport.calls] == [
+        "session.lookup",
+        "session.lookup",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_periodic_retention_keeps_sessions_still_missing_on_executor(
+    tmp_path: Path,
+) -> None:
+    """A missing response is not proof that remote teardown is safe."""
+    state = _state(tmp_path)
+    executor = new_executor_id()
+    _trust(state, executor)
+    session = new_session_id()
+    state.put_session(_active_record(executor, session))
+    transport = FakeTransport()
+    transport.online.add(executor)
+    coordinator = _coordinator(
+        state,
+        transport,  # type: ignore[arg-type]
+        max_agent_sessions=None,
+        agent_session_retention_s=10,
+        clock=lambda: 100.0,
+    )
+    coordinator._missing_by_executor[executor] = {session: 1.0}
+
+    async def still_missing(_executor_id, op, _args, session_id, _timeout):
+        assert op == "session.lookup" and session_id == session
+        return _ok(None)
+
+    transport.call_impl = still_missing
+    await coordinator.reap_expired_sessions()
+    assert state.snapshot_sessions()[session].status == "active"
+    assert [call[1] for call in transport.calls] == ["session.lookup"]
