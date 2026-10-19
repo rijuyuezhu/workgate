@@ -24,6 +24,7 @@ from workgate.jobs import recovery as job_recovery
 from workgate.jobs import state as job_state
 from workgate.jobs import status as job_status
 from workgate.persistence import get_state_store, use_state_store
+from workgate.platform.shell import default_shell
 from workgate.protocol.ids import new_session_id
 from workgate.schemas.result_models.jobs import (
     JobInfo,
@@ -210,7 +211,9 @@ def test_lifecycle_helpers_cover_platform_and_bounded_log_paths(
     )
 
 
-def test_windows_job_runner_command_uses_powershell_quoting(tmp_path, monkeypatch):
+def test_windows_job_runner_command_uses_powershell_quoting(
+    tmp_path, monkeypatch
+):
     from workgate.platform import shell as dialect
     from workgate.platform.host import HostOS
 
@@ -232,7 +235,9 @@ def test_windows_job_runner_command_uses_powershell_quoting(tmp_path, monkeypatc
     assert command.startswith("& '")
     assert "O''Brien''s job.command'" in command
     assert "--command-file" in command
-    assert paths["command"].read_text(encoding="utf-8") == "Write-Output 'hello'"
+    assert (
+        paths["command"].read_text(encoding="utf-8") == "Write-Output 'hello'"
+    )
 
 
 def test_runner_bootstrap_anchors_runtime_and_delegates(monkeypatch):
@@ -244,7 +249,7 @@ def test_runner_bootstrap_anchors_runtime_and_delegates(monkeypatch):
     runner_bootstrap.main()
 
     assert runner_bootstrap.sys.path[0] == str(
-        Path(runner_bootstrap.__file__).resolve().parents[2]
+        Path(runner_bootstrap.__file__).resolve().parents[3]
     )
     assert delegated == [True]
 
@@ -673,7 +678,7 @@ def test_job_runner_persists_bounded_output_and_terminal_status(
         log_file=str(paths["log"]),
         status_file=str(paths["status"]),
         cwd=str(tmp_path),
-        shell="/bin/bash",
+        shell=default_shell(),
         max_log_bytes=32,
     )
 
@@ -703,7 +708,7 @@ def test_job_runner_records_nonzero_exit(tmp_path, monkeypatch):
         log_file=str(paths["log"]),
         status_file=str(paths["status"]),
         cwd=str(tmp_path),
-        shell="/bin/bash",
+        shell=default_shell(),
         max_log_bytes=1024,
     )
 
@@ -725,7 +730,7 @@ def test_job_runner_records_startup_error_before_process_spawn(tmp_path):
         log_file=str(tmp_path / "runner.log"),
         status_file=str(status_file),
         cwd=str(tmp_path),
-        shell="/bin/bash",
+        shell=default_shell(),
         max_log_bytes=1024,
     )
 
@@ -3069,7 +3074,7 @@ def test_job_runner_applies_configured_environment_filters(
         log_file=str(paths["log"]),
         status_file=str(paths["status"]),
         cwd=str(tmp_path),
-        shell="/bin/bash",
+        shell=default_shell(),
         max_log_bytes=1024,
         blocked_env_name=["EXACT_SECRET"],
         blocked_env_prefix=["PRIVATE_"],
