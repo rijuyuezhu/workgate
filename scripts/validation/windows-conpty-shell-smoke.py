@@ -28,6 +28,7 @@ from workgate.executor.terminal.bridge import (  # noqa: E402
     close_terminal_bridge_execute,
     open_terminal_bridge_execute,
     read_terminal_bridge_execute,
+    write_terminal_bridge_execute,
 )
 from workgate.executor.terminal.runtime import (  # noqa: E402
     build_terminal_runtime,
@@ -95,6 +96,28 @@ async def main() -> None:
                     config, "win-smoke"
                 )
                 assert "WIN_BRIDGE_386" in captured.output, captured
+
+                # WebUI may split one UTF-8 code point across frames. The
+                # attachment must decode incrementally without corruption.
+                chinese = "Write-Output '你好-CONPTY_386'\r".encode()
+                split = chinese.index("你".encode()) + 1
+                for chunk in (chinese[:split], chinese[split:]):
+                    result = await write_terminal_bridge_execute(
+                        first["bridge_id"],
+                        base64.b64encode(chunk).decode("ascii"),
+                    )
+                    assert result["written_bytes"] == len(chunk)
+                buffer = b""
+                for _ in range(110):
+                    item = await read_terminal_bridge_execute(
+                        second["bridge_id"]
+                    )
+                    buffer += base64.b64decode(item["data_b64"])
+                    if "你好-CONPTY_386".encode() in buffer:
+                        break
+                assert "你好-CONPTY_386".encode() in buffer, repr(
+                    buffer[-2000:]
+                )
 
                 await close_terminal_bridge_execute(first["bridge_id"])
                 resized = await resize_persistent_shell_execute(

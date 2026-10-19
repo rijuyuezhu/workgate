@@ -181,3 +181,56 @@ def test_conpty_registry_closes_remaining_shells_on_one_failure(monkeypatch):
     monkeypatch.setattr(first, "close", original_close)
     registry.close()
     assert registry.shells == {}
+
+
+def test_attachment_decodes_utf8_split_across_wire_frames(monkeypatch):
+    from workgate.platform import windows_conpty as conpty
+
+    registry = conpty.ConPtyRegistry()
+    process = FakePty()
+    monkeypatch.setattr(
+        conpty,
+        "spawn_conpty",
+        lambda *_a, **_kw: ConPtySession(process),
+    )
+    with conpty.use_conpty_registry(registry):
+        registry.start("utf8", ["powershell"], cwd=".", limit=2)
+        attachment = conpty.WindowsConPtyAttach("utf8", 80, 24)
+        payload = "你好".encode()
+        attachment.write_all(payload[:2])
+        assert process.input == []
+        attachment.write_all(payload[2:])
+        assert process.input == ["你好"]
+        attachment.close_sync()
+        assert registry.get("utf8").process.isalive()
+    registry.close()
+
+
+def test_conpty_attachment_resize_read_and_closed_errors(monkeypatch):
+    from workgate.platform import windows_conpty as conpty
+
+    registry = conpty.ConPtyRegistry()
+    proc = FakePty()
+    monkeypatch.setattr(
+        conpty,
+        "spawn_conpty",
+        lambda *_a, **_kw: ConPtySession(proc),
+    )
+    with conpty.use_conpty_registry(registry):
+        registry.start("terminal", ["powershell"], cwd=".", limit=1)
+        attach = conpty.WindowsConPtyAttach("terminal", 80, 24)
+        attach._subscriber.feed(b"hello")
+        assert attach.read_wait(2, 0) == (b"he", False)
+        assert attach.resize(90, 30)
+        assert proc.size[-1] == (30, 90)
+        attach.close_sync()
+        attach.close_sync()
+        with pytest.raises(RuntimeError, match="closed"):
+            attach.write_all(b"x")
+        with pytest.raises(RuntimeError, match="closed"):
+            attach.resize(80, 24)
+        with pytest.raises(RuntimeError, match="unavailable"):
+            registry.get("missing")
+    registry.close()
+    with pytest.raises(RuntimeError, match="bound"):
+        conpty.conpty_registry()
