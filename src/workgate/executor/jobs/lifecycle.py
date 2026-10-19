@@ -1,7 +1,6 @@
 """Shell-attempt materialization and durable job-status reconciliation."""
 
 import re
-import shlex
 import sys
 from pathlib import Path
 
@@ -9,6 +8,7 @@ from ...config.executor import ExecutorConfig
 from ...jobs import status as job_status
 from ...jobs.persistence import attempt_paths as _attempt_paths
 from ...jobs.state import JobAttemptPaths, MutableJobRow
+from ...platform.shell import shell_join_argv
 from ...utils.private_files import write_private_text
 
 _adopt_pending_retry = job_status._adopt_pending_retry
@@ -78,11 +78,6 @@ def _runner_argv(
     ]
 
 
-def _runner_command(argv: list[str]) -> str:
-    """Quote an internal runner invocation for the POSIX parent shell."""
-    return shlex.join(argv)
-
-
 def _prepare_attempt(
     config: ExecutorConfig,
     job_id: str,
@@ -96,4 +91,4 @@ def _prepare_attempt(
     paths["log"].unlink(missing_ok=True)
     paths["status"].unlink(missing_ok=True)
     argv = _runner_argv(config, paths, cwd)
-    return paths, _runner_command(argv)
+    return paths, shell_join_argv(argv, shell=config.shell_executable)

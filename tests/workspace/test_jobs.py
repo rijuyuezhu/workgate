@@ -210,6 +210,31 @@ def test_lifecycle_helpers_cover_platform_and_bounded_log_paths(
     )
 
 
+def test_windows_job_runner_command_uses_powershell_quoting(tmp_path, monkeypatch):
+    from workgate.platform import shell as dialect
+    from workgate.platform.host import HostOS
+
+    config = resolve_executor_config(
+        get_settings().model_copy(update={"shell_executable": "powershell.exe"})
+    )
+    paths: job_state.JobAttemptPaths = {
+        "command": tmp_path / "O'Brien's job.command",
+        "log": tmp_path / "job.log",
+        "status": tmp_path / "status.json",
+    }
+    monkeypatch.setattr(job_lifecycle, "_attempt_paths", lambda *_: paths)
+    monkeypatch.setattr(dialect, "host_os", lambda _system=None: HostOS.WINDOWS)
+
+    _paths, command = job_lifecycle._prepare_attempt(
+        config, "job_test", 1, "Write-Output 'hello'", tmp_path
+    )
+
+    assert command.startswith("& '")
+    assert "O''Brien''s job.command'" in command
+    assert "--command-file" in command
+    assert paths["command"].read_text(encoding="utf-8") == "Write-Output 'hello'"
+
+
 def test_runner_bootstrap_anchors_runtime_and_delegates(monkeypatch):
     delegated: list[bool] = []
     isolated_path = ["sentinel"]
