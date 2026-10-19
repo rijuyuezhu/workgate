@@ -83,3 +83,101 @@ def test_natural_conpty_exit_still_closes_native_resources():
     assert session.closed
     with pytest.raises(RuntimeError, match="unavailable"):
         session.subscribe()
+
+
+def test_registry_prunes_naturally_finished_shells(monkeypatch):
+    from workgate.platform import windows_conpty as conpty
+
+    registry = conpty.ConPtyRegistry()
+    processes = []
+
+    def fake_spawn(_command, **_kwargs):
+        proc = FakePty()
+        processes.append(proc)
+        return ConPtySession(proc)
+
+    monkeypatch.setattr(conpty, "spawn_conpty", fake_spawn)
+    first = registry.start("a", ["powershell"], cwd=".", limit=1)
+    with pytest.raises(RuntimeError, match="limit"):
+        registry.start("b", ["powershell"], cwd=".", limit=1)
+    processes[0].alive = False
+    processes[0].entered.set()
+    first.reader.join(timeout=2)
+    assert registry.active() == {}
+    assert first.closed
+    second = registry.start("b", ["powershell"], cwd=".", limit=1)
+    assert registry.get("b") is second
+    registry.close()
+    assert not processes[1].alive
+    with pytest.raises(RuntimeError, match="closed"):
+        registry.start("c", ["powershell"], cwd=".", limit=1)
+
+
+def test_registry_owner_and_independent_shells(monkeypatch):
+    from workgate.platform import windows_conpty as conpty
+
+    registry = conpty.ConPtyRegistry()
+    monkeypatch.setattr(
+        conpty,
+        "spawn_conpty",
+        lambda _command, **_kwargs: ConPtySession(FakePty()),
+    )
+    a = registry.start("a", ["powershell"], cwd=".", limit=2, owner="s1")
+    b = registry.start("b", ["powershell"], cwd=".", limit=2, owner="s2")
+    assert a.owner == "s1" and b.owner == "s2"
+    with pytest.raises(RuntimeError, match="already exists"):
+        registry.start("b", ["powershell"], cwd=".", limit=2)
+    assert registry.kill("a")
+    assert "a" not in registry.active()
+    assert registry.get("b") is b
+    registry.close()
+
+
+def test_conpty_kill_retains_reference_if_native_close_fails(monkeypatch):
+    from workgate.platform import windows_conpty as conpty
+
+    registry = conpty.ConPtyRegistry()
+    monkeypatch.setattr(
+        conpty,
+        "spawn_conpty",
+        lambda *_a, **_kw: ConPtySession(FakePty()),
+    )
+    session = registry.start("retry", ["powershell"], cwd=".", limit=1)
+    original_close = session.close
+
+    def fail_close():
+        raise OSError("ConPTY close failed")
+
+    monkeypatch.setattr(session, "close", fail_close)
+    with pytest.raises(OSError, match="ConPTY close failed"):
+        registry.kill("retry")
+    assert registry.get("retry") is session
+    monkeypatch.setattr(session, "close", original_close)
+    assert registry.kill("retry")
+    assert "retry" not in registry.active()
+
+
+def test_conpty_registry_closes_remaining_shells_on_one_failure(monkeypatch):
+    from workgate.platform import windows_conpty as conpty
+
+    registry = conpty.ConPtyRegistry()
+    monkeypatch.setattr(
+        conpty,
+        "spawn_conpty",
+        lambda *_a, **_kw: ConPtySession(FakePty()),
+    )
+    first = registry.start("first", ["powershell"], cwd=".", limit=2)
+    second = registry.start("second", ["powershell"], cwd=".", limit=2)
+    original_close = first.close
+    monkeypatch.setattr(
+        first,
+        "close",
+        lambda: (_ for _ in ()).throw(OSError("simulated close failure")),
+    )
+    with pytest.raises(RuntimeError, match="Failed to close 1"):
+        registry.close()
+    assert second.closed
+    assert registry.shells == {"first": first}
+    monkeypatch.setattr(first, "close", original_close)
+    registry.close()
+    assert registry.shells == {}

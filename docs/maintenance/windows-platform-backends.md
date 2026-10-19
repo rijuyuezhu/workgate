@@ -53,6 +53,20 @@ command Job Objects are covered when colocate exits, including forced stop. Full
 recovery and service-level lifecycle still require validation before #385
 can close.
 
+## Interactive terminal (in progress, #386)
+
+On native Windows, pywinpty supplies ConPTY for interactive PowerShell/pwsh.
+Existing persistent-shell operations and the WebUI terminal bridge share one
+Executor-owned ConPTY registry. Multiple raw WebUI attachments receive
+independent bounded output streams; disconnecting one preserves the shell.
+The terminal runtime closes its ConPTY children on Executor shutdown.
+
+Unlike detached POSIX tmux sessions, these PTYs are **not restart-durable**:
+after Executor restart, their persisted reservations are reconciled against
+an empty live registry. Interactive cmd.exe is intentionally not supported;
+non-interactive cmd.exe commands still use the #384 shell adapter. No separate
+WebSocket protocol or session manager is introduced.
+
 ## Native Windows functional checks
 
 - scripts/validation/windows-stdlib-smoke.py: Windows paths, file locks,
@@ -70,5 +84,11 @@ can close.
   background descendant cleanup and forced stop.
 - scripts/validation/windows-colocate-job-smoke.py: launcher/role/grandchild
   containment on normal and forced colocate termination.
+- scripts/validation/windows-conpty-smoke.py: native terminal resize,
+  independent subscribers, detachment and natural EOF.
+- scripts/validation/windows-conpty-shell-smoke.py: WorkGate persistent
+  shell CRUD, two concurrent WebUI bridges, session limit and restart.
+- scripts/validation/windows-conpty-descendant-smoke.py: child and descendant
+  cleanup when an interactive ConPTY closes.
 
 Linux/macOS tests cover the shared implementation.
