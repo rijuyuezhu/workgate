@@ -1,6 +1,7 @@
 import hashlib
 import io
 import tarfile
+import zipfile
 from pathlib import Path
 
 import httpx
@@ -595,3 +596,191 @@ async def test_control_update_refuses_non_control_managed_state(
             target_version="9.9.9",
             store=store,
         )
+
+
+@pytest.mark.parametrize("machine", ["AMD64", "x86_64"])
+def test_target_name_windows_x86_64(
+    monkeypatch: pytest.MonkeyPatch, machine: str
+) -> None:
+    monkeypatch.setattr(runtime_update.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(runtime_update.platform, "machine", lambda: machine)
+    assert runtime_update._target_name() == "windows-x86_64"
+
+
+def test_stage_windows_runtime_extracts_only_exact_member(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "release.zip"
+    expected = b"MZ" + b"versioned" * 32
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("workgate-windows-x86_64/workgate.exe", expected)
+        bundle.writestr("../../malicious.exe", b"MALICIOUS")
+    staged = tmp_path / "staged.exe"
+    runtime_update._stage_executable(
+        archive, staged, target_name="windows-x86_64"
+    )
+    assert staged.read_bytes() == expected
+    assert not (tmp_path / "malicious.exe").exists()
+
+
+def test_stage_windows_runtime_rejects_invalid_zip_and_missing_member(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "release.zip"
+    archive.write_bytes(b"not a ZIP archive")
+    with pytest.raises(RuntimeError, match="archive is invalid"):
+        runtime_update._stage_executable(
+            archive, tmp_path / "staged.exe", target_name="windows-x86_64"
+        )
+    assert not (tmp_path / "staged.exe").exists()
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("workgate-windows-x86_64/other.exe", b"NOT_WORKGATE")
+    with pytest.raises(RuntimeError, match="archive is invalid"):
+        runtime_update._stage_executable(
+            archive, tmp_path / "staged.exe", target_name="windows-x86_64"
+        )
+    assert not (tmp_path / "staged.exe").exists()
+
+
+def test_stage_windows_runtime_enforces_decompressed_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "release.zip"
+    with zipfile.ZipFile(
+        archive, "w", compression=zipfile.ZIP_DEFLATED
+    ) as bundle:
+        bundle.writestr("workgate-windows-x86_64/workgate.exe", b"A" * 64)
+    monkeypatch.setattr(runtime_update, "_MAX_EXECUTABLE_BYTES", 32)
+    with pytest.raises(RuntimeError, match="archive member is invalid"):
+        runtime_update._stage_executable(
+            archive, tmp_path / "staged.exe", target_name="windows-x86_64"
+        )
+    assert not (tmp_path / "staged.exe").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("activation_fails", [False, True])
+async def test_windows_managed_update_switches_verified_versioned_executable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, activation_fails: bool
+) -> None:
+    target_name = "windows-x86_64"
+    target_version = "9.9.9"
+    target = tmp_path / "workgate.exe"
+    target.write_bytes(b"old-image-locked")
+    _freeze_runtime(monkeypatch, target)
+    store = _store(tmp_path)
+    store.record_install(ownership=ExecutorRuntimeOwnership.CONTROL_MANAGED)
+    archive_bytes = io.BytesIO()
+    with zipfile.ZipFile(archive_bytes, "w") as bundle:
+        bundle.writestr(
+            f"workgate-{target_name}/workgate.exe", b"MZnew-verified-image"
+        )
+    archive = archive_bytes.getvalue()
+    digest = hashlib.sha256(archive).hexdigest()
+    real_client = httpx.AsyncClient
+
+    def client_factory(**_kwargs):
+        def serve(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/sha256"):
+                return httpx.Response(200, text=digest)
+            if request.url.path.endswith("/archive"):
+                return httpx.Response(200, content=archive)
+            return httpx.Response(404)
+
+        return real_client(transport=httpx.MockTransport(serve))
+
+    monkeypatch.setattr(runtime_update, "_target_name", lambda: target_name)
+    monkeypatch.setattr(runtime_update.httpx, "AsyncClient", client_factory)
+
+    def validate(path: Path, version: str) -> None:
+        assert path.suffix == ".exe"
+        assert path.read_bytes() == b"MZnew-verified-image"
+        assert version == target_version
+
+    monkeypatch.setattr(runtime_update, "_validate_executable", validate)
+    calls = []
+
+    def activate(old: Path, new: Path) -> None:
+        assert old == target
+        assert new != target
+        assert new.is_file() and new.suffix == ".exe"
+        state = store.load()
+        assert state is not None and state.executable == str(new)
+        calls.append((old, new))
+        if activation_fails:
+            raise RuntimeError("Task Scheduler activation refused")
+
+    if activation_fails:
+        with pytest.raises(RuntimeError, match="activation refused"):
+            await apply_control_managed_update(
+                control_url="https://control.test",
+                target_version=target_version,
+                store=store,
+                windows_activate=activate,
+            )
+        assert target.read_bytes() == b"old-image-locked"
+        state = store.load()
+        assert state is not None
+        assert state.executable == str(target)
+        assert state.update_status is ExecutorRuntimeUpdateStatus.FAILED
+        return
+
+    published = await apply_control_managed_update(
+        control_url="https://control.test",
+        target_version=target_version,
+        store=store,
+        windows_activate=activate,
+    )
+    assert calls == [(target, published)]
+    assert target.read_bytes() == b"old-image-locked"
+    assert published.read_bytes() == b"MZnew-verified-image"
+    state = store.load()
+    assert state is not None
+    assert state.executable == str(published)
+    assert state.update_status is ExecutorRuntimeUpdateStatus.IDLE
+
+
+@pytest.mark.asyncio
+async def test_windows_managed_update_rejects_missing_task_callback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "workgate.exe"
+    target.write_bytes(b"old-image-locked")
+    _freeze_runtime(monkeypatch, target)
+    store = _store(tmp_path)
+    store.record_install(ownership=ExecutorRuntimeOwnership.CONTROL_MANAGED)
+    archive_bytes = io.BytesIO()
+    with zipfile.ZipFile(archive_bytes, "w") as bundle:
+        bundle.writestr("workgate-windows-x86_64/workgate.exe", b"MZverified")
+    digest = hashlib.sha256(archive_bytes.getvalue()).hexdigest()
+    real_client = httpx.AsyncClient
+
+    def client_factory(**_kwargs):
+        return real_client(
+            transport=httpx.MockTransport(
+                lambda request: (
+                    httpx.Response(200, text=digest)
+                    if request.url.path.endswith("sha256")
+                    else httpx.Response(200, content=archive_bytes.getvalue())
+                )
+            )
+        )
+
+    monkeypatch.setattr(
+        runtime_update, "_target_name", lambda: "windows-x86_64"
+    )
+    monkeypatch.setattr(runtime_update.httpx, "AsyncClient", client_factory)
+    monkeypatch.setattr(
+        runtime_update, "_validate_executable", lambda *_args: None
+    )
+    with pytest.raises(RuntimeError, match="owned Task Scheduler"):
+        await apply_control_managed_update(
+            control_url="https://control.test",
+            target_version="9.9.9",
+            store=store,
+        )
+    assert target.read_bytes() == b"old-image-locked"
+    state = store.load()
+    assert state is not None
+    assert state.update_status is ExecutorRuntimeUpdateStatus.FAILED
+    assert state.executable == str(target)

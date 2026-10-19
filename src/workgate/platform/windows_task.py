@@ -117,6 +117,66 @@ class WindowsUserTask:
             raise RuntimeError(f"scheduled task is not installed: {self.name}")
         self._powershell(f"Start-ScheduledTask {self._task}")
 
+    def switch_runtime(self, *, expected: str, replacement: str) -> None:
+        """Switch one owned task's executable without stopping its running instance."""
+        if self.status() is None:
+            raise RuntimeError(f"scheduled task is not installed: {self.name}")
+        script = "\n".join(
+            [
+                f"$task = Get-ScheduledTask {self._task} -ErrorAction Stop",
+                "if (@($task.Actions).Count -ne 1) { "
+                "throw 'unexpected scheduled task action count' }",
+                "$action = $task.Actions[0]",
+                f"$expected = [IO.Path]::GetFullPath({_literal(expected)})",
+                "$found = [IO.Path]::GetFullPath([string]$action.Execute)",
+                "if (-not [string]::Equals($expected, $found, "
+                "[StringComparison]::OrdinalIgnoreCase)) { "
+                "throw 'scheduled task executable changed unexpectedly' }",
+                "$logon = @($task.Triggers | Where-Object { "
+                "$_.CimClass.CimClassName -eq 'MSFT_TaskLogonTrigger' })",
+                "if ($logon.Count -ne 1) { "
+                "throw 'expected a single logon trigger' }",
+                "$newAction = New-ScheduledTaskAction "
+                f"-Execute {_literal(replacement)} "
+                "-Argument $action.Arguments "
+                "-WorkingDirectory $action.WorkingDirectory",
+                "$oneTime = New-ScheduledTaskTrigger -Once "
+                "-At ((Get-Date).AddSeconds(45)) "
+                "-RepetitionInterval (New-TimeSpan -Minutes 1) "
+                "-RepetitionDuration (New-TimeSpan -Minutes 5)",
+                "$triggers = @($logon[0], $oneTime)",
+                f"Set-ScheduledTask {self._task} "
+                "-Action $newAction -Trigger $triggers -ErrorAction Stop "
+                "| Out-Null",
+            ]
+        )
+        self._powershell(script)
+
+    def cancel_runtime_restart(self) -> None:
+        """Remove only our pending update trigger before an explicit stop/restart."""
+        if self.status() is None:
+            raise RuntimeError(f"scheduled task is not installed: {self.name}")
+        self._powershell(
+            "\n".join(
+                [
+                    f"$task = Get-ScheduledTask {self._task} -ErrorAction Stop",
+                    "$all = @($task.Triggers)",
+                    "$logon = @($all | Where-Object { "
+                    "$_.CimClass.CimClassName -eq 'MSFT_TaskLogonTrigger' })",
+                    "$timer = @($all | Where-Object { "
+                    "$_.CimClass.CimClassName -eq 'MSFT_TaskTimeTrigger' })",
+                    "if ($timer.Count -eq 0) { return }",
+                    "if ($all.Count -ne 2 -or $logon.Count -ne 1 -or "
+                    "$timer.Count -ne 1 -or "
+                    "$timer[0].Repetition.Interval -ne 'PT1M' -or "
+                    "$timer[0].Repetition.Duration -ne 'PT5M') { "
+                    "throw 'unexpected scheduled task triggers' }",
+                    f"Set-ScheduledTask {self._task} "
+                    "-Trigger @($logon[0]) -ErrorAction Stop | Out-Null",
+                ]
+            )
+        )
+
     def stop(self) -> None:
         current = self.status()
         if current is not None and current["state"].lower() in {
