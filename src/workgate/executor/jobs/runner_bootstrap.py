@@ -16,8 +16,9 @@ def main() -> None:
 
         runner_main()
     except Exception:
-        # Preserve errors even if the WorkGate package failed to import.
-        # The attempt directory already exists; do not rely on package helpers.
+        # Temporary #397 diagnostic: retain import/runner failures until the
+        # missing-receipt cause is identified, then reassess this sidecar.
+        # Do not rely on package helpers that may have failed to import.
         argv = sys.argv
         if "--status-file" in argv:
             index = argv.index("--status-file")

@@ -500,7 +500,10 @@ def _e2e_log_excerpt(path: Path, limit: int = 2048) -> str:
 
 
 def _failed_job_evidence(workspace: Path, job_id: str) -> str:
-    """Include bounded durable attempt evidence in the E2E failure report."""
+    """Temporary #397 evidence for the missing-receipt E2E failure.
+
+    Reassess this extra collection once the original failure is explained.
+    """
     for state_dir in workspace.parent.glob("executor-state-*"):
         store = state_dir / "jobs.json"
         try:

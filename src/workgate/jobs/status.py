@@ -203,8 +203,9 @@ def _refresh_job_status(
         and status != "lost"
         and transition.updates.get("status") == "lost"
     ):
-        # One observation per transition, not on every later poll. Audit
-        # failures must not interrupt the durable job-state transition.
+        # Temporary #397 diagnostic: classify absent receipts until the
+        # root cause is known, then remove/reassess this extra probe.
+        # Audit only once per transition; failures must not affect state.
         with contextlib.suppress(Exception):
             audit(
                 "job_completion_receipt_unavailable",
