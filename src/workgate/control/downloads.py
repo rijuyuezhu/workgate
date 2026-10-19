@@ -478,7 +478,6 @@ class ControlDownloadService:
                         chunk,
                         expected_offset=offset,
                         expected_size=expected_size,
-                        expected_sha256=stat.sha256,
                     )
                     if not decoded:
                         raise RuntimeError(
@@ -544,11 +543,8 @@ class ControlDownloadService:
         *,
         expected_offset: int,
         expected_size: int,
-        expected_sha256: str,
     ) -> bytes:
         if chunk.offset != expected_offset or chunk.size != expected_size:
-            raise RuntimeError("Executor file changed while creating snapshot")
-        if chunk.sha256 != expected_sha256:
             raise RuntimeError("Executor file changed while creating snapshot")
         try:
             decoded = base64.b64decode(
@@ -560,4 +556,6 @@ class ControlDownloadService:
             ) from exc
         if len(decoded) != chunk.bytes:
             raise RuntimeError("Executor snapshot chunk length mismatch")
+        if hashlib.sha256(decoded).hexdigest() != chunk.sha256:
+            raise RuntimeError("Executor snapshot chunk checksum mismatch")
         return decoded
