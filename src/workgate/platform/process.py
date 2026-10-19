@@ -1,7 +1,7 @@
-"""Host-selected process creation capabilities.
+"""Host-selected process-tree lifecycle operations.
 
-Subsequent Windows support must provide descendant containment before enabling
-bounded command launches. Never silently fall back to uncontained processes.
+POSIX uses process groups; Windows bounded runners are attached to kill-on-close
+Job Objects before receiving permission to execute.
 """
 
 import asyncio
@@ -27,12 +27,16 @@ async def terminate_process_tree(
     kill_timeout_s: int = 2,
     system: str | None = None,
 ) -> str:
-    """Terminate the isolated child group, including timeout escalation.
+    """Terminate the host-native isolated process tree.
 
-    Only the outer process group is controlled here; internal bounded-runner
-    descendant containment remains owned by that runner (see #385).
+    POSIX uses process groups and an internal descendant-reaping runner;
+    Windows owns the entire descendant tree through a Job Object.
     """
     current = host_os(system)
+    if current is HostOS.WINDOWS:
+        from .windows_job import terminate_process_job
+
+        return await terminate_process_job(proc, timeout_s=kill_timeout_s)
     if current in (HostOS.LINUX, HostOS.MACOS):
         from .posix.process import terminate_process_group
 

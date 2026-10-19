@@ -51,5 +51,5 @@ def test_unimplemented_backends_fail_closed(system):
 
 @pytest.mark.asyncio
 async def test_windows_termination_refuses_uncontained_process():
-    with pytest.raises(RuntimeError, match="termination is unsupported"):
+    with pytest.raises(RuntimeError, match="not assigned to a Job Object"):
         await terminate_process_tree(cast(Any, None), system="Windows")

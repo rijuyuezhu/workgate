@@ -1,0 +1,131 @@
+"""Native Windows Job Objects kill *descendants*, not only their parent."""
+
+import ctypes
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+if os.name != "nt":
+    raise RuntimeError("Run with native Windows CPython")
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+
+from workgate.platform.windows_job import WindowsJob  # noqa: E402
+
+
+def wait_dead(pid: int) -> bool:
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+    kernel.OpenProcess.restype = ctypes.c_void_p
+    kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    kernel.WaitForSingleObject.restype = ctypes.c_ulong
+    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel.CloseHandle.restype = ctypes.c_int
+    handle = kernel.OpenProcess(0x100000, False, pid)  # SYNCHRONIZE
+    if not handle:
+        return True
+    try:
+        return kernel.WaitForSingleObject(handle, 5000) == 0
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def child_main() -> None:
+    # The gate prevents the child from spawning anything until assigned to
+    # the Job Object, avoiding a start-then-attach escape window.
+    if sys.stdin.buffer.read(1) != b"G":
+        raise RuntimeError("missing job startup gate")
+    # CREATE_BREAKAWAY_FROM_JOB may be accepted by Windows, including when
+    # an ancestor Job permits it. What matters is whether *our* job still
+    # contains and kills the process.
+    try:
+        escaped = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(40)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=0x01000000,  # CREATE_BREAKAWAY_FROM_JOB
+        )
+    except OSError:
+        print("BREAKAWAY_BLOCKED", flush=True)
+    else:
+        print(f"BREAKAWAY_PID:{escaped.pid}", flush=True)
+
+    descendant = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(40)"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    print(descendant.pid, flush=True)
+    import time
+
+    time.sleep(40)
+
+
+def run() -> None:
+    with tempfile.TemporaryDirectory(prefix="workgate-native-job-"):
+        proc = subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), "--child"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=False,
+        )
+        try:
+            with WindowsJob() as job:
+                job.attach_waiting_process(proc.pid)
+                assert proc.stdin is not None and proc.stdout is not None
+                proc.stdin.write(b"G")
+                proc.stdin.flush()
+                result = proc.stdout.readline().strip()
+                escaped_pid = (
+                    int(result.split(b":", 1)[1])
+                    if result.startswith(b"BREAKAWAY_PID:")
+                    else None
+                )
+                assert (
+                    escaped_pid is not None or result == b"BREAKAWAY_BLOCKED"
+                ), result
+                descendant_pid = int(proc.stdout.readline().strip())
+                assert descendant_pid != proc.pid
+            # Closing the job kills both the waiting parent and its child.
+            assert wait_dead(proc.pid), f"parent leaked: {proc.pid}"
+            assert wait_dead(descendant_pid), (
+                f"descendant leaked: {descendant_pid}"
+            )
+            if escaped_pid is not None:
+                escaped_dead = wait_dead(escaped_pid)
+                if not escaped_dead:
+                    subprocess.run(
+                        ["taskkill", "/F", "/PID", str(escaped_pid)],
+                        capture_output=True,
+                        check=False,
+                    )
+                assert escaped_dead, (
+                    f"breakaway process escaped Job: {escaped_pid}"
+                )
+        finally:
+            proc.kill() if proc.poll() is None else None
+            proc.wait(timeout=10)
+    # Concurrent cleanup callers must never double-close an OS handle.
+    from concurrent.futures import ThreadPoolExecutor
+
+    for _ in range(20):
+        job = WindowsJob()
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = [pool.submit(job.close) for _ in range(8)]
+            for future in futures:
+                future.result()
+        job.close()
+
+    print("Windows Job Object kills descendant on handle close: PASS")
+
+
+if __name__ == "__main__":
+    if "--child" in sys.argv:
+        child_main()
+    else:
+        run()

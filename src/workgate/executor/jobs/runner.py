@@ -3,7 +3,9 @@
 import argparse
 import contextlib
 import json
+import os
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -13,6 +15,7 @@ from ...jobs.logs import compact_log
 from ...platform.shell import shell_argv
 from ...utils.private_files import atomic_write_private_text
 from ...utils.processes import user_subprocess_env
+from ..bounded_runner import bounded_runner_argv
 
 
 def _utc() -> float:
@@ -40,6 +43,16 @@ def configure_job_runner_parser(
     return parser
 
 
+def _close_job_when_root_exits(
+    process: subprocess.Popen[bytes], job: Any
+) -> None:
+    """Reap a completed root and release its surviving descendant handles."""
+    try:
+        process.wait()
+    finally:
+        job.close()
+
+
 def run_job_runner_from_args(args: Any) -> None:
     """Run one internal durable job attempt and write its terminal status."""
     command_path = Path(args.command_file)
@@ -54,6 +67,8 @@ def run_job_runner_from_args(args: Any) -> None:
     output_bytes = 0
     log_truncated = False
     process: subprocess.Popen[bytes] | None = None
+    job: Any | None = None
+    watcher: threading.Thread | None = None
 
     try:
         command = command_path.read_text(encoding="utf-8")
@@ -61,12 +76,22 @@ def run_job_runner_from_args(args: Any) -> None:
         with log_path.open("w+b") as log:
             with contextlib.suppress(OSError):
                 log_path.chmod(0o600)
+            native_windows = os.name == "nt"
+            if native_windows:
+                from ...platform.windows_job import WindowsJob
+
+                job = WindowsJob()
             process = subprocess.Popen(
-                _runner_shell_args(shell, command),
+                (
+                    bounded_runner_argv(shell, command)
+                    if native_windows
+                    else _runner_shell_args(shell, command)
+                ),
                 cwd=cwd,
-                stdin=subprocess.DEVNULL,
+                stdin=subprocess.PIPE if native_windows else subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                creationflags=0x08000000 if native_windows else 0,
                 env=user_subprocess_env(
                     blocked_names=tuple(
                         getattr(args, "blocked_env_name", ()) or ()
@@ -76,6 +101,20 @@ def run_job_runner_from_args(args: Any) -> None:
                     ),
                 ),
             )
+            if job is not None:
+                job.attach_waiting_process(process.pid)
+                assert process.stdin is not None
+                process.stdin.write(b"\x01")
+                process.stdin.flush()
+                process.stdin.close()
+                # A background descendant may retain stdout after the root
+                # exits. Close the job concurrently so reading reaches EOF.
+                watcher = threading.Thread(
+                    target=_close_job_when_root_exits,
+                    args=(process, job),
+                    daemon=True,
+                )
+                watcher.start()
             if process.stdout is None:
                 raise RuntimeError(
                     "job runner failed to capture process output"
@@ -97,12 +136,18 @@ def run_job_runner_from_args(args: Any) -> None:
             exit_code = process.wait()
             log_truncated = compact_log(log, max_log_bytes) or log_truncated
     except BaseException as exc:
+        if job is not None:
+            job.close()
         if process is not None and process.poll() is None:
             with contextlib.suppress(Exception):
                 process.kill()
                 process.wait(timeout=2)
         error = f"{public_error_type(exc)}: {exc}"
     finally:
+        if job is not None:
+            job.close()
+        if watcher is not None:
+            watcher.join(timeout=2)
         completed_at = _utc()
         atomic_write_private_text(
             status_path,

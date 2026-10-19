@@ -86,19 +86,14 @@ def test_bounded_runner_uses_frozen_cli_subcommand(monkeypatch):
     ]
 
 
-def test_windows_bounded_shell_argv_does_not_invoke_posix_runner(monkeypatch):
+def test_windows_bounded_runner_uses_startup_gate(monkeypatch):
     from workgate.platform.host import HostOS
 
     monkeypatch.setattr(shell_ops, "host_os", lambda: HostOS.WINDOWS)
     argv = shell_ops._bounded_runner_argv("powershell.exe", "Write-Output 42")
-    assert argv[:4] == [
-        "powershell.exe",
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-    ]
-    assert "Write-Output 42" in argv[-1]
-    assert "bounded-runner" not in argv
+    assert "--shell" in argv and "powershell.exe" in argv
+    assert "--command" in argv and "Write-Output 42" in argv
+    assert "bounded_runner.py" in argv[1]
 
 
 def test_persistent_shell_ids_accepts_models_and_compatibility_dicts():

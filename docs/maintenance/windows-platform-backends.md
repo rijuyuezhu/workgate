@@ -41,8 +41,17 @@ programs may still emit different encodings. PowerShell preserves native
 executable exit codes; Python subprocess handles trusted .exe, .cmd and .bat
 without a custom launcher.
 
-Bounded Windows command execution is still unavailable until #385 provides
-real process-tree containment; shell syntax support is not a substitute.
+Bounded Windows commands now use a native kill-on-close Job Object (#385).
+The existing bounded-runner waits for a one-byte startup gate until it is
+attached to that job. Any binding failure refuses execution; normal return,
+timeout or cancellation closes the job and kills surviving descendants.
+The durable job runner also uses a gated Job Object for command attempts;
+its native completion and forced-stop descendant cleanup are covered by smoke
+tests. Native colocate attaches its parent process to a kill-on-close Job
+before launching Control and Executor; role descendants and nested bounded
+command Job Objects are covered when colocate exits, including forced stop. Full tracked-job
+recovery and service-level lifecycle still require validation before #385
+can close.
 
 ## Native Windows functional checks
 
@@ -54,5 +63,12 @@ real process-tree containment; shell syntax support is not a substitute.
   diffs, and failed preflight.
 - scripts/validation/windows-shell-smoke.py: PowerShell/cmd Unicode, quoted
   paths, batch execution, exit status and environment filters.
+- scripts/validation/windows-job-smoke.py: Job Object descendant teardown.
+- scripts/validation/windows-contained-shell-smoke.py: bounded command timeout,
+  cancellation, startup gate and refused assignment.
+- scripts/validation/windows-durable-job-smoke.py: tracked runner log/status,
+  background descendant cleanup and forced stop.
+- scripts/validation/windows-colocate-job-smoke.py: launcher/role/grandchild
+  containment on normal and forced colocate termination.
 
 Linux/macOS tests cover the shared implementation.
