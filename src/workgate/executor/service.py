@@ -14,6 +14,7 @@ import posixpath
 import shutil
 import subprocess
 import sys
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
@@ -611,6 +612,49 @@ class ExecutorServiceManager:
 
         runtime_store.service_runtime_state(runtime_state.ownership)
         return self.status()
+
+    def activate_windows_runtime(self, old: Path, new: Path) -> None:
+        """Switch the existing owned task to a verified next executable."""
+        if host_os(self.system) is not HostOS.WINDOWS:
+            raise UnsupportedExecutorServiceError(
+                "native Windows task required"
+            )
+        metadata = self._read_metadata()
+        command = None if metadata is None else metadata.get("command")
+        if (
+            metadata is None
+            or metadata.get("backend") != "scheduled-task"
+            or not isinstance(command, list)
+            or not command
+            or not all(isinstance(arg, str) for arg in command)
+            or Path(command[0]) != old
+        ):
+            raise RuntimeError(
+                "managed Windows executable does not match installed service"
+            )
+        task = self._windows_task()
+        task.switch_runtime(
+            expected=str(old), replacement=str(new), restart=True
+        )
+        try:
+            self._write_metadata("scheduled-task", [str(new), *command[1:]])
+        except Exception:
+            try:
+                task.switch_runtime(
+                    expected=str(new), replacement=str(old), restart=False
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    "Windows task metadata update failed and task rollback failed"
+                ) from exc
+            raise
+        # Released old versions can be pruned on a later successful update.
+        # Never touch the current image or the verified new target.
+        for candidate in new.parent.glob(".workgate.runtime.*.exe"):
+            if candidate in {old, new}:
+                continue
+            with suppress(OSError):  # Still mapped by a Windows process.
+                candidate.unlink()
 
     def _systemd_native_state(self) -> dict[str, str]:
         result = self._run(

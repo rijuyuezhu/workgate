@@ -117,6 +117,46 @@ class WindowsUserTask:
             raise RuntimeError(f"scheduled task is not installed: {self.name}")
         self._powershell(f"Start-ScheduledTask {self._task}")
 
+    def switch_runtime(
+        self, *, expected: str, replacement: str, restart: bool
+    ) -> None:
+        """Switch one owned task's executable without stopping its running instance."""
+        if self.status() is None:
+            raise RuntimeError(f"scheduled task is not installed: {self.name}")
+        script = "\n".join(
+            [
+                f"$task = Get-ScheduledTask {self._task} -ErrorAction Stop",
+                "if (@($task.Actions).Count -ne 1) { "
+                "throw 'unexpected scheduled task action count' }",
+                "$action = $task.Actions[0]",
+                f"$expected = [IO.Path]::GetFullPath({_literal(expected)})",
+                "$found = [IO.Path]::GetFullPath([string]$action.Execute)",
+                "if (-not [string]::Equals($expected, $found, "
+                "[StringComparison]::OrdinalIgnoreCase)) { "
+                "throw 'scheduled task executable changed unexpectedly' }",
+                "$logon = @($task.Triggers | Where-Object { "
+                "$_.CimClass.CimClassName -eq 'MSFT_TaskLogonTrigger' })",
+                "if ($logon.Count -ne 1) { "
+                "throw 'expected a single logon trigger' }",
+                "$newAction = New-ScheduledTaskAction "
+                f"-Execute {_literal(replacement)} "
+                "-Argument $action.Arguments "
+                "-WorkingDirectory $action.WorkingDirectory",
+                (
+                    "$oneTime = New-ScheduledTaskTrigger -Once "
+                    "-At ((Get-Date).AddSeconds(45))"
+                    if restart
+                    else "$oneTime = $null"
+                ),
+                "$triggers = if ($oneTime) { "
+                "@($logon[0], $oneTime) } else { @($logon[0]) }",
+                f"Set-ScheduledTask {self._task} "
+                "-Action $newAction -Trigger $triggers -ErrorAction Stop "
+                "| Out-Null",
+            ]
+        )
+        self._powershell(script)
+
     def stop(self) -> None:
         current = self.status()
         if current is not None and current["state"].lower() in {
