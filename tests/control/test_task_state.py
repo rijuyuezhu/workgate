@@ -1243,14 +1243,15 @@ async def test_idle_policy_requires_all_historical_sessions_retained(
         executor_id=harness.executor_id,
         task_id=task.task_id,
     )
-    await harness.control.session_coordinator.end_session(first["session_id"])
-    await harness.control.session_coordinator.end_session(second["session_id"])
+    assert isinstance(first, dict) and isinstance(second, dict)
+    first_id = first["session_id"]
+    second_id = second["session_id"]
+    assert isinstance(first_id, str) and isinstance(second_id, str)
+    await harness.control.session_coordinator.end_session(first_id)
+    await harness.control.session_coordinator.end_session(second_id)
     records = harness.control.control_state.snapshot_sessions()
-    now = (
-        max(records[x["session_id"]].updated_at for x in (first, second))
-        + 86401
-    )
-    harness.control.control_state.remove_session(first["session_id"])
+    now = max(records[sid].updated_at for sid in (first_id, second_id)) + 86401
+    harness.control.control_state.remove_session(first_id)
     assert len((await service.read_task(task.task_id)).session_ids) == 1
     assert await service.sweep_idle_tasks(now=now) == 0
     assert (await service.read_task(task.task_id)).status == "active"
