@@ -10,6 +10,7 @@ from typing import Any
 
 from ...errors import public_error_type
 from ...jobs.logs import compact_log
+from ...platform.shell import shell_argv
 from ...utils.private_files import atomic_write_private_text
 from ...utils.processes import user_subprocess_env
 
@@ -21,7 +22,7 @@ def _utc() -> float:
 
 def _runner_shell_args(shell: str, command: str) -> list[str]:
     """Build direct subprocess arguments for the configured user shell."""
-    return [shell, "-lc", command]
+    return shell_argv(shell, command, login=True)
 
 
 def configure_job_runner_parser(

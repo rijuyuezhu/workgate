@@ -369,10 +369,9 @@ def test_role_cli_loading_does_not_import_foreign_config_values(
     assert control_settings.oauth_admin_pin == "env-control-secret"
     assert control_settings.port == 9876
     assert control_settings.default_workdir != workspace
-    assert (
-        control_settings.shell_executable
-        == Settings.model_fields["shell_executable"].get_default()
-    )
+    assert control_settings.shell_executable == Settings.model_fields[
+        "shell_executable"
+    ].get_default(call_default_factory=True)
 
 
 def test_executor_cli_parses_subprocess_env_filters():

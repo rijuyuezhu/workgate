@@ -5,7 +5,6 @@ import contextlib
 import contextvars
 import os
 import re
-import shlex
 import shutil
 import sys
 import time
@@ -20,10 +19,17 @@ from ..errors import (
     ShellExecutableNotFoundError,
     process_start_not_found_error,
 )
+from ..platform.host import HostOS, host_os
 from ..platform.posix.tmux import require_tmux, resolve_tmux, tmux_env_overrides
 from ..platform.process import (
     new_process_group_kwargs,
     terminate_process_tree,
+)
+from ..platform.shell import (
+    default_shell,
+    shell_argv,
+    shell_env_prefix,
+    shell_join_argv,
 )
 from ..protocol.terminal import (
     PERSISTENT_SHELL_MAX_COLUMNS,
@@ -238,15 +244,15 @@ def _subprocess_env(
 
 def _effective_shell_executable(config: ExecutorConfig) -> str:
     """Resolve the configured POSIX shell."""
-    return (
-        str(config.shell_executable).strip()
-        or os.environ.get("SHELL")
-        or "/bin/sh"
+    return str(config.shell_executable).strip() or (
+        default_shell()
+        if os.name == "nt"
+        else os.environ.get("SHELL") or "/bin/sh"
     )
 
 
-def _shell_join_argv(argv: list[str]) -> str:
-    return shlex.join(argv)
+def _shell_join_argv(argv: list[str], *, shell: str | None = None) -> str:
+    return shell_join_argv(argv, shell=shell or default_shell())
 
 
 def _effective_python_executable(config: ExecutorConfig) -> str:
@@ -282,14 +288,15 @@ def _command_with_env(
     overrides = _validated_env_overrides(config, env)
     if not overrides:
         return command
-    assignments = [
-        f"{name}={shlex.quote(value)}" for name, value in overrides.items()
-    ]
-    return f"{' '.join(assignments)} {command}"
+    return shell_env_prefix(
+        _effective_shell_executable(config), command, overrides
+    )
 
 
 def _bounded_runner_argv(shell: str, command: str) -> list[str]:
-    """Build the internal descendant-reaping runner invocation."""
+    """Use shell-native argv; POSIX keeps its descendant-reaping runner."""
+    if host_os() is HostOS.WINDOWS:
+        return shell_argv(shell, command, system="Windows")
     return bounded_runner_argv(
         shell,
         command,

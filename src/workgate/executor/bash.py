@@ -14,6 +14,7 @@ from ..utils.serialization import to_jsonable
 from .shell import (
     _command_with_env,
     _effective_python_executable,
+    _effective_shell_executable,
     _shell_join_argv,
     kill_persistent_shell_execute,
     run_shell_command_execute,
@@ -161,7 +162,8 @@ async def run_python_code_execute(
         [
             python_executable or _effective_python_executable(config),
             str(script_path),
-        ]
+        ],
+        shell=_effective_shell_executable(config),
     )
     result = await bash_execute(
         config,
