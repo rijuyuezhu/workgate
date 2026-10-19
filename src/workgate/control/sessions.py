@@ -39,6 +39,7 @@ _CREATE_ABSENT = "session_create_absent"
 _CREATE_UNCONFIRMED = "session_create_unconfirmed"
 _LOOKUP_TIMEOUT_S = 2.0
 _ACTIVE_SESSION_WINDOW_S = 5 * 60 * 60
+_RETENTION_SWEEP_BATCH_SIZE = 32
 _BROWSER_TOOL_NAMES = frozenset(
     {"browser_session", "browser_snapshot", "browser_act", "browser_run_script"}
 )
@@ -84,6 +85,7 @@ class ControlSessionCoordinator:
         self._clock = clock
         self._locks: dict[str, asyncio.Lock] = {}
         self._capacity_lock = asyncio.Lock()
+        self._retention_scan_offset = 0
         self._reconcile_tasks: set[asyncio.Task[None]] = set()
         self._missing_by_executor: dict[str, dict[str, float]] = {}
         self._activity_by_session: dict[str, float] = {}
@@ -384,6 +386,33 @@ class ControlSessionCoordinator:
             "stopped_browsers": payload.get("stopped_browsers", []),
         }
 
+    async def reap_expired_sessions(self) -> None:
+        """Safely expire a bounded slice of idle sessions even without new admissions."""
+        if self._agent_session_retention_s == 0:
+            return
+        # A creating session may still have an unconfirmed remote create.
+        # Periodic cleanup only reaps active sessions after an authoritative
+        # Executor activity/resource lookup; leave ambiguous creates alone.
+        records = tuple(
+            record
+            for record in self._cleanup_records()
+            if record.status == "active"
+        )
+        if not records:
+            return
+        count = min(len(records), _RETENTION_SWEEP_BATCH_SIZE)
+        start = self._retention_scan_offset % len(records)
+        self._retention_scan_offset = (start + count) % len(records)
+        cutoff = self._clock() - self._agent_session_retention_s
+        for index in range(count):
+            record = records[(start + index) % len(records)]
+            try:
+                await self._auto_end_if_eligible(record, cutoff=cutoff)
+            except Exception:
+                logger.exception(
+                    "Failed to reap expired session %s", record.session_id
+                )
+
     async def _reap_for_capacity(self) -> None:
         maximum = self._max_agent_sessions
         if maximum is None:
@@ -543,7 +572,8 @@ class ControlSessionCoordinator:
         if maximum is not None and self._nonended_session_count() >= maximum:
             raise RuntimeError(
                 "execution session limit reached: "
-                f"{maximum}; end an active session or wait for retention cleanup"
+                f"{self._nonended_session_count()}/{maximum} (Control max_agent_sessions); "
+                "end an idle session or configure max_agent_sessions: null"
             )
 
     async def reconcile_hello(self, executor_id: str) -> None:

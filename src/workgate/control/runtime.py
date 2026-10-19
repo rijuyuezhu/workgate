@@ -140,26 +140,39 @@ class ControlRuntime:
             raise
 
         self._started = True
-        if self.config.task_idle_block_after_s:
+        if (
+            self.config.task_idle_block_after_s
+            or self.config.agent_session_retention_s
+        ):
             self._idle_sweep_task = asyncio.create_task(
                 self._run_idle_sweep(), name="workgate-task-idle-sweep"
             )
 
     async def _run_idle_sweep(self) -> None:
         while True:
-            sweep = asyncio.create_task(self.task_service.sweep_idle_tasks())
-            try:
-                await asyncio.shield(sweep)
-            except asyncio.CancelledError:
-                # asyncio.to_thread is not cancellable: finish the file-lock
-                # pass before ControlState and the Job store are closed.
+            if self.config.task_idle_block_after_s:
+                sweep = asyncio.create_task(
+                    self.task_service.sweep_idle_tasks()
+                )
                 try:
-                    await sweep
+                    await asyncio.shield(sweep)
+                except asyncio.CancelledError:
+                    # asyncio.to_thread is not cancellable: finish the file-lock
+                    # pass before ControlState and the Job store are closed.
+                    try:
+                        await sweep
+                    except Exception:
+                        logger.exception(
+                            "Task idle sweep failed during shutdown"
+                        )
+                    raise
                 except Exception:
-                    logger.exception("Task idle sweep failed during shutdown")
-                raise
-            except Exception:
-                logger.exception("Task idle sweep failed")
+                    logger.exception("Task idle sweep failed")
+            if self.config.agent_session_retention_s:
+                try:
+                    await self.session_coordinator.reap_expired_sessions()
+                except Exception:
+                    logger.exception("Session retention sweep failed")
             await asyncio.sleep(60 * 60)
 
     async def aclose(self) -> None:

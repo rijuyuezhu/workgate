@@ -1096,3 +1096,243 @@ async def test_end_stops_control_resources_after_terminating(
     assert cleanup_observations == ["terminating"]
     assert ended["stopped_jobs"] == ["managed-copy", "executor-job"]
     assert state.snapshot_sessions()[session_id].status == "ended"
+
+
+@pytest.mark.asyncio
+async def test_unlimited_admission_accepts_over_256_durable_sessions(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    executor = new_executor_id()
+    _trust(state, executor)
+    for _ in range(260):
+        session_id = new_session_id()
+        state.put_session(
+            ControlSessionRecord(
+                session_id=session_id,
+                executor_id=executor,
+                status="creating",
+                created_at=1,
+                updated_at=1,
+            )
+        )
+    transport = FakeTransport()
+    transport.online.add(executor)
+    transport.hellos[executor] = _hello()
+    coordinator = _coordinator(
+        state,
+        transport,  # type: ignore[arg-type]
+        max_agent_sessions=None,
+        agent_session_retention_s=3600,
+        clock=lambda: 5.0,
+    )
+    assert coordinator.session_capacity() == (260, None, True)
+    created = await coordinator.start_session(workdir="new")
+    assert isinstance(created, dict)
+    assert coordinator.session_capacity() == (261, None, True)
+    assert [call[1] for call in transport.calls] == ["session.create"]
+
+
+@pytest.mark.asyncio
+async def test_explicit_session_cap_preserves_blocking_and_shows_control_setting(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    executor = new_executor_id()
+    _trust(state, executor)
+    for _ in range(2):
+        session_id = new_session_id()
+        state.put_session(
+            ControlSessionRecord(
+                session_id=session_id,
+                executor_id=executor,
+                status="creating",
+                created_at=1,
+                updated_at=1,
+            )
+        )
+    transport = FakeTransport()
+    coordinator = _coordinator(
+        state,
+        transport,  # type: ignore[arg-type]
+        max_agent_sessions=2,
+        clock=lambda: 2.0,
+    )
+    assert coordinator.session_capacity() == (2, 2, False)
+    with pytest.raises(RuntimeError, match="2/2 .*max_agent_sessions.*null"):
+        await coordinator.start_session()
+    assert not transport.calls
+
+
+@pytest.mark.asyncio
+async def test_periodic_unlimited_retention_protects_busy_and_offline_sessions(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    online, offline = new_executor_id(), new_executor_id()
+    _trust(state, online)
+    _trust(state, offline)
+    old_idle, old_busy, unknown = (new_session_id() for _ in range(3))
+    for executor_id, session_id in (
+        (online, old_idle),
+        (online, old_busy),
+        (offline, unknown),
+    ):
+        state.put_session(_active_record(executor_id, session_id))
+    transport = FakeTransport()
+    transport.online.add(online)
+    transport.hellos[online] = _hello(
+        (old_idle, "/workspace/project"), (old_busy, "/workspace/project")
+    )
+
+    async def execute(_executor_id, op, _args, session_id, _timeout):
+        if op == "session.lookup":
+            return _ok(
+                {
+                    "session_id": session_id,
+                    "workdir": "/workspace/project",
+                    "last_active_at": 1.0,
+                    "has_persistent_shells": session_id == old_busy,
+                    "has_active_jobs": False,
+                }
+            )
+        assert op == "session.terminate" and session_id == old_idle
+        return _ok({"session_id": session_id, "absent": True})
+
+    transport.call_impl = execute
+    coordinator = _coordinator(
+        state,
+        transport,  # type: ignore[arg-type]
+        max_agent_sessions=None,
+        agent_session_retention_s=10,
+        clock=lambda: 100.0,
+    )
+    await coordinator.reap_expired_sessions()
+    records = state.snapshot_sessions()
+    assert records[old_idle].status == "ended"
+    assert records[old_busy].status == "active"
+    assert records[unknown].status == "active"
+    assert [call[1] for call in transport.calls].count("session.terminate") == 1
+
+
+@pytest.mark.asyncio
+async def test_retention_sweep_is_bounded_and_rotates_without_starvation(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    executor = new_executor_id()
+    _trust(state, executor)
+    for _ in range(65):
+        session_id = new_session_id()
+        state.put_session(_active_record(executor, session_id))
+    transport = FakeTransport()
+    transport.online.add(executor)
+
+    async def execute(_executor_id, op, _args, session_id, _timeout):
+        if op == "session.lookup":
+            return _ok(
+                {
+                    "session_id": session_id,
+                    "workdir": "/workspace/project",
+                    "last_active_at": 1.0,
+                    "has_persistent_shells": False,
+                    "has_active_jobs": False,
+                }
+            )
+        assert op == "session.terminate"
+        return _ok({"session_id": session_id, "absent": True})
+
+    transport.call_impl = execute
+    coordinator = _coordinator(
+        state,
+        transport,  # type: ignore[arg-type]
+        max_agent_sessions=None,
+        agent_session_retention_s=10,
+        clock=lambda: 100.0,
+    )
+    await coordinator.reap_expired_sessions()
+    assert sum(call[1] == "session.terminate" for call in transport.calls) == 32
+    for _ in range(3):
+        await coordinator.reap_expired_sessions()
+    assert sum(call[1] == "session.terminate" for call in transport.calls) == 65
+    assert all(r.status == "ended" for r in state.snapshot_sessions().values())
+
+
+@pytest.mark.asyncio
+async def test_periodic_cleanup_does_not_end_ambiguous_creating_sessions(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    executor = new_executor_id()
+    _trust(state, executor)
+    session_id = new_session_id()
+    state.put_session(
+        ControlSessionRecord(
+            session_id=session_id,
+            executor_id=executor,
+            status="creating",
+            created_at=1,
+            updated_at=1,
+        )
+    )
+    transport = FakeTransport()
+    coordinator = _coordinator(
+        state,
+        transport,  # type: ignore[arg-type]
+        max_agent_sessions=None,
+        agent_session_retention_s=10,
+        clock=lambda: 100.0,
+    )
+    await coordinator.reap_expired_sessions()
+    assert state.snapshot_sessions()[session_id].status == "creating"
+    assert not transport.calls
+
+
+@pytest.mark.asyncio
+async def test_periodic_retention_preserves_control_owned_active_jobs(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    executor = new_executor_id()
+    _trust(state, executor)
+    session = new_session_id()
+    state.put_session(_active_record(executor, session))
+    transport = FakeTransport()
+    transport.online.add(executor)
+
+    async def lookup(_executor_id, op, _args, session_id, _timeout):
+        assert op == "session.lookup" and session_id == session
+        return _ok(
+            {
+                "session_id": session,
+                "workdir": "/workspace/project",
+                "last_active_at": 1.0,
+                "has_persistent_shells": False,
+                "has_active_jobs": False,
+            }
+        )
+
+    async def blocked(session_id: str) -> bool:
+        assert session_id == session
+        return True
+
+    async def stop(_session_id: str) -> list[str]:
+        pytest.fail(
+            "Cannot stop jobs belonging to an auto-cleanup-blocked session"
+        )
+
+    transport.call_impl = lookup
+    coordinator = _coordinator(
+        state,
+        transport,  # type: ignore[arg-type]
+        max_agent_sessions=None,
+        agent_session_retention_s=10,
+        clock=lambda: 100.0,
+    )
+    coordinator.set_control_resource_hooks(
+        auto_cleanup_blocked=blocked,
+        before_terminate=stop,
+    )
+    await coordinator.reap_expired_sessions()
+    assert state.snapshot_sessions()[session].status == "active"
+    assert not transport.calls

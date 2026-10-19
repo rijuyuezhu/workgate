@@ -34,7 +34,7 @@ from workgate.protocol.ids import new_executor_id, new_session_id
 def _runtime(
     tmp_path: Path,
     *,
-    max_agent_sessions: int = 256,
+    max_agent_sessions: int | None = 256,
     executor_max_pending_commands: int = 64,
 ):
     return build_control_runtime(
@@ -376,3 +376,34 @@ async def test_executor_tool_requires_executor_use_scope(
         assert isinstance(result, CallToolResult)
         assert result.structured_content is not None
         assert result.structured_content["action"] == "list"
+
+
+@pytest.mark.asyncio
+async def test_unlimited_control_session_capacity_keeps_executor_eligible(
+    tmp_path: Path,
+) -> None:
+    runtime = _runtime(tmp_path, max_agent_sessions=None)
+    async with runtime.lifespan():
+        executor_id, credential = _trust(runtime)
+        await runtime.executor_transport.hello(credential, _hello())
+        for _ in range(257):
+            session_id = new_session_id()
+            runtime.control_state.put_session(
+                ControlSessionRecord(
+                    session_id=session_id,
+                    executor_id=executor_id,
+                    status="creating",
+                    created_at=1,
+                    updated_at=1,
+                )
+            )
+        fleet = await runtime.executor_fleet.list()
+        assert fleet.session_capacity is not None
+        assert fleet.session_capacity.used == 257
+        assert fleet.session_capacity.limit is None
+        assert fleet.session_capacity.available is True
+        assert fleet.executors[0].session_admission is True
+        assert (
+            "session_capacity_full"
+            not in fleet.executors[0].session_admission_reasons
+        )
