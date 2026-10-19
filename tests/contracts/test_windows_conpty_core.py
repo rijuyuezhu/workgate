@@ -287,3 +287,16 @@ def test_concurrent_native_close_failure_cannot_drop_live_session(monkeypatch):
         assert second.result(timeout=5)
     assert process.calls == 2
     assert not registry.active()
+
+
+def test_late_attach_tail_replay_keeps_room_for_new_output():
+    process = FakePty()
+    session = ConPtySession(process)
+    with session.lock:
+        session.tail.extend(b"x" * (256 * 1024))
+    subscriber = session.subscribe()
+    replay, eof = subscriber.read_wait(64 * 1024, 0)
+    assert len(replay) == 64 * 1024 and not eof
+    subscriber.feed(b"new output")
+    assert subscriber.read_wait(100, 0) == (b"new output", False)
+    session.close()
