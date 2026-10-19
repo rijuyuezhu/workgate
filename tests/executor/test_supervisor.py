@@ -65,19 +65,23 @@ def _launch(
     ignore_term_role: str = "",
     ready_test: bool = False,
     short_apply: bool = False,
+    split_configs: bool = False,
 ):
     config = tmp_path / "config.yaml"
     config.write_text("first")
     record = tmp_path / "children.log"
     commands = []
     for role in roles:
+        role_config = tmp_path / f"{role}.yaml" if split_configs else config
+        if split_configs:
+            role_config.write_text("first")
         command = [
             sys.executable,
             "-u",
             "-c",
             CHILD_CODE,
             str(record),
-            str(config),
+            str(role_config),
             role,
             "exit"
             if role == exit_role
@@ -102,7 +106,11 @@ def _launch(
         stderr=subprocess.PIPE,
         text=True,
     )
-    return process, record, config
+    return (
+        process,
+        record,
+        (tmp_path / f"{roles[0]}.yaml" if split_configs else config),
+    )
 
 
 def _lines(path: Path, number: int):
@@ -370,7 +378,10 @@ def test_parent_rejects_stale_apply_revision_without_stopping_child(tmp_path):
 
 def test_colocate_apply_failure_recovers_only_target_role(tmp_path):
     process, record, config = _launch(
-        tmp_path, ("control", "executor"), ready_test=True
+        tmp_path,
+        ("control", "executor"),
+        ready_test=True,
+        split_configs=True,
     )
     try:
         before = _lines(record, 2)
@@ -407,4 +418,29 @@ def test_apply_health_timeout_rolls_back_to_last_healthy_child(tmp_path):
     finally:
         _shutdown(process)
     for row in _lines(record, 3):
+        _pid_gone(int(row[1]))
+
+
+def test_colocate_shared_file_rejects_unsafe_independent_apply(tmp_path):
+    process, record, config = _launch(
+        tmp_path, ("control", "executor"), ready_test=True
+    )
+    try:
+        first = _lines(record, 2)
+        assert len(_lines(tmp_path / "ready.log", 2)) == 2
+        config.write_text("changed")
+        (tmp_path / "control.restart").touch()
+        deadline = time.monotonic() + 6
+        while (
+            not (tmp_path / "control.rejected").exists()
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.05)
+        assert (tmp_path / "control.rejected").exists()
+        assert _lines(record, 2) == first
+        assert process.poll() is None
+        assert config.read_text() == "changed"
+    finally:
+        _shutdown(process)
+    for row in first:
         _pid_gone(int(row[1]))

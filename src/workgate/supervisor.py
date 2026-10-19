@@ -116,7 +116,7 @@ def restart_status() -> str:
     if not is_child():
         return "unmanaged"
     status = _parent_message(b"status\n").strip().decode("ascii")
-    if status not in {"starting", "healthy", "applying", "recovered", "failed"}:
+    if status not in {"starting", "healthy", "applying", "recovered", "shared"}:
         raise RuntimeError("invalid Parent status")
     return status
 
@@ -254,6 +254,13 @@ def supervise(commands: list[ChildCommand]) -> int:
                 selector.unregister(child.channel)
                 child.channel.close()
 
+        def shared_config(role: str) -> bool:
+            own = good_files.get(role)
+            return own is not None and any(
+                other != role and good.path == own.path
+                for other, good in good_files.items()
+            )
+
         def recover(role: str, child: _Child) -> bool:
             progress = applying.get(role)
             if progress is None or progress.recovering:
@@ -307,9 +314,10 @@ def supervise(commands: list[ChildCommand]) -> int:
                     if child.buffer:
                         raise RuntimeError("unsupported Parent IPC request")
                     if message == b"status":
-                        child.channel.sendall(
-                            child.status.encode("ascii") + b"\n"
+                        state = (
+                            "shared" if shared_config(role) else child.status
                         )
+                        child.channel.sendall(state.encode("ascii") + b"\n")
                         continue
                     if message.startswith(b'{"ready": '):
                         payload = json.loads(message)
@@ -345,6 +353,11 @@ def supervise(commands: list[ChildCommand]) -> int:
                         raise RuntimeError("unsupported Parent IPC request")
                     if role in applying:
                         child.channel.sendall(b"busy\n")
+                        continue
+                    if shared_config(role):
+                        # Two role snapshots for one file cannot be rolled back
+                        # independently without discarding the sibling's edits.
+                        child.channel.sendall(b"shared\n")
                         continue
                     previous = good_files.get(role)
                     candidate = (

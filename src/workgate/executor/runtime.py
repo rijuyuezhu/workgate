@@ -368,7 +368,10 @@ class ExecutorRuntime:
                 raise RuntimeError(
                     "Executor startup configuration is unavailable"
                 )
-            if restart_status() not in {"healthy", "recovered"}:
+            state = restart_status()
+            if state == "shared":
+                return {"error": "SharedConfigFile", "status": 409}
+            if state not in {"healthy", "recovered"}:
                 return {"error": "ParentUnavailable", "status": 409}
             revision = command.args["revision"]
             if not isinstance(revision, str):

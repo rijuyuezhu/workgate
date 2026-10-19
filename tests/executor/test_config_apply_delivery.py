@@ -61,6 +61,11 @@ async def test_config_apply_validates_file_and_parent_before_ack(
         "error": "ParentUnavailable",
         "status": 409,
     }
+    monkeypatch.setattr(supervisor, "restart_status", lambda: "shared")
+    assert await runtime._execute_protocol_command_with_state(command) == {
+        "error": "SharedConfigFile",
+        "status": 409,
+    }
 
 
 @pytest.mark.asyncio

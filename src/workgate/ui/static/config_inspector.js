@@ -40,6 +40,8 @@ export function createConfigurationView({ root, request }) {
       metadata.append(file, text("span", `${data.fields.length} settings`, "executor-config-count"));
       if (data.file_changed_since_startup) metadata.append(text("span", "File changed", "executor-config-warning"));
       if (data.file_error) metadata.append(text("span", "File unavailable", "executor-config-warning"));
+      if (data.apply_status === "shared" && data.file_changed_since_startup)
+        metadata.append(text("span", "Shared file · configure separate role files before Apply", "executor-config-warning"));
       if (!data.editable && data.edit_reason) metadata.append(text("span", data.edit_reason, "muted"));
       root.append(metadata);
 
