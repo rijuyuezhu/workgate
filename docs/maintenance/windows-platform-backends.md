@@ -90,6 +90,9 @@ WebSocket protocol or session manager is introduced.
   two WebUI bridge attachments, Unicode input, limits and restart.
 - scripts/validation/windows-conpty-owner-smoke.py: abrupt Executor-owner
   termination does not leave an interactive PowerShell behind.
+- scripts/validation/windows-conpty-transport-smoke.py: native Windows
+  Control + Executor, real WebUI API and two authenticated WebSocket terminal
+  clients sharing one PowerShell, with independent detach and continued use.
 - scripts/validation/windows-conpty-smoke.py: native terminal resize,
   independent subscribers, detachment and natural EOF.
 - scripts/validation/windows-conpty-shell-smoke.py: WorkGate persistent
