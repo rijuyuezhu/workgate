@@ -46,6 +46,24 @@ async def wait_for_pidfile(path: Path) -> int:
     raise AssertionError(f"Bounded command did not start a descendant: {path}")
 
 
+async def simulated_executor(root: Path) -> None:
+    """Model an Executor killed while a bounded command is still running."""
+    os.environ["WORKGATE_DEFAULT_WORKDIR"] = str(root)
+    os.environ["WORKGATE_STATE_DIR"] = str(root / ".executor-state")
+    clear_settings_cache()
+    config = resolve_executor_config(get_settings())
+    command = shell_join_argv(
+        [
+            sys.executable,
+            str(root / "create child.py"),
+            str(root / "executor-stopped.pid"),
+            "wait",
+        ],
+        shell=config.shell_executable,
+    )
+    await run_shell(config, command, cwd=str(root), timeout_s=60)
+
+
 async def main() -> None:
     with tempfile.TemporaryDirectory(prefix="workgate-containment-") as temp:
         root = Path(temp)
@@ -222,6 +240,33 @@ async def main() -> None:
             release.set()
             native_job.asyncio.create_subprocess_exec = original_launch
 
+        # Killing the Executor process abruptly closes its Job handles,
+        # including when Python cleanup/finally blocks never execute.
+        executor = subprocess.Popen(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--executor-child",
+                str(root),
+            ],
+            cwd=root,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=0x08000000,
+        )
+        try:
+            child_pid = await wait_for_pidfile(root / "executor-stopped.pid")
+            executor.kill()
+            await asyncio.to_thread(executor.wait, 10)
+            assert wait_dead(child_pid), (
+                f"abrupt executor shutdown leaked descendant {child_pid}"
+            )
+        finally:
+            if executor.poll() is None:
+                executor.kill()
+                executor.wait(timeout=5)
+
         # A failed job attachment must never release a command to execute.
         failed_marker = root / "should-not-run.txt"
         original = WindowsJob.attach_waiting_process
@@ -255,5 +300,7 @@ if __name__ == "__main__":
     if "--wait-gate" in sys.argv:
         if sys.stdin.buffer.read(1) == b"\x01":
             Path(sys.argv[2]).write_text("wrongly released", encoding="utf-8")
+    elif "--executor-child" in sys.argv:
+        asyncio.run(simulated_executor(Path(sys.argv[2])))
     else:
         asyncio.run(main())
