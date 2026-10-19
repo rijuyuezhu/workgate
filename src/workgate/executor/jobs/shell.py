@@ -249,13 +249,13 @@ async def start_shell_job_unlocked(
     job_id = _new_job_id()
     display_name = name or job_id
     shell_name = _shell_safe_name(f"{job_id}-{display_name}")
+    active_shells = await authoritative_persistent_shell_ids_execute(
+        config, session_store
+    )
     paths, runner_command = _prepare_attempt(
         config, job_id, 1, command, resolved_cwd
     )
     now = _utc()
-    active_shells = await authoritative_persistent_shell_ids_execute(
-        config, session_store
-    )
     job: JobRow = {
         "job_id": job_id,
         "kind": "shell",

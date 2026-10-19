@@ -1,11 +1,12 @@
 """MCP response assertions and shell commands for tests."""
 
 import base64
-import shlex
 import sys
 from typing import Any, cast
 
 from mcp.types import CallToolResult
+
+from workgate.platform.shell import default_shell, shell_join_argv
 
 
 def _mcp_content(response: Any, index: int = 0) -> Any:
@@ -43,8 +44,8 @@ def mcp_structured(response: Any) -> dict[str, Any]:
 
 
 def python_shell_command(source: str) -> str:
-    """Return one shell-safe Python command for POSIX shells."""
+    """Return a Python command quoted for the host's default shell."""
     encoded = base64.b64encode(source.encode("utf-8")).decode("ascii")
     wrapper = f"import base64;exec(base64.b64decode('{encoded}'))"
     argv = [sys.executable, "-c", wrapper]
-    return shlex.join(argv)
+    return shell_join_argv(argv, shell=default_shell())
