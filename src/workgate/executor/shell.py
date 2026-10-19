@@ -307,19 +307,10 @@ async def _spawn_process(
     cwd: str,
     env: dict[str, str] | None = None,
 ) -> asyncio.subprocess.Process:
-    """Start a bounded shell command in a descendant-reaping process group."""
+    """Start a bounded shell command under host-native descendant containment."""
     shell = _effective_shell_executable(config)
     child_env = _subprocess_env(config, internal_runner=True)
     child_env.update(_validated_env_overrides(config, env))
-    windows = host_os() is HostOS.WINDOWS
-    common: dict[str, Any] = {
-        "cwd": cwd,
-        "env": child_env,
-        "stdin": asyncio.subprocess.DEVNULL,
-        "stdout": asyncio.subprocess.PIPE,
-        "stderr": asyncio.subprocess.PIPE,
-        **({} if windows else new_process_group_kwargs()),
-    }
     shell_candidate = shell
     if not os.path.isabs(shell) and os.path.dirname(shell):
         shell_candidate = os.path.abspath(os.path.join(cwd, shell))
@@ -333,11 +324,19 @@ async def _spawn_process(
         )
     try:
         argv = _bounded_runner_argv(resolved_shell, command)
-        if windows:
+        if host_os() is HostOS.WINDOWS:
             from ..platform.windows_job import spawn_bounded_runner
 
             return await spawn_bounded_runner(argv, cwd=cwd, env=child_env)
-        return await asyncio.create_subprocess_exec(*argv, **common)
+        return await asyncio.create_subprocess_exec(
+            *argv,
+            cwd=cwd,
+            env=child_env,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            **new_process_group_kwargs(),
+        )
     except FileNotFoundError as exc:
         raise process_start_not_found_error(
             exc,
