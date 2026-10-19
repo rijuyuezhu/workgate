@@ -1,6 +1,7 @@
 """Windows user-service contracts without changing the host's scheduled tasks."""
 
 import ast
+import json
 import os
 import subprocess
 from argparse import Namespace
@@ -344,3 +345,88 @@ def test_windows_colocate_frozen_requires_windowless_build(
     with pytest.raises(RuntimeError, match="windowless"):
         colocate_service.install_colocate_service(args)
     assert not target.exists()
+
+
+def test_windows_task_lifecycle_and_idempotent_uninstall(monkeypatch):
+    monkeypatch.setattr(
+        "workgate.platform.windows_task.shutil.which",
+        lambda _: "powershell.exe",
+    )
+    state = {"installed": False, "running": False}
+    operations = []
+
+    def run(argv):
+        script = argv[-1]
+        if "Get-ScheduledTask" in script:
+            data = (
+                {
+                    "state": "Running" if state["running"] else "Ready",
+                    "last_result": 0,
+                }
+                if state["installed"]
+                else None
+            )
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                "null" if data is None else json.dumps(data),
+                "",
+            )
+        if "Register-ScheduledTask" in script:
+            state["installed"] = True
+            operations.append("register")
+        elif "Start-ScheduledTask" in script:
+            state["running"] = True
+            operations.append("start")
+        elif "Stop-ScheduledTask" in script:
+            state["running"] = False
+            operations.append("stop")
+        elif "Unregister-ScheduledTask" in script:
+            state["installed"] = False
+            operations.append("unregister")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    task = WindowsUserTask(
+        "Workgate Test", description="Managed by Workgate: test", run=run
+    )
+    assert task.status() is None
+    task.install([r"C:\pythonw.exe", r"C:\launcher.py"], cwd="C:\\")
+    task.start()
+    running = task.status()
+    assert running is not None and running["state"] == "Running"
+    task.stop()
+    task.uninstall()
+    task.uninstall()
+    assert task.status() is None
+    assert operations == ["register", "start", "stop", "unregister"]
+
+
+@pytest.mark.parametrize("payload", ["broken-json", "[]", '{"state": 2}'])
+def test_windows_task_rejects_invalid_scheduler_status(monkeypatch, payload):
+    monkeypatch.setattr(
+        "workgate.platform.windows_task.shutil.which",
+        lambda _: "powershell.exe",
+    )
+    task = WindowsUserTask(
+        "Workgate Test",
+        description="Managed by Workgate: test",
+        run=lambda argv: subprocess.CompletedProcess(argv, 0, payload, ""),
+    )
+    with pytest.raises(RuntimeError, match="invalid Windows Task Scheduler"):
+        task.status()
+
+
+def test_windows_task_errors_when_scheduler_is_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        "workgate.platform.windows_task.shutil.which", lambda _: None
+    )
+    task = WindowsUserTask(
+        "Workgate Test",
+        description="Managed by Workgate: test",
+        run=lambda argv: subprocess.CompletedProcess(argv, 0, "null", ""),
+    )
+    assert not task.available()
+    with pytest.raises(RuntimeError, match="requires PowerShell"):
+        task.status()
+    with pytest.raises(ValueError, match="must not be empty"):
+        task.install([], cwd="C:\\")

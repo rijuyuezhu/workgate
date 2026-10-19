@@ -218,3 +218,23 @@ def test_install_service_rejects_invalid_systemd_unit_path(
     with pytest.raises(RuntimeError, match="persistent user unit path"):
         service.install_colocate_service(args)
     assert not unit.exists()
+
+
+def test_manage_colocate_user_unit_lifecycle(installer):
+    args, commands, pair, unit = installer
+    pair()
+    service.install_colocate_service(args)
+    service.manage_colocate_service("status")
+    service.manage_colocate_service("stop")
+    service.manage_colocate_service("start")
+    service.manage_colocate_service("restart")
+    assert unit.is_file()
+    service.manage_colocate_service("uninstall")
+    assert not unit.exists()
+    assert [
+        "systemctl",
+        "--user",
+        "disable",
+        "--now",
+        "workgate-colocate.service",
+    ] in commands
