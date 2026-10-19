@@ -43,9 +43,19 @@ class ControlExecutorFleetService:
             self._config.resolved_base_url.rstrip("/")
             + "/executor/v1/bootstrap"
         )
+        windows_url = url + ".ps1"
+        quoted_windows_url = windows_url.replace("'", "''")
         return ExecutorBootstrapRecipe(
             url=url,
             command=f"curl -fsSL {url} | bash -s -- --persist",
+            windows_url=windows_url,
+            windows_command=(
+                "Invoke-WebRequest -UseBasicParsing "
+                f"'{quoted_windows_url}' "
+                "-OutFile workgate-bootstrap.ps1 -ErrorAction Stop; "
+                "powershell.exe -NoProfile -ExecutionPolicy Bypass "
+                r"-File .\workgate-bootstrap.ps1 -Persist"
+            ),
         )
 
     def _capacity(self) -> ExecutorSessionCapacity:
