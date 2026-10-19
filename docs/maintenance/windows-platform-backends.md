@@ -31,6 +31,19 @@ Optional stronger patch isolation is tracked separately in
 [#402](https://github.com/rijuyuezhu/workgate/issues/402). It does not
 justify native NT abstractions in #383.
 
+## Shell support (in progress, #384)
+
+Windows defaults to PowerShell; native source installations use their Python
+interpreter, while frozen builds require an external Python on PATH (or an
+explicit python_bin). Commands retain their native syntax: PowerShell
+selects UTF-8 for its output, and cmd.exe selects code page 65001. External
+programs may still emit different encodings. PowerShell preserves native
+executable exit codes; Python subprocess handles trusted .exe, .cmd and .bat
+without a custom launcher.
+
+Bounded Windows command execution is still unavailable until #385 provides
+real process-tree containment; shell syntax support is not a substitute.
+
 ## Native Windows functional checks
 
 - scripts/validation/windows-stdlib-smoke.py: Windows paths, file locks,
@@ -39,5 +52,7 @@ justify native NT abstractions in #383.
   process, checksums and directory archive transfers.
 - scripts/validation/windows-patch-smoke.py: multi-file git apply, unified
   diffs, and failed preflight.
+- scripts/validation/windows-shell-smoke.py: PowerShell/cmd Unicode, quoted
+  paths, batch execution, exit status and environment filters.
 
 Linux/macOS tests cover the shared implementation.
