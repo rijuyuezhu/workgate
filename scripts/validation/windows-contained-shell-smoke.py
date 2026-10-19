@@ -142,6 +142,38 @@ async def main() -> None:
             raise AssertionError("Cancelled bounded command returned success")
         assert wait_dead(pid), f"cancelled command leaked descendant {pid}"
 
+        # A bounded-runner crash must also close the Job Object and remove
+        # descendants that were already launched by the requested command.
+        crashed_pidfile = root / "crashed.pid"
+        import workgate.executor.shell as native_shell
+
+        original_spawn = native_shell._spawn_process
+        runner = None
+
+        async def capture_spawn(*args, **kwargs):
+            nonlocal runner
+            runner = await original_spawn(*args, **kwargs)
+            return runner
+
+        native_shell._spawn_process = capture_spawn
+        try:
+            crashed = asyncio.create_task(
+                run_shell(
+                    config,
+                    command(crashed_pidfile, wait=True),
+                    cwd=str(root),
+                    timeout_s=20,
+                )
+            )
+            pid = await wait_for_pidfile(crashed_pidfile)
+            assert runner is not None
+            runner.kill()
+            result = await asyncio.wait_for(crashed, timeout=12)
+            assert not result.ok, result
+            assert wait_dead(pid), f"crashed runner leaked descendant {pid}"
+        finally:
+            native_shell._spawn_process = original_spawn
+
         # A cancellation *during* the async spawn must also reap a child
         # created after the caller has already been cancelled.
         import workgate.platform.windows_job as native_job

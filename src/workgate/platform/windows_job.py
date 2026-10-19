@@ -130,13 +130,17 @@ class WindowsJob:
         finally:
             self._kernel.CloseHandle(process)
 
+    def attach_current_process(self) -> None:
+        """Attach a launcher before it creates any descendants."""
+        self.attach_waiting_process(os.getpid())
+
     def close(self) -> None:
         """Terminate all attached processes and descendants exactly once."""
         with self._close_lock:
             handle = self._handle
             self._handle = None
-            if handle:
-                self._kernel.CloseHandle(handle)
+            if handle and not self._kernel.CloseHandle(handle):
+                raise _win_error()
 
     def __enter__(self) -> WindowsJob:
         return self

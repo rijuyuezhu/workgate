@@ -203,3 +203,55 @@ def test_colocate_cleans_up_control_if_executor_cannot_start(monkeypatch):
         )
 
     assert control.terminated
+
+
+def test_windows_colocate_binds_launcher_before_spawning_roles(monkeypatch):
+    import types
+
+    from workgate.platform import windows_job
+
+    events: list[str] = []
+
+    class FakeJob:
+        def attach_current_process(self):
+            events.append("bound")
+
+    children = [FakeChild(0), FakeChild(None)]
+
+    def spawn(argv, **kwargs):
+        assert kwargs == {"creationflags": 0x08000000}
+        events.append(argv[3])
+        return children[len(events) - 2]
+
+    monkeypatch.setattr(colocate, "os", types.SimpleNamespace(name="nt"))
+    monkeypatch.setattr(windows_job, "WindowsJob", FakeJob)
+    monkeypatch.setattr(colocate.subprocess, "Popen", spawn)
+    with pytest.raises(SystemExit) as result:
+        colocate.run_colocate(
+            argparse.Namespace(control_config=None, executor_config=None)
+        )
+    assert result.value.code == 0
+    assert events == ["bound", "control", "executor"]
+    assert children[1].terminated
+
+
+def test_windows_colocate_refuses_to_spawn_if_job_bind_fails(monkeypatch):
+    import types
+
+    from workgate.platform import windows_job
+
+    class BrokenJob:
+        def attach_current_process(self):
+            raise OSError("Job assignment failed")
+
+    monkeypatch.setattr(colocate, "os", types.SimpleNamespace(name="nt"))
+    monkeypatch.setattr(windows_job, "WindowsJob", BrokenJob)
+    monkeypatch.setattr(
+        colocate.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail("uncontained role launch"),
+    )
+    with pytest.raises(OSError, match="Job assignment failed"):
+        colocate.run_colocate(
+            argparse.Namespace(control_config=None, executor_config=None)
+        )

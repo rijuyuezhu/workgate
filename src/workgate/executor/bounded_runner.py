@@ -1357,6 +1357,7 @@ def _run_windows_bounded_command(shell: str, command: str) -> int:
             stdin=subprocess.DEVNULL,
             stdout=None,
             stderr=None,
+            creationflags=0x08000000,  # CREATE_NO_WINDOW
             env=user_subprocess_env(),
         )
     except OSError as exc:

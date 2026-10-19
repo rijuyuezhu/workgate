@@ -74,6 +74,17 @@ def run() -> None:
         finally:
             proc.kill() if proc.poll() is None else None
             proc.wait(timeout=10)
+    # Concurrent cleanup callers must never double-close an OS handle.
+    from concurrent.futures import ThreadPoolExecutor
+
+    for _ in range(20):
+        job = WindowsJob()
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = [pool.submit(job.close) for _ in range(8)]
+            for future in futures:
+                future.result()
+        job.close()
+
     print("Windows Job Object kills descendant on handle close: PASS")
 
 

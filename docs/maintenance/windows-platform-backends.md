@@ -47,8 +47,11 @@ attached to that job. Any binding failure refuses execution; normal return,
 timeout or cancellation closes the job and kills surviving descendants.
 The durable job runner also uses a gated Job Object for command attempts;
 its native completion and forced-stop descendant cleanup are covered by smoke
-tests. Full tracked-job recovery, process-wide shutdown and colocate lifecycle
-integration still require validation before #385 can close.
+tests. Native colocate attaches its parent process to a kill-on-close Job
+before launching Control and Executor; all role descendants are then covered
+when the colocate process exits, including forced stop. Full tracked-job
+recovery and service-level lifecycle still require validation before #385
+can close.
 
 ## Native Windows functional checks
 
@@ -65,5 +68,7 @@ integration still require validation before #385 can close.
   cancellation, startup gate and refused assignment.
 - scripts/validation/windows-durable-job-smoke.py: tracked runner log/status,
   background descendant cleanup and forced stop.
+- scripts/validation/windows-colocate-job-smoke.py: launcher/role/grandchild
+  containment on normal and forced colocate termination.
 
 Linux/macOS tests cover the shared implementation.
