@@ -37,6 +37,22 @@ def child_main() -> None:
     # the Job Object, avoiding a start-then-attach escape window.
     if sys.stdin.buffer.read(1) != b"G":
         raise RuntimeError("missing job startup gate")
+    # CREATE_BREAKAWAY_FROM_JOB may be accepted by Windows, including when
+    # an ancestor Job permits it. What matters is whether *our* job still
+    # contains and kills the process.
+    try:
+        escaped = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(40)"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=0x01000000,  # CREATE_BREAKAWAY_FROM_JOB
+        )
+    except OSError:
+        print("BREAKAWAY_BLOCKED", flush=True)
+    else:
+        print(f"BREAKAWAY_PID:{escaped.pid}", flush=True)
+
     descendant = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(40)"],
         stdin=subprocess.DEVNULL,
@@ -64,6 +80,15 @@ def run() -> None:
                 assert proc.stdin is not None and proc.stdout is not None
                 proc.stdin.write(b"G")
                 proc.stdin.flush()
+                result = proc.stdout.readline().strip()
+                escaped_pid = (
+                    int(result.split(b":", 1)[1])
+                    if result.startswith(b"BREAKAWAY_PID:")
+                    else None
+                )
+                assert (
+                    escaped_pid is not None or result == b"BREAKAWAY_BLOCKED"
+                ), result
                 descendant_pid = int(proc.stdout.readline().strip())
                 assert descendant_pid != proc.pid
             # Closing the job kills both the waiting parent and its child.
@@ -71,6 +96,17 @@ def run() -> None:
             assert wait_dead(descendant_pid), (
                 f"descendant leaked: {descendant_pid}"
             )
+            if escaped_pid is not None:
+                escaped_dead = wait_dead(escaped_pid)
+                if not escaped_dead:
+                    subprocess.run(
+                        ["taskkill", "/F", "/PID", str(escaped_pid)],
+                        capture_output=True,
+                        check=False,
+                    )
+                assert escaped_dead, (
+                    f"breakaway process escaped Job: {escaped_pid}"
+                )
         finally:
             proc.kill() if proc.poll() is None else None
             proc.wait(timeout=10)
