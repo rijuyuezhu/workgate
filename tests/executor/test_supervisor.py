@@ -136,6 +136,45 @@ def _lines(path: Path, number: int):
     )
 
 
+def _recovered_pair(
+    record: Path, ready_log: Path, *, previous_pids: set[str], config_text: str
+):
+    """Wait for the recovered pair, not an implementation-specific log count."""
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        rows = (
+            [line.split() for line in record.read_text().splitlines()]
+            if record.exists()
+            else []
+        )
+        statuses = (
+            [line.split() for line in ready_log.read_text().splitlines()]
+            if ready_log.exists()
+            else []
+        )
+        pair = rows[-2:]
+        if (
+            len(pair) == 2
+            and {row[0] for row in pair} == {"control", "executor"}
+            and all(
+                row[4] == config_text and row[1] not in previous_pids
+                for row in pair
+            )
+            and any(
+                row[1] in {member[1] for member in pair}
+                and row[2] == "recovered"
+                for row in statuses
+            )
+        ):
+            return rows, statuses
+        time.sleep(0.05)
+    pytest.fail(
+        f"recovered Child pair not observed; "
+        f"children={record.read_text() if record.exists() else '(none)'}, "
+        f"ready={ready_log.read_text() if ready_log.exists() else '(none)'}"
+    )
+
+
 def _shutdown(process: subprocess.Popen[str]):
     if process.poll() is None:
         process.terminate()
@@ -478,7 +517,7 @@ def test_colocate_shared_file_failure_rolls_back_both(tmp_path, failed_role):
         tmp_path, ("control", "executor"), ready_test=True
     )
     try:
-        _lines(record, 2)
+        before = _lines(record, 2)
         assert len(_lines(tmp_path / "ready.log", 2)) == 2
         # The immediately preceding .bak is not necessarily last-known-good.
         config.write_text("intermediate")
@@ -488,11 +527,13 @@ def test_colocate_shared_file_failure_rolls_back_both(tmp_path, failed_role):
             hashlib.sha256(config.read_bytes()).hexdigest()
         )
         (tmp_path / "control.restart").touch()
-        statuses = _lines(tmp_path / "ready.log", 4)
-        # A failed Child may exit before logging its candidate startup.
-        # Both recovered roles, not a fixed candidate count, are the contract.
-        after = _lines(record, 5)
-        assert statuses[2][2] in {"starting", "applying"}  # Not success.
+        after, statuses = _recovered_pair(
+            record,
+            tmp_path / "ready.log",
+            previous_pids={row[1] for row in before},
+            config_text="first",
+        )
+        assert all(row[2] != "healthy" for row in statuses[2:])
         assert all(row[4] == "first" for row in after[-2:])
         assert {row[0] for row in after[-2:]} == {"control", "executor"}
         assert statuses[-1][2] == "recovered"
@@ -542,13 +583,18 @@ def test_colocate_shared_file_rolls_back_to_latest_jointly_healthy_config(
         )
         (tmp_path / "executor.restart").touch()
         assert len(_lines(tmp_path / "ready.log", 4)) == 4
+        previous = _lines(record, 4)
         config.write_text("bad-executor")
         (tmp_path / "control.revision").write_text(
             hashlib.sha256(config.read_bytes()).hexdigest()
         )
         (tmp_path / "control.restart").touch()
-        after = _lines(record, 8)
-        statuses = _lines(tmp_path / "ready.log", 6)
+        after, statuses = _recovered_pair(
+            record,
+            tmp_path / "ready.log",
+            previous_pids={row[1] for row in previous},
+            config_text="second",
+        )
         assert statuses[-1][2] == "recovered"
         assert {row[0] for row in after[-2:]} == {"control", "executor"}
         assert all(row[4] == "second" for row in after[-2:])
