@@ -53,7 +53,7 @@ class TransferReadChunkOutput(BaseModel):
     eof: bool = Field(
         description="Whether this chunk reaches the end of the file."
     )
-    sha256: str = Field(description="SHA-256 digest of the source file.")
+    sha256: str = Field(description="SHA-256 digest of the returned chunk.")
     data_b64: str = Field(description="Base64-encoded chunk payload.")
 
 
