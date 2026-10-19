@@ -112,20 +112,31 @@ try {
     }
 }
 finally {
+    $rollbackError = $null
     if ($published -and $runtime) {
         $target = Join-Path $runtime 'workgate.exe'
-        Remove-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
-        if ($previous -and (Test-Path -LiteralPath $previous)) {
-            Move-Item -LiteralPath $previous -Destination $target
+        try {
+            if (Test-Path -LiteralPath $target) {
+                Remove-Item -LiteralPath $target -Force -ErrorAction Stop
+            }
+            if ($previous -and (Test-Path -LiteralPath $previous)) {
+                Move-Item -LiteralPath $previous -Destination $target -ErrorAction Stop
+            }
+        } catch {
+            # Keep the old executable if Windows cannot release the new one.
+            $rollbackError = $_
         }
     }
-    if ($previous -and (Test-Path -LiteralPath $previous)) {
+    if (-not $rollbackError -and $previous -and (Test-Path -LiteralPath $previous)) {
         Remove-Item -LiteralPath $previous -Force -ErrorAction SilentlyContinue
     }
     if ($next -and (Test-Path -LiteralPath $next)) {
         Remove-Item -LiteralPath $next -Force -ErrorAction SilentlyContinue
     }
     Remove-Item -LiteralPath $temporary -Recurse -Force -ErrorAction SilentlyContinue
+    if ($rollbackError) {
+        throw "Executor installation rollback failed; previous executable preserved at '$previous': $rollbackError"
+    }
 }
 """
     return (
