@@ -24,6 +24,7 @@ from workgate.jobs import recovery as job_recovery
 from workgate.jobs import state as job_state
 from workgate.jobs import status as job_status
 from workgate.persistence import get_state_store, use_state_store
+from workgate.platform.shell import default_shell
 from workgate.protocol.ids import new_session_id
 from workgate.schemas.result_models.jobs import (
     JobInfo,
@@ -210,6 +211,83 @@ def test_lifecycle_helpers_cover_platform_and_bounded_log_paths(
     )
 
 
+def test_windows_job_runner_command_uses_powershell_quoting(
+    tmp_path, monkeypatch
+):
+    from workgate.platform import shell as dialect
+    from workgate.platform.host import HostOS
+
+    config = resolve_executor_config(
+        get_settings().model_copy(update={"shell_executable": "powershell.exe"})
+    )
+    paths: job_state.JobAttemptPaths = {
+        "command": tmp_path / "O'Brien's job.command",
+        "log": tmp_path / "job.log",
+        "status": tmp_path / "status.json",
+    }
+    monkeypatch.setattr(job_lifecycle, "_attempt_paths", lambda *_: paths)
+    monkeypatch.setattr(dialect, "host_os", lambda _system=None: HostOS.WINDOWS)
+
+    _paths, command = job_lifecycle._prepare_attempt(
+        config, "job_test", 1, "Write-Output 'hello'", tmp_path
+    )
+
+    assert command.startswith("& '")
+    assert "O''Brien''s job.command'" in command
+    assert "--command-file" in command
+    assert (
+        paths["command"].read_text(encoding="utf-8") == "Write-Output 'hello'"
+    )
+
+
+def test_windows_job_runner_rejected_shell_leaves_no_attempt_files(
+    tmp_path, monkeypatch
+):
+    from workgate.platform import shell as dialect
+    from workgate.platform.host import HostOS
+
+    config = resolve_executor_config(
+        get_settings().model_copy(update={"shell_executable": "cmd.exe"})
+    )
+    paths: job_state.JobAttemptPaths = {
+        "command": tmp_path / "job.command",
+        "log": tmp_path / "job.log",
+        "status": tmp_path / "status.json",
+    }
+    monkeypatch.setattr(job_lifecycle, "_attempt_paths", lambda *_: paths)
+    monkeypatch.setattr(dialect, "host_os", lambda _system=None: HostOS.WINDOWS)
+
+    with pytest.raises(ValueError, match="cmd.exe is unsupported"):
+        job_lifecycle._prepare_attempt(
+            config, "job_test", 1, "echo hi", tmp_path
+        )
+
+    assert all(not paths[key].exists() for key in ("command", "log", "status"))
+
+
+def test_job_attempt_failed_status_cleanup_does_not_write_command(
+    tmp_path, monkeypatch
+):
+    config = resolve_executor_config(get_settings())
+    paths = _attempt_paths_untyped("job_cleanup_failure", 1)
+    paths["status"].write_text("old status", encoding="utf-8")
+    monkeypatch.setattr(job_lifecycle, "_attempt_paths", lambda *_: paths)
+    original_unlink = Path.unlink
+
+    def fail_status_cleanup(path, *args, **kwargs):
+        if path == paths["status"]:
+            raise PermissionError("status is still open")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_status_cleanup)
+    with pytest.raises(PermissionError, match="still open"):
+        job_lifecycle._prepare_attempt(
+            config, "job_test", 1, "echo hi", tmp_path
+        )
+    assert not paths["command"].exists()
+    assert paths["status"].read_text(encoding="utf-8") == "old status"
+
+
 def test_runner_bootstrap_anchors_runtime_and_delegates(monkeypatch):
     delegated: list[bool] = []
     isolated_path = ["sentinel"]
@@ -219,7 +297,7 @@ def test_runner_bootstrap_anchors_runtime_and_delegates(monkeypatch):
     runner_bootstrap.main()
 
     assert runner_bootstrap.sys.path[0] == str(
-        Path(runner_bootstrap.__file__).resolve().parents[2]
+        Path(runner_bootstrap.__file__).resolve().parents[3]
     )
     assert delegated == [True]
 
@@ -648,7 +726,7 @@ def test_job_runner_persists_bounded_output_and_terminal_status(
         log_file=str(paths["log"]),
         status_file=str(paths["status"]),
         cwd=str(tmp_path),
-        shell="/bin/bash",
+        shell=default_shell(),
         max_log_bytes=32,
     )
 
@@ -678,7 +756,7 @@ def test_job_runner_records_nonzero_exit(tmp_path, monkeypatch):
         log_file=str(paths["log"]),
         status_file=str(paths["status"]),
         cwd=str(tmp_path),
-        shell="/bin/bash",
+        shell=default_shell(),
         max_log_bytes=1024,
     )
 
@@ -700,7 +778,7 @@ def test_job_runner_records_startup_error_before_process_spawn(tmp_path):
         log_file=str(tmp_path / "runner.log"),
         status_file=str(status_file),
         cwd=str(tmp_path),
-        shell="/bin/bash",
+        shell=default_shell(),
         max_log_bytes=1024,
     )
 
@@ -2153,6 +2231,28 @@ async def test_job_stop_confirms_lost_shell_absent_without_kill(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_job_start_inventory_failure_does_not_create_attempt_files(
+    tmp_path, monkeypatch
+):
+    _configure_job_state(tmp_path, monkeypatch)
+    session_id = _create_session(str(tmp_path))
+
+    async def failed_inventory(*_args):
+        raise RuntimeError("inventory unavailable")
+
+    monkeypatch.setattr(
+        job_shell,
+        "authoritative_persistent_shell_ids_execute",
+        failed_inventory,
+    )
+    with pytest.raises(RuntimeError, match="inventory unavailable"):
+        await _test_job_start_execute(session_id, "echo new")
+
+    assert _load_store_untyped()["jobs"] == []
+    assert not list(job_persistence.job_runtime_dir().glob("*-attempt-*"))
+
+
+@pytest.mark.asyncio
 async def test_job_start_preserves_existing_jobs_when_inventory_is_uncertain(
     tmp_path, monkeypatch
 ):
@@ -3044,7 +3144,7 @@ def test_job_runner_applies_configured_environment_filters(
         log_file=str(paths["log"]),
         status_file=str(paths["status"]),
         cwd=str(tmp_path),
-        shell="/bin/bash",
+        shell=default_shell(),
         max_log_bytes=1024,
         blocked_env_name=["EXACT_SECRET"],
         blocked_env_prefix=["PRIVATE_"],
