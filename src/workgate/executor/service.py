@@ -23,6 +23,7 @@ from ..app_paths import ensure_private_directory
 from ..config.executor import EXECUTOR_SETTING_NAMES, ExecutorConfig
 from ..persistence import FileStateStore
 from ..platform.host import HostOS, host_os
+from ..platform.windows_task import WindowsUserTask
 from ..protocol.executor import ExecutorRuntimeOwnership
 from ..utils.private_files import (
     atomic_write_private_bytes,
@@ -38,6 +39,9 @@ from .runtime_update import (
 
 _SERVICE_NAME = "workgate-executor"
 _LAUNCHD_LABEL = "com.workgate.executor"
+_WINDOWS_TASK_NAME = "Workgate Executor"
+_WINDOWS_TASK_DESCRIPTION = "Managed by Workgate: executor"
+_WINDOWS_SUCCESS_RESULTS = {0, 0x41300, 0x41301, 0x41303, 0x41306}
 _MAX_COMMAND_OUTPUT = 32_768
 _MAX_LOG_READ_BYTES = 256 * 1024
 _DEFAULT_LOG_LINES = 100
@@ -191,6 +195,13 @@ class ExecutorServiceManager:
             self.home / "Library" / "LaunchAgents" / f"{_LAUNCHD_LABEL}.plist"
         )
 
+    def _windows_task(self) -> WindowsUserTask:
+        return WindowsUserTask(
+            _WINDOWS_TASK_NAME,
+            description=_WINDOWS_TASK_DESCRIPTION,
+            run=self._run,
+        )
+
     def _run(
         self,
         command: list[str],
@@ -236,6 +247,12 @@ class ExecutorServiceManager:
                     "launchctl is required on macOS"
                 )
             return "launchd"
+        if host_os(self.system) is HostOS.WINDOWS:
+            if require_available and not WindowsUserTask.available():
+                raise UnsupportedExecutorServiceError(
+                    "Windows Task Scheduler requires PowerShell"
+                )
+            return "scheduled-task"
         raise UnsupportedExecutorServiceError(
             f"managed executor services are unsupported on {self.system}"
         )
@@ -260,18 +277,32 @@ class ExecutorServiceManager:
         self, runtime_ownership: ExecutorRuntimeOwnership
     ) -> str:
         config_path = str(self.config_path.resolve())
+        log_path = str(self.log_path.resolve())
         return (
             '"""Private Workgate managed-executor launcher. Generated; do not edit."""\n'
-            "import os\n\n"
+            "import contextlib\n"
+            "import os\n"
+            "import traceback\n\n"
             f"CONFIG_PATH = {config_path!r}\n\n"
             "for _name in list(os.environ):\n"
             "    if _name.startswith('WORKGATE_'):\n"
             "        os.environ.pop(_name, None)\n"
             "os.environ['PYTHONUNBUFFERED'] = '1'\n"
-            "from workgate.main import main\n"
-            "main(['executor', 'run', '--managed-service', "
+            "def _run():\n"
+            "    from workgate.main import main\n"
+            "    main(['executor', 'run', '--managed-service', "
             f"'--runtime-ownership', {runtime_ownership.value!r}, "
             "'--config', CONFIG_PATH])\n"
+            "if os.name == 'nt':\n"
+            f"    with open({log_path!r}, 'a', encoding='utf-8', buffering=1) as _log:\n"
+            "        with contextlib.redirect_stdout(_log), contextlib.redirect_stderr(_log):\n"
+            "            try:\n"
+            "                _run()\n"
+            "            except BaseException:\n"
+            "                traceback.print_exc()\n"
+            "                raise\n"
+            "else:\n"
+            "    _run()\n"
         )
 
     def _write_launcher(
@@ -319,6 +350,13 @@ class ExecutorServiceManager:
                 "--config",
                 str(self.config_path.resolve()),
             ]
+        if host_os(self.system) is HostOS.WINDOWS:
+            pythonw = executable.with_name("pythonw.exe")
+            if not pythonw.is_file():
+                raise UnsupportedExecutorServiceError(
+                    "Windows source service requires pythonw.exe to avoid a console"
+                )
+            executable = pythonw
         return [str(executable), str(self.launcher_path.resolve())]
 
     def _read_metadata(self) -> dict[str, Any] | None:
@@ -407,7 +445,10 @@ class ExecutorServiceManager:
             isinstance(item, str) for item in command
         ):
             return False
-        return command == self._runtime_command()
+        try:
+            return command == self._runtime_command()
+        except UnsupportedExecutorServiceError:
+            return False
 
     def _managed_posix_path(self, defaults: tuple[str, ...]) -> str:
         configured_entries = self.environ.get("PATH", "").split(":")
@@ -514,6 +555,13 @@ class ExecutorServiceManager:
         """Install or refresh the native per-user service and start it."""
 
         self._ensure_paired()
+        if host_os(self.system) is HostOS.WINDOWS and getattr(
+            sys, "frozen", False
+        ):
+            raise UnsupportedExecutorServiceError(
+                "Windows frozen service requires a windowless executable; "
+                "this frozen build is not yet service-capable"
+            )
         runtime_store = ExecutorRuntimeStateStore(self.state_store)
         runtime_state = runtime_store.install_state(runtime_ownership)
         backend = self.backend(require_available=True)
@@ -554,6 +602,12 @@ class ExecutorServiceManager:
                 command,
                 service_file=service_file,
             )
+
+        elif backend == "scheduled-task":
+            task = self._windows_task()
+            task.install(command, cwd=str(self.service_dir.resolve()))
+            self._write_metadata(backend, command)
+            task.start()
 
         runtime_store.service_runtime_state(runtime_state.ownership)
         return self.status()
@@ -638,6 +692,8 @@ class ExecutorServiceManager:
             )
             if loaded.returncode == 0:
                 raise RuntimeError("failed to unload executor LaunchAgent")
+        elif backend == "scheduled-task":
+            self._windows_task().uninstall()
         for path in (
             self.config_path,
             self.launcher_path,
@@ -674,6 +730,8 @@ class ExecutorServiceManager:
                         str(self.launchd_plist_path),
                     ]
                 )
+        elif backend == "scheduled-task":
+            self._windows_task().start()
         return self.status()
 
     def stop(self) -> ExecutorServiceStatus:
@@ -699,6 +757,8 @@ class ExecutorServiceManager:
                         "failed to stop executor LaunchAgent"
                         + (f": {detail}" if detail else "")
                     )
+        elif backend == "scheduled-task":
+            self._windows_task().stop()
         return self.status()
 
     def restart(self) -> ExecutorServiceStatus:
@@ -732,6 +792,10 @@ class ExecutorServiceManager:
                         str(self.launchd_plist_path),
                     ]
                 )
+        elif backend == "scheduled-task":
+            task = self._windows_task()
+            task.stop()
+            task.start()
         return self.status()
 
     def _require_installed(self) -> None:
@@ -949,12 +1013,68 @@ class ExecutorServiceManager:
             ),
         )
 
+    def _windows_status(self) -> ExecutorServiceStatus:
+        task = self._windows_task()
+        metadata = self.metadata_path.is_file()
+        try:
+            native = task.status()
+        except RuntimeError as exc:
+            return ExecutorServiceStatus(
+                backend="scheduled-task",
+                state=ExecutorServiceState.FAILED,
+                installed=metadata,
+                running=False,
+                detail=str(exc),
+                log_path=str(self.log_path),
+            )
+        if native is None:
+            return ExecutorServiceStatus(
+                backend="scheduled-task",
+                state=(
+                    ExecutorServiceState.FAILED
+                    if metadata
+                    else ExecutorServiceState.NOT_INSTALLED
+                ),
+                installed=False,
+                running=False,
+                detail=(
+                    "scheduled task missing; reinstall to refresh"
+                    if metadata
+                    else ""
+                ),
+                log_path=str(self.log_path),
+            )
+        name = str(native["state"]).lower()
+        code = native.get("last_result")
+        if name == "running":
+            state = ExecutorServiceState.RUNNING
+        elif name == "disabled" or (
+            isinstance(code, int) and code not in _WINDOWS_SUCCESS_RESULTS
+        ):
+            state = ExecutorServiceState.FAILED
+        elif name == "queued":
+            state = ExecutorServiceState.INSTALLED
+        else:
+            state = ExecutorServiceState.STOPPED
+        return ExecutorServiceStatus(
+            backend="scheduled-task",
+            state=state,
+            installed=True,
+            running=state is ExecutorServiceState.RUNNING,
+            detail=f"task={name}; last result={code}"
+            + ("; service metadata missing" if not metadata else ""),
+            log_path=str(self.log_path),
+            runtime_current=(self._runtime_current() if metadata else False),
+        )
+
     def status(self) -> ExecutorServiceStatus:
         backend = self.backend()
         if backend == "systemd":
             status = self._systemd_status(self.systemd_unit_path)
-        else:
+        elif backend == "launchd":
             status = self._launchd_status(self.launchd_plist_path)
+        else:
+            status = self._windows_status()
         runtime = ExecutorRuntimeStateStore(self.state_store).load()
         if runtime is None:
             return status

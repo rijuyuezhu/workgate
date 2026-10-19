@@ -8,7 +8,7 @@ from ..supervisor import ChildCommand, child_command, run_parent
 
 def register_colocate_cli(subparsers: Any) -> argparse.ArgumentParser:
     """Register the same-host launcher and optional systemd installation."""
-    from .service import install_colocate_service
+    from .service import install_colocate_service, manage_colocate_service
 
     parser = subparsers.add_parser(
         "colocate",
@@ -19,7 +19,7 @@ def register_colocate_cli(subparsers: Any) -> argparse.ArgumentParser:
     parser.set_defaults(handler=run_colocate)
     actions = parser.add_subparsers(dest="colocate_command")
     install = actions.add_parser(
-        "install-service", help="Install and start a systemd user service"
+        "install-service", help="Install and start a native user service"
     )
     install.add_argument(
         "--control-config", metavar="PATH", default=argparse.SUPPRESS
@@ -28,6 +28,11 @@ def register_colocate_cli(subparsers: Any) -> argparse.ArgumentParser:
         "--executor-config", metavar="PATH", default=argparse.SUPPRESS
     )
     install.set_defaults(handler=install_colocate_service)
+    for action in ("start", "stop", "restart", "status", "uninstall"):
+        operation = actions.add_parser(f"{action}-service")
+        operation.set_defaults(
+            handler=lambda _args, name=action: manage_colocate_service(name)
+        )
     return parser
 
 
