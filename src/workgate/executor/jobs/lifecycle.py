@@ -87,8 +87,10 @@ def _prepare_attempt(
 ) -> tuple[JobAttemptPaths, str]:
     """Validate and materialize one executor-owned durable shell attempt."""
     paths = _attempt_paths(job_id, attempt)
+    runner_command = shell_join_argv(
+        _runner_argv(config, paths, cwd), shell=config.shell_executable
+    )
     write_private_text(paths["command"], command)
     paths["log"].unlink(missing_ok=True)
     paths["status"].unlink(missing_ok=True)
-    argv = _runner_argv(config, paths, cwd)
-    return paths, shell_join_argv(argv, shell=config.shell_executable)
+    return paths, runner_command

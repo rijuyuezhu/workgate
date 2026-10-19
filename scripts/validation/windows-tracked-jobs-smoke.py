@@ -1,7 +1,8 @@
-"""Native Windows tracked shell jobs: completion, retry, ownership and restart."""
+"""Native Windows tracked shell jobs: lifecycle and cross-process recovery."""
 
 import asyncio
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -47,9 +48,35 @@ async def shell_retired(runtime) -> None:
     raise AssertionError("completed job left a live ConPTY shell")
 
 
+async def reconcile_from_new_process(owner: str, job_id: str) -> None:
+    # A new Python process has no TerminalRuntime/ConPTY or session cache from
+    # the former owner, but loads the same durable Executor state directory.
+    clear_settings_cache()
+    config = resolve_executor_config(get_settings())
+    services = build_runtime_services(config)
+    jobs = ExecutorJobService(config, services.tool_session_store)
+    runtime = build_terminal_runtime()
+    await runtime.start()
+    try:
+        with (
+            use_state_store(services.state_store),
+            use_terminal_runtime(runtime),
+        ):
+            assert await jobs.reconcile()
+            result = await jobs.tail(owner, job_id)
+            assert result.job.status == "lost", result
+            assert result.job.exit_code is None, result
+            assert result.job.error == (
+                "job shell exited without a durable completion record"
+            ), result
+    finally:
+        await runtime.aclose()
+
+
 async def main() -> None:
     with tempfile.TemporaryDirectory(prefix="workgate-windows-jobs-") as temp:
-        root = Path(temp)
+        root = Path(temp) / "O'Brien 中文 spaced"
+        root.mkdir()
         os.environ["WORKGATE_STATE_DIR"] = str(root / "state")
         os.environ["WORKGATE_DEFAULT_WORKDIR"] = str(root)
         clear_settings_cache()
@@ -127,23 +154,33 @@ async def main() -> None:
             finally:
                 await runtime.aclose()
 
-        restarted = build_terminal_runtime()
-        await restarted.start()
-        try:
-            with (
-                use_state_store(services.state_store),
-                use_terminal_runtime(restarted),
-            ):
-                assert await jobs.reconcile()
-                entry = await jobs.tail(owner, interrupted.job_id)
-                assert entry.job.status != "running", entry
-                assert entry.job.status != "succeeded", entry
-        finally:
-            await restarted.aclose()
+        # Recovery must run in a fresh process, not simply reconstruct a
+        # TerminalRuntime in the process that owns the previous shell.
+        check = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--reconcile",
+                owner,
+                interrupted.job_id,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert check.returncode == 0, (
+            check.returncode,
+            check.stdout,
+            check.stderr,
+        )
     print(
-        "Native Windows jobs start/list/tail/stop/retry/ownership/restart: PASS"
+        "Native Windows jobs start/list/tail/stop/retry/ownership/process recovery: PASS"
     )
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    if len(sys.argv) == 4 and sys.argv[1] == "--reconcile":
+        asyncio.run(reconcile_from_new_process(sys.argv[2], sys.argv[3]))
+    else:
+        asyncio.run(main())
