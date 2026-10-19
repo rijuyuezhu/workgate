@@ -113,6 +113,8 @@ async def test_managed_run_clears_workgate_environment_before_loading_settings(
 
     monkeypatch.setenv("WORKGATE_STATE_DIR", "/wrong/from-environment")
     monkeypatch.setenv("WORKGATE_OAUTH_ADMIN_PIN", "secret")
+    # Supervisor IPC must survive stripping ordinary WORKGATE_ settings.
+    monkeypatch.setenv("WORKGATE_PARENT_IPC_FD", "123")
 
     def fake_settings_from_args(*_args, **_kwargs):
         observed.update(
@@ -136,7 +138,7 @@ async def test_managed_run_clears_workgate_environment_before_loading_settings(
     with pytest.raises(RuntimeError, match="executor is not paired"):
         await executor_cli._run(argparse.Namespace(managed_service=True))
 
-    assert observed == {}
+    assert observed == {"WORKGATE_PARENT_IPC_FD": "123"}
 
 
 @pytest.mark.asyncio
@@ -173,6 +175,75 @@ async def test_run_raises_owner_action(
         await executor_cli._run(argparse.Namespace(managed_service=False))
 
     assert caught.value is owner_action
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("first_hello", "managed", "restart_requested", "returns"),
+    [
+        (True, False, False, False),
+        (True, True, True, True),
+        (False, True, True, True),
+        (False, True, False, False),
+    ],
+)
+async def test_run_reports_healthy_only_after_hello_and_handles_owner_action(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    first_hello: bool,
+    managed: bool,
+    restart_requested: bool,
+    returns: bool,
+) -> None:
+    """A blocked startup is never marked healthy; owned restarts exit cleanly."""
+    settings = _settings(tmp_path)
+    owner_action = RuntimeError("executor needs owner action")
+    observed: list[str] = []
+
+    class Connection:
+        async def wait_first_hello_or_owner_action(self) -> bool:
+            observed.append("hello" if first_hello else "blocked")
+            return first_hello
+
+        async def wait_owner_action(self) -> BaseException:
+            observed.append("owner-action")
+            return owner_action
+
+        def __init__(self) -> None:
+            self.restart_requested = restart_requested
+
+    class Runtime:
+        connection = Connection()
+
+        @asynccontextmanager
+        async def lifespan(self):
+            yield
+
+    from workgate import supervisor
+
+    monkeypatch.setattr(
+        executor_cli, "settings_from_args", lambda *_a, **_k: settings
+    )
+    monkeypatch.setattr(
+        executor_cli, "build_executor_runtime", lambda *_a, **_k: Runtime()
+    )
+    monkeypatch.setattr(
+        supervisor, "notify_ready", lambda *_a, **_k: observed.append("ready")
+    )
+    args = argparse.Namespace(managed_service=managed)
+    if returns:
+        await executor_cli._run(args)
+    else:
+        with pytest.raises(
+            RuntimeError, match="executor needs owner action"
+        ) as caught:
+            await executor_cli._run(args)
+        assert caught.value is owner_action
+    assert observed == (
+        ["hello", "ready", "owner-action"]
+        if first_hello
+        else ["blocked", "owner-action"]
+    )
 
 
 def test_run_async_maps_keyboard_interrupt_to_130() -> None:
