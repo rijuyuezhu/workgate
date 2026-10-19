@@ -6,7 +6,7 @@ import pytest
 
 from workgate.app_paths import app_paths
 from workgate.config.executor import ExecutorConfig, resolve_executor_config
-from workgate.config.settings import Settings
+from workgate.config.settings import LoadedConfigFile, Settings
 from workgate.executor import cli as executor_cli
 from workgate.executor.control_client import (
     ExecutorControlClient,
@@ -31,6 +31,18 @@ def _settings(tmp_path: Path) -> Settings:
         default_workdir=tmp_path / "workspace",
         state_dir=tmp_path / "state",
         agent_bridge_enabled=False,
+    )
+
+
+def _mock_runtime_file_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Runtime tests fake Settings, so fake the corresponding loaded file too."""
+    monkeypatch.setattr(
+        executor_cli,
+        "settings_and_source_from_args",
+        lambda args: (
+            executor_cli.settings_from_args(args),
+            LoadedConfigFile(None, None, frozenset()),
+        ),
     )
 
 
@@ -84,6 +96,7 @@ async def test_run_requires_paired_executor(
     monkeypatch.setattr(
         executor_cli, "settings_from_args", fake_settings_from_args
     )
+    _mock_runtime_file_source(monkeypatch)
     monkeypatch.setattr(
         executor_cli,
         "build_executor_runtime",
@@ -129,6 +142,7 @@ async def test_managed_run_clears_workgate_environment_before_loading_settings(
     monkeypatch.setattr(
         executor_cli, "settings_from_args", fake_settings_from_args
     )
+    _mock_runtime_file_source(monkeypatch)
     monkeypatch.setattr(
         executor_cli,
         "build_executor_runtime",
@@ -165,6 +179,7 @@ async def test_run_raises_owner_action(
     monkeypatch.setattr(
         executor_cli, "settings_from_args", lambda *_a, **_k: settings
     )
+    _mock_runtime_file_source(monkeypatch)
     monkeypatch.setattr(
         executor_cli,
         "build_executor_runtime",
@@ -224,6 +239,7 @@ async def test_run_reports_healthy_only_after_hello_and_handles_owner_action(
     monkeypatch.setattr(
         executor_cli, "settings_from_args", lambda *_a, **_k: settings
     )
+    _mock_runtime_file_source(monkeypatch)
     monkeypatch.setattr(
         executor_cli, "build_executor_runtime", lambda *_a, **_k: Runtime()
     )

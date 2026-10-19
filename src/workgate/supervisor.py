@@ -340,7 +340,11 @@ def supervise(commands: list[ChildCommand]) -> int:
                         continue  # A sibling's shared-file Apply replaced it.
                     exit_code = child.process.poll()
                     if exit_code is not None:
-                        if recover():
+                        if (
+                            applying is not None
+                            and role in applying.roles
+                            and recover()
+                        ):
                             continue
                         return 128 - exit_code if exit_code < 0 else exit_code
                 if (
@@ -478,8 +482,12 @@ def supervise(commands: list[ChildCommand]) -> int:
                     if applying is not None:
                         child.channel.sendall(b"busy\n")
                         continue
-                    # Bare restarts remain role-specific for the original
-                    # Parent IPC contract; file Apply groups all dependents.
+                    if message == b"restart":
+                        child.channel.sendall(b"accepted\n")
+                        _stop([child])
+                        retire(child)
+                        spawn(child.command)
+                        continue
                     roles = (role,)
                     previous = None
                     if message.startswith(b"restart:"):
@@ -506,10 +514,6 @@ def supervise(commands: list[ChildCommand]) -> int:
                         if previous is None:
                             child.channel.sendall(b"stale\n")
                             continue
-                    else:
-                        path = child.config_path
-                        if path is not None:
-                            previous = good_files.get(path)
                     candidate = (
                         _snapshot_file(str(previous.path)) if previous else None
                     )

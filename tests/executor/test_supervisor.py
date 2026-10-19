@@ -341,6 +341,9 @@ def test_apply_failure_restores_healthy_child_config_not_last_backup(tmp_path):
         config.write_text("intermediate")
         (tmp_path / "config.yaml.bak").write_text("intermediate")
         config.write_text("bad")
+        (tmp_path / "control.revision").write_text(
+            hashlib.sha256(config.read_bytes()).hexdigest()
+        )
         (tmp_path / "control.restart").touch()
         rows = _lines(ready_log, 2)
         assert rows[1][2] == "recovered"
@@ -398,6 +401,9 @@ def test_colocate_apply_failure_recovers_only_target_role(tmp_path):
         assert len(_lines(tmp_path / "ready.log", 2)) == 2
         original_executor = next(row for row in before if row[0] == "executor")
         config.write_text("bad")
+        (tmp_path / "control.revision").write_text(
+            hashlib.sha256(config.read_bytes()).hexdigest()
+        )
         (tmp_path / "control.restart").touch()
         statuses = _lines(tmp_path / "ready.log", 3)
         assert statuses[-1][0] == "control"
@@ -421,6 +427,9 @@ def test_apply_health_timeout_rolls_back_to_last_healthy_child(tmp_path):
         ready_log = tmp_path / "ready.log"
         assert _lines(ready_log, 1)[0][2] == "healthy"
         config.write_text("hang")
+        (tmp_path / "executor.revision").write_text(
+            hashlib.sha256(config.read_bytes()).hexdigest()
+        )
         (tmp_path / "executor.restart").touch()
         assert _lines(ready_log, 2)[-1][2] == "recovered"
         assert config.read_text() == "first"
@@ -663,5 +672,59 @@ def test_colocate_rejects_second_apply_while_first_is_running(tmp_path):
         assert process.poll() is None
     finally:
         _shutdown(process)
+    for row in after:
+        _pid_gone(int(row[1]))
+
+
+def test_plain_restart_without_ready_has_no_apply_timeout(tmp_path):
+    process, record, config = _launch(tmp_path, ("control",), short_apply=True)
+    try:
+        before = _lines(record, 1)
+        config.write_text("second")
+        (tmp_path / "control.restart").touch()
+        after = _lines(record, 2)
+        assert after[-1][4] == "second"
+        # A plain restart is not a configuration Apply transaction.
+        time.sleep(1.7)
+        assert process.poll() is None
+    finally:
+        _shutdown(process)
+    for row in before + after[1:]:
+        _pid_gone(int(row[1]))
+
+
+def test_unrelated_child_exit_does_not_rollback_another_role_apply(tmp_path):
+    process, record, control_file = _launch(
+        tmp_path,
+        ("control", "executor"),
+        ready_test=True,
+        split_configs=True,
+        short_apply=True,
+    )
+    try:
+        before = _lines(record, 2)
+        assert len(_lines(tmp_path / "ready.log", 2)) == 2
+        executor_pid = int(
+            next(row[1] for row in before if row[0] == "executor")
+        )
+        control_file.write_text("hang-control")
+        (tmp_path / "control.revision").write_text(
+            hashlib.sha256(control_file.read_bytes()).hexdigest()
+        )
+        (tmp_path / "control.restart").touch()
+        after = _lines(record, 3)
+        assert after[-1][0] == "control"
+        os.kill(executor_pid, signal.SIGKILL)
+        deadline = time.monotonic() + 5
+        while process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert process.poll() == 137
+        # An Executor crash must not roll back a Control-only Apply.
+        assert control_file.read_text() == "hang-control"
+        assert len(record.read_text().splitlines()) == 3
+    finally:
+        if process.poll() is None:
+            process.terminate()
+        process.communicate(timeout=8)
     for row in after:
         _pid_gone(int(row[1]))

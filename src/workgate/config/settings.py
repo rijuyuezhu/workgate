@@ -1,8 +1,10 @@
 """Runtime settings for Workgate."""
 
+import hashlib
 import os
 import re
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -448,18 +450,30 @@ def _default_setting_values() -> dict[str, Any]:
     }
 
 
+@dataclass(frozen=True)
+class LoadedConfigFile:
+    """The file version parsed into a Child's runtime Settings."""
+
+    path: Path | None
+    digest: str | None
+    names: frozenset[str]
+
+
 def read_config_file(
     path: str | Path | None,
     *,
     setting_names: Collection[str] | None = None,
+    source_bytes: bytes | None = None,
 ) -> dict[str, Any]:
     """Read optional YAML configuration values for one role-owned field set."""
     if not path:
         return {}
     config_path = Path(path).expanduser()
-    if not config_path.exists():
-        raise FileNotFoundError(config_path)
-    loaded = yaml.safe_load(config_path.read_text())
+    loaded = yaml.safe_load(
+        source_bytes.decode("utf-8")
+        if source_bytes is not None
+        else config_path.read_text()
+    )
     if loaded is None:
         return {}
     if not isinstance(loaded, dict):
@@ -520,6 +534,7 @@ def load_settings(
     setting_names: Collection[str] | None = None,
     default_config_path: str | Path | None = None,
     default_overrides: Mapping[str, Any] | None = None,
+    on_file_read: Callable[[LoadedConfigFile], None] | None = None,
 ) -> Settings:
     """Load settings without mutating the runtime filesystem.
 
@@ -548,7 +563,16 @@ def load_settings(
                 f"{sorted(foreign_defaults)}"
             )
         values.update(default_overrides)
-    values.update(read_config_file(selected_config, setting_names=selected))
+    path = (
+        Path(selected_config).expanduser().absolute()
+        if selected_config is not None
+        else None
+    )
+    content = path.read_bytes() if path is not None else None
+    file_values = read_config_file(
+        path, setting_names=selected, source_bytes=content
+    )
+    values.update(file_values)
     values.update(env_overrides(selected))
     if overrides:
         foreign = frozenset(overrides) - selected
@@ -557,7 +581,18 @@ def load_settings(
                 f"Settings overrides are not owned by this role: {sorted(foreign)}"
             )
         values.update(overrides)
-    return Settings(**values)
+    settings = Settings(**values)
+    if on_file_read is not None:
+        on_file_read(
+            LoadedConfigFile(
+                path,
+                hashlib.sha256(content).hexdigest()
+                if content is not None
+                else None,
+                frozenset(file_values),
+            )
+        )
+    return settings
 
 
 _configured_settings: Settings | None = None
