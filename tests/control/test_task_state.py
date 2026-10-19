@@ -481,7 +481,10 @@ async def test_task_history_prunes_oldest_terminal_task_at_bound(
     first = await service.create_task(label="first")
     await service.cancel_task(first.task_id)
     second = await service.create_task(label="second")
+    await service.cancel_task(second.task_id)
     third = await service.create_task(label="third")
+    await service.cancel_task(third.task_id)
+    await service.create_task(label="fourth")
 
     with pytest.raises(ValueError, match="unknown task_id"):
         await service.read_task(first.task_id)
@@ -511,15 +514,46 @@ async def test_task_retention_never_prunes_terminal_task_with_live_session(
     session_id = str(started["session_id"])
     await service.cancel_task(task.task_id)
 
-    with pytest.raises(RuntimeError, match="task history limit reached"):
-        await service.create_task(label="must not evict live task")
+    accepted = await service.create_task(label="must not evict live task")
+    assert accepted.label == "must not evict live task"
     assert (await service.read_task(task.task_id)).session_ids == [session_id]
 
     await harness.control.session_coordinator.end_session(session_id)
+    await service.cancel_task(accepted.task_id)
     replacement = await service.create_task(label="replacement")
     assert replacement.label == "replacement"
     with pytest.raises(ValueError, match="unknown task_id"):
         await service.read_task(task.task_id)
+
+
+@pytest.mark.asyncio
+async def test_task_history_limit_does_not_block_new_implicit_work(
+    tmp_path, monkeypatch
+):
+    _settings, harness = _harness(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "workgate.control.task_state._TASK_HISTORY_LIMIT_PER_PRINCIPAL", 2
+    )
+    service = harness.control.task_service
+    first = await service.create_task(label="ongoing")
+    second = await service.create_task(label="blocked")
+    await service.block_task(second.task_id)
+
+    third = await service.create_task(label="new work")
+    assert third.label == "new work"
+    # A session without task_id implicitly creates a Task through the same
+    # retention seam: old active/blocked Tasks must not block this admission.
+    started = await harness.control.session_coordinator.start_session(
+        workdir="project-a",
+        executor_id=harness.executor_id,
+    )
+    assert isinstance(started, dict)
+    assert started["task_created"] is True
+    assert (
+        await service.read_task(str(started["task_id"]))
+    ).task_id == started["task_id"]
+    assert (await service.read_task(first.task_id)).label == "ongoing"
+    assert (await service.read_task(second.task_id)).label == "blocked"
 
 
 @pytest.mark.asyncio
@@ -1644,3 +1678,24 @@ async def test_idle_policy_missing_claim_timestamp_remains_conservative(
         service._store.write_json(path, raw)
     assert await service.sweep_idle_tasks(now=task.updated_at + 2 * 86400) == 0
     assert (await service.read_task(task.task_id)).status == "active"
+
+
+@pytest.mark.asyncio
+async def test_active_tasks_do_not_consume_terminal_history_budget(
+    tmp_path, monkeypatch
+):
+    _settings, harness = _harness(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "workgate.control.task_state._TASK_HISTORY_LIMIT_PER_PRINCIPAL", 2
+    )
+    monkeypatch.setattr(
+        "workgate.control.task_state._TASK_TERMINAL_RETENTION_S", 10**9
+    )
+    service = harness.control.task_service
+    for _ in range(4):
+        await service.create_task(label="still active")
+    terminal = await service.create_task(label="just completed")
+    await service.finish_task(terminal.task_id)
+    created = await service.create_task(label="new")
+    assert created.label == "new"
+    assert (await service.read_task(terminal.task_id)).label == "just completed"

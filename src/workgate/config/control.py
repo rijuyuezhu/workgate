@@ -45,7 +45,7 @@ class ControlConfig(SharedRoleConfig):
     executor_max_pending_commands: int
     executor_pairing_max_pending: int
     executor_pairing_ttl_s: int
-    max_agent_sessions: int
+    max_agent_sessions: int | None
     agent_session_retention_s: int
 
     tool_timeout_s: float

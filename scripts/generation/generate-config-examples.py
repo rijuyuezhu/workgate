@@ -81,6 +81,9 @@ def generate_env_example() -> str:
                     f"# Default when omitted: {spec.dynamic_default_label}."
                 )
                 lines.append(f"# {_env_line(spec.env_var, spec.example)}")
+            elif spec.example is None:
+                # An empty environment variable is not a portable null value.
+                lines.append(f"# {_env_line(spec.env_var, spec.example)}")
             else:
                 lines.append(_env_line(spec.env_var, spec.example))
 

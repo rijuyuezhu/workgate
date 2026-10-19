@@ -164,14 +164,14 @@ class Settings(BaseSettings):
     """Maximum retained output bytes for one tracked background-job attempt."""
     max_jobs: _NonNegativeInt = 1_000
     """Maximum retained tracked-job records; 0 keeps only active jobs."""
-    max_agent_sessions: int = Field(default=256, ge=1, le=10_000)
-    """Maximum durable execution sessions after stale-session pruning."""
+    max_agent_sessions: int | None = Field(default=None, ge=1, le=10_000)
+    """Control-wide execution-session limit; null admits unlimited sessions. A full explicit cap may reclaim sessions idle for 5 hours after confirming no active resources."""
     agent_session_retention_s: int = Field(
         default=30 * 24 * 60 * 60,
         ge=0,
         le=366 * 24 * 60 * 60,
     )
-    """Idle retention for durable execution sessions; 0 disables age-based expiry."""
+    """Idle execution-session retention (seconds), checked hourly; 0 disables age expiry. Active jobs, terminals, offline and unconfirmed sessions are preserved."""
     max_session_snapshots: int = Field(default=2_000, ge=1, le=100_000)
     """Maximum grounding snapshots retained for one execution session."""
     max_session_snapshot_bytes: int = Field(
