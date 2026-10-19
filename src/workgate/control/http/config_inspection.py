@@ -241,8 +241,6 @@ def config_inspection_routes(*, api_prefix: str) -> list[BaseRoute]:
                 if snapshot is None:
                     raise ConfigEditError("Unavailable", 503)
                 state = restart_status()
-                if state == "shared":
-                    raise ConfigEditError("SharedConfigFile", 409)
                 if state not in {"healthy", "recovered"}:
                     raise ConfigEditError("ParentUnavailable", 409)
                 await asyncio.to_thread(
@@ -281,7 +279,6 @@ def config_inspection_routes(*, api_prefix: str) -> list[BaseRoute]:
                     "InvalidConfigFile",
                     "NoConfigFile",
                     "ParentUnavailable",
-                    "SharedConfigFile",
                 }:
                     raise ConfigEditError(code, 409)
                 raise ConfigEditError("ApplyRejected", 503)

@@ -17,7 +17,7 @@ import sys
 import threading
 import time
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -116,7 +116,7 @@ def restart_status() -> str:
     if not is_child():
         return "unmanaged"
     status = _parent_message(b"status\n").strip().decode("ascii")
-    if status not in {"starting", "healthy", "applying", "recovered", "shared"}:
+    if status not in {"starting", "healthy", "applying", "recovered"}:
         raise RuntimeError("invalid Parent status")
     return status
 
@@ -138,6 +138,8 @@ class _Applying:
     candidate: bytes | None
     good: _GoodFile | None
     started_at: float
+    roles: tuple[str, ...]
+    ready: set[str] = field(default_factory=set)
     recovering: bool = False
 
 
@@ -254,23 +256,24 @@ def supervise(commands: list[ChildCommand]) -> int:
                 selector.unregister(child.channel)
                 child.channel.close()
 
-        def shared_config(role: str) -> bool:
-            own = good_files.get(role)
-            return own is not None and any(
-                other != role and good.path == own.path
-                for other, good in good_files.items()
-            )
+        def restart_roles(roles: tuple[str, ...]) -> None:
+            old = [children[role] for role in roles]
+            _stop(old)
+            for child in old:
+                retire(child)
+            for child in old:
+                spawn(child.command, status="applying")
 
-        def recover(role: str, child: _Child) -> bool:
+        def recover(role: str) -> bool:
             progress = applying.get(role)
             if progress is None or progress.recovering:
                 return False
             if not _restore_good(progress.good, progress.candidate):
                 return False
             progress.recovering = True
+            progress.ready.clear()
+            restart_roles(progress.roles)
             progress.started_at = time.monotonic()
-            retire(child)
-            spawn(child.command, status="applying")
             return True
 
         signal.signal(signal.SIGTERM, terminate)
@@ -279,9 +282,11 @@ def supervise(commands: list[ChildCommand]) -> int:
                 spawn(command)
             while True:
                 for role, child in tuple(children.items()):
+                    if children[role] is not child:
+                        continue  # A sibling's shared-file Apply replaced it.
                     exit_code = child.process.poll()
                     if exit_code is not None:
-                        if recover(role, child):
+                        if recover(role):
                             continue
                         return 128 - exit_code if exit_code < 0 else exit_code
                     pending = applying.get(role)
@@ -290,13 +295,14 @@ def supervise(commands: list[ChildCommand]) -> int:
                         and time.monotonic() - pending.started_at
                         > _APPLY_TIMEOUT_SECONDS
                     ):
-                        _stop([child])
-                        if recover(role, child):
+                        if recover(role):
                             continue
                         return 1
                 for key, _events in selector.select(timeout=0.2):
                     role: str = key.data
                     child = children[role]
+                    if key.fileobj is not child.channel:
+                        continue  # Ignore socket readiness from a retired Child.
                     try:
                         data = child.channel.recv(128)
                     except ConnectionError:
@@ -314,10 +320,9 @@ def supervise(commands: list[ChildCommand]) -> int:
                     if child.buffer:
                         raise RuntimeError("unsupported Parent IPC request")
                     if message == b"status":
-                        state = (
-                            "shared" if shared_config(role) else child.status
+                        child.channel.sendall(
+                            child.status.encode("ascii") + b"\n"
                         )
-                        child.channel.sendall(state.encode("ascii") + b"\n")
                         continue
                     if message.startswith(b'{"ready": '):
                         payload = json.loads(message)
@@ -335,16 +340,42 @@ def supervise(commands: list[ChildCommand]) -> int:
                         ):
                             child.channel.sendall(b"stale\n")
                             continue
-                        progress = applying.pop(role, None)
-                        if saved is not None:
-                            good_files[role] = saved
+                        progress = applying.get(role)
+                        if progress is not None and len(progress.roles) > 1:
+                            expected = (
+                                progress.good.content
+                                if progress.recovering and progress.good
+                                else progress.candidate
+                            )
+                            if (
+                                saved is None
+                                or progress.good is None
+                                or saved.path != progress.good.path
+                                or saved.content != expected
+                            ):
+                                child.channel.sendall(b"stale\n")
+                                continue
+                            progress.ready.add(role)
+                            if len(progress.ready) == len(progress.roles):
+                                for member in progress.roles:
+                                    good_files[member] = saved
+                                    children[member].status = (
+                                        "recovered"
+                                        if progress.recovering
+                                        else "healthy"
+                                    )
+                                    applying.pop(member, None)
                         else:
-                            good_files.pop(role, None)
-                        child.status = (
-                            "recovered"
-                            if progress and progress.recovering
-                            else "healthy"
-                        )
+                            applying.pop(role, None)
+                            if saved is not None:
+                                good_files[role] = saved
+                            else:
+                                good_files.pop(role, None)
+                            child.status = (
+                                "recovered"
+                                if progress and progress.recovering
+                                else "healthy"
+                            )
                         child.channel.sendall(b"accepted\n")
                         continue
                     if message != b"restart" and not message.startswith(
@@ -354,12 +385,27 @@ def supervise(commands: list[ChildCommand]) -> int:
                     if role in applying:
                         child.channel.sendall(b"busy\n")
                         continue
-                    if shared_config(role):
-                        # Two role snapshots for one file cannot be rolled back
-                        # independently without discarding the sibling's edits.
-                        child.channel.sendall(b"shared\n")
-                        continue
                     previous = good_files.get(role)
+                    roles = (role,)
+                    if previous is not None:
+                        peers = tuple(
+                            other
+                            for other, good in good_files.items()
+                            if other != role and good.path == previous.path
+                        )
+                        if peers:
+                            # A shared file has one recoverable version, not
+                            # independently roll-backable per-role versions.
+                            if any(
+                                good_files[peer].content != previous.content
+                                for peer in peers
+                            ):
+                                child.channel.sendall(b"stale\n")
+                                continue
+                            roles = (role, *peers)
+                    if any(member in applying for member in roles):
+                        child.channel.sendall(b"busy\n")
+                        continue
                     candidate = (
                         _snapshot_file(str(previous.path)) if previous else None
                     )
@@ -374,17 +420,19 @@ def supervise(commands: list[ChildCommand]) -> int:
                         ):
                             child.channel.sendall(b"stale\n")
                             continue
-                    applying[role] = _Applying(
+                    progress = _Applying(
                         candidate=None
                         if candidate is None
                         else candidate.content,
                         good=previous,
                         started_at=time.monotonic(),
+                        roles=roles,
                     )
+                    for member in roles:
+                        applying[member] = progress
                     child.channel.sendall(b"accepted\n")
-                    _stop([child])
-                    retire(child)
-                    spawn(child.command, status="applying")
+                    restart_roles(roles)
+                    progress.started_at = time.monotonic()
         except KeyboardInterrupt:
             return 130
         finally:

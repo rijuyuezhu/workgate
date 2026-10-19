@@ -37,8 +37,8 @@ with open(record, 'a') as out:
     out.flush()
 if behavior == 'exit': raise SystemExit(7)
 if os.getenv('SUPERVISOR_READY_TEST'):
-    if Path(config).read_text().strip() == 'bad': raise SystemExit(17)
-    if Path(config).read_text().strip() == 'hang':
+    if Path(config).read_text().strip() in ('bad', 'bad-'+role): raise SystemExit(17)
+    if Path(config).read_text().strip() in ('hang', 'hang-'+role):
         while True: time.sleep(0.05)
     notify_ready(Path(config))
     with open(Path(record).parent / 'ready.log', 'a') as out:
@@ -421,26 +421,101 @@ def test_apply_health_timeout_rolls_back_to_last_healthy_child(tmp_path):
         _pid_gone(int(row[1]))
 
 
-def test_colocate_shared_file_rejects_unsafe_independent_apply(tmp_path):
+@pytest.mark.parametrize("requester", ["control", "executor"])
+def test_colocate_shared_file_applies_both_roles(tmp_path, requester):
     process, record, config = _launch(
         tmp_path, ("control", "executor"), ready_test=True
     )
     try:
         first = _lines(record, 2)
         assert len(_lines(tmp_path / "ready.log", 2)) == 2
-        config.write_text("changed")
-        (tmp_path / "control.restart").touch()
-        deadline = time.monotonic() + 6
-        while (
-            not (tmp_path / "control.rejected").exists()
-            and time.monotonic() < deadline
-        ):
-            time.sleep(0.05)
-        assert (tmp_path / "control.rejected").exists()
-        assert _lines(record, 2) == first
+        config.write_text("second")
+        (tmp_path / f"{requester}.restart").touch()
+        after = _lines(record, 4)
+        assert {row[0] for row in after[2:]} == {"control", "executor"}
+        assert all(row[4] == "second" for row in after[2:])
+        assert {row[1] for row in first}.isdisjoint(
+            {row[1] for row in after[2:]}
+        )
+        statuses = _lines(tmp_path / "ready.log", 4)
+        assert statuses[-1][2] == "healthy"
+        assert all(row[2] in {"applying", "healthy"} for row in statuses[2:])
         assert process.poll() is None
-        assert config.read_text() == "changed"
     finally:
         _shutdown(process)
-    for row in first:
+    for row in after:
+        _pid_gone(int(row[1]))
+
+
+@pytest.mark.parametrize("failed_role", ["control", "executor"])
+def test_colocate_shared_file_failure_rolls_back_both(tmp_path, failed_role):
+    process, record, config = _launch(
+        tmp_path, ("control", "executor"), ready_test=True
+    )
+    try:
+        _lines(record, 2)
+        assert len(_lines(tmp_path / "ready.log", 2)) == 2
+        # The immediately preceding .bak is not necessarily last-known-good.
+        config.write_text("intermediate")
+        (tmp_path / "config.yaml.bak").write_text("intermediate")
+        config.write_text("bad-" + failed_role)
+        (tmp_path / "control.restart").touch()
+        after = _lines(record, 6)
+        statuses = _lines(tmp_path / "ready.log", 4)
+        assert statuses[2][2] == "applying"  # One healthy role is not success.
+        assert all(row[4] == "first" for row in after[-2:])
+        assert {row[0] for row in after[-2:]} == {"control", "executor"}
+        assert statuses[-1][2] == "recovered"
+        assert config.read_text() == "first"
+        assert (tmp_path / "config.yaml.bak").read_text() == "intermediate"
+        assert process.poll() is None
+    finally:
+        _shutdown(process)
+    for row in after:
+        _pid_gone(int(row[1]))
+
+
+def test_colocate_shared_file_timeout_recovers_both(tmp_path):
+    process, record, config = _launch(
+        tmp_path, ("control", "executor"), ready_test=True, short_apply=True
+    )
+    try:
+        assert len(_lines(tmp_path / "ready.log", 2)) == 2
+        config.write_text("hang-executor")
+        (tmp_path / "control.restart").touch()
+        after = _lines(record, 6)
+        assert {row[0] for row in after[-2:]} == {"control", "executor"}
+        statuses = _lines(tmp_path / "ready.log", 5)
+        assert statuses[-1][2] == "recovered"
+        assert config.read_text() == "first"
+        assert process.poll() is None
+    finally:
+        _shutdown(process)
+    for row in after:
+        _pid_gone(int(row[1]))
+
+
+def test_colocate_shared_file_rolls_back_to_latest_jointly_healthy_config(
+    tmp_path,
+):
+    process, record, config = _launch(
+        tmp_path, ("control", "executor"), ready_test=True
+    )
+    try:
+        assert len(_lines(tmp_path / "ready.log", 2)) == 2
+        config.write_text("second")
+        (tmp_path / "executor.restart").touch()
+        assert len(_lines(tmp_path / "ready.log", 4)) == 4
+        config.write_text("bad-executor")
+        (tmp_path / "control.restart").touch()
+        after = _lines(record, 8)
+        statuses = _lines(tmp_path / "ready.log", 6)
+        assert statuses[-1][2] == "recovered"
+        assert {row[0] for row in after[-2:]} == {"control", "executor"}
+        assert all(row[4] == "second" for row in after[-2:])
+        assert config.read_text() == "second"
+        assert process.poll() is None
+    finally:
+        _shutdown(process)
+    for row in after:
         _pid_gone(int(row[1]))

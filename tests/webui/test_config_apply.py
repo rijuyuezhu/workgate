@@ -110,16 +110,6 @@ async def test_control_apply_rejects_unmanaged_stale_invalid_or_unchanged(
 
 
 @pytest.mark.asyncio
-async def test_control_apply_rejects_shared_file(tmp_path, monkeypatch):
-    path, snap = startup(tmp_path)
-    path.write_text("port: 9217\n")
-    monkeypatch.setattr(config_inspection, "restart_status", lambda: "shared")
-    response = await invoke({"revision": revision_for(snap)})
-    assert response.status_code == 409
-    assert b"SharedConfigFile" in response.body
-
-
-@pytest.mark.asyncio
 async def test_apply_requires_existing_write_scope(tmp_path, monkeypatch):
     path, snap = startup(tmp_path)
     path.write_text("port: 9217\n")
@@ -169,7 +159,3 @@ async def test_remote_apply_denies_offline_and_forwards_only_authorized(
     assert calls == [
         (("exec_1", "ui.config.apply", payload), {"timeout_s": 12})
     ]
-    transport.result = {"error": "SharedConfigFile", "status": 409}
-    rejected = await invoke(payload, executor_id="exec_1", runtime=runtime)
-    assert rejected.status_code == 409
-    assert b"SharedConfigFile" in rejected.body

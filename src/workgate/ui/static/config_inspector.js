@@ -40,8 +40,6 @@ export function createConfigurationView({ root, request }) {
       metadata.append(file, text("span", `${data.fields.length} settings`, "executor-config-count"));
       if (data.file_changed_since_startup) metadata.append(text("span", "File changed", "executor-config-warning"));
       if (data.file_error) metadata.append(text("span", "File unavailable", "executor-config-warning"));
-      if (data.apply_status === "shared" && data.file_changed_since_startup)
-        metadata.append(text("span", "Shared file · configure separate role files before Apply", "executor-config-warning"));
       if (!data.editable && data.edit_reason) metadata.append(text("span", data.edit_reason, "muted"));
       root.append(metadata);
 
@@ -86,7 +84,7 @@ export function createConfigurationView({ root, request }) {
           if (!confirmed) {
             confirmed = true; apply.textContent = "Confirm restart";
             cancelApply.hidden = false;
-            applyStatus.textContent = "This role will restart. CLI / ENV changes require restarting Parent.";
+            applyStatus.textContent = "Affected roles will restart. CLI / ENV changes require restarting Parent.";
             return;
           }
           apply.disabled = true;
@@ -99,12 +97,13 @@ export function createConfigurationView({ root, request }) {
             });
             if (generation !== revision) return;
             applyStatus.textContent = "Restart accepted · Reconnecting…";
-            for (let attempt = 0; attempt < 30; attempt++) {
+            // Allow one bounded startup attempt and one bounded rollback.
+            for (let attempt = 0; attempt < 60; attempt++) {
               await new Promise(resolve => setTimeout(resolve, 1000));
               if (generation !== revision) return;
               try {
                 const fresh = await request(`/config${path}`);
-                if (fresh.status !== "running" || fresh.startup_at === data.startup_at) continue;
+                if (fresh.status !== "running" || fresh.startup_at === data.startup_at || !["healthy", "recovered"].includes(fresh.apply_status)) continue;
                 await open(executorId);
                 if (generation === revision + 1) {
                   root.prepend(text("div",
