@@ -432,9 +432,8 @@ def test_windows_task_errors_when_scheduler_is_unavailable(monkeypatch):
         task.install([], cwd="C:\\")
 
 
-@pytest.mark.parametrize("restart", [True, False])
 def test_windows_task_updates_owned_executable_without_stopping_current(
-    monkeypatch: pytest.MonkeyPatch, restart: bool
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         "workgate.platform.windows_task.shutil.which",
@@ -460,7 +459,6 @@ def test_windows_task_updates_owned_executable_without_stopping_current(
     task.switch_runtime(
         expected=r"C:\Program Files\Old Workgate\workgate.exe",
         replacement=r"C:\Users\O'Brien\New Workgate\workgate.exe",
-        restart=restart,
     )
     assert len(scripts) == 2
     update = scripts[-1]
@@ -469,7 +467,8 @@ def test_windows_task_updates_owned_executable_without_stopping_current(
     assert "expected a single logon trigger" in update
     assert "executable changed unexpectedly" in update
     assert "O''Brien" in update
-    assert ("AddSeconds(45)" in update) == restart
+    assert "AddSeconds(45)" in update
+    assert "RepetitionDuration" in update
     assert "Stop-ScheduledTask" not in update
     assert "Unregister-ScheduledTask" not in update
 
@@ -491,9 +490,7 @@ def test_windows_task_refuses_unowned_runtime_switch(
         "Missing Workgate", description="Managed by Workgate: test", run=run
     )
     with pytest.raises(RuntimeError, match="not installed"):
-        task.switch_runtime(
-            expected=r"C:\old.exe", replacement=r"C:\new.exe", restart=True
-        )
+        task.switch_runtime(expected=r"C:\old.exe", replacement=r"C:\new.exe")
     assert len(scripts) == 1
 
 
@@ -515,12 +512,12 @@ def test_windows_runtime_switch_preserves_existing_task_and_cli_arguments(
     calls = []
 
     class Task:
-        def switch_runtime(self, *, expected, replacement, restart):
-            calls.append((expected, replacement, restart))
+        def switch_runtime(self, *, expected, replacement):
+            calls.append((expected, replacement))
 
     monkeypatch.setattr(manager, "_windows_task", Task)
     manager.activate_windows_runtime(old, new)
-    assert calls == [(str(old), str(new), True)]
+    assert calls == [(str(old), str(new))]
     metadata = manager._read_metadata()
     assert metadata is not None
     assert metadata["command"] == [str(new), *command[1:]]
@@ -536,8 +533,8 @@ def test_windows_runtime_switch_recovers_task_on_metadata_write_failure(
     calls = []
 
     class Task:
-        def switch_runtime(self, *, expected, replacement, restart):
-            calls.append((expected, replacement, restart))
+        def switch_runtime(self, *, expected, replacement):
+            calls.append((expected, replacement))
 
     monkeypatch.setattr(manager, "_windows_task", Task)
     monkeypatch.setattr(
@@ -547,13 +544,60 @@ def test_windows_runtime_switch_recovers_task_on_metadata_write_failure(
     )
     with pytest.raises(OSError, match="denied"):
         manager.activate_windows_runtime(old, new)
-    assert calls == [
-        (str(old), str(new), True),
-        (str(new), str(old), False),
-    ]
+    assert calls == []  # A metadata write failure must not touch the task.
     metadata = manager._read_metadata()
     assert metadata is not None
     assert metadata["command"][0] == str(old)
+
+
+def test_windows_runtime_switch_failure_restores_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager, _ = _paired_manager(tmp_path, system="Windows")
+    old = tmp_path / "old.exe"
+    new = tmp_path / "new.exe"
+    manager._write_metadata("scheduled-task", [str(old), "executor", "run"])
+
+    class Task:
+        def switch_runtime(self, *, expected, replacement):
+            assert (expected, replacement) == (str(old), str(new))
+            raise RuntimeError("Task Scheduler refused switch")
+
+    monkeypatch.setattr(manager, "_windows_task", Task)
+    with pytest.raises(RuntimeError, match="refused switch"):
+        manager.activate_windows_runtime(old, new)
+    metadata = manager._read_metadata()
+    assert metadata is not None
+    assert metadata["command"] == [str(old), "executor", "run"]
+
+
+def test_windows_runtime_switch_reports_failed_metadata_rollback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager, _ = _paired_manager(tmp_path, system="Windows")
+    old, new = tmp_path / "old.exe", tmp_path / "new.exe"
+    manager._write_metadata("scheduled-task", [str(old), "executor", "run"])
+    original_write = manager._write_metadata
+    writes = []
+
+    def record_write(backend, command):
+        writes.append(command)
+        if len(writes) == 2:
+            raise OSError("metadata rollback refused")
+        original_write(backend, command)
+
+    class Task:
+        def switch_runtime(self, *, expected, replacement):
+            raise RuntimeError("native switch failed")
+
+    monkeypatch.setattr(manager, "_write_metadata", record_write)
+    monkeypatch.setattr(manager, "_windows_task", Task)
+    with pytest.raises(RuntimeError, match="metadata rollback failed"):
+        manager.activate_windows_runtime(old, new)
+    assert writes == [
+        [str(new), "executor", "run"],
+        [str(old), "executor", "run"],
+    ]
 
 
 def test_windows_runtime_switch_rejects_wrong_owner_metadata(

@@ -117,9 +117,7 @@ class WindowsUserTask:
             raise RuntimeError(f"scheduled task is not installed: {self.name}")
         self._powershell(f"Start-ScheduledTask {self._task}")
 
-    def switch_runtime(
-        self, *, expected: str, replacement: str, restart: bool
-    ) -> None:
+    def switch_runtime(self, *, expected: str, replacement: str) -> None:
         """Switch one owned task's executable without stopping its running instance."""
         if self.status() is None:
             raise RuntimeError(f"scheduled task is not installed: {self.name}")
@@ -142,14 +140,11 @@ class WindowsUserTask:
                 f"-Execute {_literal(replacement)} "
                 "-Argument $action.Arguments "
                 "-WorkingDirectory $action.WorkingDirectory",
-                (
-                    "$oneTime = New-ScheduledTaskTrigger -Once "
-                    "-At ((Get-Date).AddSeconds(45))"
-                    if restart
-                    else "$oneTime = $null"
-                ),
-                "$triggers = if ($oneTime) { "
-                "@($logon[0], $oneTime) } else { @($logon[0]) }",
+                "$oneTime = New-ScheduledTaskTrigger -Once "
+                "-At ((Get-Date).AddSeconds(45)) "
+                "-RepetitionInterval (New-TimeSpan -Minutes 1) "
+                "-RepetitionDuration (New-TimeSpan -Minutes 5)",
+                "$triggers = @($logon[0], $oneTime)",
                 f"Set-ScheduledTask {self._task} "
                 "-Action $newAction -Trigger $triggers -ErrorAction Stop "
                 "| Out-Null",

@@ -159,14 +159,17 @@ control-managed Windows update validates the Control-proxied checksum, extracts
 only `workgate-windows-x86_64/workgate.exe`, and checks the requested version.
 It publishes the verified executable to a unique versioned filename and updates
 the **existing owned Task Scheduler action** to launch that file. The task's
-original logon trigger is preserved; a one-time trigger schedules the next
-start after the current Executor drains active commands and exits. Neither a
+original logon trigger is preserved; a short, bounded one-time trigger retry
+window schedules the next start after the current Executor drains active
+commands and exits. The window tolerates delayed shutdown without keeping a
+permanent periodic task. Neither a
 second supervisor nor a new service definition is required.
 
 If updating the task or its stored metadata fails, the original executable is
 retained and the update is marked failed. Source/Python-package installs remain
 owned by their installer and are not self-mutated. The prior Windows image
 remains on disk during a switch because the running process owns it; old
-Workgate-generated runtime images are pruned best-effort on later updates.
+Workgate-generated runtime images are retained until an explicit cleanup so an
+otherwise idle service or another owned task never loses its referenced binary.
 A native Windows binary with a windowless service entry point is required for
 end-to-end frozen update acceptance (#391).

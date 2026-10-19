@@ -14,7 +14,6 @@ import posixpath
 import shutil
 import subprocess
 import sys
-from contextlib import suppress
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
@@ -632,29 +631,21 @@ class ExecutorServiceManager:
             raise RuntimeError(
                 "managed Windows executable does not match installed service"
             )
-        task = self._windows_task()
-        task.switch_runtime(
-            expected=str(old), replacement=str(new), restart=True
-        )
+        # Persist the new command *before* switching the native task: a
+        # metadata write error must not leave a task running an unrecorded exe.
+        self._write_metadata("scheduled-task", [str(new), *command[1:]])
         try:
-            self._write_metadata("scheduled-task", [str(new), *command[1:]])
+            self._windows_task().switch_runtime(
+                expected=str(old), replacement=str(new)
+            )
         except Exception:
             try:
-                task.switch_runtime(
-                    expected=str(new), replacement=str(old), restart=False
-                )
+                self._write_metadata("scheduled-task", command)
             except Exception as exc:
                 raise RuntimeError(
-                    "Windows task metadata update failed and task rollback failed"
+                    "Windows task switch failed and service metadata rollback failed"
                 ) from exc
             raise
-        # Released old versions can be pruned on a later successful update.
-        # Never touch the current image or the verified new target.
-        for candidate in new.parent.glob(".workgate.runtime.*.exe"):
-            if candidate in {old, new}:
-                continue
-            with suppress(OSError):  # Still mapped by a Windows process.
-                candidate.unlink()
 
     def _systemd_native_state(self) -> dict[str, str]:
         result = self._run(

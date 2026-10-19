@@ -1,6 +1,5 @@
 """Executor runtime ownership and control-managed release replacement."""
 
-import asyncio
 import hashlib
 import os
 import platform
@@ -426,7 +425,7 @@ async def apply_control_managed_update(
                     )
                 )
                 try:
-                    await asyncio.to_thread(windows_activate, target, published)
+                    windows_activate(target, published)
                 except Exception:
                     store.save(old_state)
                     # The validated new binary is retained: native task rollback
