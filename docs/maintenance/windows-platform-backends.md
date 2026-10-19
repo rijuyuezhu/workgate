@@ -162,7 +162,8 @@ the **existing owned Task Scheduler action** to launch that file. The task's
 original logon trigger is preserved; a short, bounded one-time trigger retry
 window schedules the next start after the current Executor drains active
 commands and exits. The window tolerates delayed shutdown without keeping a
-permanent periodic task. Neither a
+permanent periodic task. Explicit Executor `stop` and `restart` cancel the pending
+upgrade trigger, so a manual stop cannot be undone by a delayed timer. Neither a
 second supervisor nor a new service definition is required.
 
 If updating the task or its stored metadata fails, the original executable is

@@ -152,6 +152,31 @@ class WindowsUserTask:
         )
         self._powershell(script)
 
+    def cancel_runtime_restart(self) -> None:
+        """Remove only our pending update trigger before an explicit stop/restart."""
+        if self.status() is None:
+            raise RuntimeError(f"scheduled task is not installed: {self.name}")
+        self._powershell(
+            "\n".join(
+                [
+                    f"$task = Get-ScheduledTask {self._task} -ErrorAction Stop",
+                    "$all = @($task.Triggers)",
+                    "$logon = @($all | Where-Object { "
+                    "$_.CimClass.CimClassName -eq 'MSFT_TaskLogonTrigger' })",
+                    "$timer = @($all | Where-Object { "
+                    "$_.CimClass.CimClassName -eq 'MSFT_TaskTimeTrigger' })",
+                    "if ($timer.Count -eq 0) { return }",
+                    "if ($all.Count -ne 2 -or $logon.Count -ne 1 -or "
+                    "$timer.Count -ne 1 -or "
+                    "$timer[0].Repetition.Interval -ne 'PT1M' -or "
+                    "$timer[0].Repetition.Duration -ne 'PT5M') { "
+                    "throw 'unexpected scheduled task triggers' }",
+                    f"Set-ScheduledTask {self._task} "
+                    "-Trigger @($logon[0]) -ErrorAction Stop | Out-Null",
+                ]
+            )
+        )
+
     def stop(self) -> None:
         current = self.status()
         if current is not None and current["state"].lower() in {

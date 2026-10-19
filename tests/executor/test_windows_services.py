@@ -100,6 +100,9 @@ def test_windows_executor_install_uninstall_retains_profile(
             active = True
             commands.append(("start", None))
 
+        def cancel_runtime_restart(self):
+            commands.append(("cancel-restart", None))
+
         def stop(self):
             nonlocal active
             active = False
@@ -124,7 +127,11 @@ def test_windows_executor_install_uninstall_retains_profile(
     assert manager.metadata_path.is_file()
     assert commands[0][0] == "install"
     manager.restart()
-    assert commands[-2:][0][0] == "stop"
+    assert [item[0] for item in commands[-3:]] == [
+        "cancel-restart",
+        "stop",
+        "start",
+    ]
     manager.stop()
     assert manager.status().state.value == "stopped"
     manager.start()
@@ -611,3 +618,32 @@ def test_windows_runtime_switch_rejects_wrong_owner_metadata(
         manager.activate_windows_runtime(
             tmp_path / "old.exe", tmp_path / "new.exe"
         )
+
+
+def test_windows_task_cancels_only_its_upgrade_timer(monkeypatch):
+    monkeypatch.setattr(
+        "workgate.platform.windows_task.shutil.which",
+        lambda _: "powershell.exe",
+    )
+    scripts = []
+
+    def run(argv):
+        scripts.append(argv[-1])
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            '{"state":"Running","last_result":0}'
+            if "Get-ScheduledTaskInfo" in argv[-1]
+            else "",
+            "",
+        )
+
+    task = WindowsUserTask(
+        "Test Workgate", description="Managed by Workgate: test", run=run
+    )
+    task.cancel_runtime_restart()
+    assert len(scripts) == 2
+    assert "-Trigger @($logon[0])" in scripts[1]
+    assert "unexpected scheduled task triggers" in scripts[1]
+    assert "PT1M" in scripts[1] and "PT5M" in scripts[1]
+    assert "Unregister-ScheduledTask" not in scripts[1]

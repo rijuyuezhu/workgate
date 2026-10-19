@@ -793,7 +793,9 @@ class ExecutorServiceManager:
                         + (f": {detail}" if detail else "")
                     )
         elif backend == "scheduled-task":
-            self._windows_task().stop()
+            task = self._windows_task()
+            task.cancel_runtime_restart()
+            task.stop()
         return self.status()
 
     def restart(self) -> ExecutorServiceStatus:
@@ -829,6 +831,7 @@ class ExecutorServiceManager:
                 )
         elif backend == "scheduled-task":
             task = self._windows_task()
+            task.cancel_runtime_restart()
             task.stop()
             task.start()
         return self.status()
