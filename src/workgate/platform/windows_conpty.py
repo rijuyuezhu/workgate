@@ -130,22 +130,25 @@ class ConPtySession:
             self.process.setwinsize(rows, cols)
 
     def close(self) -> None:
-        with self.lock:
-            if self.closed:
-                return
-            self.closed = True
-            subscribers = tuple(self.subscribers)
-            self.subscribers.clear()
-        for subscriber in subscribers:
-            subscriber.finish()
-        try:
-            self.process.close(force=True)
-        except Exception:
+        # Reuse the writer lock so concurrent close/write/resize calls cannot
+        # treat an in-progress (or failed) native close as completed.
+        with self.write_lock:
             with self.lock:
-                self.closed = False
-            raise
-        if self.reader is not threading.current_thread():
-            self.reader.join(timeout=2)
+                if self.closed:
+                    return
+                self.closed = True
+                subscribers = tuple(self.subscribers)
+                self.subscribers.clear()
+            for subscriber in subscribers:
+                subscriber.finish()
+            try:
+                self.process.close(force=True)
+            except Exception:
+                with self.lock:
+                    self.closed = False
+                raise
+            if self.reader is not threading.current_thread():
+                self.reader.join(timeout=2)
 
 
 def spawn_conpty(

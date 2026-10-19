@@ -247,3 +247,43 @@ def test_late_conpty_attach_replays_bounded_tail(monkeypatch):
     late.feed(b" latest")
     assert late.read_wait(100, 0) == (b" latest", False)
     session.close()
+
+
+def test_concurrent_native_close_failure_cannot_drop_live_session(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from workgate.platform import windows_conpty as conpty
+
+    class FailOncePty(FakePty):
+        def __init__(self):
+            super().__init__()
+            self.started = threading.Event()
+            self.release = threading.Event()
+            self.calls = 0
+
+        def close(self, force):
+            self.calls += 1
+            if self.calls == 1:
+                self.started.set()
+                assert self.release.wait(timeout=3)
+                raise OSError("native close failed")
+            return super().close(force)
+
+    registry = conpty.ConPtyRegistry()
+    process = FailOncePty()
+    monkeypatch.setattr(
+        conpty,
+        "spawn_conpty",
+        lambda *_a, **_kw: ConPtySession(process),
+    )
+    registry.start("race", ["powershell"], cwd=".", limit=1)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(registry.kill, "race")
+        assert process.started.wait(timeout=3)
+        second = pool.submit(registry.kill, "race")
+        process.release.set()
+        with pytest.raises(OSError, match="native close failed"):
+            first.result(timeout=5)
+        assert second.result(timeout=5)
+    assert process.calls == 2
+    assert not registry.active()
