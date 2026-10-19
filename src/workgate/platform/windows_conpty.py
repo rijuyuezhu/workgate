@@ -1,7 +1,6 @@
 """Small native ConPTY I/O core. Session ownership stays with the Executor."""
 
 import threading
-from collections import deque
 from typing import Any
 
 _BUFFER_BYTES = 256 * 1024
@@ -12,21 +11,18 @@ class _Subscriber:
 
     def __init__(self) -> None:
         self.condition = threading.Condition()
-        self.chunks: deque[bytes] = deque()
-        self.size = 0
+        self.buffer = bytearray()
         self.finished = False
 
     def feed(self, data: bytes) -> None:
         with self.condition:
             if self.finished:
                 return
-            if self.size + len(data) > _BUFFER_BYTES:
-                self.chunks.clear()
-                self.size = 0
+            if len(self.buffer) + len(data) > _BUFFER_BYTES:
+                self.buffer.clear()
                 self.finished = True
             else:
-                self.chunks.append(data)
-                self.size += len(data)
+                self.buffer.extend(data)
             self.condition.notify_all()
 
     def finish(self) -> None:
@@ -36,19 +32,12 @@ class _Subscriber:
 
     def read_wait(self, max_bytes: int, wait_ms: int) -> tuple[bytes, bool]:
         with self.condition:
-            if not self.chunks and not self.finished:
+            if not self.buffer and not self.finished:
                 self.condition.wait(max(0, wait_ms) / 1000)
-            remaining = max(0, max_bytes)
-            parts = []
-            while self.chunks and remaining:
-                chunk = self.chunks.popleft()
-                take = chunk[:remaining]
-                parts.append(take)
-                self.size -= len(take)
-                remaining -= len(take)
-                if len(take) < len(chunk):
-                    self.chunks.appendleft(chunk[len(take) :])
-            return b"".join(parts), self.finished and not self.chunks
+            count = min(max(0, max_bytes), len(self.buffer))
+            data = bytes(self.buffer[:count])
+            del self.buffer[:count]
+            return data, self.finished and not self.buffer
 
 
 class ConPtySession:
