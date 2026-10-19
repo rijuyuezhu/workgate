@@ -73,6 +73,8 @@ class ControlSessionCoordinator:
         ]
         | None = None,
         implicit_task_discarder: Callable[[str], None] | None = None,
+        task_session_discarder: Callable[[ControlSessionRecord], None]
+        | None = None,
         clock=time.time,
     ) -> None:
         self._state = state
@@ -88,6 +90,7 @@ class ControlSessionCoordinator:
         self._task_session_admitter = task_session_admitter
         self._implicit_task_creator = implicit_task_creator
         self._implicit_task_discarder = implicit_task_discarder
+        self._task_session_discarder = task_session_discarder
         self._auto_cleanup_blocked: Callable[[str], Awaitable[bool]] | None = (
             None
         )
@@ -710,6 +713,9 @@ class ControlSessionCoordinator:
         self._activity_by_session[session_id] = float(observed_at)
 
     def _discard_failed_create(self, record: ControlSessionRecord) -> None:
+        if not record.task_created and self._task_session_discarder is not None:
+            self._task_session_discarder(record)
+            return
         self._state.remove_session(str(record.session_id))
         if record.task_created and self._implicit_task_discarder is not None:
             self._implicit_task_discarder(str(record.task_id))

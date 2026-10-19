@@ -247,6 +247,7 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         task_session_admitter=task_service.admit_session_attachment,
         implicit_task_creator=task_service.create_for_session,
         implicit_task_discarder=task_service.discard_implicit_task,
+        task_session_discarder=task_service.discard_failed_attachment,
     )
     executor_fleet = ControlExecutorFleetService(
         control_state,

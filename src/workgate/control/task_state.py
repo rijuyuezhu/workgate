@@ -330,6 +330,7 @@ class ControlTaskService:
         changed_fields: list[str],
         session_ids: list[str],
         step_changes: list[dict[str, str]] | None = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         fields: dict[str, Any] = {
             "task": task_id,
@@ -341,6 +342,8 @@ class ControlTaskService:
             fields["session_ids"] = session_ids
         if step_changes:
             fields["step_changes"] = step_changes
+        if details:
+            fields.update(details)
         try:
             audit("task_mutation", **fields)
         except Exception:
@@ -759,8 +762,13 @@ class ControlTaskService:
                 updated_document = document.model_copy(deep=True)
                 updated_document.status = "blocked"
                 updated_document.updated_at = now
-                if len(updated_document.progress.blockers) < _REPORT_LIST_LIMIT:
-                    updated_document.progress.blockers.append(reason)
+                if (
+                    len(updated_document.progress.blockers)
+                    >= _REPORT_LIST_LIMIT
+                ):
+                    # Never discard user blockers or hide the transition reason.
+                    continue
+                updated_document.progress.blockers.append(reason)
                 continuation = current.continuation.model_copy(deep=True)
                 self._clear_continuation_claim(continuation)
                 self._persist_stored(
@@ -778,12 +786,11 @@ class ControlTaskService:
                     operation="idle_block",
                     changed_fields=["status", "progress.blockers"],
                     session_ids=list(session_ids),
-                )
-                audit(
-                    "task_idle_blocked",
-                    task=str(current.task_id),
-                    last_activity_at=last_activity,
-                    idle_threshold_s=idle_s,
+                    details={
+                        "reason": reason,
+                        "last_activity_at": last_activity,
+                        "idle_threshold_s": idle_s,
+                    },
                 )
             blocked += 1
         return blocked
@@ -967,6 +974,35 @@ class ControlTaskService:
             raise
         return attached
 
+    def discard_failed_attachment(self, record: ControlSessionRecord) -> None:
+        """Undo only an unconfirmed create, preserving incomplete history safely."""
+        task_id = str(record.task_id or "")
+        path = self._path(task_id)
+        with self._store.transaction(path):
+            retained = self._state.snapshot_sessions().get(
+                str(record.session_id)
+            )
+            if retained is None or retained.status != "creating":
+                return
+            if retained.task_id is None:
+                # Task was deleted while creation was in flight. The detached
+                # Session still needs clearing, but its Task no longer exists.
+                self._state.remove_session(str(record.session_id))
+                return
+            if retained.task_id != record.task_id:
+                return
+            # Remove the session first: interruption before the counter write
+            # is a conservative overcount, never an unsafe undercount.
+            self._state.remove_session(str(record.session_id))
+            current = self._read_stored_unlocked(task_id)
+            if current.session_count is not None and current.session_count > 0:
+                self._persist_stored(
+                    path,
+                    current.model_copy(
+                        update={"session_count": current.session_count - 1}
+                    ),
+                )
+
     def discard_implicit_task(self, task_id: str) -> None:
         """Roll back a *definitely failed* implicit create, never a live binding."""
         path = self._path(task_id)
@@ -1018,6 +1054,8 @@ class ControlTaskService:
                     }
                 ),
             )
+            # If publication is interrupted, keep the conservative overcount:
+            # a registry write may have reached disk before reporting failure.
             self._state.put_session(record)
 
     async def report_progress(
