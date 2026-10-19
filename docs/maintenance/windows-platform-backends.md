@@ -58,8 +58,10 @@ can close.
 On native Windows, pywinpty supplies ConPTY for interactive PowerShell/pwsh.
 Existing persistent-shell operations and the WebUI terminal bridge share one
 Executor-owned ConPTY registry. Multiple raw WebUI attachments receive
-independent bounded output streams; disconnecting one preserves the shell.
-The terminal runtime closes its ConPTY children on Executor shutdown.
+independent bounded output streams; connecting a new client replays the
+bounded recent output tail, while disconnecting one preserves the shell.
+The terminal runtime closes its ConPTY children on Executor shutdown and
+native abrupt-owner termination was verified as well.
 
 Unlike detached POSIX tmux sessions, these PTYs are **not restart-durable**:
 after Executor restart, their persisted reservations are reconciled against
@@ -84,6 +86,10 @@ WebSocket protocol or session manager is introduced.
   background descendant cleanup and forced stop.
 - scripts/validation/windows-colocate-job-smoke.py: launcher/role/grandchild
   containment on normal and forced colocate termination.
+- scripts/validation/windows-conpty-shell-smoke.py: persistent Shell API,
+  two WebUI bridge attachments, Unicode input, limits and restart.
+- scripts/validation/windows-conpty-owner-smoke.py: abrupt Executor-owner
+  termination does not leave an interactive PowerShell behind.
 - scripts/validation/windows-conpty-smoke.py: native terminal resize,
   independent subscribers, detachment and natural EOF.
 - scripts/validation/windows-conpty-shell-smoke.py: WorkGate persistent

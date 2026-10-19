@@ -234,3 +234,16 @@ def test_conpty_attachment_resize_read_and_closed_errors(monkeypatch):
     registry.close()
     with pytest.raises(RuntimeError, match="bound"):
         conpty.conpty_registry()
+
+
+def test_late_conpty_attach_replays_bounded_tail(monkeypatch):
+
+    proc = FakePty()
+    session = ConPtySession(proc)
+    with session.lock:
+        session.tail.extend(b"earlier output")
+    late = session.subscribe()
+    assert late.read_wait(100, 0) == (b"earlier output", False)
+    late.feed(b" latest")
+    assert late.read_wait(100, 0) == (b" latest", False)
+    session.close()

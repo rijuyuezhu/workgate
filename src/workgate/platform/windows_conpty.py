@@ -106,6 +106,7 @@ class ConPtySession:
             if self.closed or self.ended or not self.process.isalive():
                 raise RuntimeError("ConPTY session is unavailable")
             subscriber = _Subscriber()
+            subscriber.feed(bytes(self.tail))
             self.subscribers.add(subscriber)
             return subscriber
 
