@@ -395,6 +395,128 @@ def test_skill_editor_old_request_cannot_unlock_new_editor(
     browser_harness.assert_clean_browser()
 
 
+def test_control_card_switching_config_refresh_and_mobile(
+    browser_harness: BrowserHarness,
+) -> None:
+    """Control is a first-class UI selection, never a fake Executor request."""
+    browser_harness.login()
+    browser_harness.wait_executor_online()
+    page = browser_harness.page
+    urls: list[str] = []
+    page.on("request", lambda request: urls.append(request.url))
+    page.set_viewport_size({"width": 1360, "height": 900})
+    page.goto(f"{browser_harness.base_url}/ui#executors")
+
+    control = page.locator(
+        '#executor-list button[data-selection="__control__"]'
+    )
+    executor = page.locator(
+        '#executor-list button:not([data-selection="__control__"])'
+    ).first
+    expect(control).to_be_visible()
+    expect(page.locator("#executor-list button").first).to_have_attribute(
+        "data-selection", "__control__"
+    )
+    expect(page.locator("#executor-detail-name")).to_have_text("Control")
+    expect(page.locator(".executor-detail-actions")).to_be_hidden()
+    expect(page.locator("#executor-control-overview")).to_be_visible()
+    expect(page.locator("#executor-detail-grid")).to_be_hidden()
+
+    page.locator('[data-executor-subtab="mcp"]').click()
+    expect(
+        page.locator("#executor-mcp-body .executor-manage-group")
+    ).to_have_count(1)
+    expect(page.locator("#executor-mcp-body")).to_contain_text("Control")
+    page.locator('[data-executor-subtab="skills"]').click()
+    expect(
+        page.locator("#executor-skills-body .executor-manage-group")
+    ).to_have_count(1)
+    expect(page.locator("#executor-skills-body")).to_contain_text("Control")
+
+    page.locator('[data-executor-subtab="config"]').click()
+    settings = page.locator("#executor-config-body")
+    expect(settings).to_contain_text("oauth_admin_pin")
+    first_field = settings.locator(".executor-config-row").first
+    expect(first_field).to_be_visible()
+    # Polling updates state without replacing the selected card or Config DOM.
+    page.evaluate(
+        """() => { window.__controlCard = document.querySelector('[data-selection="__control__"]'); }"""
+    )
+    page.wait_for_timeout(4300)
+    assert page.evaluate(
+        """() => window.__controlCard === document.querySelector('[data-selection="__control__"]')"""
+    )
+    expect(first_field).to_be_visible()
+    expect(page.locator('[data-executor-subtab="config"]')).to_have_attribute(
+        "aria-selected", "true"
+    )
+
+    expect(executor).to_be_visible()
+    executor.click()
+    expect(page.locator("#executor-detail-name")).not_to_have_text("Control")
+    expect(page.locator("#executor-control-overview")).to_be_hidden()
+    expect(page.locator("#executor-detail-grid")).to_be_visible()
+    expect(page.locator(".executor-detail-actions")).to_be_visible()
+    page.locator('[data-executor-subtab="config"]').click()
+    expect(settings).to_contain_text("max_jobs")
+    page.locator('[data-executor-subtab="mcp"]').click()
+    expect(page.locator("#executor-mcp-add")).to_be_enabled()
+    page.locator("#executor-mcp-add").click()
+    expect(page.locator("#executor-integration-dialog")).to_be_visible()
+
+    # Losing the selected Executor must close its uncommitted editor and
+    # fall back to Control Config without a fake executor_id.
+    def remove_executor(route):
+        response = route.fetch()
+        payload = response.json()
+        payload["data"]["executors"] = []
+        route.fulfill(response=response, json=payload)
+
+    page.route("**/api/ui/executors", remove_executor)
+    expect(page.locator("#executor-detail-name")).to_have_text(
+        "Control", timeout=10000
+    )
+    expect(page.locator("#executor-integration-dialog")).to_be_hidden()
+    page.locator('[data-executor-subtab="config"]').click()
+    expect(settings).to_contain_text("oauth_admin_pin")
+    page.unroute("**/api/ui/executors", remove_executor)
+
+    # A failed inventory request must not leave stale management actions live.
+    def unavailable(route):
+        route.fulfill(
+            status=200, json={"ok": False, "message": "Simulated outage"}
+        )
+
+    page.locator('[data-executor-subtab="mcp"]').click()
+    expect(page.locator("#executor-mcp-add")).to_be_enabled()
+    page.route("**/api/ui/executors", unavailable)
+    expect(page.locator("#executor-detail-status")).to_have_text(
+        "Unavailable", timeout=10000
+    )
+    expect(page.locator("#executor-mcp-add")).to_be_disabled()
+    expect(page.locator("#executor-mcp-body")).to_contain_text("Unavailable")
+    page.unroute("**/api/ui/executors", unavailable)
+    expect(page.locator("#executor-detail-status")).to_have_text(
+        "Available", timeout=10000
+    )
+    expect(page.locator("#executor-mcp-add")).to_be_enabled(timeout=10000)
+
+    # Real mobile list/detail navigation also applies to Control.
+    page.set_viewport_size({"width": 390, "height": 844})
+    expect(page.locator(".executor-details")).to_be_hidden()
+    control.click()
+    expect(page.locator(".executor-details")).to_be_visible()
+    expect(page.locator("#executor-detail-name")).to_have_text("Control")
+    assert page.evaluate(
+        "document.documentElement.scrollWidth <= innerWidth + 1"
+    )
+    page.locator(".mobile-subpage-bar:visible .mobile-subpage-back").click()
+    expect(page.locator(".executor-details")).to_be_hidden()
+    # The UI selection marker must never leak into executor-scoped APIs.
+    assert not any("executor_id=__control__" in url for url in urls)
+    browser_harness.assert_clean_browser()
+
+
 def test_standalone_control_mcp_real_chromium(
     browser_harness: BrowserHarness,
 ) -> None:
@@ -412,18 +534,37 @@ def test_standalone_control_mcp_real_chromium(
     page.route("**/api/ui/executors", empty_inventory)
     page.set_viewport_size({"width": 390, "height": 844})
     page.goto(f"{browser_harness.base_url}/ui#executors")
-    expect(page.locator("#executor-list")).to_contain_text("No executors")
-    expect(page.locator("#executor-control-standalone")).to_be_visible()
-    expect(page.locator("#executor-control-mcp-add")).to_be_enabled()
-    page.locator("#executor-control-mcp-add").click()
+    control_card = page.locator(
+        '#executor-list button[data-selection="__control__"]'
+    )
+    expect(control_card).to_be_visible()
+    expect(page.locator("#executor-list button")).to_have_count(1)
+    control_card.click()
+    expect(page.locator(".executor-details")).to_be_visible()
+    expect(page.locator("#executor-detail-name")).to_have_text("Control")
+    expect(page.locator(".executor-detail-actions")).to_be_hidden()
+    page.locator('[data-executor-subtab="mcp"]').click()
+    expect(page.locator("#executor-mcp-add")).to_be_enabled()
+    page.locator("#executor-mcp-add").click()
     expect(page.locator("#executor-integration-owner")).to_have_value("control")
+    submitted = []
+    page.on(
+        "request",
+        lambda req: (
+            submitted.append(req.post_data_json)
+            if req.method == "POST" and req.url.endswith("/api/ui/integrations")
+            else None
+        ),
+    )
     page.locator("#executor-integration-name").fill("standalone-control")
     page.locator("#executor-integration-url").fill("https://example.org/mcp")
     page.locator("#executor-integration-save").click()
     expect(page.locator("#executor-integration-dialog")).not_to_be_visible()
-    row = page.locator(
-        "#executor-control-mcp-body .executor-manage-row"
-    ).filter(has_text="standalone-control")
+    assert submitted[-1]["owner"] == "control"
+    assert submitted[-1].get("executor_id") is None
+    row = page.locator("#executor-mcp-body .executor-manage-row").filter(
+        has_text="standalone-control"
+    )
     expect(row).to_be_visible()
     row.get_by_role("button", name="Manage").click()
     page.locator("#executor-integration-toggle").click()
@@ -436,19 +577,22 @@ def test_standalone_control_mcp_real_chromium(
     )
     page.once("dialog", lambda dialog: dialog.accept())
     page.locator("#executor-integration-delete").click()
-    expect(page.locator("#executor-control-mcp-body")).not_to_contain_text(
+    expect(page.locator("#executor-mcp-body")).not_to_contain_text(
         "standalone-control"
     )
-    expect(page.locator("#executor-control-skills-add")).to_be_enabled()
-    page.locator("#executor-control-skills-add").click()
+    page.locator('[data-executor-subtab="skills"]').click()
+    expect(page.locator("#executor-skills-add")).to_be_enabled()
+    page.locator("#executor-skills-add").click()
     expect(page.locator("#executor-integration-owner")).to_have_value("control")
     page.locator("#executor-integration-name").fill("standalone-skill")
     page.locator("#executor-integration-content").fill("# Control Skill\n")
     page.locator("#executor-integration-save").click()
     expect(page.locator("#executor-integration-dialog")).not_to_be_visible()
-    skill = page.locator(
-        "#executor-control-skills-body .executor-manage-row"
-    ).filter(has_text="standalone-skill")
+    assert submitted[-1]["owner"] == "control"
+    assert submitted[-1].get("executor_id") is None
+    skill = page.locator("#executor-skills-body .executor-manage-row").filter(
+        has_text="standalone-skill"
+    )
     expect(skill).to_be_visible()
     skill.get_by_role("button", name="Manage").click()
     expect(page.locator("#executor-integration-content")).to_be_enabled()

@@ -3,6 +3,9 @@ import { createSkillFileEditor } from "./skill_file_editor.js";
 import { createExecutorTopology } from "./executor_topology.js";
 import { createConfigurationView } from "./config_inspector.js";
 
+// A UI selection, not an Executor ID; never send it to executor-scoped APIs.
+const CONTROL_SELECTION = "__control__";
+
 export function createExecutorsController({
   elements,
   request,
@@ -14,7 +17,8 @@ export function createExecutorsController({
 }) {
   const state = {
     executors: [],
-    selectedId: "",
+    selectedId: CONTROL_SELECTION,
+    controlAvailable: false,
     loading: false,
     generation: 0,
     timer: null,
@@ -39,9 +43,6 @@ export function createExecutorsController({
     onClose: () => onNavigate("list", {replace: true}),
   });
 
-  const controlConfigView = createConfigurationView({
-    root: document.getElementById("executor-control-config-body"), request,
-  });
   const executorConfigView = createConfigurationView({
     root: document.getElementById("executor-config-body"), request,
   });
@@ -52,10 +53,11 @@ export function createExecutorsController({
   });
 
   function clearConfiguration() {
-    controlConfigView.clear();
     executorConfigView.clear();
-    document.getElementById("executor-control-config-view").hidden = true;
-    document.getElementById("executors-panel").classList.remove("control-config-open");
+  }
+
+  function isControlSelected() {
+    return state.selectedId === CONTROL_SELECTION;
   }
 
   function selectedExecutor() {
@@ -80,7 +82,7 @@ export function createExecutorsController({
   }
 
   function select(executorId) {
-    if (!state.executors.some((item) => item.executor_id === executorId)) return;
+    if (executorId !== CONTROL_SELECTION && !state.executors.some((item) => item.executor_id === executorId)) return;
     const changed = state.selectedId !== executorId;
     // Changing the selected Executor cannot cancel a committed remote Apply.
     if (changed && state.editor?.busy && state.editor.applying) return;
@@ -101,7 +103,7 @@ export function createExecutorsController({
     if (changed) { resetMetrics(); executorConfigView.clear(); }
     renderList();
     renderDetails();
-    if (changed && activeSubtab() === "config") void executorConfigView.open(state.selectedId);
+    if (changed && activeSubtab() === "config") void executorConfigView.open(isControlSelected() ? "" : state.selectedId);
     renderManagement();
     void loadSkillSources(true);
     void refreshMetrics();
@@ -128,52 +130,65 @@ export function createExecutorsController({
     elements.executorRenameOpen.disabled = state.loading || !mutable;
     elements.executorRevokeOpen.disabled = state.loading || !mutable;
     elements.executorDrain.textContent = selected?.draining ? "Resume" : "Drain";
+    elements.executorReset.closest(".executor-detail-actions").hidden = isControlSelected();
   }
 
   function renderList() {
-    elements.executorList.replaceChildren();
-    if (!state.executors.length) {
-      const empty = document.createElement("div");
-      empty.className = "empty-state";
-      empty.textContent = "No executors are paired yet.";
-      elements.executorList.append(empty);
-      return;
+    // Preserve card DOM/focus through the 4-second inventory refresh.
+    const entries = [
+      {key: CONTROL_SELECTION, name: "Control", label: "Control plane",
+       status: state.controlAvailable ? "available" : "unavailable"},
+      ...state.executors.map(executor => ({
+        key: executor.executor_id,
+        name: executor.name || executor.executor_id,
+        label: executor.runtime?.workgate_version || "Executor",
+        status: executor.revoked_at ? "revoked" : executor.draining ? "draining" : executor.online ? "online" : "offline",
+      })),
+    ];
+    const existing = new Map(Array.from(elements.executorList.children,
+      child => [child.dataset.selection, child]));
+    let position = 0;
+    for (const entry of entries) {
+      let button = existing.get(entry.key);
+      existing.delete(entry.key);
+      if (!button) {
+        button = document.createElement("button");
+        button.type = "button";
+        button.className = "executor-band executor-row";
+        button.dataset.selection = entry.key;
+        const indicator = document.createElement("span");
+        indicator.className = "executor-band-mark";
+        const main = document.createElement("span");
+        main.className = "executor-band-main";
+        const name = document.createElement("strong");
+        name.className = "executor-band-name";
+        const meta = document.createElement("span");
+        meta.className = "executor-band-meta";
+        main.append(name, meta);
+        const status = document.createElement("span");
+        status.className = "executor-band-state";
+        button.append(indicator, main, status);
+        button.addEventListener("click", () => {
+          select(button.dataset.selection);
+          onNavigate("detail");
+        });
+      }
+      const selected = entry.key === state.selectedId;
+      button.classList.toggle("executor-row-selected", selected);
+      button.setAttribute("aria-pressed", String(selected));
+      button.title = entry.name;
+      button.querySelector(".executor-band-mark").textContent = entry.name.slice(0, 1).toUpperCase();
+      button.querySelector(".executor-band-name").textContent = entry.name;
+      button.querySelector(".executor-band-meta").textContent = entry.label;
+      const status = button.querySelector(".executor-band-state");
+      status.textContent = entry.status;
+      status.dataset.status = entry.status === "available" ? "online"
+        : entry.status === "unavailable" ? "offline" : entry.status;
+      if (elements.executorList.children[position] !== button)
+        elements.executorList.insertBefore(button, elements.executorList.children[position] || null);
+      position++;
     }
-    for (const executor of state.executors) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "executor-band executor-row";
-      const selected = executor.executor_id === state.selectedId;
-      if (selected) button.classList.add("executor-row-selected");
-      button.setAttribute("aria-pressed", selected ? "true" : "false");
-      button.title = executor.name || executor.executor_id;
-
-      const indicator = document.createElement("span");
-      indicator.className = "executor-band-mark";
-      indicator.textContent = (executor.name || executor.executor_id).slice(0, 1).toUpperCase();
-
-      const main = document.createElement("span");
-      main.className = "executor-band-main";
-      const name = document.createElement("strong");
-      name.className = "executor-band-name";
-      name.textContent = executor.name || executor.executor_id;
-      const meta = document.createElement("span");
-      meta.className = "executor-band-meta";
-      meta.textContent = executor.runtime?.workgate_version || "Executor";
-      main.append(name, meta);
-
-      const status = document.createElement("span");
-      status.className = "executor-band-state";
-      status.textContent = executor.revoked_at
-        ? "revoked" : executor.draining ? "draining" : executor.online ? "online" : "offline";
-      status.dataset.status = status.textContent;
-      button.append(indicator, main, status);
-      button.addEventListener("click", () => {
-        select(executor.executor_id);
-        onNavigate("detail");
-      });
-      elements.executorList.append(button);
-    }
+    for (const stale of existing.values()) stale.remove();
   }
 
   function activeSubtab() {
@@ -181,10 +196,11 @@ export function createExecutorsController({
   }
 
   function setSubtab(tab) {
-    if (!selectedExecutor() || !["overview", "mcp", "skills", "config"].includes(tab)) return;
+    if (!state.selectedId || !["overview", "mcp", "skills", "config"].includes(tab)
+      || tab === activeSubtab()) return;
     state.detailTabs.set(state.selectedId, tab);
     renderSubtabs();
-    if (tab === "config") void executorConfigView.open(state.selectedId);
+    if (tab === "config") void executorConfigView.open(isControlSelected() ? "" : state.selectedId);
     else executorConfigView.clear();
     if (tab === "overview") void refreshMetrics();
     if (tab === "mcp" || tab === "skills") void loadManagement();
@@ -316,13 +332,14 @@ export function createExecutorsController({
 
   async function loadManagement(force = false) {
     const executorId = state.selectedId;
-    const scope = executorId || "__control__";
-    if (state.managementId === scope && !force) return;
+    if (state.managementId === executorId && !force) return;
     const generation = ++state.managementGeneration;
-    state.managementId = scope;
+    state.managementId = executorId;
     state.management = null;
     renderManagement();
-    const sources = [["control", "mcp"], ["executor", "mcp"], ["executor", "skill"], ["control", "skill"]];
+    const sources = isControlSelected()
+      ? [["control", "mcp"], ["control", "skill"]]
+      : [["control", "mcp"], ["executor", "mcp"], ["executor", "skill"], ["control", "skill"]];
     const online = Boolean(selectedExecutor()?.online && !selectedExecutor()?.revoked_at);
     const results = await Promise.all(sources.map(async ([owner, kind]) => {
       if (owner === "executor" && !online) return { error: "Offline" };
@@ -333,7 +350,9 @@ export function createExecutorsController({
       }
     }));
     if (generation !== state.managementGeneration || executorId !== state.selectedId) return;
-    state.management = {control: results[0], executorMcp: results[1], skills: results[2], controlSkills: results[3]};
+    state.management = isControlSelected()
+      ? {control: results[0], controlSkills: results[1]}
+      : {control: results[0], executorMcp: results[1], skills: results[2], controlSkills: results[3]};
     renderManagement();
   }
 
@@ -343,7 +362,8 @@ export function createExecutorsController({
     mcp.replaceChildren();
     skills.replaceChildren();
     const stateRows = (message) => [{ title: message, detail: "" }];
-    const snap = state.management;
+    const snap = state.controlAvailable ? state.management : null;
+    const unavailable = state.controlAvailable ? null : {error: "Unavailable"};
     const renderGroup = (container, title, result, owner, kind, shadowed = new Set()) => {
       if (!result || result.error) {
         addGroup(container, title, result?.error
@@ -360,18 +380,12 @@ export function createExecutorsController({
       }));
       addGroup(container, title, rows.length ? rows : stateRows("None"));
     };
-    renderGroup(mcp, "Executor", snap?.executorMcp, "executor", "mcp");
+    if (!isControlSelected()) renderGroup(mcp, "Executor", unavailable || snap?.executorMcp, "executor", "mcp");
     const shadowedMcp = new Set((snap?.executorMcp?.servers || [])
       .filter((server) => server.enabled).map((server) => server.name));
-    renderGroup(mcp, "Control", snap?.control, "control", "mcp", shadowedMcp);
-    elements.executorControlStandalone.hidden = Boolean(selectedExecutor());
-    elements.executorControlMcpBody.replaceChildren();
-    if (!selectedExecutor()) {
-      renderGroup(elements.executorControlMcpBody, "Control", snap?.control, "control", "mcp");
-    }
-    elements.executorControlMcpAdd.disabled = !Boolean(snap?.control?.can_manage);
-    renderGroup(skills, "Executor", snap?.skills, "executor", "skill");
-    const globalsAvailable = Boolean(selectedExecutor()?.online && state.skillSources?.status === "available" && state.skillSourceId === state.selectedId);
+    renderGroup(mcp, "Control", unavailable || snap?.control, "control", "mcp", shadowedMcp);
+    if (!isControlSelected()) renderGroup(skills, "Executor", unavailable || snap?.skills, "executor", "skill");
+    const globalsAvailable = Boolean(state.controlAvailable && selectedExecutor()?.online && state.skillSources?.status === "available" && state.skillSourceId === state.selectedId);
     const globalSkills = state.skillSources?.executor?.skills;
     const readOnly = globalsAvailable ? [
       ...(globalSkills?.selected || []).filter((skill) => skill.source === "global")
@@ -381,7 +395,7 @@ export function createExecutorsController({
     ] : [];
     const globalStatus = !selectedExecutor()?.online ? "Offline"
       : !globalsAvailable ? "Unavailable" : "None";
-    addGroup(skills, "User Global", readOnly.length ? readOnly
+    if (!isControlSelected()) addGroup(skills, "User Global", readOnly.length ? readOnly
       : globalStatus === "None" ? stateRows(globalStatus)
       : [{title: globalStatus, notice: "warning"}]);
     // Control is the lowest-priority source; a same-name Executor or global
@@ -390,12 +404,8 @@ export function createExecutorsController({
       ...((snap?.skills?.skills || []).filter((skill) => skill.enabled).map((skill) => skill.name)),
       ...(globalsAvailable ? (globalSkills?.selected || []).filter((skill) => skill.source === "global").map((skill) => skill.name) : []),
     ]);
-    renderGroup(skills, "Control", snap?.controlSkills, "control", "skill", shadowed);
-    elements.executorControlSkillsBody.replaceChildren();
-    if (!selectedExecutor()) {
-      renderGroup(elements.executorControlSkillsBody, "Control", snap?.controlSkills, "control", "skill");
-    }
-    elements.executorControlSkillsAdd.disabled = !Boolean(snap?.controlSkills?.can_manage);
+    renderGroup(skills, "Control", unavailable || snap?.controlSkills, "control", "skill", shadowed);
+
     const active = Boolean(snap?.skills?.can_manage && selectedExecutor()?.online);
     elements.executorSkillsAdd.disabled = !(active || snap?.controlSkills?.can_manage);
     elements.executorMcpAdd.disabled = !Boolean((snap?.control?.can_manage || snap?.executorMcp?.can_manage));
@@ -504,7 +514,8 @@ export function createExecutorsController({
 
   async function openEditor({owner, kind, item = null}) {
     if (!selectedExecutor() && owner !== "control") return;
-    state.editor = { owner, kind, executorId: state.selectedId, name: item?.name || "", revision: item?.revision || "", item,
+    state.editor = { owner, kind, executorId: owner === "executor" ? state.selectedId : null,
+                     name: item?.name || "", revision: item?.revision || "", item,
                      enabled: item?.enabled !== false };
     const edit = state.editor;
     edit.filesReady = false;
@@ -864,6 +875,20 @@ export function createExecutorsController({
   function renderDetails() {
     renderSubtabs();
     const executor = selectedExecutor();
+    const control = isControlSelected();
+    document.getElementById("executor-detail-grid").hidden = control;
+    document.getElementById("executor-control-overview").hidden = !control;
+    document.getElementById("executor-overview-metrics").hidden = control || !executor?.online;
+    if (control) {
+      elements.executorDetailName.textContent = "Control";
+      elements.executorDetailStatus.textContent = state.controlAvailable ? "Available" : "Unavailable";
+      document.getElementById("executor-control-connection").textContent =
+        state.controlAvailable ? "Connected" : "Unavailable";
+      document.getElementById("executor-control-online").textContent =
+        String(state.executors.filter((item) => item.online && !item.revoked_at).length);
+      setControls();
+      return;
+    }
     if (!executor) {
       elements.executorDetailName.textContent = "No executor selected";
       elements.executorDetailStatus.textContent = "Select an executor to inspect it";
@@ -915,9 +940,11 @@ export function createExecutorsController({
   function render(payload) {
     const previousId = state.selectedId;
     state.executors = Array.isArray(payload?.executors) ? payload.executors : [];
+    const recovered = !state.controlAvailable;
+    state.controlAvailable = true;
     topology.update(state.executors);
-    if (!state.executors.some((item) => item.executor_id === state.selectedId)) {
-      state.selectedId = (state.executors.find((entry) => !entry.revoked_at) || state.executors[0])?.executor_id || "";
+    if (state.selectedId !== CONTROL_SELECTION && !state.executors.some((item) => item.executor_id === state.selectedId)) {
+      state.selectedId = CONTROL_SELECTION;
     }
     const online = state.executors.filter((item) => !item.revoked_at && item.online).length;
     const revoked = state.executors.filter((item) => item.revoked_at).length;
@@ -929,6 +956,13 @@ export function createExecutorsController({
     renderList();
     renderDetails();
     if (state.selectedId !== previousId) {
+      // Inventory can remove an Executor while its integration editor is open.
+      // Close stale, non-applying editors just as manual selection does.
+      if (elements.executorIntegrationDialog.open && !state.editor?.applying)
+        elements.executorIntegrationDialog.close();
+      executorConfigView.clear();
+      if (activeSubtab() === "config")
+        void executorConfigView.open(isControlSelected() ? "" : state.selectedId);
       state.skillSourceGeneration += 1;
       state.skillSourceId = "";
       state.skillSources = null;
@@ -967,7 +1001,7 @@ export function createExecutorsController({
       if (metricsBody) metricsBody.hidden = !showMetrics;
     }
     onInventory(state.executors);
-    if (!state.selectedId && state.managementId !== "__control__") void loadManagement();
+    if (recovered && ["mcp", "skills"].includes(activeSubtab())) void loadManagement(true);
   }
 
   async function refresh({ force = false } = {}) {
@@ -984,6 +1018,13 @@ export function createExecutorsController({
     } catch (error) {
       if (error.authenticationRequired) throw error;
       if (generation !== state.generation) return null;
+      state.controlAvailable = false;
+      state.managementGeneration += 1;
+      state.managementId = "";
+      state.management = null;
+      renderManagement();
+      renderList();
+      renderDetails();
       notice(elements.executorState, error instanceof Error ? error.message : String(error), "error");
       return null;
     } finally {
@@ -1075,7 +1116,8 @@ export function createExecutorsController({
     state.generation += 1;
     state.loading = false;
     state.executors = [];
-    state.selectedId = "";
+    state.selectedId = CONTROL_SELECTION;
+    state.controlAvailable = false;
     clearConfiguration();
     state.skillSourceGeneration += 1;
     state.skillSourceId = "";
@@ -1108,21 +1150,7 @@ export function createExecutorsController({
 
   function bind() {
     topology.bind();
-    document.getElementById("executor-control-config-open").addEventListener("click", () => {
-      document.getElementById("executor-control-config-view").hidden = false;
-      document.getElementById("executors-panel").classList.add("control-config-open");
-      void controlConfigView.open();
-    });
-    document.getElementById("executor-control-config-close").addEventListener("click", () => {
-      clearConfiguration();
-    });
-    document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) return;
-      clearConfiguration();
-    });
     document.getElementById("executor-topology-open").addEventListener("click", () => topology.open());
-    elements.executorControlMcpAdd.addEventListener("click", () => void openEditor({owner: "control", kind: "mcp"}));
-    elements.executorControlSkillsAdd.addEventListener("click", () => void openEditor({owner: "control", kind: "skill"}));
     elements.executorIntegrationTest.addEventListener("click", () => void testEditorMcp());
     elements.executorMcpAdd.addEventListener("click", () => {
       const owner = selectedExecutor()?.online && state.management?.executorMcp?.can_manage

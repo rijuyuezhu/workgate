@@ -21,15 +21,18 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
     page.set_viewport_size({"width": 1360, "height": 900})
     page.goto(f"{harness.base_url}/ui#executors")
     expect(page.locator("#connection-state")).to_have_text("Connected")
-    expect(page.locator("#executor-list .executor-row")).to_be_visible()
-    # Initial auto-selection loads exactly one snapshot; polling must not repeat it.
+    expect(
+        page.locator('#executor-list button[data-selection="__control__"]')
+    ).to_be_visible()
+    # The first card is now Control; Executor diagnostics load on selection.
+    assert not calls
+    page.locator("#executor-list .executor-row").filter(
+        has_text="online"
+    ).first.click()
     expect(page.locator("#executor-overview-metrics")).to_contain_text(
         "Network throughput"
     )
     assert len(calls) >= 1
-    page.locator("#executor-list .executor-row").filter(
-        has_text="online"
-    ).first.click()
     bounds = page.locator("#executor-list").bounding_box()
     assert bounds is not None and 220 <= bounds["width"] <= 260
     expect(page.locator('[data-executor-subtab="overview"]')).to_have_attribute(
@@ -124,11 +127,13 @@ def run_executor_diagnostics_ui(harness: BrowserHarness) -> None:
 
     page.route(diagnostic_url, capture_diagnostics)
     page.reload()
-    expect(
+    executor_card = (
         page.locator("#executor-list .executor-row")
         .filter(has_text="online")
         .first
-    ).to_be_visible()
+    )
+    expect(executor_card).to_be_visible()
+    executor_card.click()
     page.locator('[data-executor-subtab="mcp"]').click()
     expect(page.locator("#executor-mcp-body")).to_contain_text("Control")
     page.locator('[data-executor-subtab="skills"]').click()
