@@ -214,7 +214,9 @@ def run() -> None:
     assert refused.closed, "failed Job Object not closed"
 
     with tempfile.TemporaryDirectory(prefix="workgate-supervisor-win-") as temp:
-        root = Path(temp)
+        # CI Windows temp roots can be junction aliases; Parent config file
+        # snapshots require the canonical, non-aliased path.
+        root = Path(temp).resolve()
         _test(root / "restart", forced=False)
         _test(root / "apply", forced=False, apply=True)
         _test(root / "crash", forced=True)
