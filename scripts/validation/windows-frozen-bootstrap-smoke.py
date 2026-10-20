@@ -146,8 +146,11 @@ def main() -> None:
             "            yield chunk\n"
             "b._fetch_checksum = _fetch_checksum\n"
             "b._archive_stream = _archive_stream\n"
-            "from workgate.main import main\n"
-            f"main(['control', '--config', {str(config)!r}])\n",
+            # The test's local archive/pairing replacements must run inside
+            # this Control; re-executing a Parent Child would discard them.
+            "from workgate.main import _build_parser\n"
+            f"_args = _build_parser().parse_args(['control', '--config', {str(config)!r}])\n"
+            "_args.handler(_args)\n",
             encoding="utf-8",
         )
         (root / "digest.txt").write_text(digest, encoding="ascii")
