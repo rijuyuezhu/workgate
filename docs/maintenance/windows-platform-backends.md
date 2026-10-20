@@ -240,8 +240,14 @@ re-authentication and failure recovery. The synthetic PE reuses this checkout's
 source except for the version string; it is **not** the historical v5.0.0a3
 release, and cannot substitute for testing upgrade across real historical
 release artifacts. The CI test never publishes this synthetic build.
-Complete real-release cross-version and two-host OAuth acceptance remain gated
-by #392.
+The published, checksum-verified Windows `v5.0.0a1` ZIP instead contains
+`workgate.exe` and `workgate-tui.exe`, **not** `workgatew.exe`. Its native CLI
+still uses `worker` and has no `executor` command, so it cannot serve as an
+older managed-Executor image for this update test. Moving from that legacy
+worker/TUI installation to the current Executor requires a fresh installation
+and owner-approved pairing, not a compatibility shim or in-place managed update.
+Real-release upgrade acceptance for newer compatible Executor layouts and
+complete two-host OAuth acceptance remain gated by #392.
 
 ## Windows x86-64 native CI and release (#391)
 
