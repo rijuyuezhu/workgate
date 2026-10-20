@@ -202,12 +202,57 @@ def _desktop_probe(output: Path) -> None:
         )
 
 
+def _assert_headless() -> None:
+    """Native no-desktop contract: GUI is unavailable and never enumerates UIA."""
+    from workgate.errors import GuiUnavailableError
+    from workgate.executor.gui import gui_capability_available
+    from workgate.executor.gui.windows import (
+        WindowsGuiBackend,
+        windows_desktop_available,
+    )
+
+    if windows_desktop_available():
+        raise RuntimeError(
+            "Headless acceptance requires a noninteractive Windows runner"
+        )
+    if gui_capability_available():
+        raise AssertionError("Headless Executor incorrectly advertises GUI")
+
+    async def probe() -> None:
+        backend = WindowsGuiBackend()
+        try:
+            try:
+                await backend.list_windows()
+            except GuiUnavailableError as exc:
+                if "unlocked interactive input desktop" not in str(exc):
+                    raise
+            else:
+                raise AssertionError(
+                    "Headless Executor enumerated desktop windows"
+                )
+        finally:
+            await backend.aclose()
+
+    asyncio.run(probe())
+    print("Native Windows headless GUI unavailable and fail-closed: PASS")
+
+
 def main() -> None:
+    if len(sys.argv) == 2 and sys.argv[1] == "--assert-headless":
+        _assert_headless()
+        return
     if len(sys.argv) == 3 and sys.argv[1] == "--probe":
         _desktop_probe(Path(sys.argv[2]))
         return
-    if len(sys.argv) != 1:
-        raise SystemExit("pass disposable output filename")
+    strict_ci = len(sys.argv) == 2 and sys.argv[1] == "--ci"
+    if len(sys.argv) != 1 and not strict_ci:
+        raise SystemExit("optional --ci for strict native desktop acceptance")
+    if strict_ci:
+        from workgate.executor.gui.windows import windows_desktop_available
+
+        if not windows_desktop_available():
+            _assert_headless()
+            return
     root = Path(tempfile.gettempdir()) / f"workgate389-{os.getpid()}"
     root.mkdir()
     output = root / "result.json"
@@ -238,7 +283,7 @@ def main() -> None:
             )
         result = json.loads(output.read_text(encoding="utf-8"))
         print(json.dumps(result, ensure_ascii=False))
-        if not result.get("pass") and not result.get("skipped"):
+        if not result.get("pass") and (strict_ci or not result.get("skipped")):
             raise SystemExit(1)
     finally:
         task.uninstall()
