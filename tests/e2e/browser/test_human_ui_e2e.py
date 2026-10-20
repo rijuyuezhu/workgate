@@ -459,9 +459,13 @@ def test_control_card_switching_config_refresh_and_mobile(
     expect(page.locator(".executor-detail-actions")).to_be_visible()
     page.locator('[data-executor-subtab="config"]').click()
     expect(settings).to_contain_text("max_jobs")
+    page.locator('[data-executor-subtab="mcp"]').click()
+    expect(page.locator("#executor-mcp-add")).to_be_enabled()
+    page.locator("#executor-mcp-add").click()
+    expect(page.locator("#executor-integration-dialog")).to_be_visible()
 
-    # Losing the selected Executor must clear its Config and fall back to
-    # real Control configuration, without a fabricated executor_id.
+    # Losing the selected Executor must close its uncommitted editor and
+    # fall back to Control Config without a fake executor_id.
     def remove_executor(route):
         response = route.fetch()
         payload = response.json()
@@ -472,6 +476,8 @@ def test_control_card_switching_config_refresh_and_mobile(
     expect(page.locator("#executor-detail-name")).to_have_text(
         "Control", timeout=10000
     )
+    expect(page.locator("#executor-integration-dialog")).to_be_hidden()
+    page.locator('[data-executor-subtab="config"]').click()
     expect(settings).to_contain_text("oauth_admin_pin")
     page.unroute("**/api/ui/executors", remove_executor)
 
@@ -541,10 +547,21 @@ def test_standalone_control_mcp_real_chromium(
     expect(page.locator("#executor-mcp-add")).to_be_enabled()
     page.locator("#executor-mcp-add").click()
     expect(page.locator("#executor-integration-owner")).to_have_value("control")
+    submitted = []
+    page.on(
+        "request",
+        lambda req: (
+            submitted.append(req.post_data_json)
+            if req.method == "POST" and req.url.endswith("/api/ui/integrations")
+            else None
+        ),
+    )
     page.locator("#executor-integration-name").fill("standalone-control")
     page.locator("#executor-integration-url").fill("https://example.org/mcp")
     page.locator("#executor-integration-save").click()
     expect(page.locator("#executor-integration-dialog")).not_to_be_visible()
+    assert submitted[-1]["owner"] == "control"
+    assert submitted[-1].get("executor_id") is None
     row = page.locator("#executor-mcp-body .executor-manage-row").filter(
         has_text="standalone-control"
     )
@@ -571,6 +588,8 @@ def test_standalone_control_mcp_real_chromium(
     page.locator("#executor-integration-content").fill("# Control Skill\n")
     page.locator("#executor-integration-save").click()
     expect(page.locator("#executor-integration-dialog")).not_to_be_visible()
+    assert submitted[-1]["owner"] == "control"
+    assert submitted[-1].get("executor_id") is None
     skill = page.locator("#executor-skills-body .executor-manage-row").filter(
         has_text="standalone-skill"
     )

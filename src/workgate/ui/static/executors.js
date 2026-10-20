@@ -145,10 +145,12 @@ export function createExecutorsController({
         status: executor.revoked_at ? "revoked" : executor.draining ? "draining" : executor.online ? "online" : "offline",
       })),
     ];
+    const existing = new Map(Array.from(elements.executorList.children,
+      child => [child.dataset.selection, child]));
     let position = 0;
     for (const entry of entries) {
-      let button = Array.from(elements.executorList.children)
-        .find(child => child.dataset.selection === entry.key);
+      let button = existing.get(entry.key);
+      existing.delete(entry.key);
       if (!button) {
         button = document.createElement("button");
         button.type = "button";
@@ -186,8 +188,7 @@ export function createExecutorsController({
         elements.executorList.insertBefore(button, elements.executorList.children[position] || null);
       position++;
     }
-    while (elements.executorList.children.length > position)
-      elements.executorList.lastElementChild.remove();
+    for (const stale of existing.values()) stale.remove();
   }
 
   function activeSubtab() {
@@ -195,7 +196,8 @@ export function createExecutorsController({
   }
 
   function setSubtab(tab) {
-    if (!state.selectedId || !["overview", "mcp", "skills", "config"].includes(tab)) return;
+    if (!state.selectedId || !["overview", "mcp", "skills", "config"].includes(tab)
+      || tab === activeSubtab()) return;
     state.detailTabs.set(state.selectedId, tab);
     renderSubtabs();
     if (tab === "config") void executorConfigView.open(isControlSelected() ? "" : state.selectedId);
@@ -512,7 +514,8 @@ export function createExecutorsController({
 
   async function openEditor({owner, kind, item = null}) {
     if (!selectedExecutor() && owner !== "control") return;
-    state.editor = { owner, kind, executorId: state.selectedId, name: item?.name || "", revision: item?.revision || "", item,
+    state.editor = { owner, kind, executorId: owner === "executor" ? state.selectedId : null,
+                     name: item?.name || "", revision: item?.revision || "", item,
                      enabled: item?.enabled !== false };
     const edit = state.editor;
     edit.filesReady = false;
@@ -953,6 +956,10 @@ export function createExecutorsController({
     renderList();
     renderDetails();
     if (state.selectedId !== previousId) {
+      // Inventory can remove an Executor while its integration editor is open.
+      // Close stale, non-applying editors just as manual selection does.
+      if (elements.executorIntegrationDialog.open && !state.editor?.applying)
+        elements.executorIntegrationDialog.close();
       executorConfigView.clear();
       if (activeSubtab() === "config")
         void executorConfigView.open(isControlSelected() ? "" : state.selectedId);

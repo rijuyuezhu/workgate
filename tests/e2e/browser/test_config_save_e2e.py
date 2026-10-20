@@ -110,6 +110,9 @@ def test_config_save_is_file_only_with_role_ownership(tmp_path: Path):
             row.locator("select.executor-config-input").select_option("info")
             row.get_by_role("button", name="Set", exact=True).click()
             expect(row).to_have_class(re.compile("executor-config-changed"))
+            # Clicking the already active tab must not discard unsaved edits.
+            page.locator('[data-executor-subtab="config"]').click()
+            expect(row).to_have_class(re.compile("executor-config-changed"))
             expect(row.locator(".executor-config-transition")).to_contain_text(
                 "warning→info"
             )
