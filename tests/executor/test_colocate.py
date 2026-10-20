@@ -7,6 +7,8 @@ import pytest
 
 from workgate import supervisor
 from workgate.colocate import cli as colocate
+from workgate.colocate import service as colocate_service
+from workgate.main import _build_parser
 
 
 def test_colocate_uses_one_parent_with_two_normal_role_children(monkeypatch):
@@ -80,3 +82,14 @@ def test_colocate_does_not_accept_duplicate_role_commands():
                 supervisor.ChildCommand("control", (sys.executable,)),
             ]
         )
+
+
+def test_colocate_service_actions_are_reachable_via_cli(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        colocate_service, "manage_colocate_service", calls.append
+    )
+    for action in ("start", "stop", "restart", "status", "uninstall"):
+        args = _build_parser().parse_args(["colocate", f"{action}-service"])
+        args.handler(args)
+    assert calls == ["start", "stop", "restart", "status", "uninstall"]
