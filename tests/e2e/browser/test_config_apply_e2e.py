@@ -39,7 +39,7 @@ def test_browser_applies_control_and_executor_saved_files(tmp_path: Path):
             row.locator("select.executor-config-input").select_option("info")
             row.get_by_role("button", name="Set", exact=True).click()
             body.get_by_role("button", name="Save changes").click()
-            expect(body).to_contain_text("Saved · Restart to apply")
+            expect(body).to_contain_text("Saved. Restart to apply.")
             body.get_by_role("button", name="Apply saved file").click()
             expect(body).to_contain_text(
                 "CLI / ENV changes require restarting Parent"
@@ -65,7 +65,7 @@ def test_browser_applies_control_and_executor_saved_files(tmp_path: Path):
             row.locator("input.executor-config-input").fill("32")
             row.get_by_role("button", name="Set", exact=True).click()
             executor.get_by_role("button", name="Save changes").click()
-            expect(executor).to_contain_text("Saved · Restart to apply")
+            expect(executor).to_contain_text("Saved. Restart to apply.")
             executor.get_by_role("button", name="Apply saved file").click()
             executor.get_by_role("button", name="Confirm restart").click()
             expect(executor).to_contain_text(

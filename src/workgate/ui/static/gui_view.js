@@ -34,7 +34,7 @@ export function createGuiViewer({ request, onOpen = () => {} }) {
       generation++;
       observation = null;
       manual.disabled = true;
-      state.textContent = "Manual mode off · capture again before further input";
+      state.textContent = "Manual mode off. Capture again before further input.";
     }
     manualEnabled = enabled && Boolean(sessionId) && Boolean(windows.value) && Boolean(observation);
     manualControls.hidden = !manualEnabled;
@@ -128,7 +128,7 @@ export function createGuiViewer({ request, onOpen = () => {} }) {
       if (!windows.value) setManual(false);
       const count = windows.options.length - 1;
       state.textContent = count
-        ? `${count} window${count === 1 ? "" : "s"} · list refreshed at ${new Date().toLocaleTimeString()}`
+        ? `${count} window${count === 1 ? "" : "s"} (updated ${new Date().toLocaleTimeString()})`
         : "No native GUI windows available";
     } catch (error) {
       if (revision === generation && sessionId === currentSession) {
@@ -175,8 +175,8 @@ export function createGuiViewer({ request, onOpen = () => {} }) {
       scrollDown.disabled = !pointerAvailable;
       manual.disabled = !observation;
       state.textContent = pointerAvailable
-        ? "Captured frame · refresh manually to observe changes"
-        : "Captured frame · pointer input unavailable on this backend";
+        ? "Frame captured. Refresh to observe changes."
+        : "Frame captured. Pointer input unavailable.";
     } catch (error) {
       if (revision === generation && sessionId === currentSession) {
         state.textContent = error instanceof Error ? error.message : String(error);

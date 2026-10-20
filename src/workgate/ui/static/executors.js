@@ -433,7 +433,7 @@ export function createExecutorsController({
     for (const executor of state.executors) {
       if (executor.revoked_at) continue;
       const value = executor.executor_id === current ? "executor" : `executor:${executor.executor_id}`;
-      add(value, `Executor · ${executor.name || executor.executor_id}`,
+      add(value, `Executor ${executor.name || executor.executor_id}`,
         !executor.online || (edit.kind !== "skill" && state.management?.executorMcp?.can_manage === false));
     }
     field.value = edit.owner === "control" ? "control" : (edit.executorId === current ? "executor" : `executor:${edit.executorId}`);
@@ -694,7 +694,7 @@ export function createExecutorsController({
       elements.executorMcpAuthStatus.hidden = status.status === "not_required";
       if (!elements.executorMcpAuthStatus.hidden) notice(
         elements.executorMcpAuthStatus,
-        `Authorization: ${status.status || "unavailable"}${status.expires_at ? ` · expires ${new Date(status.expires_at * 1000).toLocaleString()}` : ""}`,
+        `Authorization: ${status.status || "unavailable"}${status.expires_at ? ` (expires ${new Date(status.expires_at * 1000).toLocaleString()})` : ""}`,
         ["authorized", "valid"].includes(status.status) ? "success" : "warning",
       );
       const list = elements.executorMcpSecretList;
@@ -705,7 +705,7 @@ export function createExecutorsController({
         const name = document.createElement("code");
         name.textContent = key;
         const label = document.createElement("span");
-        label.textContent = "Stored · value hidden";
+        label.textContent = "Value hidden";
         const remove = document.createElement("button");
         remove.type = "button";
         remove.textContent = "Remove";
@@ -772,13 +772,13 @@ export function createExecutorsController({
       notice(
         elements.executorIntegrationTestResult,
         result.status === "available"
-          ? `Available · ${tools.length} discovered tools (none were called)`
-          : `MCP ${result.status || "unavailable"} · check the owning host`,
+          ? `${tools.length} tools discovered (none called)`
+          : `MCP ${result.status || "unavailable"}. Check the owning host.`,
         result.status === "available" ? "success" : "warning",
       );
       for (const tool of tools) {
         const line = document.createElement("div");
-        line.textContent = `${tool.name}${tool.description ? ` · ${tool.description}` : ""}`;
+        line.textContent = `${tool.name}${tool.description ? `: ${tool.description}` : ""}`;
         elements.executorIntegrationTestResult.append(line);
       }
     } catch (error) {
@@ -921,7 +921,7 @@ export function createExecutorsController({
     elements.executorDetailCompatibility.textContent = !executor.runtime
       ? "Not reported"
       : executor.runtime_update_required
-        ? "Update required · " + executor.required_workgate_version
+        ? "Update required: " + executor.required_workgate_version
         : "Compatible";
     elements.executorDetailPlatform.textContent = executor.runtime?.platform || "Not reported";
     elements.executorDetailAdmission.textContent = executor.session_admission
@@ -929,7 +929,7 @@ export function createExecutorsController({
       : (executor.session_admission_reasons || []).join(", ") || "Not eligible";
     elements.executorDetailSessions.textContent = String(executor.active_sessions || 0);
     elements.executorDetailCommands.textContent =
-      String(executor.queued_commands || 0) + " queued · " + String(executor.offered_commands || 0) + " offered · " + String(executor.command_limit || 0) + " max";
+      String(executor.queued_commands || 0) + " queued, " + String(executor.offered_commands || 0) + " offered (limit " + String(executor.command_limit || 0) + ")";
     elements.executorDetailCapabilities.textContent =
       (executor.capabilities || []).join(", ") || "None reported";
     elements.executorDetailCreated.textContent = timestamp(executor.created_at, "Unknown");

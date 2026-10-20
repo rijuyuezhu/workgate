@@ -26,7 +26,7 @@
       </nav>
       <div class="app-global-status">
         <span id="connection-state" class="status status-idle">Connecting</span>
-        <span class="app-version"><span id="version">—</span> · <span id="auth-mode">—</span></span>
+        <span class="app-version"><span id="version">—</span> <span id="auth-mode">—</span></span>
         <button id="sign-out" type="button" hidden>Sign out</button>
       </div>
       <button id="nav-toggle" class="nav-toggle" type="button" aria-controls="app-navigation" aria-expanded="false" aria-label="Open navigation">
@@ -87,7 +87,7 @@
           <div><strong id="executor-target-total">—</strong><span>Executors</span></div>
           <div><strong id="executor-target-online">—</strong><span>Online</span></div>
           <button class="dashboard-audit-shortcut" type="button" data-go-view="audit" aria-label="Open Audit records">
-            <strong id="dashboard-audit-total">—</strong><span>Audit · 24h <span aria-hidden="true">↗</span></span>
+            <strong id="dashboard-audit-total">—</strong><span>Audit (24h) <span aria-hidden="true">↗</span></span>
             <small id="dashboard-audit-detail" class="visually-hidden">—</small>
           </button>
         </div>
@@ -174,7 +174,7 @@
             <div><dt>Platform</dt><dd id="dashboard-platform">—</dd></div>
             <div><dt>Python</dt><dd id="dashboard-python">—</dd></div>
             <div><dt>CPUs</dt><dd id="dashboard-cpu-count">—</dd></div>
-            <div><dt>Load · 1m</dt><dd id="dashboard-load">—</dd></div>
+            <div><dt>Load (1m)</dt><dd id="dashboard-load">—</dd></div>
             <div><dt>Uptime</dt><dd id="dashboard-uptime">—</dd></div>
             <div><dt>Memory used</dt><dd id="dashboard-memory-used">—</dd></div>
             <div><dt>Disk used</dt><dd id="dashboard-disk-used">—</dd></div>
@@ -201,7 +201,7 @@
       <p id="executor-action-status" role="status" aria-live="polite"></p>
       <section id="executor-topology" class="executor-topology" aria-label="Peer topology" hidden>
         <div class="topology-heading">
-          <div><button id="topology-back" type="button">← Executors</button><h2>Peer Direct topology</h2></div>
+          <div><button id="topology-back" type="button">← Executors</button><h2>Peer topology</h2></div>
           <span id="topology-summary" class="muted" role="status">No pairs</span>
         </div>
         <div class="topology-toolbar">
@@ -305,7 +305,7 @@
         <div class="dialog-heading"><div><h2 id="executor-integration-title">Add integration</h2></div><button class="dialog-close" type="button" id="executor-integration-close" aria-label="Close integration editor">×</button></div>
         <p id="executor-integration-status" class="muted" role="status"></p>
         <label>Name <input id="executor-integration-name" maxlength="128" required spellcheck="false" autocomplete="off" placeholder="integration-name"></label>
-        <label>Owner <select id="executor-integration-owner"><option value="executor">Executor · Local</option><option value="control">Control</option></select></label>
+        <label>Owner <select id="executor-integration-owner"><option value="executor">Executor</option><option value="control">Control</option></select></label>
         <div id="executor-integration-mcp-fields">
           <label id="executor-integration-url-wrap">Server URL <input id="executor-integration-url" type="url" placeholder="https://example.org/mcp" autocomplete="off"></label>
           <label id="executor-integration-command-wrap">Command <input id="executor-integration-command" placeholder="/usr/bin/server" spellcheck="false"></label>
@@ -332,8 +332,8 @@
               </div>
             </div>
           </fieldset>
-          <details class="executor-integration-advanced"><summary>Advanced · Secret references only</summary>
-            <label>Advanced settings (JSON) <textarea id="executor-integration-advanced" rows="4" spellcheck="false" placeholder='{"headers":{"Authorization":{"secret":"my_key"}}}'>{}</textarea></label>
+          <details class="executor-integration-advanced"><summary>Advanced</summary>
+            <label>Options (JSON) <textarea id="executor-integration-advanced" rows="4" spellcheck="false" placeholder='{"headers":{"Authorization":{"secret":"my_key"}}}'>{}</textarea></label>
           </details>
           <label id="executor-integration-args-wrap">Arguments (JSON array) <textarea id="executor-integration-args" rows="3" spellcheck="false">[]</textarea></label>
           <div id="executor-integration-test-wrap" hidden>
@@ -531,7 +531,7 @@ description: My Skill
           </div>
         </aside>
         <section class="file-browser">
-          <div class="file-browser-heading"><h3>Files</h3><span class="muted">Current directory</span></div>
+          <div class="file-browser-heading"><h3>Directory</h3></div>
       <nav id="file-breadcrumbs" class="file-breadcrumbs" aria-label="File path breadcrumbs"></nav>
       <div class="file-list-options">
         <label>Filter <input id="file-filter" type="search" placeholder="Search in this folder" autocomplete="off"></label>
@@ -763,7 +763,7 @@ description: My Skill
             </div>
             <section id="session-integrations-mcp" class="session-integrations-pane" role="tabpanel">
               <div class="session-integrations-toolbar">
-                <span id="session-integrations-mcp-status" class="muted" role="status">MCPs for this Session</span>
+                <span id="session-integrations-mcp-status" class="muted" role="status">Session MCPs</span>
                 <div class="session-integrations-actions">
                   <button id="session-integrations-mcp-refresh" type="button">Refresh</button>
                   <button id="session-integrations-mcp-manage" type="button">Manage in Executors</button>
@@ -773,7 +773,7 @@ description: My Skill
             </section>
             <section id="session-integrations-skills" class="session-integrations-pane" role="tabpanel" hidden>
               <div class="session-integrations-toolbar">
-                <span id="session-integrations-skills-status" class="muted" role="status">Effective Skills for this Session</span>
+                <span id="session-integrations-skills-status" class="muted" role="status">Effective Skills</span>
                 <div class="session-integrations-actions">
                   <button id="session-integrations-skills-refresh" type="button">Refresh</button>
                   <button id="session-integrations-skills-manage" type="button">Manage in Executors</button>

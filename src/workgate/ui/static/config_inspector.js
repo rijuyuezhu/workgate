@@ -96,7 +96,7 @@ export function createConfigurationView({ root, request }) {
               body: JSON.stringify({revision: data.revision}),
             });
             if (generation !== revision) return;
-            applyStatus.textContent = "Restart requested · Reconnecting…";
+            applyStatus.textContent = "Restart requested. Reconnecting…";
             // Allow one bounded startup attempt and one bounded rollback.
             for (let attempt = 0; attempt < 60; attempt++) {
               await new Promise(resolve => setTimeout(resolve, 1000));
@@ -113,10 +113,10 @@ export function createConfigurationView({ root, request }) {
                 return;
               } catch { /* The Child may be temporarily unavailable. */ }
             }
-            applyStatus.textContent = "Restart not confirmed · Check Parent logs and the saved config";
+            applyStatus.textContent = "Restart not confirmed. Check Parent logs and saved config.";
           } catch (error) {
             if (generation !== revision) return;
-            applyStatus.textContent = error.status === 409 ? "File changed or restart unavailable · Reload" : "Apply failed";
+            applyStatus.textContent = error.status === 409 ? "File changed or restart unavailable. Reload." : "Apply failed";
             apply.disabled = false;
           }
         });
@@ -200,12 +200,12 @@ export function createConfigurationView({ root, request }) {
           if (revision !== generation) return;
           await open(executorId);
           if (revision + 1 === generation) {
-            const notice = text("span", "Saved · Restart to apply", "executor-config-success");
+            const notice = text("span", "Saved. Restart to apply.", "executor-config-success");
             root.prepend(notice);
           }
         } catch (error) {
           if (revision !== generation) return;
-          status.textContent = error.status === 409 ? "File changed · Reload to edit" : error.status === 400 ? "Invalid value" : "Save failed";
+          status.textContent = error.status === 409 ? "File changed. Reload to edit." : error.status === 400 ? "Invalid value" : "Save failed";
           save.disabled = false;
         }
       });

@@ -596,7 +596,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     page.route("**/api/ui/tasks/detail?**", project_session_availability)
     page.locator("#tasks-refresh").click()
     expect(page.locator("#session-detail-status")).to_have_text(
-        "Unavailable · missing on executor"
+        "Unavailable (missing on executor)"
     )
     expect(
         page.locator(
@@ -611,7 +611,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     availability_override = "executor_offline"
     page.locator("#tasks-refresh").click()
     expect(page.locator("#session-detail-status")).to_have_text(
-        "Unavailable · executor offline"
+        "Unavailable (executor offline)"
     )
     expect(page.locator("#todo-refresh")).to_be_enabled()
     expect(page.locator("#todo-add")).to_be_enabled()
@@ -621,7 +621,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     page.unroute("**/api/ui/tasks/detail?**", project_session_availability)
     page.locator("#tasks-refresh").click()
     expect(page.locator("#session-detail-status")).to_contain_text(
-        "Available · "
+        "Available ("
     )
     expect(page.locator("#todo-add")).to_be_enabled()
     expect(page.locator("#session-audit-refresh")).to_be_enabled()
@@ -770,11 +770,9 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     )
     expect(page.locator("#connection-state")).to_have_text("Connected")
     expect(page.locator("#audit-summary")).to_contain_text(
-        f"Session · {session_id}"
+        f"Session {session_id}"
     )
-    expect(page.locator("#audit-state")).to_contain_text(
-        f"Session · {session_id}"
-    )
+    expect(page.locator("#audit-state")).to_contain_text("records loaded")
 
     page.goto(
         f"{harness.base_url}/ui?{deep_link_query}#terminals",
@@ -1080,7 +1078,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     page.once("dialog", lambda dialog: dialog.accept())
     page.locator("#session-terminate").click()
     expect(page.locator("#session-detail-status")).to_contain_text(
-        "Ended · retained history available"
+        "Ended (history retained)"
     )
     expect(
         page.locator(f'#task-list .task-entry[data-task-id="{task_id}"]')
