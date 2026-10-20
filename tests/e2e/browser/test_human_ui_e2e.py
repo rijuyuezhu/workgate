@@ -9,7 +9,10 @@ from tests.e2e.browser.scenario_background_polling import run_background_polling
 from tests.e2e.browser.scenario_executor_diagnostics import (
     run_executor_diagnostics_ui,
 )
-from tests.e2e.browser.scenario_executors import run_executor_admin
+from tests.e2e.browser.scenario_executors import (
+    run_browser_approved_cli_pairing,
+    run_executor_admin,
+)
 from tests.e2e.browser.scenario_files_todos_audit import run_files_todos_audit
 from tests.e2e.browser.scenario_layout import run_webui_layout
 from tests.e2e.browser.scenario_live_workspace import (
@@ -46,6 +49,13 @@ def test_human_ui_real_chromium(browser_harness: BrowserHarness) -> None:
     run_mobile_drilldown(browser_harness)
     run_native_gui_manual(browser_harness)
     browser_harness.assert_clean_browser()
+
+
+def test_browser_oauth_approves_and_denies_real_executor_cli(
+    browser_harness: BrowserHarness,
+) -> None:
+    """Owner PKCE browser login decides real pending Executor CLI requests."""
+    run_browser_approved_cli_pairing(browser_harness)
 
 
 def test_executor_mcp_auth_real_chromium(
