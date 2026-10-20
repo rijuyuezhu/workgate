@@ -36,8 +36,8 @@ export function createAuditView({ text, formatFileBytes }) {
     const status = auditEntryStatus(entry);
     const meta = document.createElement("span");
     meta.className = `audit-entry-meta audit-entry-status-${status}`;
-    const duration = Number.isFinite(Number(entry.duration_ms)) ? ` · ${Number(entry.duration_ms)} ms` : "";
-    meta.textContent = `${auditTimestamp(entry.ts)} · ${text(entry.operation, "other")} · ${status}${duration}`;
+    const duration = Number.isFinite(Number(entry.duration_ms)) ? `, ${Number(entry.duration_ms)} ms` : "";
+    meta.textContent = `${text(entry.operation, "other")}: ${status} (${auditTimestamp(entry.ts)}${duration})`;
 
     const session = document.createElement("span");
     session.className = "audit-entry-session";
@@ -335,7 +335,7 @@ export function createAuditView({ text, formatFileBytes }) {
       image.alt = text(preview.path, "Audited image result");
       image.src = `data:${preview.mime_type};base64,${preview.data_base64}`;
       const caption = document.createElement("figcaption");
-      caption.textContent = `${text(preview.path, "image result")} · ${formatFileBytes(preview.bytes)}`;
+      caption.textContent = `${text(preview.path, "image result")} (${formatFileBytes(preview.bytes)})`;
       figure.append(image, caption);
       resultPanel.body.append(figure);
     } else if (entry.image_preview_error) {

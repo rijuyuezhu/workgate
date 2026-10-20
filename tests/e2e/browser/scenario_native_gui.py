@@ -257,7 +257,7 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
         with page.expect_response(lambda r: "/api/ui/gui/state?" in r.url):
             page.locator("#session-gui-capture").click()
         expect(page.locator("#session-gui-state")).to_contain_text(
-            "Captured frame"
+            "Frame captured"
         )
         expect(page.locator("#session-gui-image")).to_be_visible()
         page.locator("#session-gui-text").fill("Keep this unsent text")
@@ -281,7 +281,7 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
         with page.expect_response(lambda r: "/api/ui/gui/state?" in r.url):
             page.locator("#session-gui-capture").click()
         expect(page.locator("#session-gui-state")).to_contain_text(
-            "Captured frame"
+            "Frame captured"
         )
         expect(page.locator("#session-gui-image")).to_be_visible()
         page.locator("#session-gui-manual").click()

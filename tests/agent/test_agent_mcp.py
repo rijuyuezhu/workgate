@@ -397,6 +397,64 @@ def test_build_agent_registry_probes_enabled_servers(tmp_path):
     assert registry.mcp_servers["off"].error == "disabled"
 
 
+def test_registry_excludes_shadowed_control_mcp_before_network_probe(
+    tmp_path,
+) -> None:
+    """Excluding a server must skip its auth/probe, not merely hide results."""
+    (tmp_path / "config.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "mcpServers": {
+                    "same": {"type": "http", "url": "https://same.test/mcp"},
+                    "control": {
+                        "type": "http",
+                        "url": "https://control.test/mcp",
+                    },
+                    "disabled": {
+                        "type": "http",
+                        "url": "https://disabled.test/mcp",
+                        "enabled": False,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class RecordingManager(FakeMcpManager):
+        def __init__(self):
+            super().__init__()
+            self.probes = []
+
+        async def list_tools(self, name, server):
+            self.probes.append(name)
+            return [
+                AgentMcpTool(name="ping", description=name, input_schema={})
+            ]
+
+    manager = RecordingManager()
+    registry = build_agent_registry(
+        tmp_path,
+        manager,
+        scan_skills=False,
+        mcp_server_types=frozenset({"http"}),
+        excluded_mcp_server_names=frozenset({"same"}),
+    )
+    assert set(registry.mcp_servers) == {"control", "disabled"}
+    assert manager.probes == ["control"]
+    assert registry.mcp_servers["disabled"].available is False
+
+    full = build_agent_registry(
+        tmp_path,
+        manager,
+        scan_skills=False,
+        mcp_server_types=frozenset({"http"}),
+    )
+    assert set(full.mcp_servers) == {"same", "control", "disabled"}
+    assert manager.probes == ["control", "same", "control"]
+
+
 def test_build_agent_registry_records_probe_errors(tmp_path):
     (tmp_path / "config.json").write_text(
         json.dumps(

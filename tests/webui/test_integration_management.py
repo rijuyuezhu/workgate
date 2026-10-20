@@ -76,6 +76,7 @@ def test_control_and_executor_mcp_and_skill_crud(tmp_path):
         )
         control = get(client, "control", "mcp").json()["data"]
         assert control["servers"][0]["name"] == "remote"
+        assert "auth_authorized" not in control["servers"][0]
         assert (
             post(client, "control", "mcp", "disable", name="remote").status_code
             == 400
@@ -564,7 +565,11 @@ def test_mcp_auth_endpoint_denied_without_management_scope(tmp_path):
 
 
 def test_authenticated_mcp_registration_assigns_stable_identity(tmp_path):
-    """Users may select OAuth/Secret Auth without inventing a store identity."""
+    """List status is read from existing private owner credentials, never remote probes."""
+    from mcp.shared.auth import OAuthToken
+
+    from workgate.agent_bridge.auth_store import AgentAuthStore
+
     project = tmp_path / "project"
     project.mkdir()
     settings = Settings(
@@ -627,6 +632,53 @@ def test_authenticated_mcp_registration_assigns_stable_identity(tmp_path):
             identity = server["integrationId"]
             assert isinstance(identity, str) and identity.startswith("ui-")
             assert len(identity) <= 128
+            assert server["auth_authorized"] is False
+            private_dir = (
+                harness.control.config.agent_auth_dir
+                if owner == "control"
+                else harness.executor.config.agent_auth_dir
+            )
+            store = AgentAuthStore(private_dir)
+            if owner == "control":
+                store.set_tokens(
+                    identity,
+                    OAuthToken(
+                        access_token="NEVER_EXPOSE_AUTH_TOKEN",
+                        token_type="Bearer",
+                    ),
+                )
+            else:
+                store.set_secret(identity, "api_token", "NEVER_EXPOSE_SECRET")
+            refreshed = client.get(
+                "/api/ui/integrations",
+                params={
+                    "owner": owner,
+                    "kind": "mcp",
+                    "executor_id": harness.executor_id,
+                },
+            )
+            assert refreshed.status_code == 200, refreshed.text
+            assert (
+                refreshed.json()["data"]["servers"][0]["auth_authorized"]
+                is True
+            )
+            assert "NEVER_EXPOSE" not in refreshed.text
+            if owner == "control":
+                store.clear_oauth(identity)
+            else:
+                assert store.delete_secret(identity, "api_token")
+            reset = client.get(
+                "/api/ui/integrations",
+                params={
+                    "owner": owner,
+                    "kind": "mcp",
+                    "executor_id": harness.executor_id,
+                },
+            )
+            assert reset.status_code == 200, reset.text
+            assert (
+                reset.json()["data"]["servers"][0]["auth_authorized"] is False
+            )
             detail = client.get(
                 "/api/ui/integrations",
                 params={
@@ -801,3 +853,59 @@ def test_unpaired_control_manages_network_mcp_without_executor(tmp_path):
             ]
             == []
         )
+
+
+def test_control_oauth_clear_cancels_pending_browser_authorization(tmp_path):
+    """Credential reset must retire any in-flight handshake for the same identity."""
+    from workgate.agent_bridge.auth import credential_store_key
+    from workgate.agent_bridge.state import load_agent_manifest
+
+    project = tmp_path / "project"
+    project.mkdir()
+    settings = Settings(
+        default_workdir=project,
+        state_dir=tmp_path / "state",
+        auth_mode="none",
+        base_url=BASE,
+        agent_bridge_enabled=True,
+    )
+    app, harness = build_paired_http_app(settings)
+    harness.control.config = replace(
+        harness.control.config, agent_config_dir=tmp_path / "control-agent"
+    )
+    cancelled: list[str] = []
+
+    class Broker:
+        def cancel_credential(self, key: str) -> None:
+            cancelled.append(key)
+
+    app.state.browser_mcp_oauth = Broker()
+    with TestClient(app, base_url=BASE) as client:
+        created = client.post(
+            "/api/ui/integrations",
+            json={
+                "owner": "control",
+                "kind": "mcp",
+                "action": "register",
+                "name": "oauth-test",
+                "config": {
+                    "type": "http",
+                    "url": "https://example.test/mcp",
+                    "auth": {"mode": "oauth", "scopes": ["tools.read"]},
+                },
+            },
+        )
+        assert created.status_code == 200, created.text
+        stored = load_agent_manifest(harness.control.config.agent_config_dir)
+        configured = stored.data.mcp_servers["oauth-test"]
+        assert configured.integration_id
+        result = client.post(
+            "/api/ui/integrations/auth",
+            json={
+                "owner": "control",
+                "name": "oauth-test",
+                "action": "clear_oauth",
+            },
+        )
+        assert result.status_code == 200, result.text
+        assert cancelled == [credential_store_key("oauth-test", configured)]

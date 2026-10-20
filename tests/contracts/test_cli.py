@@ -22,7 +22,7 @@ from workgate.config.roles import (
     EXECUTOR_SETTING_NAMES,
     SHARED_SETTING_NAMES,
 )
-from workgate.config.settings import Settings, load_settings
+from workgate.config.settings import LoadedConfigFile, Settings, load_settings
 from workgate.config.surface import (
     SETTING_SPECS,
     cli_overrides_from_args,
@@ -586,7 +586,6 @@ def test_main_dispatches_to_argparse_handler(monkeypatch):
         calls.append(args.mode)
 
     monkeypatch.setattr(server_cli, "run_control_from_args", run_from_args)
-
     cli.main(["control", "--mode", "stdio"])
 
     assert calls == ["stdio"]
@@ -652,7 +651,14 @@ def test_control_handler_initializes_only_control_owned_directories(
     def load_from_args(_args):
         return settings
 
-    monkeypatch.setattr(server_cli, "settings_from_args", load_from_args)
+    monkeypatch.setattr(
+        server_cli,
+        "settings_and_source_from_args",
+        lambda args: (
+            load_from_args(args),
+            LoadedConfigFile(None, None, frozenset()),
+        ),
+    )
     monkeypatch.setattr(
         server_cli,
         "configure_settings",
@@ -691,8 +697,11 @@ def test_control_handler_rejects_a_second_writer(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(
         server_cli,
-        "settings_from_args",
-        lambda _args: settings,
+        "settings_and_source_from_args",
+        lambda args: (
+            settings,
+            LoadedConfigFile(None, None, frozenset()),
+        ),
     )
     monkeypatch.setattr(
         server_cli, "configure_settings", lambda _settings: None

@@ -397,3 +397,22 @@ def test_subprocess_env_filters_normalize_edge_cases():
 
     with pytest.raises(ValueError, match="must be a list"):
         Settings.model_validate({"subprocess_env_blocklist": 123})
+
+
+def test_control_execution_session_limit_is_nullable_and_unlimited_by_default(
+    tmp_path,
+):
+    from workgate.config.control import resolve_control_config
+
+    assert Settings().max_agent_sessions is None
+    assert Settings(max_agent_sessions=None).max_agent_sessions is None
+    assert Settings(max_agent_sessions=256).max_agent_sessions == 256
+    for invalid in (0, -1, 10_001):
+        with pytest.raises(ValueError):
+            Settings(max_agent_sessions=invalid)
+
+    config = tmp_path / "control.yaml"
+    config.write_text("max_agent_sessions: null\n")
+    settings = load_settings(config)
+    assert settings.max_agent_sessions is None
+    assert resolve_control_config(settings).max_agent_sessions is None

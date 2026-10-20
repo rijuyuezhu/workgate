@@ -1,11 +1,11 @@
 """Shared argparse contracts for configuration-backed CLI commands."""
 
 import argparse
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 from typing import Any
 
-from .settings import Settings, load_settings
+from .settings import LoadedConfigFile, Settings, load_settings
 from .surface import cli_overrides_from_args, register_setting_cli_args
 
 
@@ -40,7 +40,11 @@ def register_config_and_setting_args(
     )
 
 
-def settings_from_args(args: argparse.Namespace) -> Settings:
+def settings_from_args(
+    args: argparse.Namespace,
+    *,
+    on_file_read: Callable[[LoadedConfigFile], None] | None = None,
+) -> Settings:
     """Load CLI-selected settings without installing process-wide runtime state."""
     setting_names = getattr(args, "_workgate_setting_names", None)
     settings = load_settings(
@@ -51,5 +55,15 @@ def settings_from_args(args: argparse.Namespace) -> Settings:
             args, "_workgate_default_config_path", None
         ),
         default_overrides=getattr(args, "_workgate_setting_defaults", None),
+        on_file_read=on_file_read,
     )
     return settings
+
+
+def settings_and_source_from_args(
+    args: argparse.Namespace,
+) -> tuple[Settings, LoadedConfigFile]:
+    """Load runtime settings and their file revision from the same read."""
+    captured: list[LoadedConfigFile] = []
+    settings = settings_from_args(args, on_file_read=captured.append)
+    return settings, captured[0]

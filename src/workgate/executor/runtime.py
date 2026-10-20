@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator
 from contextlib import ExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import JsonValue
 from websockets.exceptions import ConnectionClosedOK
@@ -28,6 +28,7 @@ from .errors import ExecutorResourceInventoryUnavailable
 from .files import files_config_from_executor_config
 from .gui import GuiService, build_gui_service
 from .path import resolve_default_workdir, resolve_path
+from .peer_probe import PeerProbeManager, connect_peer_probe
 from .peer_receiver import PeerReceiverManager
 from .peer_sender import send_peer_transfer
 from .services import RuntimeServices, build_runtime_services
@@ -95,6 +96,8 @@ class ExecutorRuntime:
     """Executor-owned short-lived native desktop GUI observations."""
     peer_receiver: PeerReceiverManager
     """One-time trusted-overlay transfer listeners."""
+    peer_probe: PeerProbeManager
+    """Sessionless, one-use bounded connectivity-check listeners."""
     runtime_state_store: ExecutorRuntimeStateStore
     """Small persisted runtime ownership/update authority."""
     managed_service: bool = False
@@ -266,7 +269,7 @@ class ExecutorRuntime:
         self._profile_lock = profile_lock
         self._started = True
 
-    async def _execute_protocol_command(self, command: ExecutorCommand):
+    async def _execute_protocol_command(self, command: ExecutorCommand) -> Any:
         """Execute one final command under this executor's state context."""
         with (
             use_role_config(self.config),
@@ -331,6 +334,80 @@ class ExecutorRuntime:
             and command.session_id is not None
         ):
             raise ValueError("dashboard_snapshot must not carry session_id")
+        if command.op == "ui.config.save":
+            if command.session_id is not None or set(command.args) != {
+                "revision",
+                "changes",
+            }:
+                raise ValueError("Invalid config save request")
+            from ..config.editing import ConfigEditError, save_config
+            from ..config.inspection import current_startup_config
+
+            snapshot = current_startup_config("executor")
+            if snapshot is None:
+                raise RuntimeError(
+                    "Executor startup configuration is unavailable"
+                )
+            revision = command.args["revision"]
+            changes = command.args["changes"]
+            if not isinstance(revision, str) or not isinstance(changes, dict):
+                raise ValueError("Invalid config save request")
+            try:
+                return {
+                    "revision": await asyncio.to_thread(
+                        save_config,
+                        snapshot,
+                        revision=revision,
+                        changes=changes,
+                    )
+                }
+            except ConfigEditError as exc:
+                return {"error": exc.code, "status": exc.status}
+        if command.op == "ui.config.apply":
+            if command.session_id is not None or set(command.args) != {
+                "revision"
+            }:
+                raise ValueError("Invalid config apply request")
+            from ..config.editing import ConfigEditError, validate_apply
+            from ..config.inspection import current_startup_config
+            from ..supervisor import restart_status
+
+            snapshot = current_startup_config("executor")
+            if snapshot is None:
+                raise RuntimeError(
+                    "Executor startup configuration is unavailable"
+                )
+            state = restart_status()
+            if state not in {"healthy", "recovered"}:
+                return {"error": "ParentUnavailable", "status": 409}
+            revision = command.args["revision"]
+            if not isinstance(revision, str):
+                raise ValueError("Invalid config apply request")
+            try:
+                await asyncio.to_thread(
+                    validate_apply, snapshot, revision=revision
+                )
+            except ConfigEditError as exc:
+                return {"error": exc.code, "status": exc.status}
+            # The connection submits the successful result to Control *before*
+            # triggering the Parent; this handler only validates and accepts.
+            return {"status": "queued"}
+        if command.op == "ui.config.inspect":
+            if command.session_id is not None or command.args:
+                raise ValueError(
+                    "config inspection cannot be session-bound or parameterized"
+                )
+            from ..config.inspection import current_startup_config
+
+            snapshot = current_startup_config("executor")
+            if snapshot is None:
+                raise RuntimeError(
+                    "Executor startup configuration is unavailable"
+                )
+            from ..supervisor import restart_status
+
+            data = await asyncio.to_thread(snapshot.describe)
+            return {**data, "apply_status": restart_status()}
         if command.op == "ui.executor_diagnostics":
             if command.session_id is not None or command.args:
                 raise ValueError(
@@ -344,6 +421,7 @@ class ExecutorRuntime:
             "ui.mcp.manage",
             "ui.mcp.test",
             "ui.skill.manage",
+            "ui.skill.files",
         }:
             if command.session_id is not None:
                 raise ValueError(
@@ -409,6 +487,26 @@ class ExecutorRuntime:
         args = dict(command.args)
         if command.session_id is not None:
             args.setdefault("session_id", command.session_id)
+        if command.op.startswith("peer.probe_"):
+            if command.session_id is not None:
+                raise ValueError(
+                    "peer connectivity diagnostics cannot carry session_id"
+                )
+            if command.op == "peer.probe_prepare":
+                return await self.peer_probe.prepare(
+                    _peer_arg(args, "tailnet_id", str)
+                )
+            if command.op == "peer.probe_cancel":
+                await self.peer_probe.cancel(_peer_arg(args, "probe_id", str))
+                return {"cancelled": True}
+            if command.op == "peer.probe_connect":
+                return await connect_peer_probe(
+                    host=_peer_arg(args, "host", str),
+                    port=_peer_arg(args, "port", int),
+                    token=_peer_arg(args, "token", str),
+                    tailnet_id=_peer_arg(args, "tailnet_id", str),
+                )
+            raise ValueError("Unknown peer probe operation")
         if command.op == "transfer.peer_prepare":
             if command.session_id is None:
                 raise ValueError("peer prepare requires a destination session")
@@ -549,7 +647,10 @@ class ExecutorRuntime:
                 try:
                     try:
                         try:
-                            await self.peer_receiver.aclose()
+                            try:
+                                await self.peer_probe.aclose()
+                            finally:
+                                await self.peer_receiver.aclose()
                         finally:
                             await self.gui.aclose()
                     finally:
@@ -643,6 +744,7 @@ def build_executor_runtime(
         browser=browser_service,
         gui=gui_service,
         peer_receiver=PeerReceiverManager(config, services.tool_session_store),
+        peer_probe=PeerProbeManager(),
         runtime_state_store=runtime_state_store,
         managed_service=managed_service,
         runtime_ownership=runtime_ownership,

@@ -194,11 +194,6 @@ void (async () => {
     executorSubtabs: Array.from(document.querySelectorAll("#executor-subtabs [data-executor-subtab]")),
     executorSubtabPanes: Array.from(document.querySelectorAll(".executor-subtab-pane[data-executor-pane]")),
     executorMcpAdd: document.getElementById("executor-mcp-add"),
-    executorControlStandalone: document.getElementById("executor-control-standalone"),
-    executorControlMcpAdd: document.getElementById("executor-control-mcp-add"),
-    executorControlMcpBody: document.getElementById("executor-control-mcp-body"),
-    executorControlSkillsAdd: document.getElementById("executor-control-skills-add"),
-    executorControlSkillsBody: document.getElementById("executor-control-skills-body"),
     executorSkillsAdd: document.getElementById("executor-skills-add"),
     executorIntegrationDialog: document.getElementById("executor-integration-dialog"),
     executorIntegrationForm: document.getElementById("executor-integration-form"),
@@ -224,11 +219,20 @@ void (async () => {
     executorMcpSecretValue: document.getElementById("executor-mcp-secret-value"),
     executorMcpSecretSet: document.getElementById("executor-mcp-secret-set"),
     executorMcpOAuthActions: document.getElementById("executor-mcp-oauth-actions"),
+    executorMcpOAuthAdvanced: document.getElementById("executor-mcp-oauth-advanced"),
+    executorMcpOAuthAuthorize: document.getElementById("executor-mcp-oauth-authorize"),
+    executorMcpOAuthLink: document.getElementById("executor-mcp-oauth-link"),
+    executorMcpOAuthCopy: document.getElementById("executor-mcp-oauth-copy"),
+    executorMcpOAuthCancel: document.getElementById("executor-mcp-oauth-cancel"),
+    executorMcpOAuthProgress: document.getElementById("executor-mcp-oauth-progress"),
+    executorMcpOAuthLogout: document.getElementById("executor-mcp-oauth-logout"),
     executorMcpOAuthClear: document.getElementById("executor-mcp-oauth-clear"),
     executorIntegrationToggle: document.getElementById("executor-integration-toggle"),
     executorIntegrationDelete: document.getElementById("executor-integration-delete"),
     executorIntegrationContent: document.getElementById("executor-integration-content"),
     executorIntegrationSkillWrap: document.getElementById("executor-integration-skill-wrap"),
+    executorSkillFilesEntry: document.getElementById("executor-skill-files-entry"),
+    executorSkillFilesOpen: document.getElementById("executor-skill-files-open"),
     executorIntegrationMcpFields: document.getElementById("executor-integration-mcp-fields"),
     executorIntegrationUrlWrap: document.getElementById("executor-integration-url-wrap"),
     executorIntegrationCommandWrap: document.getElementById("executor-integration-command-wrap"),
@@ -531,7 +535,7 @@ void (async () => {
     const definition = viewDefinitions[view];
     document.body.dataset.activeView = view;
     elements.pageTitle.textContent = definition.title;
-    document.title = `${definition.title} · Workgate`;
+    document.title = `${definition.title} — Workgate`;
 
     for (const item of elements.appNavItems) {
       const active = item.dataset.view === view;
@@ -541,6 +545,10 @@ void (async () => {
     }
     for (const panel of elements.appViews) {
       panel.hidden = panel.dataset.appView !== view;
+    }
+    if (view !== "executors") {
+      executors.closeTopology();
+      executors.clearConfiguration();
     }
     if (view !== "tasks") {
       guiViewer.close();

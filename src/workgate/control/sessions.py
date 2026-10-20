@@ -39,6 +39,7 @@ _CREATE_ABSENT = "session_create_absent"
 _CREATE_UNCONFIRMED = "session_create_unconfirmed"
 _LOOKUP_TIMEOUT_S = 2.0
 _ACTIVE_SESSION_WINDOW_S = 5 * 60 * 60
+_RETENTION_SWEEP_BATCH_SIZE = 32
 _BROWSER_TOOL_NAMES = frozenset(
     {"browser_session", "browser_snapshot", "browser_act", "browser_run_script"}
 )
@@ -73,6 +74,8 @@ class ControlSessionCoordinator:
         ]
         | None = None,
         implicit_task_discarder: Callable[[str], None] | None = None,
+        task_session_discarder: Callable[[ControlSessionRecord], None]
+        | None = None,
         clock=time.time,
     ) -> None:
         self._state = state
@@ -82,12 +85,14 @@ class ControlSessionCoordinator:
         self._clock = clock
         self._locks: dict[str, asyncio.Lock] = {}
         self._capacity_lock = asyncio.Lock()
+        self._retention_scan_offset = 0
         self._reconcile_tasks: set[asyncio.Task[None]] = set()
         self._missing_by_executor: dict[str, dict[str, float]] = {}
         self._activity_by_session: dict[str, float] = {}
         self._task_session_admitter = task_session_admitter
         self._implicit_task_creator = implicit_task_creator
         self._implicit_task_discarder = implicit_task_discarder
+        self._task_session_discarder = task_session_discarder
         self._auto_cleanup_blocked: Callable[[str], Awaitable[bool]] | None = (
             None
         )
@@ -362,7 +367,7 @@ class ControlSessionCoordinator:
         payload = self._unwrap(result)
         if not isinstance(payload, dict) or payload.get("absent") is not True:
             raise RuntimeError("executor did not confirm session absence")
-        self._mark_ended(record)
+        self._mark_ended(record, confirmed=True)
         executor_stopped_jobs = payload.get("stopped_jobs", [])
         stopped_jobs = list(
             dict.fromkeys(
@@ -380,6 +385,43 @@ class ControlSessionCoordinator:
             "stopped_shells": payload.get("stopped_shells", []),
             "stopped_browsers": payload.get("stopped_browsers", []),
         }
+
+    async def reap_expired_sessions(self) -> None:
+        """Safely expire a bounded slice of idle sessions even without new admissions."""
+        if self._agent_session_retention_s == 0:
+            return
+        # A creating session may still have an unconfirmed remote create.
+        # Periodic cleanup only reaps active sessions after an authoritative
+        # Executor activity/resource lookup; leave ambiguous creates alone.
+        records = tuple(
+            record
+            for record in self._cleanup_records()
+            if record.status == "active"
+        )
+        if not records:
+            return
+        count = min(len(records), _RETENTION_SWEEP_BATCH_SIZE)
+        start = self._retention_scan_offset % len(records)
+        self._retention_scan_offset = (start + count) % len(records)
+        cutoff = self._clock() - self._agent_session_retention_s
+        for index in range(count):
+            record = records[(start + index) % len(records)]
+            try:
+                # A cached missing observation may be stale after a reconnect.
+                # Never terminate a recovered session based only on that hint.
+                if (
+                    str(record.session_id)
+                    in self._missing_by_executor.get(
+                        str(record.executor_id), {}
+                    )
+                    and await self._lookup_session_summary(record) is None
+                ):
+                    continue
+                await self._auto_end_if_eligible(record, cutoff=cutoff)
+            except Exception:
+                logger.exception(
+                    "Failed to reap expired session %s", record.session_id
+                )
 
     async def _reap_for_capacity(self) -> None:
         maximum = self._max_agent_sessions
@@ -540,7 +582,8 @@ class ControlSessionCoordinator:
         if maximum is not None and self._nonended_session_count() >= maximum:
             raise RuntimeError(
                 "execution session limit reached: "
-                f"{maximum}; end an active session or wait for retention cleanup"
+                f"{self._nonended_session_count()}/{maximum} (Control max_agent_sessions); "
+                "end an idle session or configure max_agent_sessions: null"
             )
 
     async def reconcile_hello(self, executor_id: str) -> None:
@@ -566,7 +609,7 @@ class ControlSessionCoordinator:
             item = reported.get(session_id)
             if record.status == "terminating":
                 if item is None:
-                    self._mark_ended(record)
+                    self._mark_ended(record, confirmed=True)
                 else:
                     self._schedule_termination(record)
                 continue
@@ -710,6 +753,9 @@ class ControlSessionCoordinator:
         self._activity_by_session[session_id] = float(observed_at)
 
     def _discard_failed_create(self, record: ControlSessionRecord) -> None:
+        if not record.task_created and self._task_session_discarder is not None:
+            self._task_session_discarder(record)
+            return
         self._state.remove_session(str(record.session_id))
         if record.task_created and self._implicit_task_discarder is not None:
             self._implicit_task_discarder(str(record.task_id))
@@ -790,7 +836,9 @@ class ControlSessionCoordinator:
         except Exception:
             return
 
-    def _mark_ended(self, record: ControlSessionRecord) -> None:
+    def _mark_ended(
+        self, record: ControlSessionRecord, *, confirmed: bool = False
+    ) -> None:
         self._activity_by_session.pop(str(record.session_id), None)
         missing = self._missing_by_executor.get(str(record.executor_id))
         if missing is not None:
@@ -798,7 +846,10 @@ class ControlSessionCoordinator:
             if not missing:
                 self._missing_by_executor.pop(str(record.executor_id), None)
         self._state.update_session(
-            str(record.session_id), status="ended", updated_at=self._clock()
+            str(record.session_id),
+            status="ended",
+            executor_absence_confirmed=confirmed,
+            updated_at=self._clock(),
         )
 
     async def _require_available(self, record: ControlSessionRecord) -> None:

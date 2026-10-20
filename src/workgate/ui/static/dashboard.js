@@ -386,7 +386,7 @@ export function createDashboardController({
     const load = dashboardNumber(system.load_1m);
     renderResourceCards(document.querySelector("#dashboard-panel .dashboard-summary"), system, controllerState.history);
     elements.dashboardAuditTotal.textContent = text(payload.audit_total_24h, "0");
-    elements.dashboardAuditDetail.textContent = `${text(payload.audit_failed_24h, "0")} failed · last 24h`;
+    elements.dashboardAuditDetail.textContent = `${text(payload.audit_failed_24h, "0")} failed in 24h`;
     elements.dashboardGenerated.textContent = dashboardTimestamp(payload.generated_at, "Unknown sample time");
 
     elements.dashboardCpuValue.textContent = dashboardPercent(system.cpu_percent);

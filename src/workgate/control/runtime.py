@@ -1,12 +1,18 @@
 """Control composition owner for long-lived server processes."""
 
+import asyncio
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 
 from ..config.control import ControlConfig, resolve_control_config
 from ..config.settings import Settings
-from ..jobs.managed import ManagedJobsRuntime
+from ..jobs.managed import (
+    ManagedJobsRuntime,
+    managed_jobs_last_activity_for_sessions,
+    use_managed_jobs_runtime,
+)
 from ..oauth.core.state import OAuthState, build_oauth_state
 from ..persistence import FileStateStore
 from ..tools.catalog import ToolCatalog
@@ -20,6 +26,7 @@ from .jobs import ControlJobService
 from .object_store_transfer import S3ObjectTransferService
 from .pairing import ExecutorPairingService
 from .payload_store import PayloadStore
+from .peer_links import ControlPeerLinkService
 from .session_copy import ControlSessionCopyService
 from .sessions import ControlSessionCoordinator
 from .state import ControlState
@@ -27,6 +34,8 @@ from .streams import ControlStreamHub
 from .task_state import ControlTaskService
 from .tool_composition import build_control_tool_catalog
 from .transfer_gateway import ControlTransferGateway
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -49,6 +58,8 @@ class ControlRuntime:
     """Control authority for execution-session lifecycle and executor routing."""
     session_copy_service: ControlSessionCopyService
     """Control orchestration for copies between existing execution sessions."""
+    peer_links: ControlPeerLinkService
+    """On-demand, short-lived and non-durable peer link evidence."""
     transfer_gateway: ControlTransferGateway
     """Process-local raw-byte capabilities bound to trusted executors."""
     download_service: ControlDownloadService
@@ -71,6 +82,9 @@ class ControlRuntime:
     """Control-owned public tool catalog."""
     agent_bridge: ControlAgentBridgeService
     """Shared MCP discovery and management authority for tools and WebUI."""
+    _idle_sweep_task: asyncio.Task[None] | None = field(
+        default=None, init=False, repr=False
+    )
     _started: bool = field(default=False, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
     _close_complete: bool = field(default=False, init=False, repr=False)
@@ -126,6 +140,53 @@ class ControlRuntime:
             raise
 
         self._started = True
+        if (
+            self.config.task_idle_block_after_s
+            or self.config.agent_session_retention_s
+        ):
+            self._idle_sweep_task = asyncio.create_task(
+                self._run_idle_sweep(), name="workgate-task-idle-sweep"
+            )
+
+    async def _run_idle_sweep(self) -> None:
+        while True:
+            if self.config.task_idle_block_after_s:
+                sweep = asyncio.create_task(
+                    self.task_service.sweep_idle_tasks()
+                )
+                try:
+                    await asyncio.shield(sweep)
+                except asyncio.CancelledError:
+                    # asyncio.to_thread is not cancellable: finish the file-lock
+                    # pass before ControlState and the Job store are closed.
+                    try:
+                        await sweep
+                    except Exception:
+                        logger.exception(
+                            "Task idle sweep failed during shutdown"
+                        )
+                    raise
+                except Exception:
+                    logger.exception("Task idle sweep failed")
+            if self.config.agent_session_retention_s:
+                sweep = asyncio.create_task(
+                    self.session_coordinator.reap_expired_sessions()
+                )
+                try:
+                    await asyncio.shield(sweep)
+                except asyncio.CancelledError:
+                    # Finish any in-flight session termination before closing
+                    # transport; otherwise it can remain stuck in terminating.
+                    try:
+                        await sweep
+                    except Exception:
+                        logger.exception(
+                            "Session retention sweep failed during shutdown"
+                        )
+                    raise
+                except Exception:
+                    logger.exception("Session retention sweep failed")
+            await asyncio.sleep(60 * 60)
 
     async def aclose(self) -> None:
         """Close every control-owned service; repeated close is harmless."""
@@ -133,6 +194,12 @@ class ControlRuntime:
             return
         self._closed = True
         errors: list[BaseException] = []
+
+        if self._idle_sweep_task is not None:
+            self._idle_sweep_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._idle_sweep_task
+            self._idle_sweep_task = None
 
         async def close_async(close) -> None:
             try:
@@ -145,6 +212,7 @@ class ControlRuntime:
         await close_async(self.human_ui_runtime.aclose)
         await close_async(self.oauth_state.aclose)
         await close_async(self.session_copy_service.aclose)
+        await close_async(self.peer_links.aclose)
         try:
             self.transfer_gateway.close()
         except BaseException as exc:
@@ -188,7 +256,15 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         max_pending_attempts=config.executor_pairing_max_pending,
         ttl_s=config.executor_pairing_ttl_s,
     )
-    task_service = ControlTaskService(control_state, state_store, config)
+    managed_jobs_runtime = ManagedJobsRuntime(state_store, config)
+
+    def last_job_activity(session_ids: tuple[str, ...]) -> float | None:
+        with use_managed_jobs_runtime(managed_jobs_runtime):
+            return managed_jobs_last_activity_for_sessions(session_ids)
+
+    task_service = ControlTaskService(
+        control_state, state_store, config, jobs_last_activity=last_job_activity
+    )
     session_coordinator = ControlSessionCoordinator(
         control_state,
         executor_transport,
@@ -197,6 +273,7 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         task_session_admitter=task_service.admit_session_attachment,
         implicit_task_creator=task_service.create_for_session,
         implicit_task_discarder=task_service.discard_implicit_task,
+        task_session_discarder=task_service.discard_failed_attachment,
     )
     executor_fleet = ControlExecutorFleetService(
         control_state,
@@ -244,7 +321,6 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
     download_service = ControlDownloadService(
         session_coordinator, executor_transport, config
     )
-    managed_jobs_runtime = ManagedJobsRuntime(state_store, config)
     job_service = ControlJobService(
         session_coordinator,
         managed_jobs_runtime,
@@ -282,6 +358,7 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         executor_fleet=executor_fleet,
         session_coordinator=session_coordinator,
         session_copy_service=session_copy_service,
+        peer_links=ControlPeerLinkService(control_state, executor_transport),
         transfer_gateway=transfer_gateway,
         download_service=download_service,
         job_service=job_service,

@@ -7,9 +7,14 @@ from pathlib import Path
 from typing import Any
 
 from ..app_paths import ensure_private_directory
-from ..config.cli import register_config_and_setting_args, settings_from_args
+from ..config.cli import (
+    register_config_and_setting_args,
+    settings_and_source_from_args,
+)
 from ..config.control import CONTROL_SETTING_NAMES
+from ..config.inspection import capture_startup_config
 from ..config.settings import configure_settings
+from ..supervisor import supervise_cli_role
 from ..utils.private_files import private_file_lock
 from .http.app import run_http
 from .mcp.app import run_mcp
@@ -67,7 +72,10 @@ def _dispatch_control(settings: Any) -> None:
 
 def run_control_from_args(args: argparse.Namespace) -> None:
     """Load production control settings without acquiring executor machine authority."""
-    settings = settings_from_args(args)
+    if supervise_cli_role("control", args):
+        return
+    settings, source = settings_and_source_from_args(args)
+    capture_startup_config("control", args, settings, source)
     ensure_private_directory(settings.state_dir)
     ensure_private_directory(settings.data_dir)
     ensure_private_directory(settings.audit_log_path.parent)

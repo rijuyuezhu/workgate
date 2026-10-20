@@ -824,6 +824,9 @@
             "lines": [
               {
                 "code": "--max-agent-sessions"
+              },
+              {
+                "code": "--unset-max-agent-sessions clears the value"
               }
             ]
           },
@@ -832,9 +835,9 @@
           },
           "integer",
           {
-            "code": "256"
+            "code": "unset"
           },
-          "Maximum durable execution sessions after stale-session pruning."
+          "Control-wide execution-session limit; null admits unlimited sessions. A full explicit cap may reclaim sessions idle for 5 hours after confirming no active resources."
         ],
         [
           {
@@ -854,7 +857,7 @@
           {
             "code": "2592000"
           },
-          "Idle retention for durable execution sessions; 0 disables age-based expiry."
+          "Idle execution-session retention (seconds), checked hourly; 0 disables age expiry. Active jobs, terminals, offline and unconfirmed sessions are preserved."
         ],
         [
           {
@@ -1175,6 +1178,26 @@
             "code": "1000"
           },
           "Todo-list item limit."
+        ],
+        [
+          {
+            "code": "task_idle_block_after_s"
+          },
+          {
+            "lines": [
+              {
+                "code": "--task-idle-block-after-s"
+              }
+            ]
+          },
+          {
+            "code": "WORKGATE_TASK_IDLE_BLOCK_AFTER_S"
+          },
+          "integer",
+          {
+            "code": "86400"
+          },
+          "Auto-block confirmed idle active Tasks after this interval; 0 disables."
         ],
         [
           {
@@ -2541,22 +2564,22 @@
     {
       "choices": [],
       "cli": "--max-agent-sessions",
-      "default": 256,
-      "default_display": "256",
-      "description": "Maximum durable execution sessions after stale-session pruning.",
+      "default": null,
+      "default_display": "unset",
+      "description": "Control-wide execution-session limit; null admits unlimited sessions. A full explicit cap may reclaim sessions idle for 5 hours after confirming no active resources.",
       "env": "WORKGATE_MAX_AGENT_SESSIONS",
       "name": "max_agent_sessions",
-      "nullable": false,
+      "nullable": true,
       "section": "Safety and resource limits",
       "type": "integer",
-      "unset_cli": null
+      "unset_cli": "--unset-max-agent-sessions"
     },
     {
       "choices": [],
       "cli": "--agent-session-retention-s",
       "default": 2592000,
       "default_display": "2592000",
-      "description": "Idle retention for durable execution sessions; 0 disables age-based expiry.",
+      "description": "Idle execution-session retention (seconds), checked hourly; 0 disables age expiry. Active jobs, terminals, offline and unconfirmed sessions are preserved.",
       "env": "WORKGATE_AGENT_SESSION_RETENTION_S",
       "name": "agent_session_retention_s",
       "nullable": false,
@@ -2773,6 +2796,19 @@
       "description": "Todo-list item limit.",
       "env": "WORKGATE_MAX_TODOS",
       "name": "max_todos",
+      "nullable": false,
+      "section": "Safety and resource limits",
+      "type": "integer",
+      "unset_cli": null
+    },
+    {
+      "choices": [],
+      "cli": "--task-idle-block-after-s",
+      "default": 86400,
+      "default_display": "86400",
+      "description": "Auto-block confirmed idle active Tasks after this interval; 0 disables.",
+      "env": "WORKGATE_TASK_IDLE_BLOCK_AFTER_S",
+      "name": "task_idle_block_after_s",
       "nullable": false,
       "section": "Safety and resource limits",
       "type": "integer",

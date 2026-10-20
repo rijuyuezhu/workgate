@@ -81,6 +81,8 @@ jobs:
         run: |
           uv run python -c "import winpty, uiautomation; print('Windows native dependencies imported')"
           uv run pytest -q tests/contracts/test_windows_conpty_core.py tests/contracts/test_windows_file_lock.py tests/contracts/test_windows_shell_dialect.py tests/contracts/test_windows_subprocess_env.py tests/contracts/test_windows_path.py tests/contracts/test_windows_native_runner.py tests/executor/test_windows_services.py tests/executor/test_windows_gui.py tests/executor/test_windows_gui_edges.py tests/executor/test_windows_gui_desktop.py tests/executor/test_windows_capture.py
+      - name: Native Windows Parent/Child IPC, restart and crash cleanup
+        run: uv run python scripts/validation/windows-supervisor-smoke.py
       - name: Native Windows GUI desktop or headless fail-closed E2E
         run: uv run python scripts/validation/windows-gui-task-smoke.py --ci
       - name: Native Control, Executor and concurrent ConPTY WebUI E2E

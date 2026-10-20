@@ -1,4 +1,10 @@
 import { renderResourceCards } from "./dashboard.js";
+import { createSkillFileEditor } from "./skill_file_editor.js";
+import { createExecutorTopology } from "./executor_topology.js";
+import { createConfigurationView } from "./config_inspector.js";
+
+// A UI selection, not an Executor ID; never send it to executor-scoped APIs.
+const CONTROL_SELECTION = "__control__";
 
 export function createExecutorsController({
   elements,
@@ -11,7 +17,8 @@ export function createExecutorsController({
 }) {
   const state = {
     executors: [],
-    selectedId: "",
+    selectedId: CONTROL_SELECTION,
+    controlAvailable: false,
     loading: false,
     generation: 0,
     timer: null,
@@ -28,7 +35,32 @@ export function createExecutorsController({
     managementId: "",
     managementGeneration: 0,
     editor: null,
+    oauthSessions: new Map(),
+    oauthTimer: null,
   };
+
+  const topology = createExecutorTopology({
+    request,
+    onAuthenticationRequired: () => void reloadApp(),
+    onClose: () => onNavigate("list", {replace: true}),
+  });
+
+  const executorConfigView = createConfigurationView({
+    root: document.getElementById("executor-config-body"), request,
+  });
+
+  const skillFileEditor = createSkillFileEditor({
+    request,
+    onClose: () => void loadManagement(true),
+  });
+
+  function clearConfiguration() {
+    executorConfigView.clear();
+  }
+
+  function isControlSelected() {
+    return state.selectedId === CONTROL_SELECTION;
+  }
 
   function selectedExecutor() {
     return state.executors.find((item) => item.executor_id === state.selectedId) || null;
@@ -52,7 +84,7 @@ export function createExecutorsController({
   }
 
   function select(executorId) {
-    if (!state.executors.some((item) => item.executor_id === executorId)) return;
+    if (executorId !== CONTROL_SELECTION && !state.executors.some((item) => item.executor_id === executorId)) return;
     const changed = state.selectedId !== executorId;
     // Changing the selected Executor cannot cancel a committed remote Apply.
     if (changed && state.editor?.busy && state.editor.applying) return;
@@ -70,9 +102,10 @@ export function createExecutorsController({
       state.management = null;
       notice(elements.executorActionStatus, "");
     }
-    if (changed) resetMetrics();
+    if (changed) { resetMetrics(); executorConfigView.clear(); }
     renderList();
     renderDetails();
+    if (changed && activeSubtab() === "config") void executorConfigView.open(isControlSelected() ? "" : state.selectedId);
     renderManagement();
     void loadSkillSources(true);
     void refreshMetrics();
@@ -99,52 +132,70 @@ export function createExecutorsController({
     elements.executorRenameOpen.disabled = state.loading || !mutable;
     elements.executorRevokeOpen.disabled = state.loading || !mutable;
     elements.executorDrain.textContent = selected?.draining ? "Resume" : "Drain";
+    elements.executorReset.closest(".executor-detail-actions").hidden = isControlSelected();
   }
 
   function renderList() {
-    elements.executorList.replaceChildren();
-    if (!state.executors.length) {
-      const empty = document.createElement("div");
-      empty.className = "empty-state";
-      empty.textContent = "No executors are paired yet.";
-      elements.executorList.append(empty);
-      return;
+    // Preserve card DOM/focus through the 4-second inventory refresh.
+    const entries = [
+      {key: CONTROL_SELECTION, name: "Control", label: "Control plane",
+       status: state.controlAvailable ? "available" : "unavailable"},
+      ...state.executors.map(executor => ({
+        key: executor.executor_id,
+        name: executor.name || executor.executor_id,
+        label: executor.runtime?.workgate_version || "Executor",
+        status: executor.revoked_at ? "revoked" : executor.draining ? "draining" : executor.online ? "online" : "offline",
+      })),
+    ];
+    const controlGroup = elements.executorList.querySelector(".executor-control-group");
+    const peerGroup = elements.executorList.querySelector(".executor-peer-group");
+    const peerRows = peerGroup.querySelector(".executor-peer-rows");
+    peerGroup.hidden = state.executors.length === 0;
+    const existing = new Map(Array.from(elements.executorList.querySelectorAll(".executor-row"),
+      child => [child.dataset.selection, child]));
+    let peerPosition = 0;
+    for (const entry of entries) {
+      let button = existing.get(entry.key);
+      existing.delete(entry.key);
+      if (!button) {
+        button = document.createElement("button");
+        button.type = "button";
+        button.className = "executor-band executor-row";
+        button.dataset.selection = entry.key;
+        const indicator = document.createElement("span");
+        indicator.className = "executor-band-mark";
+        const main = document.createElement("span");
+        main.className = "executor-band-main";
+        const name = document.createElement("strong");
+        name.className = "executor-band-name";
+        const meta = document.createElement("span");
+        meta.className = "executor-band-meta";
+        main.append(name, meta);
+        const status = document.createElement("span");
+        status.className = "executor-band-state";
+        button.append(indicator, main, status);
+        button.addEventListener("click", () => {
+          select(button.dataset.selection);
+          onNavigate("detail");
+        });
+      }
+      const selected = entry.key === state.selectedId;
+      button.classList.toggle("executor-row-selected", selected);
+      button.setAttribute("aria-pressed", String(selected));
+      button.title = entry.name;
+      button.querySelector(".executor-band-mark").textContent = entry.name.slice(0, 1).toUpperCase();
+      button.querySelector(".executor-band-name").textContent = entry.name;
+      button.querySelector(".executor-band-meta").textContent = entry.label;
+      const status = button.querySelector(".executor-band-state");
+      status.textContent = entry.status;
+      status.dataset.status = entry.status === "available" ? "online"
+        : entry.status === "unavailable" ? "offline" : entry.status;
+      const group = entry.key === CONTROL_SELECTION ? controlGroup : peerRows;
+      const position = entry.key === CONTROL_SELECTION ? 0 : peerPosition++;
+      if (group.children[position] !== button)
+        group.insertBefore(button, group.children[position] || null);
     }
-    for (const executor of state.executors) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "executor-band executor-row";
-      const selected = executor.executor_id === state.selectedId;
-      if (selected) button.classList.add("executor-row-selected");
-      button.setAttribute("aria-pressed", selected ? "true" : "false");
-      button.title = executor.name || executor.executor_id;
-
-      const indicator = document.createElement("span");
-      indicator.className = "executor-band-mark";
-      indicator.textContent = (executor.name || executor.executor_id).slice(0, 1).toUpperCase();
-
-      const main = document.createElement("span");
-      main.className = "executor-band-main";
-      const name = document.createElement("strong");
-      name.className = "executor-band-name";
-      name.textContent = executor.name || executor.executor_id;
-      const meta = document.createElement("span");
-      meta.className = "executor-band-meta";
-      meta.textContent = executor.runtime?.workgate_version || "Executor";
-      main.append(name, meta);
-
-      const status = document.createElement("span");
-      status.className = "executor-band-state";
-      status.textContent = executor.revoked_at
-        ? "revoked" : executor.draining ? "draining" : executor.online ? "online" : "offline";
-      status.dataset.status = status.textContent;
-      button.append(indicator, main, status);
-      button.addEventListener("click", () => {
-        select(executor.executor_id);
-        onNavigate("detail");
-      });
-      elements.executorList.append(button);
-    }
+    for (const stale of existing.values()) stale.remove();
   }
 
   function activeSubtab() {
@@ -152,9 +203,12 @@ export function createExecutorsController({
   }
 
   function setSubtab(tab) {
-    if (!selectedExecutor() || !["overview", "mcp", "skills"].includes(tab)) return;
+    if (!state.selectedId || !["overview", "mcp", "skills", "config"].includes(tab)
+      || tab === activeSubtab()) return;
     state.detailTabs.set(state.selectedId, tab);
     renderSubtabs();
+    if (tab === "config") void executorConfigView.open(isControlSelected() ? "" : state.selectedId);
+    else executorConfigView.clear();
     if (tab === "overview") void refreshMetrics();
     if (tab === "mcp" || tab === "skills") void loadManagement();
   }
@@ -213,6 +267,7 @@ export function createExecutorsController({
       if (row.status === "Disabled") item.dataset.state = "disabled";
       if (row.status === "Enabled") item.dataset.state = "enabled";
       if (row.status === "Overridden") item.dataset.state = "overridden";
+      if (row.authState) item.dataset.auth = row.authState;
       const icon = rowIcon(row.icon);
       if (icon) {
         const mark = document.createElement('span');
@@ -235,6 +290,14 @@ export function createExecutorsController({
       detail.textContent = row.detail || "";
       text.append(name);
       if (row.detail) text.append(detail);
+      if (row.authState) {
+        const auth = document.createElement("span");
+        auth.className = "executor-row-auth";
+        auth.textContent = row.authMode === "secret"
+          ? (row.authState === "authorized" ? "✓ Secret configured" : "Secret required")
+          : (row.authState === "authorized" ? "✓ Authorized" : "Authorization required");
+        text.append(auth);
+      }
       item.append(text);
       const tail = document.createElement("div");
       tail.className = "executor-manage-tail";
@@ -285,13 +348,14 @@ export function createExecutorsController({
 
   async function loadManagement(force = false) {
     const executorId = state.selectedId;
-    const scope = executorId || "__control__";
-    if (state.managementId === scope && !force) return;
+    if (state.managementId === executorId && !force) return;
     const generation = ++state.managementGeneration;
-    state.managementId = scope;
+    state.managementId = executorId;
     state.management = null;
     renderManagement();
-    const sources = [["control", "mcp"], ["executor", "mcp"], ["executor", "skill"], ["control", "skill"]];
+    const sources = isControlSelected()
+      ? [["control", "mcp"], ["control", "skill"]]
+      : [["control", "mcp"], ["executor", "mcp"], ["executor", "skill"], ["control", "skill"]];
     const online = Boolean(selectedExecutor()?.online && !selectedExecutor()?.revoked_at);
     const results = await Promise.all(sources.map(async ([owner, kind]) => {
       if (owner === "executor" && !online) return { error: "Offline" };
@@ -302,7 +366,9 @@ export function createExecutorsController({
       }
     }));
     if (generation !== state.managementGeneration || executorId !== state.selectedId) return;
-    state.management = {control: results[0], executorMcp: results[1], skills: results[2], controlSkills: results[3]};
+    state.management = isControlSelected()
+      ? {control: results[0], controlSkills: results[1]}
+      : {control: results[0], executorMcp: results[1], skills: results[2], controlSkills: results[3]};
     renderManagement();
   }
 
@@ -312,7 +378,8 @@ export function createExecutorsController({
     mcp.replaceChildren();
     skills.replaceChildren();
     const stateRows = (message) => [{ title: message, detail: "" }];
-    const snap = state.management;
+    const snap = state.controlAvailable ? state.management : null;
+    const unavailable = state.controlAvailable ? null : {error: "Unavailable"};
     const renderGroup = (container, title, result, owner, kind, shadowed = new Set()) => {
       if (!result || result.error) {
         addGroup(container, title, result?.error
@@ -325,22 +392,20 @@ export function createExecutorsController({
         title: item.name,
         detail: kind === "mcp" ? item.type : "SKILL.md",
         status: item.enabled ? (shadowed.has(item.name) ? "Overridden" : "Enabled") : "Disabled",
+        authMode: kind === "mcp" ? item.auth?.mode : null,
+        authState: kind === "mcp" && item.enabled && !shadowed.has(item.name)
+          && item.auth?.mode !== "none" && typeof item.auth_authorized === "boolean"
+          ? (item.auth_authorized ? "authorized" : "required") : null,
         manage: result.can_manage ? () => void openEditor({owner, kind, item}) : null,
       }));
       addGroup(container, title, rows.length ? rows : stateRows("None"));
     };
-    renderGroup(mcp, "Executor", snap?.executorMcp, "executor", "mcp");
+    if (!isControlSelected()) renderGroup(mcp, "Executor", unavailable || snap?.executorMcp, "executor", "mcp");
     const shadowedMcp = new Set((snap?.executorMcp?.servers || [])
       .filter((server) => server.enabled).map((server) => server.name));
-    renderGroup(mcp, "Control", snap?.control, "control", "mcp", shadowedMcp);
-    elements.executorControlStandalone.hidden = Boolean(selectedExecutor());
-    elements.executorControlMcpBody.replaceChildren();
-    if (!selectedExecutor()) {
-      renderGroup(elements.executorControlMcpBody, "Control", snap?.control, "control", "mcp");
-    }
-    elements.executorControlMcpAdd.disabled = !Boolean(snap?.control?.can_manage);
-    renderGroup(skills, "Executor", snap?.skills, "executor", "skill");
-    const globalsAvailable = Boolean(selectedExecutor()?.online && state.skillSources?.status === "available" && state.skillSourceId === state.selectedId);
+    renderGroup(mcp, "Control", unavailable || snap?.control, "control", "mcp", shadowedMcp);
+    if (!isControlSelected()) renderGroup(skills, "Executor", unavailable || snap?.skills, "executor", "skill");
+    const globalsAvailable = Boolean(state.controlAvailable && selectedExecutor()?.online && state.skillSources?.status === "available" && state.skillSourceId === state.selectedId);
     const globalSkills = state.skillSources?.executor?.skills;
     const readOnly = globalsAvailable ? [
       ...(globalSkills?.selected || []).filter((skill) => skill.source === "global")
@@ -350,7 +415,7 @@ export function createExecutorsController({
     ] : [];
     const globalStatus = !selectedExecutor()?.online ? "Offline"
       : !globalsAvailable ? "Unavailable" : "None";
-    addGroup(skills, "User Global", readOnly.length ? readOnly
+    if (!isControlSelected()) addGroup(skills, "User Global", readOnly.length ? readOnly
       : globalStatus === "None" ? stateRows(globalStatus)
       : [{title: globalStatus, notice: "warning"}]);
     // Control is the lowest-priority source; a same-name Executor or global
@@ -359,12 +424,8 @@ export function createExecutorsController({
       ...((snap?.skills?.skills || []).filter((skill) => skill.enabled).map((skill) => skill.name)),
       ...(globalsAvailable ? (globalSkills?.selected || []).filter((skill) => skill.source === "global").map((skill) => skill.name) : []),
     ]);
-    renderGroup(skills, "Control", snap?.controlSkills, "control", "skill", shadowed);
-    elements.executorControlSkillsBody.replaceChildren();
-    if (!selectedExecutor()) {
-      renderGroup(elements.executorControlSkillsBody, "Control", snap?.controlSkills, "control", "skill");
-    }
-    elements.executorControlSkillsAdd.disabled = !Boolean(snap?.controlSkills?.can_manage);
+    renderGroup(skills, "Control", unavailable || snap?.controlSkills, "control", "skill", shadowed);
+
     const active = Boolean(snap?.skills?.can_manage && selectedExecutor()?.online);
     elements.executorSkillsAdd.disabled = !(active || snap?.controlSkills?.can_manage);
     elements.executorMcpAdd.disabled = !Boolean((snap?.control?.can_manage || snap?.executorMcp?.can_manage));
@@ -392,7 +453,7 @@ export function createExecutorsController({
     for (const executor of state.executors) {
       if (executor.revoked_at) continue;
       const value = executor.executor_id === current ? "executor" : `executor:${executor.executor_id}`;
-      add(value, `Executor · ${executor.name || executor.executor_id}`,
+      add(value, `Executor ${executor.name || executor.executor_id}`,
         !executor.online || (edit.kind !== "skill" && state.management?.executorMcp?.can_manage === false));
     }
     field.value = edit.owner === "control" ? "control" : (edit.executorId === current ? "executor" : `executor:${edit.executorId}`);
@@ -409,6 +470,9 @@ export function createExecutorsController({
     elements.executorIntegrationSkillWrap.hidden = !skill;
     elements.executorIntegrationValidate.hidden = !skill;
     const moving = Boolean(editing.item && (owner !== editing.owner || (owner === "executor" && target.executorId !== editing.executorId)));
+    elements.executorSkillFilesEntry.hidden = !skill || !editing.item
+      || editing.owner !== "executor" || !selectedExecutor()?.online || moving;
+    elements.executorSkillFilesOpen.disabled = !editing.filesReady || editing.busy || moving;
     elements.executorIntegrationToggle.hidden = !editing.item || moving;
     // Delete always acts on the original owner. Hide it while the selector
     // points elsewhere, so a user cannot mistake it for deleting the target.
@@ -425,6 +489,10 @@ export function createExecutorsController({
     const mode = elements.executorIntegrationAuthMode.value;
     elements.executorIntegrationOAuthScopesWrap.hidden = mode !== "oauth";
     elements.executorMcpOAuthActions.hidden = mode !== "oauth" || !editing.item;
+    // Secrets can be pre-stored even before an MCP switches to secret auth.
+    elements.executorMcpSecretDetails.hidden = mode === "oauth" || !editing.item;
+    elements.executorMcpOAuthAdvanced.hidden = mode !== "oauth" || !editing.item;
+    renderBrowserOAuth(editing);
     elements.executorIntegrationUrlWrap.hidden = owner !== "control";
     elements.executorIntegrationCommandWrap.hidden = owner !== "executor";
     elements.executorIntegrationArgsWrap.hidden = owner !== "executor";
@@ -458,9 +526,12 @@ export function createExecutorsController({
     for (const button of [elements.executorIntegrationSave, elements.executorIntegrationToggle,
       elements.executorIntegrationDelete, elements.executorIntegrationValidate,
       elements.executorIntegrationTest, elements.executorMcpSecretSet,
-      elements.executorMcpOAuthClear, ...elements.executorMcpSecretList.querySelectorAll("button")]) {
+      elements.executorMcpOAuthClear, elements.executorMcpOAuthLogout, elements.executorMcpOAuthAuthorize,
+      elements.executorMcpOAuthCopy, elements.executorMcpOAuthCancel,
+      ...elements.executorMcpSecretList.querySelectorAll("button")]) {
       button.disabled = !ready;
     }
+    elements.executorSkillFilesOpen.disabled = !ready || !edit.filesReady;
     elements.executorIntegrationOwner.disabled = !ready;
     elements.executorIntegrationCancel.disabled = busy && edit.applying;
     elements.executorIntegrationClose.disabled = busy && edit.applying;
@@ -469,10 +540,15 @@ export function createExecutorsController({
 
   async function openEditor({owner, kind, item = null}) {
     if (!selectedExecutor() && owner !== "control") return;
-    state.editor = { owner, kind, executorId: state.selectedId, name: item?.name || "", revision: item?.revision || "", item,
+    state.editor = { owner, kind, executorId: owner === "executor" ? state.selectedId : null,
+                     name: item?.name || "", revision: item?.revision || "", item,
                      enabled: item?.enabled !== false };
     const edit = state.editor;
+    edit.filesReady = false;
     elements.executorIntegrationForm.reset();
+    // A prior committed Apply may have closed the dialog while both were locked.
+    elements.executorIntegrationClose.disabled = false;
+    elements.executorIntegrationCancel.disabled = false;
     elements.executorIntegrationTitle.textContent = `${item ? "Edit" : "Add"} ${kind === "skill" ? "Skill" : "MCP server"}`;
     elements.executorIntegrationName.value = edit.name;
     elements.executorIntegrationSave.disabled = Boolean(item);
@@ -494,9 +570,11 @@ export function createExecutorsController({
     elements.executorMcpSecretList.replaceChildren();
     elements.executorMcpSecretSet.disabled = Boolean(item);
     elements.executorMcpOAuthClear.disabled = Boolean(item);
+    elements.executorMcpOAuthLogout.disabled = Boolean(item);
     elements.executorIntegrationTest.disabled = Boolean(item);
     elements.executorMcpAuthStatus.hidden = true;
     notice(elements.executorMcpAuthStatus, "");
+    renderBrowserOAuth(edit);
     notice(elements.executorIntegrationTestResult, "");
     elements.executorIntegrationToggle.hidden = !item;
     elements.executorIntegrationDelete.hidden = !item;
@@ -517,6 +595,7 @@ export function createExecutorsController({
         elements.executorIntegrationContent.value = data.skill?.content || "";
         elements.executorIntegrationContent.disabled = false;
         elements.executorIntegrationValidate.disabled = false;
+        edit.filesReady = true;
       } else {
         const config = data.editable_config;
         if (!config || data.requires_replacement) throw new Error("This legacy server requires replacement; it cannot be edited safely in the WebUI.");
@@ -531,6 +610,10 @@ export function createExecutorsController({
         elements.executorIntegrationOAuthScopes.value = (config.auth?.scopes || []).join(" ");
         elements.executorMcpSecretSet.disabled = false;
         elements.executorMcpOAuthClear.disabled = false;
+        elements.executorMcpOAuthLogout.disabled = false;
+        elements.executorMcpOAuthAuthorize.disabled = false;
+        elements.executorMcpOAuthCopy.disabled = false;
+        elements.executorMcpOAuthCancel.disabled = false;
         elements.executorIntegrationTest.disabled = false;
         void loadEditorAuth(edit);
       }
@@ -640,11 +723,24 @@ export function createExecutorsController({
       if (state.editor !== edit || edit.authGeneration !== generation) return;
       edit.authStatus = result;
       const status = result.auth || {};
-      elements.executorMcpAuthStatus.hidden = status.status === "not_required";
+      if (edit.owner === "control" && status.mode === "oauth") {
+        try {
+          const pending = await request(`/integrations/oauth/current?name=${encodeURIComponent(edit.name)}`);
+          if (state.editor !== edit || edit.authGeneration !== generation) return;
+          if (pending?.session_id) state.oauthSessions.set(edit.name, {
+            id:pending.session_id, url:pending.authorization_url || "", status:pending.status,
+          });
+          else state.oauthSessions.delete(edit.name);
+        } catch { /* A disconnected status read must not block the MCP editor. */ }
+      }
+      renderBrowserOAuth(edit);
+      const pending = Boolean(state.oauthSessions.get(edit.name));
+      elements.executorMcpAuthStatus.hidden = status.status === "not_required" || (status.mode === "oauth" && pending && !status.authorized);
+      elements.executorMcpAuthStatus.dataset.state = status.authorized ? "connected" : "";
       if (!elements.executorMcpAuthStatus.hidden) notice(
         elements.executorMcpAuthStatus,
-        `Authorization: ${status.status || "unavailable"}${status.expires_at ? ` · expires ${new Date(status.expires_at * 1000).toLocaleString()}` : ""}`,
-        ["authorized", "valid"].includes(status.status) ? "success" : "warning",
+        status.mode === "oauth" ? (status.authorized ? "✓ Connected" : "Not connected")
+          : `Authorization: ${status.status || "unavailable"}`,
       );
       const list = elements.executorMcpSecretList;
       list.replaceChildren();
@@ -654,7 +750,7 @@ export function createExecutorsController({
         const name = document.createElement("code");
         name.textContent = key;
         const label = document.createElement("span");
-        label.textContent = "Stored · value hidden";
+        label.textContent = "Value hidden";
         const remove = document.createElement("button");
         remove.type = "button";
         remove.textContent = "Remove";
@@ -679,6 +775,83 @@ export function createExecutorsController({
     }
   }
 
+  function renderBrowserOAuth(edit) {
+    clearTimeout(state.oauthTimer);
+    const session = state.oauthSessions.get(edit.name);
+    const supported = edit.owner === "control" && edit.kind === "mcp"
+      && elements.executorIntegrationAuthMode.value === "oauth";
+    const authorized = Boolean(edit.authStatus?.auth?.authorized) || session?.status === "authorized";
+    const active = session && ["waiting", "preparing", "completing"].includes(session.status);
+    if (active && !authorized) elements.executorMcpAuthStatus.hidden = true;
+    elements.executorMcpOAuthAuthorize.hidden = !supported || authorized || active;
+    elements.executorMcpOAuthLogout.hidden = !supported || !authorized;
+    const link = supported && Boolean(session?.url) && !authorized;
+    elements.executorMcpOAuthLink.hidden = !link;
+    elements.executorMcpOAuthCopy.hidden = !link;
+    if (link) elements.executorMcpOAuthLink.href = session.url;
+    elements.executorMcpOAuthCancel.hidden = !supported || !active || session.status === "completing";
+    const messages = {
+      waiting: "Waiting for authorization…",
+      preparing: "Preparing authorization…",
+      completing: "Connecting…",
+      authorized: "Connected",
+      denied: "Authorization denied. Try again.",
+      failed: "Authorization failed. Try again.",
+    };
+    notice(elements.executorMcpOAuthProgress, supported ? (messages[session?.status] || "") : "",
+      session?.status === "authorized" ? "success" : "plain");
+    if (supported && active && state.editor === edit && !authorized) {
+      // Only poll while the MCP editor owns this explicit OAuth session.
+      state.oauthTimer = setTimeout(() => {
+        if (state.editor === edit) void browserOAuth("check");
+      }, 1700);
+    }
+  }
+
+  async function browserOAuth(action) {
+    const edit = state.editor;
+    if (!edit || edit.owner !== "control" || edit.kind !== "mcp" || !edit.item || edit.busy) return;
+    const name = edit.name;
+    let session = state.oauthSessions.get(name);
+    setEditorBusy(edit, true);
+    try {
+      if (action === "start") {
+        const result = await request("/integrations/oauth/start", {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({owner:"control", name}),
+        });
+        session = {id:result.session_id, url:result.authorization_url, status:"waiting"};
+        state.oauthSessions.set(name, session);
+      } else if (session && action === "cancel") {
+        await request("/integrations/oauth/cancel", {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({session_id:session.id}),
+        });
+        state.oauthSessions.delete(name);
+      } else if (session && action === "check") {
+        const result = await request("/integrations/oauth/status?session_id=" + encodeURIComponent(session.id));
+        session.status = result.status;
+        if (["completing", "authorized", "denied", "failed", "expired"].includes(result.status)) session.url = "";
+        if (result.status === "authorized") {
+          await loadEditorAuth(edit);
+          void loadManagement(true);
+        }
+      }
+    } catch (error) {
+      if (state.editor === edit) {
+        if (error?.status === 404 && session && action !== "start") {
+          state.oauthSessions.delete(name);
+          editorStatus("Authorization expired. Try again.", "warning");
+        } else editorStatus(error instanceof Error ? error.message : String(error), "error");
+      }
+    } finally {
+      if (state.editor === edit) {
+        setEditorBusy(edit, false);
+        renderBrowserOAuth(edit);
+      }
+    }
+  }
+
   async function mutateAuth(action, fields = {}) {
     const edit = state.editor;
     if (!edit || edit.kind !== "mcp" || !edit.item || edit.busy) return;
@@ -692,9 +865,15 @@ export function createExecutorsController({
       elements.executorMcpSecretValue.value = "";
       const message = action === "set_secret" ? "Secret stored securely."
         : action === "delete_secret" ? (result.changed ? "Secret removed." : "Secret already absent.")
+        : action === "logout" ? `Signed out locally (remote revocation: ${result.remote_revocation || "unavailable"}).`
         : result.changed ? "Local OAuth state cleared (remote tokens not revoked)." : "No local OAuth state to clear.";
       editorStatus(message, result.changed === false ? "warning" : "success");
+      if (action === "logout" || action === "clear_oauth") {
+        state.oauthSessions.delete(edit.name);
+        renderBrowserOAuth(edit);
+      }
       await loadEditorAuth(edit);
+      void loadManagement(true);
     } catch (error) {
       if (state.editor === edit) editorStatus(error instanceof Error ? error.message : String(error), "error");
     } finally {
@@ -721,13 +900,13 @@ export function createExecutorsController({
       notice(
         elements.executorIntegrationTestResult,
         result.status === "available"
-          ? `Available · ${tools.length} discovered tools (none were called)`
-          : `MCP ${result.status || "unavailable"} · check the owning host`,
+          ? `${tools.length} tools discovered (none called)`
+          : `MCP ${result.status || "unavailable"}. Check the owning host.`,
         result.status === "available" ? "success" : "warning",
       );
       for (const tool of tools) {
         const line = document.createElement("div");
-        line.textContent = `${tool.name}${tool.description ? ` · ${tool.description}` : ""}`;
+        line.textContent = `${tool.name}${tool.description ? `: ${tool.description}` : ""}`;
         elements.executorIntegrationTestResult.append(line);
       }
     } catch (error) {
@@ -824,6 +1003,20 @@ export function createExecutorsController({
   function renderDetails() {
     renderSubtabs();
     const executor = selectedExecutor();
+    const control = isControlSelected();
+    document.getElementById("executor-detail-grid").hidden = control;
+    document.getElementById("executor-control-overview").hidden = !control;
+    document.getElementById("executor-overview-metrics").hidden = control || !executor?.online;
+    if (control) {
+      elements.executorDetailName.textContent = "Control";
+      elements.executorDetailStatus.textContent = state.controlAvailable ? "Available" : "Unavailable";
+      document.getElementById("executor-control-connection").textContent =
+        state.controlAvailable ? "Connected" : "Unavailable";
+      document.getElementById("executor-control-online").textContent =
+        String(state.executors.filter((item) => item.online && !item.revoked_at).length);
+      setControls();
+      return;
+    }
     if (!executor) {
       elements.executorDetailName.textContent = "No executor selected";
       elements.executorDetailStatus.textContent = "Select an executor to inspect it";
@@ -856,7 +1049,7 @@ export function createExecutorsController({
     elements.executorDetailCompatibility.textContent = !executor.runtime
       ? "Not reported"
       : executor.runtime_update_required
-        ? "Update required · " + executor.required_workgate_version
+        ? "Update required: " + executor.required_workgate_version
         : "Compatible";
     elements.executorDetailPlatform.textContent = executor.runtime?.platform || "Not reported";
     elements.executorDetailAdmission.textContent = executor.session_admission
@@ -864,7 +1057,7 @@ export function createExecutorsController({
       : (executor.session_admission_reasons || []).join(", ") || "Not eligible";
     elements.executorDetailSessions.textContent = String(executor.active_sessions || 0);
     elements.executorDetailCommands.textContent =
-      String(executor.queued_commands || 0) + " queued · " + String(executor.offered_commands || 0) + " offered · " + String(executor.command_limit || 0) + " max";
+      String(executor.queued_commands || 0) + " queued, " + String(executor.offered_commands || 0) + " offered (limit " + String(executor.command_limit || 0) + ")";
     elements.executorDetailCapabilities.textContent =
       (executor.capabilities || []).join(", ") || "None reported";
     elements.executorDetailCreated.textContent = timestamp(executor.created_at, "Unknown");
@@ -875,8 +1068,11 @@ export function createExecutorsController({
   function render(payload) {
     const previousId = state.selectedId;
     state.executors = Array.isArray(payload?.executors) ? payload.executors : [];
-    if (!state.executors.some((item) => item.executor_id === state.selectedId)) {
-      state.selectedId = (state.executors.find((entry) => !entry.revoked_at) || state.executors[0])?.executor_id || "";
+    const recovered = !state.controlAvailable;
+    state.controlAvailable = true;
+    topology.update(state.executors);
+    if (state.selectedId !== CONTROL_SELECTION && !state.executors.some((item) => item.executor_id === state.selectedId)) {
+      state.selectedId = CONTROL_SELECTION;
     }
     const online = state.executors.filter((item) => !item.revoked_at && item.online).length;
     const revoked = state.executors.filter((item) => item.revoked_at).length;
@@ -888,6 +1084,13 @@ export function createExecutorsController({
     renderList();
     renderDetails();
     if (state.selectedId !== previousId) {
+      // Inventory can remove an Executor while its integration editor is open.
+      // Close stale, non-applying editors just as manual selection does.
+      if (elements.executorIntegrationDialog.open && !state.editor?.applying)
+        elements.executorIntegrationDialog.close();
+      executorConfigView.clear();
+      if (activeSubtab() === "config")
+        void executorConfigView.open(isControlSelected() ? "" : state.selectedId);
       state.skillSourceGeneration += 1;
       state.skillSourceId = "";
       state.skillSources = null;
@@ -926,7 +1129,7 @@ export function createExecutorsController({
       if (metricsBody) metricsBody.hidden = !showMetrics;
     }
     onInventory(state.executors);
-    if (!state.selectedId && state.managementId !== "__control__") void loadManagement();
+    if (recovered && ["mcp", "skills"].includes(activeSubtab())) void loadManagement(true);
   }
 
   async function refresh({ force = false } = {}) {
@@ -943,6 +1146,13 @@ export function createExecutorsController({
     } catch (error) {
       if (error.authenticationRequired) throw error;
       if (generation !== state.generation) return null;
+      state.controlAvailable = false;
+      state.managementGeneration += 1;
+      state.managementId = "";
+      state.management = null;
+      renderManagement();
+      renderList();
+      renderDetails();
       notice(elements.executorState, error instanceof Error ? error.message : String(error), "error");
       return null;
     } finally {
@@ -1034,7 +1244,9 @@ export function createExecutorsController({
     state.generation += 1;
     state.loading = false;
     state.executors = [];
-    state.selectedId = "";
+    state.selectedId = CONTROL_SELECTION;
+    state.controlAvailable = false;
+    clearConfiguration();
     state.skillSourceGeneration += 1;
     state.skillSourceId = "";
     state.skillSources = null;
@@ -1045,6 +1257,10 @@ export function createExecutorsController({
     state.managementId = "";
     state.management = null;
     state.editor = null;
+    // Discard pending OAuth links when the WebUI session resets.
+    state.oauthSessions.clear();
+    clearTimeout(state.oauthTimer);
+    skillFileEditor.close(true);
     elements.executorIntegrationDialog.close();
     closeDialog(elements.executorPairDialog);
     closeDialog(elements.executorRenameDialog);
@@ -1064,8 +1280,8 @@ export function createExecutorsController({
   }
 
   function bind() {
-    elements.executorControlMcpAdd.addEventListener("click", () => void openEditor({owner: "control", kind: "mcp"}));
-    elements.executorControlSkillsAdd.addEventListener("click", () => void openEditor({owner: "control", kind: "skill"}));
+    topology.bind();
+    document.getElementById("executor-topology-open").addEventListener("click", () => topology.open());
     elements.executorIntegrationTest.addEventListener("click", () => void testEditorMcp());
     elements.executorMcpAdd.addEventListener("click", () => {
       const owner = selectedExecutor()?.online && state.management?.executorMcp?.can_manage
@@ -1093,9 +1309,33 @@ export function createExecutorsController({
       if (!key || !value) { editorStatus("Enter both a secret reference name and a value.", "warning"); return; }
       void mutateAuth("set_secret", {secret_name:key, secret_value:value});
     });
+    elements.executorMcpOAuthAuthorize.addEventListener("click", () => void browserOAuth("start"));
+    elements.executorMcpOAuthCopy.addEventListener("click", async () => {
+      const session = state.editor && state.oauthSessions.get(state.editor.name);
+      if (!session?.url) return;
+      try {
+        await navigator.clipboard.writeText(session.url);
+        notice(elements.executorMcpOAuthProgress, "Link copied · Waiting for authorization…");
+      } catch {
+        editorStatus("Clipboard unavailable. Open the authorization link instead.", "warning");
+      }
+    });
+    elements.executorMcpOAuthCancel.addEventListener("click", () => void browserOAuth("cancel"));
+    elements.executorMcpOAuthLogout.addEventListener("click", () => {
+      if (globalThis.confirm("Try to revoke the OAuth token remotely and clear local OAuth state?"))
+        void mutateAuth("logout");
+    });
     elements.executorMcpOAuthClear.addEventListener("click", () => {
       if (globalThis.confirm("Clear locally stored OAuth state? This does not revoke tokens at the provider."))
         void mutateAuth("clear_oauth");
+    });
+    skillFileEditor.bind();
+    elements.executorSkillFilesOpen.addEventListener("click", () => {
+      const edit = state.editor;
+      if (!edit || edit.kind !== "skill" || edit.owner !== "executor"
+        || !edit.item || !edit.filesReady || edit.busy || chosenLocation().owner !== "executor"
+        || chosenLocation().executorId !== edit.executorId) return;
+      skillFileEditor.open({ executorId: edit.executorId, name: edit.name });
     });
     elements.executorIntegrationClose.addEventListener("click", () => elements.executorIntegrationDialog.close());
     elements.executorIntegrationCancel.addEventListener("click", () => elements.executorIntegrationDialog.close());
@@ -1103,6 +1343,7 @@ export function createExecutorsController({
       if (state.editor?.busy && state.editor.applying) event.preventDefault();
     });
     elements.executorIntegrationDialog.addEventListener("close", () => {
+      skillFileEditor.close(true);
       const inspect = Boolean(state.editor?.needsInspection);
       state.editor = null;
       elements.executorMcpSecretValue.value = "";
@@ -1284,6 +1525,8 @@ export function createExecutorsController({
 
   return {
     activate,
+    closeTopology: () => topology.close(),
+    clearConfiguration,
     openManagement,
     bind,
     select,

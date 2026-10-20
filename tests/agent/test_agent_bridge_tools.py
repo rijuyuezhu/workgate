@@ -2618,8 +2618,8 @@ async def test_control_agent_bridge_prefers_executor_on_same_name():
         cast(Any, object()), cast(Any, Sessions())
     )
     service._network_registry = (
-        lambda *, probe_mcp_tools=True, mcp_server_name=None: cast(
-            Any, SimpleNamespace(mcp_servers={"same": object()})
+        lambda *, probe_mcp_tools=True, mcp_server_name=None, excluded_mcp_server_names=frozenset(): (
+            cast(Any, SimpleNamespace(mcp_servers={"same": object()}))
         )
     )
     assert (await service._resolve_server_owner("same", "sess_owner"))[
@@ -2657,7 +2657,9 @@ async def test_control_agent_bridge_routes_by_explicit_owner(monkeypatch):
         cast(Any, object()), cast(Any, Sessions())
     )
     service._network_registry = (
-        lambda *, probe_mcp_tools=True, mcp_server_name=None: registry
+        lambda *, probe_mcp_tools=True, mcp_server_name=None, excluded_mcp_server_names=frozenset(): (
+            registry
+        )
     )
     monkeypatch.setattr(
         control_agent_bridge_module,
@@ -2701,13 +2703,21 @@ async def test_control_agent_bridge_routes_by_explicit_owner(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "executor_row",
+    [
+        {"enabled": True},
+        {"enabled": True, "available": False},
+        {"available": False},
+    ],
+)
 async def test_control_agent_bridge_masks_shadowed_tools_when_listing_all(
-    monkeypatch,
+    monkeypatch, executor_row
 ):
     class Sessions:
         async def call_session_tool(self, op, args):
             if op == "agent_mcp.list_servers":
-                return {"same": {"enabled": True}}
+                return {"same": executor_row}
             assert op == "agent_mcp.list_tools"
             assert args == {"session_id": "sess", "server": None}
             return {"tools": [{"server": "same", "tool": "executor"}]}
@@ -2715,24 +2725,58 @@ async def test_control_agent_bridge_masks_shadowed_tools_when_listing_all(
     service = ControlAgentBridgeService(
         cast(Any, object()), cast(Any, Sessions())
     )
-    service._network_registry = (
-        lambda *, probe_mcp_tools=True, mcp_server_name=None: cast(
-            Any, SimpleNamespace(mcp_servers={"same": object()})
+    probed_control: list[frozenset[str]] = []
+
+    def network_registry(
+        *,
+        probe_mcp_tools=True,
+        mcp_server_name=None,
+        excluded_mcp_server_names=frozenset(),
+    ):
+        if probe_mcp_tools:
+            probed_control.append(excluded_mcp_server_names)
+        return cast(
+            Any,
+            SimpleNamespace(
+                mcp_servers={
+                    name: object()
+                    for name in {"same", "other"}
+                    if name not in excluded_mcp_server_names
+                }
+            ),
         )
-    )
+
+    service._network_registry = network_registry
     monkeypatch.setattr(
         control_agent_bridge_module,
         "list_agent_mcp_tools_payload",
-        lambda _registry, server=None: (
+        lambda registry, server=None: (
             control_agent_bridge_module.ListAgentMcpToolsOutput(
-                tools=[{"server": "same", "tool": "control"}]
+                tools=[
+                    {"server": name, "tool": "control"}
+                    for name in registry.mcp_servers
+                ]
             )
         ),
     )
 
     assert (await service.list_tools(session_id="sess")).tools == [
-        {"server": "same", "tool": "executor"}
+        {"server": "other", "tool": "control"},
+        {"server": "same", "tool": "executor"},
     ]
+    assert probed_control == [frozenset({"same"})]
+    monkeypatch.setattr(
+        control_agent_bridge_module,
+        "list_agent_mcp_servers_payload",
+        lambda registry: control_agent_bridge_module.ListAgentMcpServersOutput(
+            root={name: {"enabled": True} for name in registry.mcp_servers}
+        ),
+    )
+    assert (await service.list_servers("sess")).root == {
+        "other": {"enabled": True},
+        "same": executor_row,
+    }
+    assert probed_control == [frozenset({"same"}), frozenset({"same"})]
     assert service._merge_server_rows(
         {"same": {"source": "control"}}, {"same": {"source": "executor"}}
     ) == {"same": {"source": "executor"}}
@@ -2748,7 +2792,7 @@ async def test_control_agent_bridge_disabled_executor_reveals_control(
         async def call_session_tool(self, op, args):
             if op == "agent_mcp.list_servers":
                 return {
-                    "same": {"enabled": False},
+                    "same": {"enabled": False, "available": False},
                     "executor": {"enabled": True},
                 }
             if op == "agent_mcp.list_tools":
@@ -2759,28 +2803,34 @@ async def test_control_agent_bridge_disabled_executor_reveals_control(
         cast(Any, object()), cast(Any, Sessions())
     )
     service._network_registry = (
-        lambda *, probe_mcp_tools=True, mcp_server_name=None: cast(
-            Any,
-            SimpleNamespace(
-                mcp_servers={"same": object(), "control": object()}
-            ),
+        lambda *, probe_mcp_tools=True, mcp_server_name=None, excluded_mcp_server_names=frozenset(): (
+            cast(
+                Any,
+                SimpleNamespace(
+                    mcp_servers={
+                        name: object()
+                        for name in ("same", "control")
+                        if name not in excluded_mcp_server_names
+                    }
+                ),
+            )
         )
     )
     monkeypatch.setattr(
         control_agent_bridge_module,
         "list_agent_mcp_servers_payload",
-        lambda _registry: control_agent_bridge_module.ListAgentMcpServersOutput(
-            root={"same": {"enabled": True}, "control": {"enabled": True}}
+        lambda registry: control_agent_bridge_module.ListAgentMcpServersOutput(
+            root={name: {"enabled": True} for name in registry.mcp_servers}
         ),
     )
     monkeypatch.setattr(
         control_agent_bridge_module,
         "list_agent_mcp_tools_payload",
-        lambda _registry, server=None: (
+        lambda registry, server=None: (
             control_agent_bridge_module.ListAgentMcpToolsOutput(
                 tools=[
-                    {"server": "same", "tool": "network"},
-                    {"server": "control", "tool": "network"},
+                    {"server": name, "tool": "network"}
+                    for name in registry.mcp_servers
                 ]
             )
         ),

@@ -26,7 +26,7 @@
       </nav>
       <div class="app-global-status">
         <span id="connection-state" class="status status-idle">Connecting</span>
-        <span class="app-version"><span id="version">—</span> · <span id="auth-mode">—</span></span>
+        <span class="app-version"><span id="version">—</span> <span id="auth-mode">—</span></span>
         <button id="sign-out" type="button" hidden>Sign out</button>
       </div>
       <button id="nav-toggle" class="nav-toggle" type="button" aria-controls="app-navigation" aria-expanded="false" aria-label="Open navigation">
@@ -87,7 +87,7 @@
           <div><strong id="executor-target-total">—</strong><span>Executors</span></div>
           <div><strong id="executor-target-online">—</strong><span>Online</span></div>
           <button class="dashboard-audit-shortcut" type="button" data-go-view="audit" aria-label="Open Audit records">
-            <strong id="dashboard-audit-total">—</strong><span>Audit · 24h <span aria-hidden="true">↗</span></span>
+            <strong id="dashboard-audit-total">—</strong><span>Audit (24h) <span aria-hidden="true">↗</span></span>
             <small id="dashboard-audit-detail" class="visually-hidden">—</small>
           </button>
         </div>
@@ -174,7 +174,7 @@
             <div><dt>Platform</dt><dd id="dashboard-platform">—</dd></div>
             <div><dt>Python</dt><dd id="dashboard-python">—</dd></div>
             <div><dt>CPUs</dt><dd id="dashboard-cpu-count">—</dd></div>
-            <div><dt>Load · 1m</dt><dd id="dashboard-load">—</dd></div>
+            <div><dt>Load (1m)</dt><dd id="dashboard-load">—</dd></div>
             <div><dt>Uptime</dt><dd id="dashboard-uptime">—</dd></div>
             <div><dt>Memory used</dt><dd id="dashboard-memory-used">—</dd></div>
             <div><dt>Disk used</dt><dd id="dashboard-disk-used">—</dd></div>
@@ -193,26 +193,59 @@
           <span id="executor-revoked-summary" hidden><strong id="executor-revoked">—</strong> revoked</span>
         </div>
         <div class="executors-actions">
+          <button id="executor-topology-open" type="button">Topology</button>
           <button id="executor-pair-open" class="primary-action" type="button">Pair executor</button>
           <span id="executor-state" class="muted">Not loaded</span>
         </div>
       </div>
       <p id="executor-action-status" role="status" aria-live="polite"></p>
-      <section id="executor-control-standalone" class="executor-control-standalone" hidden aria-label="Standalone Control integrations">
-        <div class="executor-section-heading">
-          <h3>Control MCP</h3>
-          <button type="button" id="executor-control-mcp-add" disabled>+ Add MCP</button>
+      <section id="executor-topology" class="executor-topology" aria-label="Peer topology" hidden>
+        <div class="topology-heading">
+          <div><button id="topology-back" type="button">← Executors</button><h2>Peer topology</h2></div>
+          <span id="topology-summary" class="muted" role="status">No pairs</span>
         </div>
-        <div id="executor-control-mcp-body" class="executor-subtab-content"></div>
-        <div class="executor-section-heading">
-          <h3>Control Skills</h3>
-          <button type="button" id="executor-control-skills-add" disabled>+ Add Skill</button>
+        <div class="topology-toolbar">
+          <div class="topology-pair-picker">
+            <span class="topology-toolbar-label">Inspect a connection</span>
+            <label>From <select id="topology-source" aria-label="Source Executor"></select></label>
+            <label>To <select id="topology-destination" aria-label="Destination Executor"></select></label>
+            <button id="topology-show-pair" type="button">Inspect</button>
+          </div>
+          <div class="topology-view-actions">
+            <button id="topology-reset" type="button">All nodes</button>
+            <button id="topology-refresh" type="button">Refresh</button>
+            <button id="topology-test-all" type="button" title="Test each visible link in both directions" disabled>Test all links</button>
+          </div>
         </div>
-        <div id="executor-control-skills-body" class="executor-subtab-content"></div>
+        <p id="topology-test-progress" class="muted" role="status" aria-live="polite" hidden></p>
+        <p id="topology-instructions" class="muted">Click a line to inspect the connection, or a node to focus its links.</p>
+        <div class="topology-legend" aria-label="Peer Direct link states">
+          <span><i data-status="verified"></i>Direct OK</span>
+          <span><i data-status="one-way"></i>One-way</span>
+          <span><i data-status="unreachable"></i>Failed or blocked</span>
+          <span><i data-status="untested"></i>Not tested</span>
+          <span><i data-status="unknown"></i>Unavailable</span>
+          <span><i data-status="stale"></i>Expired result</span>
+        </div>
+        <div id="topology-graph" class="topology-graph" aria-label="Executor connection graph">
+          <div id="topology-stage" class="topology-stage">
+            <svg id="topology-edges" class="topology-edges" aria-label="Executor connection edges"></svg>
+            <div id="topology-nodes" class="topology-nodes"></div>
+          </div>
+        </div>
+        <section id="topology-inspector" class="topology-inspector" aria-label="Selected peer connection" hidden>
+          <div class="topology-inspector-heading"><h3 id="topology-pair-title">Connection</h3><span id="topology-pair-status" class="topology-state"></span></div>
+          <div id="topology-direction-rows" class="topology-directions"></div>
+          <p id="topology-feedback" role="status" aria-live="polite"></p>
+        </section>
       </section>
       <div class="executors-layout">
-        <nav id="executor-list" class="executor-list" aria-label="Paired executors" aria-live="polite">
-          <div class="empty-state">Loading executors…</div>
+        <nav id="executor-list" class="executor-list" aria-label="Control and executors" aria-live="polite">
+          <div class="executor-control-group"></div>
+          <div class="executor-peer-group">
+            <div class="executor-peer-heading">Executors</div>
+            <div class="executor-peer-rows"></div>
+          </div>
         </nav>
         <article class="executor-details">
           <div class="executor-details-header">
@@ -227,14 +260,22 @@
               <button id="executor-revoke-open" class="danger-action" type="button" disabled>Revoke</button>
             </div>
           </div>
-          <nav id="executor-subtabs" class="executor-subtabs" role="tablist" aria-label="Executor details">
+          <nav id="executor-subtabs" class="executor-subtabs" role="tablist" aria-label="Control and executor details">
             <button type="button" role="tab" data-executor-subtab="overview" aria-selected="true">Overview</button>
             <button type="button" role="tab" data-executor-subtab="mcp" aria-selected="false">MCP</button>
             <button type="button" role="tab" data-executor-subtab="skills" aria-selected="false">Skills</button>
+            <button type="button" role="tab" data-executor-subtab="config" aria-selected="false">Config</button>
           </nav>
-          <section class="executor-subtab-pane" data-executor-pane="overview" aria-label="Executor overview">
+          <section class="executor-subtab-pane" data-executor-pane="overview" aria-label="Overview">
             <div id="executor-overview-metrics" class="executor-overview-body"></div>
-          <dl class="executor-detail-grid">
+            <div id="executor-control-overview" hidden>
+              <dl class="executor-detail-grid">
+                <div><dt>Role</dt><dd>Control</dd></div>
+                <div><dt>Connection</dt><dd id="executor-control-connection">Unavailable</dd></div>
+                <div><dt>Online Executors</dt><dd id="executor-control-online">0</dd></div>
+              </dl>
+            </div>
+          <dl id="executor-detail-grid" class="executor-detail-grid">
             <div><dt>Executor ID</dt><dd id="executor-detail-id">—</dd></div>
             <div><dt>Workgate version</dt><dd id="executor-detail-version">—</dd></div>
             <div><dt>Runtime owner</dt><dd id="executor-detail-runtime-owner">—</dd></div>
@@ -256,6 +297,9 @@
             <div class="executor-section-heading executor-manage-toolbar"><button type="button" id="executor-skills-add">+ Add Skill</button></div>
             <div id="executor-skills-body" class="executor-subtab-content"></div>
           </section>
+          <section class="executor-subtab-pane" data-executor-pane="config" aria-label="Configuration" hidden>
+            <div id="executor-config-body" class="executor-subtab-content"></div>
+          </section>
         </article>
       </div>
     </section>
@@ -265,7 +309,7 @@
         <div class="dialog-heading"><div><h2 id="executor-integration-title">Add integration</h2></div><button class="dialog-close" type="button" id="executor-integration-close" aria-label="Close integration editor">×</button></div>
         <p id="executor-integration-status" class="muted" role="status"></p>
         <label>Name <input id="executor-integration-name" maxlength="128" required spellcheck="false" autocomplete="off" placeholder="integration-name"></label>
-        <label>Owner <select id="executor-integration-owner"><option value="executor">Executor · Local</option><option value="control">Control</option></select></label>
+        <label>Owner <select id="executor-integration-owner"><option value="executor">Executor</option><option value="control">Control</option></select></label>
         <div id="executor-integration-mcp-fields">
           <label id="executor-integration-url-wrap">Server URL <input id="executor-integration-url" type="url" placeholder="https://example.org/mcp" autocomplete="off"></label>
           <label id="executor-integration-command-wrap">Command <input id="executor-integration-command" placeholder="/usr/bin/server" spellcheck="false"></label>
@@ -282,24 +326,37 @@
                 <div id="executor-mcp-secret-list" class="executor-auth-secret-list"></div>
                 <div class="executor-auth-secret-add">
                   <label>Secret name <input id="executor-mcp-secret-name" autocomplete="off" spellcheck="false" placeholder="api_token" maxlength="128"></label>
-                  <label>New value <input id="executor-mcp-secret-value" type="password" autocomplete="new-password" placeholder="Not displayed after saving"></label>
+                  <label>New value <input id="executor-mcp-secret-value" type="password" autocomplete="new-password" placeholder="Enter secret value"></label>
                   <button id="executor-mcp-secret-set" type="button">Store secret</button>
                 </div>
               </details>
               <div id="executor-mcp-oauth-actions" hidden>
-                <p class="muted">Authorize on host: <code>workgate mcp auth SERVER</code></p>
-                <button id="executor-mcp-oauth-clear" class="danger-action" type="button">Clear local OAuth credentials</button>
+                <div class="executor-oauth-actions">
+                  <button id="executor-mcp-oauth-authorize" class="primary-action" type="button">Authorize</button>
+                  <a id="executor-mcp-oauth-link" href="#" target="_blank" rel="noopener noreferrer" hidden>Open authorization ↗</a>
+                  <button id="executor-mcp-oauth-copy" type="button" hidden>Copy link</button>
+                  <button id="executor-mcp-oauth-cancel" type="button" hidden>Stop authorization</button>
+                  <button id="executor-mcp-oauth-logout" type="button" hidden>Sign out</button>
+                </div>
+                <p id="executor-mcp-oauth-progress" class="muted" role="status" aria-live="polite"></p>
+
               </div>
             </div>
           </fieldset>
-          <details class="executor-integration-advanced"><summary>Advanced · Secret references only</summary>
-            <label>Advanced settings (JSON) <textarea id="executor-integration-advanced" rows="4" spellcheck="false" placeholder='{"headers":{"Authorization":{"secret":"my_key"}}}'>{}</textarea></label>
+          <details id="executor-mcp-advanced-settings" class="executor-integration-advanced"><summary>Advanced</summary>
+            <label>Options (JSON) <textarea id="executor-integration-advanced" rows="4" spellcheck="false" placeholder='{"headers":{"Authorization":{"secret":"my_key"}}}'>{}</textarea></label>
+            <div id="executor-mcp-oauth-advanced" hidden>
+              <button id="executor-mcp-oauth-clear" class="danger-action" type="button">Clear local OAuth state</button>
+            </div>
+            <div id="executor-integration-test-wrap" hidden>
+              <button type="button" id="executor-integration-test">Discover tools</button>
+              <div id="executor-integration-test-result" class="muted" role="status" aria-live="polite"></div>
+            </div>
           </details>
           <label id="executor-integration-args-wrap">Arguments (JSON array) <textarea id="executor-integration-args" rows="3" spellcheck="false">[]</textarea></label>
-          <div id="executor-integration-test-wrap" hidden>
-            <button type="button" id="executor-integration-test">Test / Discover</button>
-            <div id="executor-integration-test-result" class="muted" role="status" aria-live="polite"></div>
-          </div>
+        </div>
+        <div id="executor-skill-files-entry" hidden>
+          <button id="executor-skill-files-open" type="button" disabled>Bundle files…</button>
         </div>
         <label id="executor-integration-skill-wrap" hidden>SKILL.md (Markdown) <textarea id="executor-integration-content" rows="12" spellcheck="false" placeholder="---
 description: My Skill
@@ -307,6 +364,37 @@ description: My Skill
 # Instructions"></textarea></label>
         <div class="dialog-actions"><button type="button" id="executor-integration-cancel">Cancel</button><button id="executor-integration-delete" class="danger-action" type="button" hidden>Delete</button><button id="executor-integration-toggle" type="button" hidden>Disable</button><button id="executor-integration-validate" type="button" hidden>Validate</button><button class="primary-action" type="submit" id="executor-integration-save">Save</button></div>
       </form>
+    </dialog>
+
+    <dialog id="executor-skill-files-dialog" class="executor-dialog executor-skill-files-dialog">
+      <div class="dialog-heading">
+        <div><h2>Skill files</h2><p id="executor-skill-files-title" class="muted"></p></div>
+        <button id="executor-skill-files-close" class="dialog-close" type="button" aria-label="Close Skill files">×</button>
+      </div>
+      <p id="executor-skill-files-status" class="muted" role="status"></p>
+      <div class="executor-skill-files-layout">
+        <div class="executor-skill-files-sidebar">
+          <label for="executor-skill-files-list">Files</label>
+          <select id="executor-skill-files-list" size="9" aria-label="Skill auxiliary files"></select>
+          <div class="executor-skill-files-actions">
+            <button id="executor-skill-files-new" type="button">+ New file</button>
+            <button id="executor-skill-files-refresh" type="button">Refresh</button>
+          </div>
+        </div>
+        <form id="executor-skill-files-form" class="executor-skill-files-editor">
+          <label for="executor-skill-files-path">Relative path
+            <input id="executor-skill-files-path" required maxlength="4096" spellcheck="false" autocomplete="off" placeholder="examples/checklist.md">
+          </label>
+          <label for="executor-skill-files-content">UTF-8 text (max 128 KiB)
+            <textarea id="executor-skill-files-content" rows="13" maxlength="131072" spellcheck="false"></textarea>
+          </label>
+          <div class="dialog-actions">
+            <button id="executor-skill-files-delete" class="danger-action" type="button" hidden>Delete</button>
+            <button id="executor-skill-files-reload" type="button" hidden>Reload</button>
+            <button id="executor-skill-files-save" class="primary-action" type="submit">Create file</button>
+          </div>
+        </form>
+      </div>
     </dialog>
 
     <dialog id="executor-pair-dialog" class="executor-dialog">
@@ -457,7 +545,7 @@ description: My Skill
           </div>
         </aside>
         <section class="file-browser">
-          <div class="file-browser-heading"><h3>Files</h3><span class="muted">Current directory</span></div>
+          <div class="file-browser-heading"><h3>Directory</h3></div>
       <nav id="file-breadcrumbs" class="file-breadcrumbs" aria-label="File path breadcrumbs"></nav>
       <div class="file-list-options">
         <label>Filter <input id="file-filter" type="search" placeholder="Search in this folder" autocomplete="off"></label>
@@ -689,7 +777,7 @@ description: My Skill
             </div>
             <section id="session-integrations-mcp" class="session-integrations-pane" role="tabpanel">
               <div class="session-integrations-toolbar">
-                <span id="session-integrations-mcp-status" class="muted" role="status">MCPs for this Session</span>
+                <span id="session-integrations-mcp-status" class="muted" role="status">Session MCPs</span>
                 <div class="session-integrations-actions">
                   <button id="session-integrations-mcp-refresh" type="button">Refresh</button>
                   <button id="session-integrations-mcp-manage" type="button">Manage in Executors</button>
@@ -699,7 +787,7 @@ description: My Skill
             </section>
             <section id="session-integrations-skills" class="session-integrations-pane" role="tabpanel" hidden>
               <div class="session-integrations-toolbar">
-                <span id="session-integrations-skills-status" class="muted" role="status">Effective Skills for this Session</span>
+                <span id="session-integrations-skills-status" class="muted" role="status">Effective Skills</span>
                 <div class="session-integrations-actions">
                   <button id="session-integrations-skills-refresh" type="button">Refresh</button>
                   <button id="session-integrations-skills-manage" type="button">Manage in Executors</button>

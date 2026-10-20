@@ -20,7 +20,7 @@ def run_webui_layout(harness: BrowserHarness) -> None:
     expect(page.locator("#nav-toggle")).to_be_hidden()
     expect(page.locator("#connection-state")).to_be_visible()
     expect(page.locator("#version")).to_be_visible()
-    assert page.title().endswith("· Workgate")
+    assert page.title().endswith("— Workgate")
     colors = page.evaluate("""() => ({
         body: getComputedStyle(document.body).backgroundColor,
         header: getComputedStyle(document.querySelector('.app-header')).backgroundColor,

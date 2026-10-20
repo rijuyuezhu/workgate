@@ -3182,10 +3182,13 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 
 #executors-panel .executor-overview-body[hidden] { display: none !important; }
 /* Executor management workspace: a quiet selector + one readable work area. */
-#executors-panel .executor-control-standalone { margin-bottom: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }
-#executors-panel .executor-control-standalone[hidden] { display: none !important; }
 #executors-panel .executors-layout { min-height: 430px; }
-#executors-panel .executor-list { padding: 10px 8px; gap: 3px; background: #fafbfe; }
+#executors-panel .executor-list { padding: 10px 8px; gap: 16px; background: #fafbfe; }
+#executors-panel .executor-control-group,
+#executors-panel .executor-peer-rows { display: grid; gap: 3px; }
+#executors-panel .executor-peer-group { padding-top: 12px; border-top: 1px solid #e1e5ed; }
+#executors-panel .executor-peer-heading { margin: 0 12px 7px; color: #818b9e; font-size: 11px; font-weight: 650; }
+
 #executors-panel .executor-band {
   display: grid; grid-template-columns: minmax(0, 1fr) 9px;
   gap: 8px; min-height: 54px; padding: 9px 12px;
@@ -3278,29 +3281,46 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 #executor-integration-args-wrap[hidden], #executor-integration-validate[hidden],
 #executor-integration-delete[hidden], #executor-integration-toggle[hidden] { display: none !important; }
 
-/* MCP management rows remain neutral when enabled; disabled rows are muted. */
-#executors-panel #executor-mcp-body .executor-manage-row[data-state="enabled"],
-#executors-panel #executor-control-mcp-body .executor-manage-row[data-state="enabled"],
-#executors-panel #executor-mcp-body .executor-manage-pill[data-state="enabled"] { background: #fff; }
-#executors-panel #executor-mcp-body .executor-manage-row[data-state="disabled"],
-#executors-panel #executor-control-mcp-body .executor-manage-row[data-state="disabled"] { background: #eef0f3; }
+/* MCPs share the enabled styling with Skills; disabled entries remain muted. */
+/* Only enabled MCPs needing credentials acquire an auth label. Plain MCPs keep their existing row. */
+#executors-panel #executor-mcp-body .executor-manage-row[data-auth="required"] { background: #fff8e9; }
+#executors-panel #executor-mcp-body .executor-manage-row[data-auth="required"] .executor-manage-pill::before { background: #c48a26; }
+#executors-panel #executor-mcp-body .executor-row-auth { color: #23825c; font-size: 11px; }
+#executors-panel #executor-mcp-body .executor-manage-row[data-auth="required"] .executor-row-auth { color: #a16a11; }
+#executors-panel #executor-mcp-body .executor-manage-row[data-state="disabled"] { background: #eef0f3; }
 #executors-panel #executor-mcp-body .executor-manage-row[data-state="disabled"] strong,
-#executors-panel #executor-control-mcp-body .executor-manage-row[data-state="disabled"] strong,
 #executors-panel #executor-mcp-body .executor-manage-row[data-state="disabled"] .executor-row-mark { color: #858d9a; }
-.executor-mcp-auth-settings { border: 1px solid #e8ebf1; border-radius: 6px; padding: 11px 13px; display: grid; gap: 12px; min-width: 0; }
+.executor-mcp-auth-settings { border: 1px solid #e8ebf1; border-radius: 6px; padding: 12px 14px; display: grid; gap: 12px; min-width: 0; }
 .executor-mcp-auth-settings legend { color: #566178; font-size: 12px; font-weight: 700; padding: 0 5px; }
-.executor-auth-inputs { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+.executor-auth-inputs { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
 .executor-auth-secret-list { display: grid; gap: 5px; }
 .executor-auth-secret-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 9px; padding: 6px 0; border-bottom: 1px solid #eceff4; }
 .executor-auth-secret-row code { color: #364355; font-size: 11px; }
 .executor-auth-secret-row span { color: #8592a4; font-size: 11px; }
 .executor-auth-secret-row button { font-size: 11px; padding: 4px 8px; }
-.executor-auth-secret-add { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) auto; align-items: end; gap: 8px; }
-.executor-auth-secret-add button { white-space: nowrap; }
-#executor-mcp-oauth-actions { border-top: 1px solid #eceff4; padding-top: 10px; }
-#executor-mcp-oauth-actions p { font-size: 11px; line-height: 1.6; }
-#executor-mcp-oauth-actions code { overflow-wrap: anywhere; }
-@media (max-width: 620px) { .executor-auth-inputs { grid-template-columns: minmax(0,1fr); } .executor-auth-secret-add { grid-template-columns: minmax(0,1fr); } }
+.executor-auth-secret-add { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); align-items: end; gap: 10px; margin-top: 10px; }
+.executor-auth-secret-add button { justify-self: start; }
+#executor-mcp-oauth-actions { display: grid; gap: 10px; min-width: 0; }
+.executor-oauth-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.executor-oauth-actions button, .executor-oauth-actions a { font-size: 12px; }
+.executor-oauth-actions a { display: inline-flex; align-items: center; text-decoration: none; padding: 8px 12px; border: 1px solid #dfe3ed; border-radius: 6px; background: #fff; color: #48556e; }
+.executor-oauth-actions a:hover { background: #f5f4ff; border-color: #cbc7ed; }
+#executor-mcp-auth-status[data-state="connected"] { color: #21815d !important; font-weight: 650; font-size: 12px; }
+#executor-integration-test-wrap { margin-top: 12px; }
+#executor-integration-test-wrap button { font-size: 12px; }
+#executor-mcp-oauth-progress { font-size: 12px; line-height: 1.45; }
+#executor-mcp-oauth-progress:empty { display: none; }
+#executor-mcp-oauth-advanced { margin-top: 12px; }
+#executor-mcp-oauth-advanced button { font-size: 12px; }
+@media (max-width: 620px) {
+  .executor-auth-inputs, .executor-auth-secret-add { grid-template-columns: minmax(0,1fr); }
+  .executor-integration-dialog .dialog-actions { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
+  .executor-integration-dialog .dialog-actions button { width: 100%; }
+  .executor-integration-dialog #executor-integration-save { grid-column: 1 / -1; grid-row: 1; }
+  .executor-integration-dialog #executor-integration-cancel { grid-column: 1; grid-row: 2; }
+  .executor-integration-dialog #executor-integration-toggle { grid-column: 2; grid-row: 2; }
+  .executor-integration-dialog #executor-integration-delete { grid-column: 1 / -1; grid-row: 3; }
+}
 
 /* Shared inline feedback for Executor management. Ordinary empty/loading text
    stays unboxed; only actionable outcomes receive semantic color and icon. */
@@ -3405,3 +3425,257 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 }
 /* Small, passive confirmation for implicit Task creation. */
 .task-sessions-main #session-detail-task-created { font-size: 11px; line-height: 1.4; color: #8490a3; }
+
+/* Focused auxiliary editor: the main Skill dialog keeps only one entry point. */
+#executor-skill-files-entry[hidden] { display: none !important; }
+#executor-skill-files-entry button { padding: 7px 11px; font-size: 12px; }
+.executor-skill-files-dialog {
+  width: min(850px, calc(100vw - 30px));
+  max-width: 850px;
+  max-height: min(90dvh, 870px);
+  overflow-y: auto;
+  padding: 20px 22px;
+  border-radius: 9px;
+  border: 1px solid #e3e7f0;
+}
+.executor-skill-files-dialog .dialog-heading { margin-bottom: 12px; }
+.executor-skill-files-dialog .dialog-heading h2 { font-size: 17px; }
+.executor-skill-files-dialog .dialog-heading p { margin-top: 3px; font-size: 11px; }
+#executor-skill-files-status { min-height: 1em; margin: 0 0 10px; font-size: 11px; }
+#executor-skill-files-status[data-error="true"] { color: #a13547; }
+.executor-skill-files-layout { display: grid; grid-template-columns: minmax(0, 230px) minmax(0, 1fr); gap: 16px; }
+.executor-skill-files-sidebar, .executor-skill-files-editor { display: flex; flex-direction: column; min-width: 0; gap: 9px; }
+.executor-skill-files-sidebar label, .executor-skill-files-editor label { display: grid; gap: 5px; font-size: 11px; font-weight: 650; color: #58657c; }
+#executor-skill-files-list { width: 100%; min-height: 220px; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+#executor-skill-files-list option { padding: 5px; }
+.executor-skill-files-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.executor-skill-files-actions button, .executor-skill-files-editor .dialog-actions button { padding: 6px 9px; font-size: 11px; }
+.executor-skill-files-editor input, .executor-skill-files-editor textarea { width: 100%; min-width: 0; font: 12px ui-monospace, SFMono-Regular, Consolas, monospace; }
+#executor-skill-files-content { flex: 1 1 auto; min-height: 235px; resize: vertical; }
+.executor-skill-files-editor .dialog-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+@media (max-width: 780px) {
+  .executor-skill-files-dialog { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; padding: 15px; border-radius: 0; }
+  .executor-skill-files-layout { grid-template-columns: minmax(0, 1fr); gap: 13px; }
+  #executor-skill-files-list { min-height: 95px; max-height: 15dvh; }
+  #executor-skill-files-content { min-height: 27dvh; }
+  .executor-skill-files-editor .dialog-actions { flex-direction: row; }
+}
+
+
+/* Executor topology is a separate workspace, never another Executor subtab. */
+#executors-panel.topology-open > .section-heading,
+#executors-panel.topology-open > #executor-action-status,
+#executors-panel.topology-open > .executors-layout { display: none !important; }
+#executor-topology[hidden] { display: none !important; }
+.executor-topology { display: grid; gap: 12px; min-width: 0; }
+.topology-heading, .topology-toolbar, .topology-inspector-heading {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+}
+.topology-heading > div { display: flex; align-items: center; gap: 13px; }
+.topology-heading h2 { margin: 0; font-size: 18px; font-weight: 750; }
+.topology-heading .muted, #topology-instructions { font-size: 12px; margin: 0; }
+.topology-toolbar { justify-content: space-between; gap: 8px 20px; }
+.topology-pair-picker, .topology-view-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.topology-toolbar-label { color: var(--text); font-size: 12px; font-weight: 700; }
+.topology-toolbar label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; font-size: 11px; color: var(--muted); font-weight: 650; }
+.topology-toolbar select { min-width: 0; max-width: 180px; font-size: 12px; }
+.topology-toolbar button, #topology-back, .topology-direction button {
+  padding: 7px 10px; font-size: 11px; border-radius: 6px;
+}
+#topology-test-progress { margin: 0; font-size: 11px; }
+#topology-test-progress[hidden] { display: none; }
+#topology-instructions { line-height: 1.5; }
+.topology-legend { display: flex; align-items: center; gap: 8px 18px; flex-wrap: wrap; font-size: 11px; color: var(--muted); }
+.topology-legend span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.topology-legend i { display: inline-block; width: 20px; border-top: 3px solid #2b9974; }
+.topology-legend i[data-status="one-way"] { border-color: #6c63ac; }
+.topology-legend i[data-status="unreachable"] { border-color: #c15a62; border-top-style: dashed; }
+.topology-legend i[data-status="untested"] { border-color: #aeb7c7; border-top-style: dashed; }
+.topology-legend i[data-status="unknown"] { border-color: #9d839f; border-top-style: dotted; }
+.topology-legend i[data-status="stale"] { border-color: #a18550; border-top-style: dashed; }
+.topology-graph {
+  position: relative; width: 100%; height: clamp(380px, 47vw, 570px);
+  min-width: 0; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel); overflow: hidden;
+}
+.topology-graph[data-layout="grid"] { height: auto; min-height: 270px; }
+.topology-graph[data-size="1"], .topology-graph[data-size="2"] { height: 350px; }
+.topology-graph[data-size="3"] { height: 420px; }
+.topology-edges, .topology-nodes {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+}
+.topology-edges { z-index: 1; overflow: visible; }
+.topology-nodes { z-index: 2; pointer-events: none; }
+.topology-graph[data-layout="grid"] .topology-edges { display: none; }
+.topology-graph[data-layout="grid"] .topology-nodes {
+  position: relative; min-height: 265px; display: grid; align-content: start;
+  grid-template-columns: repeat(auto-fill, minmax(115px, 1fr)); gap: 10px;
+  padding: 20px; pointer-events: auto;
+}
+.topology-graph.topology-empty::after {
+  content: "No paired Executors"; position: absolute; inset: 0;
+  display: grid; place-items: center; color: var(--muted); font-size: 12px;
+}
+.topology-node {
+  position: absolute; transform: translate(-50%, -50%); width: 112px; min-height: 78px;
+  padding: 10px 8px 9px; display: grid; justify-items: center; gap: 5px;
+  border: 1px solid #dfe2eb; border-radius: 9px; background: var(--panel);
+  box-shadow: 0 2px 7px rgba(33, 40, 72, .07); text-align: center;
+  z-index: 2; pointer-events: auto;
+}
+.topology-node:hover, .topology-node:focus-visible {
+  border-color: #9280e3; box-shadow: 0 0 0 2px #edeafa; outline: none;
+}
+.topology-node[aria-pressed="true"] { border-color: #7567c6; background: #f4f1ff; }
+.topology-node .executor-band-mark { display: grid !important; width: 30px; height: 30px; font-size: 12px; }
+.topology-node-name { display: block; width: 100%; color: var(--text); font-size: 11px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topology-node-presence { font-size: 10px; color: #788497; }
+.topology-node[data-online="true"] .topology-node-presence { color: #197f5b; }
+.topology-graph[data-layout="grid"] .topology-node {
+  position: relative; inset: auto !important; transform: none; width: 100%; height: 100%; min-height: 85px;
+}
+.topology-edges g { outline: none; cursor: pointer; }
+.topology-edge-line { fill: none; stroke: #bbc3d2; stroke-width: 2; stroke-dasharray: 5 6; vector-effect: non-scaling-stroke; }
+.topology-edge-hit { fill: none; stroke: transparent; stroke-width: 26; pointer-events: stroke; vector-effect: non-scaling-stroke; }
+.topology-edges g[data-status="verified"] .topology-edge-line { stroke: #2b9974; stroke-dasharray: none; stroke-width: 3; }
+.topology-edges g[data-status="one-way"] .topology-edge-line { stroke: #6c63ac; stroke-dasharray: none; }
+.topology-edges g[data-status="unreachable"] .topology-edge-line { stroke: #c15a62; stroke-dasharray: 6 5; }
+.topology-edges g[data-status="ineligible"] .topology-edge-line { stroke: #c15a62; stroke-dasharray: 6 5; }
+.topology-edges g[data-status="unknown"] .topology-edge-line { stroke: #9d839f; stroke-dasharray: 2 5; }
+.topology-edges g[data-status="stale"] .topology-edge-line { stroke: #a18550; stroke-dasharray: 8 6; }
+.topology-edges g:hover .topology-edge-line, .topology-edges g:focus-visible .topology-edge-line,
+.topology-edges g.selected .topology-edge-line { stroke-width: 5; filter: drop-shadow(0 0 2px #7567c6); }
+.topology-edges g.selected .topology-edge-line { stroke-width: 6; }
+.topology-inspector { padding: 4px 0 0; min-width: 0; }
+.topology-inspector[hidden] { display: none !important; }
+.topology-inspector-heading h3 { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.topology-inspector-heading { justify-content: flex-start; gap: 8px 14px; }
+.topology-state { font-size: 11px; font-weight: 650; color: #798496; background: var(--panel); padding: 4px 8px; border-radius: 5px; }
+.topology-state[data-status="verified"] { color: #197f5b; background: #e5f4ec; }
+.topology-state[data-status="one-way"] { color: #6551a1; background: #eeeafb; }
+.topology-state[data-status="unreachable"], .topology-state[data-status="ineligible"] { color: #a64850; background: #fcebee; }
+.topology-state[data-status="stale"] { color: #866927; background: #f9f2dd; }
+.topology-directions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 10px; }
+.topology-direction { display: flex; min-width: 0; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; }
+.topology-direction-main { display: grid; min-width: 0; gap: 5px; }
+.topology-direction-title, .topology-direction-meta { display: flex; align-items: center; gap: 5px 10px; flex-wrap: wrap; }
+.topology-direction strong { font-size: 12px; overflow-wrap: anywhere; }
+.topology-direction span { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.topology-direction-status { font-weight: 650; }
+.topology-direction[data-status="peer_succeeded"] .topology-direction-status { color: #197f5b; }
+.topology-direction[data-status="unreachable"] .topology-direction-status,
+.topology-direction[data-status="ineligible"] .topology-direction-status { color: #a64850; }
+.topology-direction[data-status="stale"] .topology-direction-status { color: #866927; }
+.topology-direction button { white-space: nowrap; }
+#topology-feedback { margin: 8px 0 0; color: var(--muted); font-size: 11px; }
+#topology-feedback:empty { display: none; }
+@media (max-width: 780px) {
+  .topology-heading { align-items: flex-start; }
+  .topology-heading h2 { font-size: 16px; }
+  .topology-pair-picker { width: 100%; }
+  .topology-toolbar-label { width: 100%; }
+  .topology-toolbar label { flex: 1 1 90px; }
+  .topology-toolbar select { width: 100%; max-width: none; }
+  .topology-graph { height: 420px; }
+  .topology-graph[data-layout="focus"] { height: 500px; }
+  .topology-graph[data-layout="focus"] .topology-node { width: 58px; min-height: 53px; padding: 4px 2px; gap: 2px; }
+  .topology-graph[data-layout="focus"] .topology-node .executor-band-mark { width: 21px; height: 21px; font-size: 10px; }
+  .topology-graph[data-layout="focus"] .topology-node-presence { display: none; }
+  .topology-node { width: 84px; min-height: 74px; padding: 8px 5px; }
+  .topology-node .executor-band-mark { width: 27px; height: 27px; }
+  .topology-node-name { font-size: 10px; }
+  .topology-directions { grid-template-columns: minmax(0, 1fr); }
+  .topology-graph[data-layout="grid"] .topology-nodes {
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 7px; padding: 10px;
+  }
+}
+/* A focused multi-node ring gets vertical breathing room on desktop. */
+@media (min-width: 781px) {
+  .topology-graph[data-layout="focus"] { height: 660px; }
+  .topology-graph[data-layout="focus"][data-size="2"] { height: 350px; }
+}
+/* Oversized focused mobile graphs scroll inside their own stage, not the page. */
+.topology-stage { position: relative; width: 100%; height: 100%; }
+.topology-graph[data-layout="grid"] .topology-stage { height: auto; min-height: 265px; }
+.topology-graph[data-scrollable="true"] { overflow: auto; }
+
+/* Config uses the same neutral grouped rows as MCP / Skills. */
+#executors-panel .executor-config-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 14px; font-size: 11px; color: #8892a2; }
+#executors-panel .executor-config-file { font-family: var(--font-mono, monospace); overflow-wrap: anywhere; }
+#executors-panel .executor-config-warning { color: #936017; }
+#executors-panel .executor-config-list { display: grid; gap: 12px; }
+#executors-panel .executor-config-access { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 12px; }
+#executors-panel .executor-config-access button { padding: 6px 10px; }
+#executors-panel .executor-config-section { min-width: 0; overflow: hidden; }
+#executors-panel .executor-config-section > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 11px 15px; list-style: none; background: #fbfcfe; color: #626e84; font-size: 11px; }
+#executors-panel .executor-config-section > summary::-webkit-details-marker { display: none; }
+#executors-panel .executor-config-section > summary::before { content: '›'; color: #8c94a6; font-size: 17px; line-height: 12px; transform: rotate(0); }
+#executors-panel .executor-config-section[open] > summary::before { transform: rotate(90deg); }
+#executors-panel .executor-config-count { font-weight: 400; color: #9ba4b3; }
+#executors-panel .executor-config-row { display: grid; grid-template-columns: minmax(120px, 32%) minmax(0, 1.5fr) minmax(90px, 1fr) auto; align-items: start; gap: 12px; padding: 10px 15px; min-height: 43px; border-top: 1px solid #edf0f5; }
+#executors-panel .executor-config-name { min-width: 0; overflow-wrap: anywhere; font-size: 12px; font-weight: 600; color: #31394f; line-height: 1.5; }
+#executors-panel .executor-config-info { display: grid; gap: 3px; min-width: 0; }
+#executors-panel .executor-config-headings { display: grid; grid-template-columns: minmax(120px, 32%) minmax(0, 1.5fr) minmax(90px, 1fr) 44px; gap: 12px; padding: 2px 15px 9px; color: #8e97a7; font-size: 11px; }
+#executors-panel .executor-config-transition { display: flex; align-items: baseline; flex-wrap: wrap; gap: 7px; min-width: 0; }
+#executors-panel .executor-config-values { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; min-width: 0; }
+#executors-panel .executor-config-arrow { color: #b38327; font-size: 15px; line-height: 1; }
+#executors-panel .executor-config-default { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+#executors-panel .executor-config-default code { color: #8993a4; background: none; padding: 0; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+#executors-panel .executor-config-arrow[hidden],
+#executors-panel .executor-config-value[hidden] { display: none; }
+#executors-panel .executor-config-mobile-heading { display: none; }
+#executors-panel .executor-config-value { color: #414b60; background: none; padding: 0; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; min-width: 0; }
+#executors-panel .executor-config-source { color: #9ba4b3; font-size: 10px; white-space: nowrap; text-transform: uppercase; padding-top: 2px; }
+/* The in-use value is secondary to the file and default. Keep code typography
+   consistent; without an explicit reset it inherits a large app-wide style. */
+#executors-panel .executor-config-effective { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; min-width: 0; color: #8a94a4; font-size: 11px; line-height: 1.5; }
+#executors-panel .executor-config-live-label { flex: 0 0 auto; color: #8a94a4; }
+#executors-panel .executor-config-effective code { min-width: 0; background: none; padding: 0; color: #657187; font-size: 11px; font-weight: 400; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+#executors-panel .executor-config-effective .executor-config-source { padding: 0; font-size: 10px; line-height: 1.5; }
+
+#executors-panel .executor-detail-grid[hidden],
+#executors-panel .executor-detail-actions[hidden],
+#executors-panel #executor-overview-metrics[hidden] { display: none !important; }
+@media (max-width: 680px) {
+  #executors-panel .executor-config-row { grid-template-columns: minmax(0, 1fr) auto; gap: 2px; padding: 10px 12px; }
+  #executors-panel .executor-config-name { grid-column: 1; }
+  #executors-panel .executor-config-info { grid-row: 2; grid-column: 1 / -1; }
+  #executors-panel .executor-config-default { grid-row: 3; grid-column: 1 / -1; }
+  #executors-panel .executor-config-edit { grid-column: 2; grid-row: 1; }
+  #executors-panel .executor-config-headings { display: none; }
+  #executors-panel .executor-config-mobile-heading { display: inline; color: #9aa4b2; font-size: 11px; line-height: 1.5; }
+  #executors-panel .executor-config-live-label { flex: initial; }
+  #executors-panel .executor-config-transition,
+  #executors-panel .executor-config-default,
+  #executors-panel .executor-config-effective { display: grid; grid-template-columns: 49px minmax(0, 1fr); gap: 6px; align-items: baseline; }
+  #executors-panel .executor-config-info { gap: 4px; }
+}
+/* Editing is local to the chosen setting; bulk save never applies/restarts. */
+#executors-panel .executor-config-edit { padding: 2px 8px; font-size: 11px; align-self: start; }
+#executors-panel .executor-config-editor { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+#executors-panel .executor-config-editor[hidden] { display: none; }
+#executors-panel .executor-config-input { flex: 1 1 180px; min-width: 0; padding: 7px 9px; font-size: 12px; }
+#executors-panel .executor-config-editor button { font-size: 11px; padding: 6px 10px; }
+#executors-panel .executor-config-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+#executors-panel .executor-config-actions[hidden] { display: none; }
+#executors-panel .executor-config-actions button[hidden] { display: none; }
+#executors-panel .executor-config-actions button { padding: 6px 10px; font-size: 12px; }
+#executors-panel .executor-config-status { font-size: 11px; color: var(--muted); }
+#executors-panel .executor-config-success { display: block; margin-bottom: 10px; font-size: 12px; color: #447759; }
+/* File-backed value, staged changes and an optional focused review of pending edits. */
+#executors-panel .executor-config-unset { color: #9aa3b1; font-style: italic; }
+#executors-panel .executor-config-row[hidden],
+#executors-panel .executor-config-section[hidden],
+#executors-panel .executor-config-empty[hidden],
+#executors-panel .executor-config-headings[hidden] { display: none; }
+#executors-panel .executor-config-row.executor-config-changed {
+  background: #fffaf0;
+  outline: 1px solid #e1b650;
+  outline-offset: -1px;
+  box-shadow: inset 3px 0 0 #d8a129;
+}
+#executors-panel .executor-config-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; margin: 0 0 12px; }
+#executors-panel .executor-config-filter { display: inline-flex; align-items: center; gap: 7px; color: #646e80; font-size: 12px; cursor: pointer; }
+#executors-panel .executor-config-filter input { margin: 0; accent-color: #c4932d; }
+#executors-panel .executor-config-filter[hidden] { display: none; }
+#executors-panel .executor-config-empty { margin: 10px 0; font-size: 12px; color: #8790a0; }

@@ -13,6 +13,7 @@ from ..agent_bridge.management import (
     manage_mcp_manifest,
     test_mcp_connection,
 )
+from ..agent_bridge.skill_files import manage_skill_file
 from ..agent_bridge.skill_management import manage_skill
 from ..agent_bridge.state import load_agent_manifest
 from ..config.executor import ExecutorConfig
@@ -33,6 +34,18 @@ async def manage_executor_integration(
     if not isinstance(action, str):
         raise ValueError("Invalid integration action")
     name = _optional_string(args, "name")
+    if op == "ui.skill.files":
+        if not name:
+            raise ValueError("Executor-managed Skill name required")
+        return await asyncio.to_thread(
+            manage_skill_file,
+            config.agent_config_dir,
+            action,
+            name=name,
+            path=_optional_string(args, "path"),
+            content=_optional_string(args, "content"),
+            expected_revision=_optional_string(args, "expected_revision"),
+        )
     if op == "ui.skill.manage":
         return await asyncio.to_thread(
             manage_skill,

@@ -127,7 +127,7 @@ export function createFilesController({
           renderFileList();
         }
         elements.fileExecutor.value = controllerState.fileExecutorId;
-        elements.fileState.textContent = `Executor unavailable · ${controllerState.fileExecutorId}`;
+        elements.fileState.textContent = `Executor unavailable (${controllerState.fileExecutorId})`;
         setFileControls();
         elements.fileRefresh.disabled = true;
         return;
@@ -238,7 +238,8 @@ export function createFilesController({
 
   function showFilePreviewMessage(title, detail) {
     elements.filePreviewTitle.textContent = title;
-    elements.filePreviewMeta.textContent = detail || "";
+    // The detail is already rendered in the preview body; avoid repeating it.
+    elements.filePreviewMeta.textContent = "";
     const empty = document.createElement("div");
     empty.className = "empty-state";
     empty.textContent = detail || title;
@@ -246,7 +247,7 @@ export function createFilesController({
   }
 
   function fileEntryLabel(entry) {
-    const icon = entry.type === "dir" ? "▰" : entry.type === "link" ? "↗" : "·";
+    const icon = entry.type === "dir" ? "▰" : entry.type === "link" ? "↗" : "▤";
     return `${icon} ${text(entry.name, entry.path)}`;
   }
 
@@ -383,11 +384,11 @@ export function createFilesController({
     elements.filePreviewTitle.textContent = text(entry.name, entry.path);
     const metadata = [payload.kind, payload.media_type, payload.bytes === undefined ? "" : formatFileBytes(payload.bytes)]
       .filter(Boolean)
-      .join(" · ");
+      .join(", ");
     elements.filePreviewMeta.textContent = metadata;
 
     if (payload.kind === "directory") {
-      elements.filePreviewMeta.textContent = `${payload.count || 0} entries${payload.is_truncated ? " · truncated" : ""}`;
+      elements.filePreviewMeta.textContent = `${payload.count || 0} entries${payload.is_truncated ? " (truncated)" : ""}`;
       elements.filePreviewBody.replaceChildren(renderDirectoryPreview(payload));
       return;
     }
@@ -409,7 +410,7 @@ export function createFilesController({
     if (payload.kind === "binary") {
       const hex = String(payload.preview || "");
       pre.textContent = (hex.match(/.{1,32}/g) || []).join("\n") || "No preview bytes.";
-      elements.filePreviewMeta.textContent = `${formatFileBytes(payload.bytes)} · ${payload.preview_bytes || 0} preview bytes · hex`;
+      elements.filePreviewMeta.textContent = `${formatFileBytes(payload.bytes)} (${payload.preview_bytes || 0} preview bytes, hex)`;
     } else {
       const source = text(payload.content, "");
       const language = window.WorkgateSyntax
@@ -417,7 +418,7 @@ export function createFilesController({
         : "plain";
       if (window.WorkgateSyntax && language !== "plain") window.WorkgateSyntax.render(pre, source, language);
       else pre.textContent = source;
-      if (payload.preview_truncated) elements.filePreviewMeta.textContent += " · preview truncated";
+      if (payload.preview_truncated) elements.filePreviewMeta.textContent += " (preview truncated)";
     }
     elements.filePreviewBody.replaceChildren(pre);
   }
@@ -481,7 +482,7 @@ export function createFilesController({
       }
       renderFileList();
       if (selected && previewSelection) void previewFile(selected);
-      elements.fileState.textContent = `${controllerState.fileEntries.length} entries${payload.is_truncated ? " · truncated" : ""}`;
+      elements.fileState.textContent = `${controllerState.fileEntries.length} entries${payload.is_truncated ? " (truncated)" : ""}`;
       return payload;
     } finally {
       if (generation === controllerState.fileListGeneration) {
@@ -527,8 +528,8 @@ export function createFilesController({
       elements.fileEditor.value = text(payload.content, "");
       elements.filePreviewBody.hidden = true;
       elements.fileEditorForm.hidden = false;
-      elements.filePreviewTitle.textContent = `Edit · ${text(entry.name, entry.path)}`;
-      elements.filePreviewMeta.textContent = `${formatFileBytes(payload.bytes)} · complete text`;
+      elements.filePreviewTitle.textContent = `Edit ${text(entry.name, entry.path)}`;
+      elements.filePreviewMeta.textContent = `${formatFileBytes(payload.bytes)} (complete text)`;
       elements.fileState.textContent = "Editing";
       elements.fileEditor.focus();
     } catch (error) {

@@ -1,11 +1,11 @@
 {
-  "count": 58,
+  "count": 60,
   "sections": [
     {
       "body": [
         "Generated tool count: ",
         {
-          "code": "58"
+          "code": "60"
         },
         "."
       ],
@@ -2257,6 +2257,54 @@
       "heading": "Other",
       "kind": "table",
       "rows": [
+        [
+          {
+            "code": "config_inspect"
+          },
+          {
+            "items": [
+              {
+                "description": null,
+                "head": {
+                  "code": "executor_id"
+                },
+                "note": "(string / null, optional)"
+              }
+            ]
+          },
+          "Read the running Control configuration or one online Executor's configuration and file revision."
+        ],
+        [
+          {
+            "code": "config_save"
+          },
+          {
+            "items": [
+              {
+                "description": null,
+                "head": {
+                  "code": "changes"
+                },
+                "note": "(object, required)"
+              },
+              {
+                "description": null,
+                "head": {
+                  "code": "executor_id"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
+                "description": null,
+                "head": {
+                  "code": "revision"
+                },
+                "note": "(string, required)"
+              }
+            ]
+          },
+          "Atomically save role-owned configuration file changes using a revision from config_inspect. Saves file only; does NOT restart or apply."
+        ],
         [
           {
             "code": "workspace_continuation"
@@ -4676,6 +4724,109 @@
         "description": "Redacted result from an upstream agent MCP tool call.",
         "properties": {},
         "title": "CallAgentMcpToolOutput",
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "executor:use"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Read the running Control configuration or one online Executor's configuration and file revision.",
+      "inputSchema": {
+        "properties": {
+          "executor_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Executor Id"
+          }
+        },
+        "title": "config_inspectArguments",
+        "type": "object"
+      },
+      "name": "config_inspect",
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "config_inspectDictOutput",
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:write",
+              "executor:use"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false
+      },
+      "description": "Atomically save role-owned configuration file changes using a revision from config_inspect. Saves file only; does NOT restart or apply.",
+      "inputSchema": {
+        "properties": {
+          "changes": {
+            "additionalProperties": true,
+            "title": "Changes",
+            "type": "object"
+          },
+          "executor_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Executor Id"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision",
+          "changes"
+        ],
+        "title": "config_saveArguments",
+        "type": "object"
+      },
+      "name": "config_save",
+      "outputSchema": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "title": "config_saveDictOutput",
         "type": "object"
       }
     },

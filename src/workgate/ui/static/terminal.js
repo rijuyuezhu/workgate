@@ -307,7 +307,7 @@ export function createTerminalController({
     controllerState.terminalHistoryDraft = "";
     elements.terminalExecutor.value = controllerState.terminalExecutorId;
     elements.terminalTitle.textContent = "No terminal selected";
-    elements.terminalState.textContent = `Not loaded · ${controllerState.terminalExecutorId}`;
+    elements.terminalState.textContent = "Not loaded";
     showTerminalMessage(`Select or create a terminal session on ${controllerState.terminalExecutorId}.`);
     renderTerminalList({ shells: [] }, { emptyMessage: `Terminals for ${controllerState.terminalExecutorId} are not loaded.` });
     setTerminalControls(false);
@@ -363,7 +363,7 @@ export function createTerminalController({
         }
         if (wasOnline) resetTerminalWorkspace(controllerState.terminalExecutorId);
         elements.terminalExecutor.value = controllerState.terminalExecutorId;
-        elements.terminalState.textContent = `Executor unavailable · ${controllerState.terminalExecutorId}`;
+        elements.terminalState.textContent = "Executor unavailable";
         setTerminalControls(false);
         return;
       }
@@ -423,7 +423,7 @@ export function createTerminalController({
       terminalIcon.append(terminalPath);
       button.prepend(terminalIcon);
       const details = [controllerState.terminalExecutorId, shellId, session.cwd, session.command].filter(Boolean);
-      button.title = details.join(" · ");
+      button.title = details.join(", ");
       button.setAttribute("aria-current", shellId === controllerState.selectedShellId ? "true" : "false");
       button.addEventListener("click", () => {
         onNavigate("detail");
@@ -532,7 +532,7 @@ export function createTerminalController({
       requestedExecutor === controllerState.terminalSocketExecutorId;
     socket.addEventListener("open", () => {
       if (!current()) return;
-      elements.terminalState.textContent = `Negotiating · ${requestedExecutor}`;
+      elements.terminalState.textContent = "Connecting";
       controllerState.terminalReady = false;
       setTerminalControls(false);
     });
@@ -561,7 +561,7 @@ export function createTerminalController({
           return;
         }
         controllerState.terminalReady = true;
-        elements.terminalState.textContent = `Connected · ${requestedExecutor} · PTY`;
+        elements.terminalState.textContent = "Connected (PTY)";
         setTerminalControls(true);
         sendTerminalResize();
         if (document.body.dataset.activeView === "terminals") {
@@ -570,7 +570,7 @@ export function createTerminalController({
       } else if (message.type === "exit") {
         const detail = terminalNotice(message.message);
         controllerState.terminalReady = false;
-        elements.terminalState.textContent = `Exited · ${requestedExecutor}`;
+        elements.terminalState.textContent = "Exited";
         controllerState.terminalXterm?.write(`\r\n\u001b[31m[${detail}]\u001b[0m\r\n`);
         setTerminalControls(false);
         refreshTerminalsInBackground({ force: true });
@@ -582,13 +582,13 @@ export function createTerminalController({
       controllerState.terminalSocketExecutorId = "";
       controllerState.terminalReady = false;
       setTerminalControls(false);
-      elements.terminalState.textContent = event.reason || `Disconnected · ${requestedExecutor}`;
+      elements.terminalState.textContent = event.reason || "Disconnected";
       if (event.code === 4403 || event.code === 4404) {
         refreshTerminalsInBackground({ force: true });
       }
     });
     socket.addEventListener("error", () => {
-      if (current()) elements.terminalState.textContent = `Connection error · ${requestedExecutor}`;
+      if (current()) elements.terminalState.textContent = "Connection error";
     });
   }
 

@@ -1,8 +1,10 @@
 """Runtime settings for Workgate."""
 
+import hashlib
 import os
 import re
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -163,14 +165,14 @@ class Settings(BaseSettings):
     """Maximum retained output bytes for one tracked background-job attempt."""
     max_jobs: _NonNegativeInt = 1_000
     """Maximum retained tracked-job records; 0 keeps only active jobs."""
-    max_agent_sessions: int = Field(default=256, ge=1, le=10_000)
-    """Maximum durable execution sessions after stale-session pruning."""
+    max_agent_sessions: int | None = Field(default=None, ge=1, le=10_000)
+    """Control-wide execution-session limit; null admits unlimited sessions. A full explicit cap may reclaim sessions idle for 5 hours after confirming no active resources."""
     agent_session_retention_s: int = Field(
         default=30 * 24 * 60 * 60,
         ge=0,
         le=366 * 24 * 60 * 60,
     )
-    """Idle retention for durable execution sessions; 0 disables age-based expiry."""
+    """Idle execution-session retention (seconds), checked hourly; 0 disables age expiry. Active jobs, terminals, offline and unconfirmed sessions are preserved."""
     max_session_snapshots: int = Field(default=2_000, ge=1, le=100_000)
     """Maximum grounding snapshots retained for one execution session."""
     max_session_snapshot_bytes: int = Field(
@@ -203,6 +205,10 @@ class Settings(BaseSettings):
     """Maximum tree-view entries."""
     max_todos: _PositiveInt = 1_000
     """Todo-list item limit."""
+    task_idle_block_after_s: int = Field(
+        default=24 * 60 * 60, ge=0, le=365 * 24 * 60 * 60
+    )
+    """Auto-block confirmed idle active Tasks after this interval; 0 disables."""
     max_todo_bytes: _PositiveInt = 1_000_000
     """Todo-list total byte limit."""
     max_http_request_bytes: _NonNegativeInt = 16_000_000
@@ -449,18 +455,30 @@ def _default_setting_values() -> dict[str, Any]:
     }
 
 
+@dataclass(frozen=True)
+class LoadedConfigFile:
+    """The file version parsed into a Child's runtime Settings."""
+
+    path: Path | None
+    digest: str | None
+    names: frozenset[str]
+
+
 def read_config_file(
     path: str | Path | None,
     *,
     setting_names: Collection[str] | None = None,
+    source_bytes: bytes | None = None,
 ) -> dict[str, Any]:
     """Read optional YAML configuration values for one role-owned field set."""
     if not path:
         return {}
     config_path = Path(path).expanduser()
-    if not config_path.exists():
-        raise FileNotFoundError(config_path)
-    loaded = yaml.safe_load(config_path.read_text())
+    loaded = yaml.safe_load(
+        source_bytes.decode("utf-8")
+        if source_bytes is not None
+        else config_path.read_text()
+    )
     if loaded is None:
         return {}
     if not isinstance(loaded, dict):
@@ -521,6 +539,7 @@ def load_settings(
     setting_names: Collection[str] | None = None,
     default_config_path: str | Path | None = None,
     default_overrides: Mapping[str, Any] | None = None,
+    on_file_read: Callable[[LoadedConfigFile], None] | None = None,
 ) -> Settings:
     """Load settings without mutating the runtime filesystem.
 
@@ -549,7 +568,16 @@ def load_settings(
                 f"{sorted(foreign_defaults)}"
             )
         values.update(default_overrides)
-    values.update(read_config_file(selected_config, setting_names=selected))
+    path = (
+        Path(selected_config).expanduser().absolute()
+        if selected_config is not None
+        else None
+    )
+    content = path.read_bytes() if path is not None else None
+    file_values = read_config_file(
+        path, setting_names=selected, source_bytes=content
+    )
+    values.update(file_values)
     values.update(env_overrides(selected))
     if overrides:
         foreign = frozenset(overrides) - selected
@@ -558,7 +586,18 @@ def load_settings(
                 f"Settings overrides are not owned by this role: {sorted(foreign)}"
             )
         values.update(overrides)
-    return Settings(**values)
+    settings = Settings(**values)
+    if on_file_read is not None:
+        on_file_read(
+            LoadedConfigFile(
+                path,
+                hashlib.sha256(content).hexdigest()
+                if content is not None
+                else None,
+                frozenset(file_values),
+            )
+        )
+    return settings
 
 
 _configured_settings: Settings | None = None

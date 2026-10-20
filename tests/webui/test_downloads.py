@@ -133,6 +133,31 @@ def test_public_create_share_link_serves_executor_snapshot(
     assert "result.txt" in response.headers["content-disposition"]
 
 
+@pytest.mark.parametrize(
+    "size", [1024 * 1024, 1024 * 1024 + 1, 2 * 1024 * 1024 + 37]
+)
+def test_file_link_snapshot_spanning_transfer_chunks(
+    tmp_path, monkeypatch, size
+):
+    _reset(tmp_path, monkeypatch)
+    payload = (bytes(range(256)) * ((size + 255) // 256))[:size]
+    (tmp_path / "chunked.bin").write_bytes(payload)
+    app, _harness = build_paired_http_app(get_settings())
+    client = FastAPITestClient(app)
+    session_id = _public_session(client)
+
+    created = client.post(
+        "/tools/create_file_link",
+        json={"session_id": session_id, "path": "chunked.bin"},
+    )
+    assert created.status_code == 200
+    link = created.json()["structuredContent"]
+    assert link["bytes"] == size
+    response = client.get(link["url"])
+    assert response.status_code == 200
+    assert response.content == payload
+
+
 def test_explicit_control_data_dir_overrides_ambient_payload_location(
     tmp_path, monkeypatch
 ):
@@ -500,13 +525,63 @@ async def test_invalid_executor_chunk_removes_staging_snapshot(
         }
 
     monkeypatch.setattr(harness.control.download_service, "_call", fake_call)
-    with pytest.raises(RuntimeError, match="changed while creating snapshot"):
+    with pytest.raises(RuntimeError, match="chunk checksum mismatch"):
         await harness.control.download_service._export_snapshot(
             record, "artifact.bin"
         )
     assert (
         list(snapshot_directory(data_dir=_control_config().data_dir).iterdir())
         == []
+    )
+
+
+@pytest.mark.asyncio
+async def test_file_changed_during_chunked_snapshot_is_rejected(
+    tmp_path, monkeypatch
+):
+    _reset(tmp_path, monkeypatch)
+    original = b"a" * (1024 * 1024 + 1)
+    changed = b"b" * len(original)
+    _app, harness = build_paired_http_app(get_settings())
+    session = await harness.control.session_coordinator.start_session(
+        workdir="."
+    )
+    assert isinstance(session, dict)
+    record = harness.control.control_state.snapshot_sessions()[
+        str(session["session_id"])
+    ]
+
+    async def fake_call(_record, op: str, args: dict):
+        if op == "transfer_stat":
+            return {
+                "path": "artifact.bin",
+                "type": "file",
+                "size": len(original),
+                "modified": 0.0,
+                "sha256": hashlib.sha256(original).hexdigest(),
+            }
+        assert op == "transfer_read_chunk"
+        start = int(args["offset"])
+        data = changed[start : start + int(args["chunk_size"])]
+        return {
+            "path": "artifact.bin",
+            "offset": start,
+            "bytes": len(data),
+            "size": len(changed),
+            "eof": start + len(data) == len(changed),
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "data_b64": base64.b64encode(data).decode("ascii"),
+        }
+
+    monkeypatch.setattr(harness.control.download_service, "_call", fake_call)
+    with pytest.raises(
+        RuntimeError, match="file changed while creating snapshot"
+    ):
+        await harness.control.download_service._export_snapshot(
+            record, "artifact.bin"
+        )
+    assert not list(
+        snapshot_directory(data_dir=_control_config().data_dir).iterdir()
     )
 
 

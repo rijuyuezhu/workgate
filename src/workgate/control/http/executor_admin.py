@@ -10,7 +10,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Route
 
+from ...agent_bridge.auth import credential_store_key, oauth_status
 from ...agent_bridge.auth_management import manage_mcp_auth
+from ...agent_bridge.auth_store import AgentAuthStore
+from ...agent_bridge.cli import revoke_stored_oauth
 from ...agent_bridge.diagnostics import manifest_diagnostics
 from ...agent_bridge.management import (
     ManagedMcpConfig,
@@ -33,6 +36,7 @@ from ..pairing import (
     ExecutorPairingService,
     PairingAttemptView,
 )
+from ..peer_links import LinkProbeBusy
 
 
 class _IntegrationMoveBody(BaseModel):
@@ -63,12 +67,27 @@ class _SkillMoveBody(BaseModel):
     content: str = Field(min_length=1, max_length=131072)
 
 
+class _SkillFileBody(BaseModel):
+    """One file under the chosen Executor-managed Skill, never a source root."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    executor_id: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=128)
+    action: Literal["list", "get", "create", "update", "delete"]
+    path: str | None = Field(default=None, max_length=4096)
+    content: str | None = Field(default=None, max_length=131072)
+    expected_revision: str | None = Field(
+        default=None, min_length=64, max_length=64
+    )
+
+
 class _IntegrationAuthBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     owner: Literal["control", "executor"]
     name: str = Field(min_length=1, max_length=128)
-    action: Literal["set_secret", "delete_secret", "clear_oauth"]
+    action: Literal["set_secret", "delete_secret", "clear_oauth", "logout"]
     executor_id: str | None = Field(default=None, max_length=128)
     secret_name: str | None = Field(default=None, max_length=128)
     secret_value: str | None = Field(default=None, max_length=65_536)
@@ -95,6 +114,12 @@ class _IntegrationMutationBody(BaseModel):
     expected_revision: str | None = Field(
         default=None, min_length=64, max_length=64
     )
+
+
+class _PeerLinkProbeBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source_executor_id: str = Field(min_length=1, max_length=128)
+    destination_executor_id: str = Field(min_length=1, max_length=128)
 
 
 class _RenameExecutorBody(BaseModel):
@@ -231,6 +256,62 @@ def executor_admin_routes(
                 else result.bootstrap.model_dump(mode="json"),
             }
         )
+
+    async def peer_link(request: Request) -> Response:
+        """Read cached pair evidence or explicitly initiate a bounded probe."""
+        try:
+            require_oauth_scopes(
+                (SCOPE_EXECUTOR_USE, SCOPE_SHELL_WRITE)
+                if request.method == "POST"
+                else (SCOPE_EXECUTOR_USE,)
+            )
+        except MissingOAuthScopeError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        try:
+            params = (
+                dict(request.query_params)
+                if request.method == "GET"
+                else await request.json()
+            )
+            body = _PeerLinkProbeBody.model_validate(params)
+        except ValueError, ValidationError, TypeError:
+            return _json_error(
+                "InvalidPeerPair", "Invalid Executor pair", status_code=400
+            )
+        runtime = getattr(request.app.state, "control_runtime", None)
+        if runtime is None:
+            return _json_error(
+                "Unavailable", "Control unavailable", status_code=503
+            )
+        try:
+            if request.method == "POST":
+                result = await runtime.peer_links.probe(
+                    body.source_executor_id,
+                    body.destination_executor_id,
+                )
+                audit(
+                    "executor_peer_link_probed",
+                    source_executor_id=body.source_executor_id,
+                    destination_executor_id=body.destination_executor_id,
+                    status=result["status"],
+                    reason=result["reason"],
+                )
+            else:
+                result = await runtime.peer_links.read(
+                    body.source_executor_id,
+                    body.destination_executor_id,
+                )
+            return _json_ok(result)
+        except LookupError:
+            return _json_error(
+                "UnknownExecutor", "Executor not found", status_code=404
+            )
+        except LinkProbeBusy as exc:
+            return _json_error("LinkProbeBusy", str(exc), status_code=429)
+        except ValueError:
+            return _json_error(
+                "InvalidPeerPair", "Invalid Executor pair", status_code=400
+            )
 
     async def diagnostics(request: Request) -> Response:
         """Authorized, on-demand Executor diagnostics; never serve raw config."""
@@ -434,7 +515,32 @@ def executor_admin_routes(
                     "OfflineExecutor", "Executor offline", status_code=503
                 )
         try:
-            if owner == "control":
+            server = None
+            if owner == "control" and action in {"logout", "clear_oauth"}:
+                configured = load_agent_manifest(
+                    runtime.config.agent_config_dir, read_only=True
+                )
+                server = configured.data.mcp_servers.get(name)
+                if (
+                    not server
+                    or server.type != "http"
+                    or server.auth.mode != "oauth"
+                ):
+                    raise ValueError("Select a configured Control OAuth MCP")
+                broker = getattr(request.app.state, "browser_mcp_oauth", None)
+                if broker is not None:
+                    broker.cancel_credential(credential_store_key(name, server))
+            if owner == "control" and action == "logout":
+                assert server is not None
+                store = AgentAuthStore(runtime.config.agent_auth_dir)
+                revocation = await revoke_stored_oauth(store, name, server)
+                changed = store.clear_oauth(credential_store_key(name, server))
+                result = {
+                    "changed": changed,
+                    "auth": oauth_status(store, name, server),
+                    "remote_revocation": revocation.status,
+                }
+            elif owner == "control":
                 result = await asyncio.to_thread(
                     manage_mcp_auth,
                     runtime.config.agent_config_dir,
@@ -1007,6 +1113,83 @@ def executor_admin_routes(
         )
         return _json_ok({"name": body.name, "moved": True})
 
+    async def skill_files(request: Request) -> Response:
+        """Edit text files under one Executor-owned managed Skill bundle."""
+        try:
+            require_oauth_scopes((SCOPE_EXECUTOR_USE, SCOPE_SHELL_WRITE))
+        except MissingOAuthScopeError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        try:
+            data = (
+                dict(request.query_params)
+                if request.method == "GET"
+                else await request.json()
+            )
+            body = _SkillFileBody.model_validate(data)
+        except ValidationError, ValueError, TypeError:
+            return _json_error(
+                "InvalidSkillFileRequest",
+                "Invalid Skill file fields",
+                status_code=400,
+            )
+        if (request.method == "GET") != (body.action in {"list", "get"}):
+            return _json_error(
+                "InvalidSkillFileMethod",
+                "Use GET for reads and POST for changes",
+                status_code=405,
+            )
+        runtime = getattr(request.app.state, "control_runtime", None)
+        if runtime is None:
+            return _json_error(
+                "Unavailable", "Control unavailable", status_code=503
+            )
+        executor = runtime.control_state.snapshot_executors().get(
+            body.executor_id
+        )
+        if executor is None or executor.revoked_at is not None:
+            return _json_error(
+                "UnknownExecutor", "Unknown Executor", status_code=404
+            )
+        if not await runtime.executor_transport.is_online(body.executor_id):
+            return _json_error(
+                "OfflineExecutor", "Executor offline", status_code=503
+            )
+        try:
+            response = await runtime.executor_transport.call(
+                body.executor_id,
+                "ui.skill.files",
+                body.model_dump(exclude_none=True),
+                timeout_s=12,
+            )
+        except RuntimeError, OSError:
+            return _json_error(
+                "SkillFilesUnavailable",
+                "Executor file service unavailable; refresh before retrying",
+                status_code=503,
+            )
+        if not response.ok:
+            return _json_error(
+                "SkillFileRejected",
+                "Skill file operation rejected; reload before editing",
+                status_code=409,
+            )
+        if not isinstance(response.result, dict):
+            return _json_error(
+                "SkillFilesUnavailable",
+                "Executor file response unavailable",
+                status_code=503,
+            )
+        if request.method == "POST":
+            audit(
+                "skill_file_management",
+                executor_id=body.executor_id,
+                name=body.name,
+                action=body.action,
+                path=body.path,
+                ok=True,
+            )
+        return _json_ok(response.result)
+
     async def integrations(request: Request) -> Response:
         """Owner-scoped MCP/Skill CRUD for the Executor management workspace."""
         _require_executor_admin_scope()
@@ -1326,6 +1509,11 @@ def executor_admin_routes(
             api_prefix + "/integrations", integrations, methods=["GET", "POST"]
         ),
         Route(
+            api_prefix + "/integrations/skill-files",
+            skill_files,
+            methods=["GET", "POST"],
+        ),
+        Route(
             api_prefix + "/integrations/move",
             integration_move,
             methods=["POST"],
@@ -1347,6 +1535,11 @@ def executor_admin_routes(
         ),
         Route(
             api_prefix + "/executors/diagnostics", diagnostics, methods=["GET"]
+        ),
+        Route(
+            api_prefix + "/executors/peer-link",
+            peer_link,
+            methods=["GET", "POST"],
         ),
         Route(
             api_prefix + "/executors/{action}",

@@ -261,3 +261,93 @@ async def test_executor_runtime_close_can_retry_failed_owned_cleanup(
     assert calls == 2
     with pytest.raises(RuntimeError, match="cannot be restarted"):
         await runtime.start()
+
+
+@pytest.mark.asyncio
+async def test_control_idle_sweep_starts_and_stops_with_runtime(tmp_path):
+    runtime = build_control_runtime(
+        Settings(
+            state_dir=tmp_path / "idle-control",
+            auth_mode="none",
+            task_idle_block_after_s=86400,
+        )
+    )
+    async with runtime.lifespan():
+        assert runtime._idle_sweep_task is not None
+        assert not runtime._idle_sweep_task.done()
+    assert runtime._idle_sweep_task is None
+
+    disabled = build_control_runtime(
+        Settings(
+            state_dir=tmp_path / "disabled-control",
+            auth_mode="none",
+            task_idle_block_after_s=0,
+            agent_session_retention_s=0,
+        )
+    )
+    async with disabled.lifespan():
+        assert disabled._idle_sweep_task is None
+
+
+@pytest.mark.asyncio
+async def test_retention_uses_existing_control_maintenance_loop(
+    tmp_path, monkeypatch
+):
+    import asyncio
+
+    runtime = build_control_runtime(
+        Settings(
+            auth_mode="none",
+            state_dir=tmp_path / "retention-only",
+            task_idle_block_after_s=0,
+            agent_session_retention_s=100,
+        )
+    )
+    called = asyncio.Event()
+
+    async def reaper():
+        called.set()
+
+    monkeypatch.setattr(
+        runtime.session_coordinator, "reap_expired_sessions", reaper
+    )
+    async with runtime.lifespan():
+        assert runtime._idle_sweep_task is not None
+        await asyncio.wait_for(called.wait(), timeout=3)
+    assert runtime._idle_sweep_task is None
+
+
+@pytest.mark.asyncio
+async def test_shutdown_waits_for_in_flight_session_retention_cleanup(
+    tmp_path, monkeypatch
+):
+    import asyncio
+
+    runtime = build_control_runtime(
+        Settings(
+            auth_mode="none",
+            state_dir=tmp_path / "retention-shutdown",
+            task_idle_block_after_s=0,
+            agent_session_retention_s=10,
+        )
+    )
+    entered = asyncio.Event()
+    released = asyncio.Event()
+    finished = asyncio.Event()
+
+    async def reaper():
+        entered.set()
+        await released.wait()
+        finished.set()
+
+    monkeypatch.setattr(
+        runtime.session_coordinator, "reap_expired_sessions", reaper
+    )
+    await runtime.start()
+    await asyncio.wait_for(entered.wait(), timeout=3)
+    closing = asyncio.create_task(runtime.aclose())
+    await asyncio.sleep(0)
+    assert not closing.done()
+    released.set()
+    await asyncio.wait_for(closing, timeout=3)
+    assert finished.is_set()

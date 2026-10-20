@@ -42,6 +42,7 @@ def build_network_agent_registry_from_settings(
     *,
     probe_mcp_tools: bool = True,
     mcp_server_name: str | None = None,
+    excluded_mcp_server_names: frozenset[str] = frozenset(),
 ) -> AgentCapabilityRegistry:
     """Build the control-owned HTTP registry without machine/Skill policy."""
     active_settings: ControlConfig = settings or get_control_config()
@@ -70,6 +71,7 @@ def build_network_agent_registry_from_settings(
         scan_skills=False,
         probe_mcp_tools=probe_mcp_tools,
         mcp_server_name=mcp_server_name,
+        excluded_mcp_server_names=excluded_mcp_server_names,
     )
 
 
