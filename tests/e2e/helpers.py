@@ -82,7 +82,9 @@ def write_yaml_config(path: Path, values: dict[str, Any]) -> Path:
         yaml.safe_dump(values, sort_keys=True, allow_unicode=True),
         encoding="utf-8",
     )
-    return path
+    # The Parent rejects aliased config paths. CI Windows temp dirs may be
+    # reached through junctions, so pass the actual file path to the CLI.
+    return path.resolve()
 
 
 def isolated_xdg_env(root: Path) -> dict[str, str]:
