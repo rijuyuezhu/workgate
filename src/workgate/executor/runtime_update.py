@@ -279,8 +279,10 @@ def _stage_executable(
     target_name: str,
 ) -> None:
     windows = target_name == "windows-x86_64"
-    member_name = f"workgate-{target_name}/workgate" + (
-        ".exe" if windows else ""
+    member_name = (
+        f"workgate-{target_name}/workgatew.exe"
+        if windows
+        else f"workgate-{target_name}/workgate"
     )
     try:
         with ExitStack() as opened:
@@ -345,6 +347,29 @@ def _validate_executable(path: Path, version: str) -> None:
         )
 
 
+def _validate_windows_service_executable(path: Path, version: str) -> None:
+    """A windowless PE has no stdout; use the same bundled private version probe."""
+    output = _temp_path(path.parent, "version")
+    try:
+        result = subprocess.run(
+            [str(path), "--_windows-version-file", str(output)],
+            check=False,
+            capture_output=True,
+            timeout=30.0,
+        )
+        reported = (
+            output.read_text(encoding="ascii").strip()
+            if output.is_file()
+            else ""
+        )
+        if result.returncode != 0 or reported != f"workgate {version}":
+            raise RuntimeError(
+                f"executor runtime validation failed for required version {version}"
+            )
+    finally:
+        output.unlink(missing_ok=True)
+
+
 def _validate_replace_target(path: Path) -> None:
     if not path.is_absolute():
         raise RuntimeError("control-managed executor path must be absolute")
@@ -400,7 +425,10 @@ async def apply_control_managed_update(
                 )
             _stage_executable(archive, staged, target_name=target_name)
             staged.chmod(0o700)
-            _validate_executable(staged, target_version)
+            if windows:
+                _validate_windows_service_executable(staged, target_version)
+            else:
+                _validate_executable(staged, target_version)
 
             if windows:
                 if windows_activate is None:

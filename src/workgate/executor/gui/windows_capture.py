@@ -228,16 +228,17 @@ def _capture_window_image_native(hwnd: int, destination: Path) -> None:
         user32.ReleaseDC(ctypes.c_void_p(hwnd), window_dc)
 
 
-def main() -> None:
-    if sys.platform != "win32" or len(sys.argv) != 3:
+def main(argv: list[str] | None = None) -> None:
+    args = sys.argv[1:] if argv is None else argv
+    if sys.platform != "win32" or len(args) != 2:
         raise SystemExit(
             "usage: python -m workgate.executor.gui.windows_capture HWND PNG"
         )
-    hwnd = int(sys.argv[1])
+    hwnd = int(args[0])
     if hwnd <= 0:
         raise SystemExit("invalid window handle")
     _set_thread_dpi_awareness()
-    _capture_window_image_native(hwnd, Path(sys.argv[2]))
+    _capture_window_image_native(hwnd, Path(args[1]))
 
 
 if __name__ == "__main__":

@@ -145,7 +145,9 @@ async def test_control_managed_update_replaces_verified_runtime_atomically(
         assert path.read_text().endswith(f"'workgate {target_version}'\n")
 
     monkeypatch.setattr(runtime_update, "_target_name", lambda: target_name)
-    monkeypatch.setattr(runtime_update, "_validate_executable", validate_staged)
+    monkeypatch.setattr(
+        runtime_update, "_validate_windows_service_executable", validate_staged
+    )
     monkeypatch.setattr(runtime_update.httpx, "AsyncClient", client_factory)
 
     updated = await apply_control_managed_update(
@@ -613,7 +615,7 @@ def test_stage_windows_runtime_extracts_only_exact_member(
     archive = tmp_path / "release.zip"
     expected = b"MZ" + b"versioned" * 32
     with zipfile.ZipFile(archive, "w") as bundle:
-        bundle.writestr("workgate-windows-x86_64/workgate.exe", expected)
+        bundle.writestr("workgate-windows-x86_64/workgatew.exe", expected)
         bundle.writestr("../../malicious.exe", b"MALICIOUS")
     staged = tmp_path / "staged.exe"
     runtime_update._stage_executable(
@@ -649,7 +651,7 @@ def test_stage_windows_runtime_enforces_decompressed_budget(
     with zipfile.ZipFile(
         archive, "w", compression=zipfile.ZIP_DEFLATED
     ) as bundle:
-        bundle.writestr("workgate-windows-x86_64/workgate.exe", b"A" * 64)
+        bundle.writestr("workgate-windows-x86_64/workgatew.exe", b"A" * 64)
     monkeypatch.setattr(runtime_update, "_MAX_EXECUTABLE_BYTES", 32)
     with pytest.raises(RuntimeError, match="archive member is invalid"):
         runtime_update._stage_executable(
@@ -673,7 +675,7 @@ async def test_windows_managed_update_switches_verified_versioned_executable(
     archive_bytes = io.BytesIO()
     with zipfile.ZipFile(archive_bytes, "w") as bundle:
         bundle.writestr(
-            f"workgate-{target_name}/workgate.exe", b"MZnew-verified-image"
+            f"workgate-{target_name}/workgatew.exe", b"MZnew-verified-image"
         )
     archive = archive_bytes.getvalue()
     digest = hashlib.sha256(archive).hexdigest()
@@ -697,7 +699,9 @@ async def test_windows_managed_update_switches_verified_versioned_executable(
         assert path.read_bytes() == b"MZnew-verified-image"
         assert version == target_version
 
-    monkeypatch.setattr(runtime_update, "_validate_executable", validate)
+    monkeypatch.setattr(
+        runtime_update, "_validate_windows_service_executable", validate
+    )
     calls = []
 
     def activate(old: Path, new: Path) -> None:
@@ -751,7 +755,7 @@ async def test_windows_managed_update_rejects_missing_task_callback(
     store.record_install(ownership=ExecutorRuntimeOwnership.CONTROL_MANAGED)
     archive_bytes = io.BytesIO()
     with zipfile.ZipFile(archive_bytes, "w") as bundle:
-        bundle.writestr("workgate-windows-x86_64/workgate.exe", b"MZverified")
+        bundle.writestr("workgate-windows-x86_64/workgatew.exe", b"MZverified")
     digest = hashlib.sha256(archive_bytes.getvalue()).hexdigest()
     real_client = httpx.AsyncClient
 
@@ -771,7 +775,9 @@ async def test_windows_managed_update_rejects_missing_task_callback(
     )
     monkeypatch.setattr(runtime_update.httpx, "AsyncClient", client_factory)
     monkeypatch.setattr(
-        runtime_update, "_validate_executable", lambda *_args: None
+        runtime_update,
+        "_validate_windows_service_executable",
+        lambda *_args: None,
     )
     with pytest.raises(RuntimeError, match="owned Task Scheduler"):
         await apply_control_managed_update(
@@ -784,3 +790,19 @@ async def test_windows_managed_update_rejects_missing_task_callback(
     assert state is not None
     assert state.update_status is ExecutorRuntimeUpdateStatus.FAILED
     assert state.executable == str(target)
+
+
+def test_windowless_windows_version_probe_matches_and_cleans_output(
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "workgatew.exe"
+    binary.write_text(
+        "#!/usr/bin/env python3\n"
+        "import pathlib, sys\n"
+        "pathlib.Path(sys.argv[2]).write_text('workgate 9.9.9\\n')\n"
+    )
+    binary.chmod(0o700)
+    runtime_update._validate_windows_service_executable(binary, "9.9.9")
+    with pytest.raises(RuntimeError, match="required version 9.9.8"):
+        runtime_update._validate_windows_service_executable(binary, "9.9.8")
+    assert list(tmp_path.glob(".workgate.version.*")) == []

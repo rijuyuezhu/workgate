@@ -26,6 +26,8 @@ def test_release_matrix_rejects_stale_binary_packaging(tmp_path):
         ".github/workflows/release.yml",
         "pyproject.toml",
         "scripts/release/build-binary.sh",
+        "scripts/release/build-binary.ps1",
+        "scripts/release/package-windows.ps1",
         "scripts/validation/check-release-matrix.py",
     )
     for relative in paths:
@@ -66,6 +68,8 @@ def test_release_matrix_rejects_mismatched_package_version(tmp_path):
         ".github/workflows/release.yml",
         "pyproject.toml",
         "src/workgate/__init__.py",
+        "scripts/release/build-binary.ps1",
+        "scripts/release/package-windows.ps1",
         "scripts/validation/check-release-matrix.py",
     )
     for relative in paths:
@@ -83,3 +87,39 @@ def test_release_matrix_rejects_mismatched_package_version(tmp_path):
     )
     assert completed.returncode != 0
     assert "version must match" in completed.stderr
+
+
+def test_release_matrix_rejects_missing_windows_binary(tmp_path):
+    """Do not publish a release without the native Windows x86-64 asset."""
+    import shutil
+
+    root = Path(__file__).parents[2]
+    for relative in (
+        ".github/workflows/ci.yml",
+        ".github/workflows/release.yml",
+        "pyproject.toml",
+        "src/workgate/__init__.py",
+        "scripts/release/build-binary.sh",
+        "scripts/release/build-binary.ps1",
+        "scripts/release/package-windows.ps1",
+        "scripts/validation/check-release-matrix.py",
+    ):
+        destination = tmp_path / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(root / relative, destination)
+    workflow = tmp_path / ".github/workflows/release.yml"
+    workflow.write_text(
+        workflow.read_text().replace(
+            "          - artifact: windows-x86_64\n            runner: windows-2022\n",
+            "",
+        )
+    )
+    completed = subprocess.run(
+        [sys.executable, "-S", "scripts/validation/check-release-matrix.py"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode != 0
+    assert "matrix mismatch" in completed.stderr

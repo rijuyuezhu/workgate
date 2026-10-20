@@ -156,3 +156,19 @@ def test_capture_cli_rejects_other_platforms_and_bad_handles(monkeypatch):
     monkeypatch.setattr(capture.sys, "argv", ["capture", "0", "window.png"])
     with pytest.raises(SystemExit, match="invalid window handle"):
         capture.main()
+
+
+def test_windows_frozen_capture_entrypoint_args(monkeypatch, tmp_path):
+    output = tmp_path / "window.png"
+    called = []
+    monkeypatch.setattr(capture.sys, "platform", "win32")
+    monkeypatch.setattr(capture, "_set_thread_dpi_awareness", lambda: None)
+    monkeypatch.setattr(
+        capture,
+        "_capture_window_image_native",
+        lambda hwnd, destination: called.append((hwnd, destination)),
+    )
+    capture.main(["42", str(output)])
+    assert called == [(42, output)]
+    with pytest.raises(SystemExit, match="invalid window handle"):
+        capture.main(["0", str(output)])

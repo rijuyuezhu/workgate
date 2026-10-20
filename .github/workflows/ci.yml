@@ -63,6 +63,35 @@ jobs:
       - run: uv sync --locked --group dev
       - run: uv run pytest -q -m "not topology"
 
+  windows-native:
+    name: Native Windows tests (x86-64, Python 3.14)
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+          architecture: x64
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync --locked --group dev
+      - name: Verify WinPTY, UI Automation and Windows native contracts
+        run: |
+          uv run python -c "import winpty, uiautomation; print('Windows native dependencies imported')"
+          uv run pytest -q tests/contracts/test_windows_conpty_core.py tests/contracts/test_windows_file_lock.py tests/contracts/test_windows_shell_dialect.py tests/contracts/test_windows_subprocess_env.py tests/contracts/test_windows_path.py tests/contracts/test_windows_native_runner.py tests/executor/test_windows_services.py tests/executor/test_windows_gui.py tests/executor/test_windows_gui_edges.py tests/executor/test_windows_gui_desktop.py tests/executor/test_windows_capture.py
+      - name: Verify clean Windows wheel installation
+        shell: pwsh
+        run: |
+          uv build --wheel --out-dir dist
+          $wheel = (Get-ChildItem dist -Filter '*.whl' | Select-Object -First 1).FullName
+          $environment = Join-Path $env:RUNNER_TEMP 'wg391-wheel'
+          uv venv --python 3.14 $environment
+          uv pip install --python (Join-Path $environment 'Scripts/python.exe') $wheel
+          & (Join-Path $environment 'Scripts/workgate.exe') --version
+
+
   topology:
     name: Deployment topology
     runs-on: ubuntu-latest
@@ -166,6 +195,8 @@ jobs:
             runner: macos-15-intel
           - artifact: macos-aarch64
             runner: macos-15
+          - artifact: windows-x86_64
+            runner: windows-2022
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -174,8 +205,20 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - run: bash scripts/release/build-binary.sh
-      - run: python scripts/release/smoke-binary.py dist/workgate
+      - if: runner.os != 'Windows'
+        run: bash scripts/release/build-binary.sh
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/release/build-binary.ps1
+      - if: runner.os != 'Windows'
+        run: python scripts/release/smoke-binary.py dist/workgate
+      - if: runner.os == 'Windows'
+        run: python scripts/release/smoke-binary.py dist/workgate.exe
+      - if: runner.os == 'Windows'
+        run: uv run pytest -q tests/contracts/test_windows_frozen_service.py
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/release/package-windows.ps1
 
   package-smoke:
     name: Package smoke
@@ -262,6 +305,7 @@ jobs:
       - pre-commit
       - pyright
       - test
+      - windows-native
       - topology
       - coverage
       - browser-e2e

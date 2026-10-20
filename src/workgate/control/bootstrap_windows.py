@@ -22,10 +22,8 @@ if (-not [Environment]::Is64BitOperatingSystem -or
     [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() -ne 'X64') {
     throw 'Windows x86-64 is required'
 }
-$previous = ''
-$next = ''
-$published = $false
-$runtime = ''
+$installDirectory = ''
+$installStarted = $false
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ('workgate-bootstrap-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temporary -ErrorAction Stop | Out-Null
 try {
@@ -41,34 +39,37 @@ try {
 
     Add-Type -AssemblyName System.IO.Compression
     $staged = Join-Path $temporary 'workgate.exe'
+    $stagedService = Join-Path $temporary 'workgatew.exe'
     $file = [IO.File]::OpenRead($archive)
     try {
         $zip = [IO.Compression.ZipArchive]::new($file, [IO.Compression.ZipArchiveMode]::Read)
         try {
-            $entry = $zip.GetEntry("workgate-$Target/workgate.exe")
-            if ($null -eq $entry -or $entry.Length -le 0 -or $entry.Length -gt $MaxArchiveBytes) {
-                throw 'Executor runtime executable is missing or invalid'
-            }
-            $source = $entry.Open()
-            try {
-                $destination = [IO.File]::Create($staged)
-                try {
-                    $buffer = New-Object byte[] 65536
-                    $written = [long]0
-                    while (($count = $source.Read($buffer, 0, $buffer.Length)) -gt 0) {
-                        $written += $count
-                        if ($written -gt $MaxArchiveBytes) {
-                            throw 'Executor runtime executable exceeds the size limit'
-                        }
-                        $destination.Write($buffer, 0, $count)
-                    }
-                    if ($written -ne $entry.Length) {
-                        throw 'Executor runtime executable size mismatch'
-                    }
+            foreach ($binary in @('workgate.exe', 'workgatew.exe')) {
+                $entry = $zip.GetEntry("workgate-$Target/$binary")
+                if ($null -eq $entry -or $entry.Length -le 0 -or $entry.Length -gt $MaxArchiveBytes) {
+                    throw "Executor runtime $binary is missing or invalid"
                 }
-                finally { $destination.Dispose() }
+                $source = $entry.Open()
+                try {
+                    $destination = [IO.File]::Create((Join-Path $temporary $binary))
+                    try {
+                        $buffer = New-Object byte[] 65536
+                        $written = [long]0
+                        while (($count = $source.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                            $written += $count
+                            if ($written -gt $MaxArchiveBytes) {
+                                throw "Executor runtime $binary exceeds the size limit"
+                            }
+                            $destination.Write($buffer, 0, $count)
+                        }
+                        if ($written -ne $entry.Length) {
+                            throw "Executor runtime $binary size mismatch"
+                        }
+                    }
+                    finally { $destination.Dispose() }
+                }
+                finally { $source.Dispose() }
             }
-            finally { $source.Dispose() }
         }
         finally { $zip.Dispose() }
     }
@@ -77,6 +78,14 @@ try {
     $reported = (& $staged --version | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $reported -ne "workgate $Version") {
         throw 'Executor runtime version mismatch'
+    }
+    $serviceVersion = Join-Path $temporary 'service-version.txt'
+    $probe = Start-Process -FilePath $stagedService -ArgumentList @(
+        '--_windows-version-file', ('"' + $serviceVersion + '"')
+    ) -Wait -PassThru
+    if ($probe.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $serviceVersion) -or
+        (Get-Content -LiteralPath $serviceVersion -Raw).Trim() -ne "workgate $Version") {
+        throw 'Executor windowless runtime version mismatch'
     }
     $connect = @('executor', 'connect', $Control)
     if ($Name) { $connect += @('--name', $Name) }
@@ -92,18 +101,17 @@ try {
     if ($Persist) {
         $runtime = Join-Path $env:LOCALAPPDATA 'workgate\executor-bootstrap'
         New-Item -ItemType Directory -Force -Path $runtime | Out-Null
-        $target = Join-Path $runtime 'workgate.exe'
-        $next = Join-Path $runtime ([Guid]::NewGuid().ToString('N') + '.next.exe')
-        $previous = Join-Path $runtime ([Guid]::NewGuid().ToString('N') + '.previous.exe')
-        Copy-Item -LiteralPath $staged -Destination $next
-        if (Test-Path -LiteralPath $target) {
-            Move-Item -LiteralPath $target -Destination $previous
-        }
-        $published = $true
-        Move-Item -LiteralPath $next -Destination $target
+        # Versioned installation directory: never rename/replace a Windows EXE
+        # still mapped by a previous running Task Scheduler process.
+        $installDirectory = Join-Path $runtime ([Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $installDirectory -ErrorAction Stop | Out-Null
+        Copy-Item -LiteralPath $staged -Destination (Join-Path $installDirectory 'workgate.exe')
+        Copy-Item -LiteralPath $stagedService -Destination (Join-Path $installDirectory 'workgatew.exe')
+        $target = Join-Path $installDirectory 'workgate.exe'
+        $installStarted = $true
         & $target @install
         if ($LASTEXITCODE -ne 0) { throw 'Executor service installation failed' }
-        $published = $false
+        $installDirectory = ''
         Write-Host 'Workgate executor installed and started.'
         Write-Host "Management: $target executor status"
     } else {
@@ -112,31 +120,12 @@ try {
     }
 }
 finally {
-    $rollbackError = $null
-    if ($published -and $runtime) {
-        $target = Join-Path $runtime 'workgate.exe'
-        try {
-            if (Test-Path -LiteralPath $target) {
-                Remove-Item -LiteralPath $target -Force -ErrorAction Stop
-            }
-            if ($previous -and (Test-Path -LiteralPath $previous)) {
-                Move-Item -LiteralPath $previous -Destination $target -ErrorAction Stop
-            }
-        } catch {
-            # Keep the old executable if Windows cannot release the new one.
-            $rollbackError = $_
-        }
+    if ($installDirectory -and -not $installStarted) {
+        Remove-Item -LiteralPath $installDirectory -Recurse -Force -ErrorAction SilentlyContinue
     }
-    if (-not $rollbackError -and $previous -and (Test-Path -LiteralPath $previous)) {
-        Remove-Item -LiteralPath $previous -Force -ErrorAction SilentlyContinue
-    }
-    if ($next -and (Test-Path -LiteralPath $next)) {
-        Remove-Item -LiteralPath $next -Force -ErrorAction SilentlyContinue
-    }
+    # Once installation starts, retain the versioned files even on failure:
+    # Task Scheduler may already reference them, and Windows may hold them open.
     Remove-Item -LiteralPath $temporary -Recurse -Force -ErrorAction SilentlyContinue
-    if ($rollbackError) {
-        throw "Executor installation rollback failed; previous executable preserved at '$previous': $rollbackError"
-    }
 }
 """
     return (
