@@ -241,7 +241,11 @@
       </section>
       <div class="executors-layout">
         <nav id="executor-list" class="executor-list" aria-label="Control and executors" aria-live="polite">
-          <div class="empty-state">Loading executors…</div>
+          <div class="executor-control-group"></div>
+          <div class="executor-peer-group">
+            <div class="executor-peer-heading">Executors</div>
+            <div class="executor-peer-rows"></div>
+          </div>
         </nav>
         <article class="executor-details">
           <div class="executor-details-header">
@@ -322,24 +326,34 @@
                 <div id="executor-mcp-secret-list" class="executor-auth-secret-list"></div>
                 <div class="executor-auth-secret-add">
                   <label>Secret name <input id="executor-mcp-secret-name" autocomplete="off" spellcheck="false" placeholder="api_token" maxlength="128"></label>
-                  <label>New value <input id="executor-mcp-secret-value" type="password" autocomplete="new-password" placeholder="Not displayed after saving"></label>
+                  <label>New value <input id="executor-mcp-secret-value" type="password" autocomplete="new-password" placeholder="Enter secret value"></label>
                   <button id="executor-mcp-secret-set" type="button">Store secret</button>
                 </div>
               </details>
               <div id="executor-mcp-oauth-actions" hidden>
-                <p class="muted">Authorize on host: <code>workgate mcp auth SERVER</code></p>
-                <button id="executor-mcp-oauth-clear" class="danger-action" type="button">Clear local OAuth credentials</button>
+                <div class="executor-oauth-actions">
+                  <button id="executor-mcp-oauth-authorize" class="primary-action" type="button">Authorize</button>
+                  <a id="executor-mcp-oauth-link" href="#" target="_blank" rel="noopener noreferrer" hidden>Open authorization ↗</a>
+                  <button id="executor-mcp-oauth-copy" type="button" hidden>Copy link</button>
+                  <button id="executor-mcp-oauth-cancel" type="button" hidden>Stop authorization</button>
+                  <button id="executor-mcp-oauth-logout" type="button" hidden>Sign out</button>
+                </div>
+                <p id="executor-mcp-oauth-progress" class="muted" role="status" aria-live="polite"></p>
+
               </div>
             </div>
           </fieldset>
-          <details class="executor-integration-advanced"><summary>Advanced</summary>
+          <details id="executor-mcp-advanced-settings" class="executor-integration-advanced"><summary>Advanced</summary>
             <label>Options (JSON) <textarea id="executor-integration-advanced" rows="4" spellcheck="false" placeholder='{"headers":{"Authorization":{"secret":"my_key"}}}'>{}</textarea></label>
+            <div id="executor-mcp-oauth-advanced" hidden>
+              <button id="executor-mcp-oauth-clear" class="danger-action" type="button">Clear local OAuth state</button>
+            </div>
+            <div id="executor-integration-test-wrap" hidden>
+              <button type="button" id="executor-integration-test">Discover tools</button>
+              <div id="executor-integration-test-result" class="muted" role="status" aria-live="polite"></div>
+            </div>
           </details>
           <label id="executor-integration-args-wrap">Arguments (JSON array) <textarea id="executor-integration-args" rows="3" spellcheck="false">[]</textarea></label>
-          <div id="executor-integration-test-wrap" hidden>
-            <button type="button" id="executor-integration-test">Test / Discover</button>
-            <div id="executor-integration-test-result" class="muted" role="status" aria-live="polite"></div>
-          </div>
         </div>
         <div id="executor-skill-files-entry" hidden>
           <button id="executor-skill-files-open" type="button" disabled>Bundle files…</button>

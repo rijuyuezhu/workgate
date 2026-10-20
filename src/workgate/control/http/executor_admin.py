@@ -10,7 +10,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Route
 
+from ...agent_bridge.auth import credential_store_key, oauth_status
 from ...agent_bridge.auth_management import manage_mcp_auth
+from ...agent_bridge.auth_store import AgentAuthStore
+from ...agent_bridge.cli import revoke_stored_oauth
 from ...agent_bridge.diagnostics import manifest_diagnostics
 from ...agent_bridge.management import (
     ManagedMcpConfig,
@@ -84,7 +87,7 @@ class _IntegrationAuthBody(BaseModel):
 
     owner: Literal["control", "executor"]
     name: str = Field(min_length=1, max_length=128)
-    action: Literal["set_secret", "delete_secret", "clear_oauth"]
+    action: Literal["set_secret", "delete_secret", "clear_oauth", "logout"]
     executor_id: str | None = Field(default=None, max_length=128)
     secret_name: str | None = Field(default=None, max_length=128)
     secret_value: str | None = Field(default=None, max_length=65_536)
@@ -512,7 +515,32 @@ def executor_admin_routes(
                     "OfflineExecutor", "Executor offline", status_code=503
                 )
         try:
-            if owner == "control":
+            server = None
+            if owner == "control" and action in {"logout", "clear_oauth"}:
+                configured = load_agent_manifest(
+                    runtime.config.agent_config_dir, read_only=True
+                )
+                server = configured.data.mcp_servers.get(name)
+                if (
+                    not server
+                    or server.type != "http"
+                    or server.auth.mode != "oauth"
+                ):
+                    raise ValueError("Select a configured Control OAuth MCP")
+                broker = getattr(request.app.state, "browser_mcp_oauth", None)
+                if broker is not None:
+                    broker.cancel_credential(credential_store_key(name, server))
+            if owner == "control" and action == "logout":
+                assert server is not None
+                store = AgentAuthStore(runtime.config.agent_auth_dir)
+                revocation = await revoke_stored_oauth(store, name, server)
+                changed = store.clear_oauth(credential_store_key(name, server))
+                result = {
+                    "changed": changed,
+                    "auth": oauth_status(store, name, server),
+                    "remote_revocation": revocation.status,
+                }
+            elif owner == "control":
                 result = await asyncio.to_thread(
                     manage_mcp_auth,
                     runtime.config.agent_config_dir,

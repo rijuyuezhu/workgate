@@ -35,6 +35,8 @@ export function createExecutorsController({
     managementId: "",
     managementGeneration: 0,
     editor: null,
+    oauthSessions: new Map(),
+    oauthTimer: null,
   };
 
   const topology = createExecutorTopology({
@@ -145,9 +147,13 @@ export function createExecutorsController({
         status: executor.revoked_at ? "revoked" : executor.draining ? "draining" : executor.online ? "online" : "offline",
       })),
     ];
-    const existing = new Map(Array.from(elements.executorList.children,
+    const controlGroup = elements.executorList.querySelector(".executor-control-group");
+    const peerGroup = elements.executorList.querySelector(".executor-peer-group");
+    const peerRows = peerGroup.querySelector(".executor-peer-rows");
+    peerGroup.hidden = state.executors.length === 0;
+    const existing = new Map(Array.from(elements.executorList.querySelectorAll(".executor-row"),
       child => [child.dataset.selection, child]));
-    let position = 0;
+    let peerPosition = 0;
     for (const entry of entries) {
       let button = existing.get(entry.key);
       existing.delete(entry.key);
@@ -184,9 +190,10 @@ export function createExecutorsController({
       status.textContent = entry.status;
       status.dataset.status = entry.status === "available" ? "online"
         : entry.status === "unavailable" ? "offline" : entry.status;
-      if (elements.executorList.children[position] !== button)
-        elements.executorList.insertBefore(button, elements.executorList.children[position] || null);
-      position++;
+      const group = entry.key === CONTROL_SELECTION ? controlGroup : peerRows;
+      const position = entry.key === CONTROL_SELECTION ? 0 : peerPosition++;
+      if (group.children[position] !== button)
+        group.insertBefore(button, group.children[position] || null);
     }
     for (const stale of existing.values()) stale.remove();
   }
@@ -260,6 +267,7 @@ export function createExecutorsController({
       if (row.status === "Disabled") item.dataset.state = "disabled";
       if (row.status === "Enabled") item.dataset.state = "enabled";
       if (row.status === "Overridden") item.dataset.state = "overridden";
+      if (row.authState) item.dataset.auth = row.authState;
       const icon = rowIcon(row.icon);
       if (icon) {
         const mark = document.createElement('span');
@@ -282,6 +290,14 @@ export function createExecutorsController({
       detail.textContent = row.detail || "";
       text.append(name);
       if (row.detail) text.append(detail);
+      if (row.authState) {
+        const auth = document.createElement("span");
+        auth.className = "executor-row-auth";
+        auth.textContent = row.authMode === "secret"
+          ? (row.authState === "authorized" ? "✓ Secret configured" : "Secret required")
+          : (row.authState === "authorized" ? "✓ Authorized" : "Authorization required");
+        text.append(auth);
+      }
       item.append(text);
       const tail = document.createElement("div");
       tail.className = "executor-manage-tail";
@@ -376,6 +392,10 @@ export function createExecutorsController({
         title: item.name,
         detail: kind === "mcp" ? item.type : "SKILL.md",
         status: item.enabled ? (shadowed.has(item.name) ? "Overridden" : "Enabled") : "Disabled",
+        authMode: kind === "mcp" ? item.auth?.mode : null,
+        authState: kind === "mcp" && item.enabled && !shadowed.has(item.name)
+          && item.auth?.mode !== "none" && typeof item.auth_authorized === "boolean"
+          ? (item.auth_authorized ? "authorized" : "required") : null,
         manage: result.can_manage ? () => void openEditor({owner, kind, item}) : null,
       }));
       addGroup(container, title, rows.length ? rows : stateRows("None"));
@@ -469,6 +489,10 @@ export function createExecutorsController({
     const mode = elements.executorIntegrationAuthMode.value;
     elements.executorIntegrationOAuthScopesWrap.hidden = mode !== "oauth";
     elements.executorMcpOAuthActions.hidden = mode !== "oauth" || !editing.item;
+    // Secrets can be pre-stored even before an MCP switches to secret auth.
+    elements.executorMcpSecretDetails.hidden = mode === "oauth" || !editing.item;
+    elements.executorMcpOAuthAdvanced.hidden = mode !== "oauth" || !editing.item;
+    renderBrowserOAuth(editing);
     elements.executorIntegrationUrlWrap.hidden = owner !== "control";
     elements.executorIntegrationCommandWrap.hidden = owner !== "executor";
     elements.executorIntegrationArgsWrap.hidden = owner !== "executor";
@@ -502,7 +526,9 @@ export function createExecutorsController({
     for (const button of [elements.executorIntegrationSave, elements.executorIntegrationToggle,
       elements.executorIntegrationDelete, elements.executorIntegrationValidate,
       elements.executorIntegrationTest, elements.executorMcpSecretSet,
-      elements.executorMcpOAuthClear, ...elements.executorMcpSecretList.querySelectorAll("button")]) {
+      elements.executorMcpOAuthClear, elements.executorMcpOAuthLogout, elements.executorMcpOAuthAuthorize,
+      elements.executorMcpOAuthCopy, elements.executorMcpOAuthCancel,
+      ...elements.executorMcpSecretList.querySelectorAll("button")]) {
       button.disabled = !ready;
     }
     elements.executorSkillFilesOpen.disabled = !ready || !edit.filesReady;
@@ -544,9 +570,11 @@ export function createExecutorsController({
     elements.executorMcpSecretList.replaceChildren();
     elements.executorMcpSecretSet.disabled = Boolean(item);
     elements.executorMcpOAuthClear.disabled = Boolean(item);
+    elements.executorMcpOAuthLogout.disabled = Boolean(item);
     elements.executorIntegrationTest.disabled = Boolean(item);
     elements.executorMcpAuthStatus.hidden = true;
     notice(elements.executorMcpAuthStatus, "");
+    renderBrowserOAuth(edit);
     notice(elements.executorIntegrationTestResult, "");
     elements.executorIntegrationToggle.hidden = !item;
     elements.executorIntegrationDelete.hidden = !item;
@@ -582,6 +610,10 @@ export function createExecutorsController({
         elements.executorIntegrationOAuthScopes.value = (config.auth?.scopes || []).join(" ");
         elements.executorMcpSecretSet.disabled = false;
         elements.executorMcpOAuthClear.disabled = false;
+        elements.executorMcpOAuthLogout.disabled = false;
+        elements.executorMcpOAuthAuthorize.disabled = false;
+        elements.executorMcpOAuthCopy.disabled = false;
+        elements.executorMcpOAuthCancel.disabled = false;
         elements.executorIntegrationTest.disabled = false;
         void loadEditorAuth(edit);
       }
@@ -691,11 +723,24 @@ export function createExecutorsController({
       if (state.editor !== edit || edit.authGeneration !== generation) return;
       edit.authStatus = result;
       const status = result.auth || {};
-      elements.executorMcpAuthStatus.hidden = status.status === "not_required";
+      if (edit.owner === "control" && status.mode === "oauth") {
+        try {
+          const pending = await request(`/integrations/oauth/current?name=${encodeURIComponent(edit.name)}`);
+          if (state.editor !== edit || edit.authGeneration !== generation) return;
+          if (pending?.session_id) state.oauthSessions.set(edit.name, {
+            id:pending.session_id, url:pending.authorization_url || "", status:pending.status,
+          });
+          else state.oauthSessions.delete(edit.name);
+        } catch { /* A disconnected status read must not block the MCP editor. */ }
+      }
+      renderBrowserOAuth(edit);
+      const pending = Boolean(state.oauthSessions.get(edit.name));
+      elements.executorMcpAuthStatus.hidden = status.status === "not_required" || (status.mode === "oauth" && pending && !status.authorized);
+      elements.executorMcpAuthStatus.dataset.state = status.authorized ? "connected" : "";
       if (!elements.executorMcpAuthStatus.hidden) notice(
         elements.executorMcpAuthStatus,
-        `Authorization: ${status.status || "unavailable"}${status.expires_at ? ` (expires ${new Date(status.expires_at * 1000).toLocaleString()})` : ""}`,
-        ["authorized", "valid"].includes(status.status) ? "success" : "warning",
+        status.mode === "oauth" ? (status.authorized ? "✓ Connected" : "Not connected")
+          : `Authorization: ${status.status || "unavailable"}`,
       );
       const list = elements.executorMcpSecretList;
       list.replaceChildren();
@@ -730,6 +775,83 @@ export function createExecutorsController({
     }
   }
 
+  function renderBrowserOAuth(edit) {
+    clearTimeout(state.oauthTimer);
+    const session = state.oauthSessions.get(edit.name);
+    const supported = edit.owner === "control" && edit.kind === "mcp"
+      && elements.executorIntegrationAuthMode.value === "oauth";
+    const authorized = Boolean(edit.authStatus?.auth?.authorized) || session?.status === "authorized";
+    const active = session && ["waiting", "preparing", "completing"].includes(session.status);
+    if (active && !authorized) elements.executorMcpAuthStatus.hidden = true;
+    elements.executorMcpOAuthAuthorize.hidden = !supported || authorized || active;
+    elements.executorMcpOAuthLogout.hidden = !supported || !authorized;
+    const link = supported && Boolean(session?.url) && !authorized;
+    elements.executorMcpOAuthLink.hidden = !link;
+    elements.executorMcpOAuthCopy.hidden = !link;
+    if (link) elements.executorMcpOAuthLink.href = session.url;
+    elements.executorMcpOAuthCancel.hidden = !supported || !active || session.status === "completing";
+    const messages = {
+      waiting: "Waiting for authorization…",
+      preparing: "Preparing authorization…",
+      completing: "Connecting…",
+      authorized: "Connected",
+      denied: "Authorization denied. Try again.",
+      failed: "Authorization failed. Try again.",
+    };
+    notice(elements.executorMcpOAuthProgress, supported ? (messages[session?.status] || "") : "",
+      session?.status === "authorized" ? "success" : "plain");
+    if (supported && active && state.editor === edit && !authorized) {
+      // Only poll while the MCP editor owns this explicit OAuth session.
+      state.oauthTimer = setTimeout(() => {
+        if (state.editor === edit) void browserOAuth("check");
+      }, 1700);
+    }
+  }
+
+  async function browserOAuth(action) {
+    const edit = state.editor;
+    if (!edit || edit.owner !== "control" || edit.kind !== "mcp" || !edit.item || edit.busy) return;
+    const name = edit.name;
+    let session = state.oauthSessions.get(name);
+    setEditorBusy(edit, true);
+    try {
+      if (action === "start") {
+        const result = await request("/integrations/oauth/start", {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({owner:"control", name}),
+        });
+        session = {id:result.session_id, url:result.authorization_url, status:"waiting"};
+        state.oauthSessions.set(name, session);
+      } else if (session && action === "cancel") {
+        await request("/integrations/oauth/cancel", {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({session_id:session.id}),
+        });
+        state.oauthSessions.delete(name);
+      } else if (session && action === "check") {
+        const result = await request("/integrations/oauth/status?session_id=" + encodeURIComponent(session.id));
+        session.status = result.status;
+        if (["completing", "authorized", "denied", "failed", "expired"].includes(result.status)) session.url = "";
+        if (result.status === "authorized") {
+          await loadEditorAuth(edit);
+          void loadManagement(true);
+        }
+      }
+    } catch (error) {
+      if (state.editor === edit) {
+        if (error?.status === 404 && session && action !== "start") {
+          state.oauthSessions.delete(name);
+          editorStatus("Authorization expired. Try again.", "warning");
+        } else editorStatus(error instanceof Error ? error.message : String(error), "error");
+      }
+    } finally {
+      if (state.editor === edit) {
+        setEditorBusy(edit, false);
+        renderBrowserOAuth(edit);
+      }
+    }
+  }
+
   async function mutateAuth(action, fields = {}) {
     const edit = state.editor;
     if (!edit || edit.kind !== "mcp" || !edit.item || edit.busy) return;
@@ -743,9 +865,15 @@ export function createExecutorsController({
       elements.executorMcpSecretValue.value = "";
       const message = action === "set_secret" ? "Secret stored securely."
         : action === "delete_secret" ? (result.changed ? "Secret removed." : "Secret already absent.")
+        : action === "logout" ? `Signed out locally (remote revocation: ${result.remote_revocation || "unavailable"}).`
         : result.changed ? "Local OAuth state cleared (remote tokens not revoked)." : "No local OAuth state to clear.";
       editorStatus(message, result.changed === false ? "warning" : "success");
+      if (action === "logout" || action === "clear_oauth") {
+        state.oauthSessions.delete(edit.name);
+        renderBrowserOAuth(edit);
+      }
       await loadEditorAuth(edit);
+      void loadManagement(true);
     } catch (error) {
       if (state.editor === edit) editorStatus(error instanceof Error ? error.message : String(error), "error");
     } finally {
@@ -1129,6 +1257,9 @@ export function createExecutorsController({
     state.managementId = "";
     state.management = null;
     state.editor = null;
+    // Discard pending OAuth links when the WebUI session resets.
+    state.oauthSessions.clear();
+    clearTimeout(state.oauthTimer);
     skillFileEditor.close(true);
     elements.executorIntegrationDialog.close();
     closeDialog(elements.executorPairDialog);
@@ -1177,6 +1308,22 @@ export function createExecutorsController({
       const value = elements.executorMcpSecretValue.value;
       if (!key || !value) { editorStatus("Enter both a secret reference name and a value.", "warning"); return; }
       void mutateAuth("set_secret", {secret_name:key, secret_value:value});
+    });
+    elements.executorMcpOAuthAuthorize.addEventListener("click", () => void browserOAuth("start"));
+    elements.executorMcpOAuthCopy.addEventListener("click", async () => {
+      const session = state.editor && state.oauthSessions.get(state.editor.name);
+      if (!session?.url) return;
+      try {
+        await navigator.clipboard.writeText(session.url);
+        notice(elements.executorMcpOAuthProgress, "Link copied · Waiting for authorization…");
+      } catch {
+        editorStatus("Clipboard unavailable. Open the authorization link instead.", "warning");
+      }
+    });
+    elements.executorMcpOAuthCancel.addEventListener("click", () => void browserOAuth("cancel"));
+    elements.executorMcpOAuthLogout.addEventListener("click", () => {
+      if (globalThis.confirm("Try to revoke the OAuth token remotely and clear local OAuth state?"))
+        void mutateAuth("logout");
     });
     elements.executorMcpOAuthClear.addEventListener("click", () => {
       if (globalThis.confirm("Clear locally stored OAuth state? This does not revoke tokens at the provider."))
