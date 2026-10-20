@@ -227,9 +227,13 @@ jobs:
       - if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/release/package-windows.ps1
-      - name: Native frozen Windows PowerShell bootstrap, persistent pairing and checksum rejection
+      - name: Build distinct acceptance-only older Windows frozen PE
         if: runner.os == 'Windows'
-        run: uv run python scripts/validation/windows-frozen-bootstrap-smoke.py
+        shell: pwsh
+        run: ./scripts/validation/build-windows-older-frozen.ps1
+      - name: Native frozen Windows PowerShell bootstrap and automatic cross-version update E2E
+        if: runner.os == 'Windows'
+        run: uv run python scripts/validation/windows-frozen-bootstrap-smoke.py --older-service dist/workgatew-older.exe
 
   package-smoke:
     name: Package smoke

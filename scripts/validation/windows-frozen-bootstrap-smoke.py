@@ -1,5 +1,6 @@
 """Windows CI: real frozen ZIP + PowerShell bootstrap + owner-approved service."""
 
+import argparse
 import asyncio
 import hashlib
 import json
@@ -36,6 +37,7 @@ from workgate.executor.runtime_update import (  # noqa: E402
     ExecutorRuntimeState,
     ExecutorRuntimeStateStore,
     ExecutorRuntimeUpdateStatus,
+    _validate_windows_service_executable,
     apply_control_managed_update,
 )
 from workgate.executor.service import (  # noqa: E402
@@ -65,6 +67,9 @@ def _remove_tree(path: Path) -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--older-service", type=Path)
+    args = parser.parse_args()
     if os.environ.get("GITHUB_ACTIONS") != "true":
         raise RuntimeError("Frozen bootstrap service smoke is CI-only")
     archive = Path("release/workgate-windows-x86_64.zip").resolve()
@@ -311,9 +316,8 @@ def main() -> None:
                     stderr_path=root / "control.err",
                 )
             )
-            # Exercise the actual verified ZIP -> versioned PE -> owned Task
-            # Scheduler action switch. This uses the *same* build/version;
-            # separate distinct-version release acceptance is still required.
+            # Also exercise an explicit switch after the optional automatic
+            # A->B upgrade; this uses the current version as its own target.
             task.stop()
             assert task.status()["state"].lower() != "running"
             manager = ExecutorServiceManager(
@@ -332,6 +336,89 @@ def main() -> None:
                     executable=str(service_exe),
                 )
             )
+            if args.older_service is not None:
+                # A is a genuinely separate frozen build with a distinct
+                # synthetic version; it is NOT a published historical release.
+                old_build = args.older_service.resolve(strict=True)
+                with old_build.open("rb") as image:
+                    old_sha256 = hashlib.file_digest(
+                        image, "sha256"
+                    ).hexdigest()
+                with service_exe.open("rb") as image:
+                    assert (
+                        hashlib.file_digest(image, "sha256").hexdigest()
+                        != old_sha256
+                    )
+                old_service = (
+                    service_exe.parent / "older-build" / "workgatew.exe"
+                )
+                old_service.parent.mkdir()
+                shutil.copyfile(old_build, old_service)
+                _validate_windows_service_executable(
+                    old_service, "5.0.0a3.dev0"
+                )
+                manager.activate_windows_runtime(service_exe, old_service)
+                runtime_store.save(
+                    ExecutorRuntimeState(
+                        ownership=ExecutorRuntimeOwnership.CONTROL_MANAGED,
+                        executable=str(old_service),
+                    )
+                )
+                action = task._powershell(
+                    f"(Get-ScheduledTask {task._task} -ErrorAction Stop).Actions[0].Execute"
+                )
+                assert (
+                    Path(action.stdout.strip()).resolve()
+                    == old_service.resolve()
+                )
+                task.start()
+                # Real older frozen service receives Control's newer-version
+                # policy, fetches B, switches the actual scheduled action and
+                # relies on its bounded automatic restart trigger (no test-side
+                # call to apply_control_managed_update or task.start for B).
+                deadline = time.monotonic() + 170
+                while time.monotonic() < deadline:
+                    state = runtime_store.load()
+                    if (
+                        state is not None
+                        and state.executable is not None
+                        and state.executable
+                        not in {str(service_exe), str(old_service)}
+                        and state.update_status
+                        is ExecutorRuntimeUpdateStatus.IDLE
+                    ):
+                        candidate = Path(state.executable)
+                        if candidate.is_file():
+                            _validate_windows_service_executable(
+                                candidate, __version__
+                            )
+                            service_exe = candidate
+                            break
+                    time.sleep(0.5)
+                else:
+                    raise AssertionError(
+                        "old frozen Executor did not auto-publish newer PE"
+                    )
+                last_seen = asyncio.run(
+                    wait_for_executor_online(
+                        url,
+                        control,
+                        executor_id,
+                        after_last_seen=last_seen,
+                        timeout_s=120,
+                        stdout_path=root / "control.out",
+                        stderr_path=root / "control.err",
+                    )
+                )
+                action = task._powershell(
+                    f"(Get-ScheduledTask {task._task} -ErrorAction Stop).Actions[0].Execute"
+                )
+                assert (
+                    Path(action.stdout.strip()).resolve()
+                    == service_exe.resolve()
+                )
+                assert task.status()["state"].lower() == "running"
+                task.stop()
             (root / "digest.txt").write_text(digest, encoding="ascii")
             published = asyncio.run(
                 apply_control_managed_update(
