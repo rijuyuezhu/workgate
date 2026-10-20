@@ -174,3 +174,17 @@ Workgate-generated runtime images are retained until an explicit cleanup so an
 otherwise idle service or another owned task never loses its referenced binary.
 A native Windows binary with a windowless service entry point is required for
 end-to-end frozen update acceptance (#391).
+
+## Windows x86-64 native CI and release (#391)
+
+The `windows-2022` x64 GitHub Actions runner uses Python 3.14 to run native
+ConPTY, Win32 Job Object, file-lock, Scheduler and GUI contract tests. The
+Windows PyInstaller build is a native PowerShell invocation of the existing
+one-file CLI entrypoint. CI runs the same frozen executable CLI/HTTP/WebUI
+smoke as Linux/macOS. No WSL/Bash installation is required for Windows.
+
+Release archives use `workgate-windows-x86_64.zip`, containing
+`workgate-windows-x86_64/workgate.exe` alongside README, LICENSE and
+QUICKSTART.txt. The matching SHA-256 checksum follows the existing release
+proxy format and is verified by Control bootstrap and managed updates.
+Existing four Linux/macOS release targets remain required.

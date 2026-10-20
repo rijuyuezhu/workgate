@@ -12,6 +12,7 @@ EXPECTED_BINARY_ARTIFACTS = {
     "linux-aarch64",
     "macos-x86_64",
     "macos-aarch64",
+    "windows-x86_64",
 }
 
 
@@ -28,8 +29,6 @@ def _section(text: str, name: str) -> str:
 
 def main() -> int:
     ci = (ROOT / ".github/workflows/ci.yml").read_text()
-    if "windows-latest" in ci or "windows-conpty" in ci:
-        raise SystemExit("Windows CI jobs are not supported")
     release = (ROOT / ".github/workflows/release.yml").read_text()
     with (ROOT / "pyproject.toml").open("rb") as stream:
         project = tomllib.load(stream)["project"]
@@ -57,6 +56,7 @@ def main() -> int:
     publish = _section(release, "github-release")
     smoke = _section(ci, "package-smoke")
     binary_smoke = _section(ci, "binary-smoke")
+    windows_native = _section(ci, "windows-native")
     expected = EXPECTED_BINARY_ARTIFACTS
     actual = set(
         re.findall(r"^          - artifact: ([\w-]+)$", binary, re.MULTILINE)
@@ -74,8 +74,10 @@ def main() -> int:
         raise SystemExit(
             f"binary CI artifact matrix mismatch: {sorted(ci_artifacts)}"
         )
-    if "windows-" in binary or "windows-" in binary_smoke:
-        raise SystemExit("self-contained binary jobs must not include Windows")
+    if "runs-on: windows-2022" not in windows_native:
+        raise SystemExit("native Windows CI runner is required")
+    if "python-version: '3.14'" not in windows_native:
+        raise SystemExit("native Windows CI requires Python 3.14")
     for job, section in (("release", binary), ("CI", binary_smoke)):
         fields = set(
             re.findall(r"^          - ([a-z_]+):", section, re.MULTILINE)
@@ -95,6 +97,32 @@ def main() -> int:
         raise SystemExit(
             "release must package the built dist/workgate executable"
         )
+    windows_contract = (
+        "scripts/release/build-binary.ps1",
+        "scripts/release/smoke-binary.py dist/workgate.exe",
+    )
+    for section in (binary, binary_smoke):
+        for fragment in windows_contract:
+            if fragment not in section:
+                raise SystemExit(f"Windows binary job is missing {fragment}")
+    for fragment in (
+        "Compress-Archive",
+        "Get-FileHash -Algorithm SHA256",
+        "workgate-${{ matrix.artifact }}.zip",
+    ):
+        if fragment not in binary:
+            raise SystemExit(f"Windows release packaging missing {fragment}")
+    for fragment in (
+        "uv sync --locked --group dev",
+        "import winpty, uiautomation",
+        "tests/contracts/test_windows_conpty_core.py",
+        "tests/contracts/test_windows_native_runner.py",
+        "tests/executor/test_windows_services.py",
+    ):
+        if fragment not in windows_native:
+            raise SystemExit(f"native Windows test job is missing {fragment}")
+    if "- windows-native" not in _section(ci, "ci-gate"):
+        raise SystemExit("Windows tests must participate in CI Gate")
     required = (
         (
             validation,
@@ -154,8 +182,18 @@ def main() -> int:
             raise SystemExit(
                 f"missing shared PyInstaller build contract: {fragment}"
             )
+    powershell_builder = (ROOT / "scripts/release/build-binary.ps1").read_text()
+    for fragment in (
+        "--clean --noconfirm --onefile --name workgate",
+        "--collect-all workgate",
+        "scripts/release/pyinstaller-entry.py",
+    ):
+        if fragment not in powershell_builder:
+            raise SystemExit(
+                f"missing Windows PyInstaller build contract: {fragment}"
+            )
     print(
-        "Release matrix: universal Python wheel + sdist and four self-contained binaries"
+        "Release matrix: universal Python wheel + sdist and five self-contained binaries"
     )
     return 0
 
