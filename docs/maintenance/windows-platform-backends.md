@@ -106,12 +106,16 @@ WebSocket protocol or session manager is introduced.
   the Task Scheduler service; the E2E then verifies process/log cleanup and
   removes its versioned runtime directory. This test runs only on disposable
   GitHub Windows runners and uses a local archive because the version is unreleased.
-- scripts/validation/windows-pairing-approval-smoke.py: actual native
-  `executor connect` device-code request against an independent loopback
-  Control, owner lookup and approval through the Control UI API, profile
-  persistence/validation, and rejection without credential persistence.
-  Uses local test-only `auth_mode: none`; OAuth-protected owner workflows and
-  cross-host interoperability need separate acceptance under #392.
+- scripts/validation/windows-pairing-approval-smoke.py: native
+  `executor connect` device-code approval and denial against disposable
+  loopback Controls in both `auth_mode: none` and **OAuth-protected** modes.
+  Tests real signed `executor:use` owner bearer approval, 401 for missing,
+  invalid or wrong-audience tokens, 403 for insufficient `shell:read` scope,
+  and no persisted credential after an explicit denial. Localhost bypass is
+  disabled even in the isolated OAuth test. The bearer is issued directly by
+  the test using temporary shared signing state; this covers authorization
+  enforcement, **not** the interactive browser OAuth consent/code exchange.
+  Cross-physical-host interoperability remains a separate #392 requirement.
 - scripts/validation/windows-linux-pairing-smoke.py: **manual WSL / native
   Windows cross-OS** acceptance on DOM, with owner-approved Windows device-code
   pairing against a Linux Control, fresh authenticated online activity and
