@@ -102,8 +102,10 @@ WebSocket protocol or session manager is introduced.
   standard Control bootstrap HTTP routes, run the real downloaded PowerShell
   script with `-Persist`, approve device-code pairing, verify the windowless
   Task Scheduler Executor reaches Control, then reject a tampered checksum
-  without stopping the existing service and uninstall the temporary task.
-  CI uses a local archive because the development version is not yet released.
+  without stopping the existing service. The frozen CLI itself must uninstall
+  the Task Scheduler service; the E2E then verifies process/log cleanup and
+  removes its versioned runtime directory. This test runs only on disposable
+  GitHub Windows runners and uses a local archive because the version is unreleased.
 - scripts/validation/windows-pairing-approval-smoke.py: actual native
   `executor connect` device-code request against an independent loopback
   Control, owner lookup and approval through the Control UI API, profile
@@ -198,6 +200,11 @@ owned by their installer and are not self-mutated. The prior Windows image
 remains on disk during a switch because the running process owns it; old
 Workgate-generated runtime images are retained until an explicit cleanup so an
 otherwise idle service or another owned task never loses its referenced binary.
+When a frozen Windows Task Scheduler service stops, the Scheduler may leave
+behind the PyInstaller one-file child holding the service log open. The shared
+task stop path reaps only processes matching the verified owned task's exact
+windowless executable path and managed-service command arguments.
+
 Windows frozen Task Scheduler services use the bundled windowless entry point.
 Native pairing and complete runtime-update acceptance remain gated by #392.
 

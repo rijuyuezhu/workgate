@@ -41,7 +41,20 @@ def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _remove_tree(path: Path) -> None:
+    for attempt in range(60):
+        try:
+            shutil.rmtree(path)
+            return
+        except PermissionError:
+            if attempt == 59:
+                raise
+            time.sleep(0.5)
+
+
 def main() -> None:
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        raise RuntimeError("Frozen bootstrap service smoke is CI-only")
     archive = Path("release/workgate-windows-x86_64.zip").resolve()
     checksum = Path("release/workgate-windows-x86_64.sha256").resolve()
     assert archive.is_file() and checksum.is_file(), (
@@ -66,6 +79,7 @@ def main() -> None:
     control = None
     install = None
     boot = None
+    uninstall_error = None
     env = isolated_process_env()
     env["WORKGATE_STATE_DIR"] = str(root / "executor-state")
     env["WORKGATE_DEFAULT_WORKDIR"] = str(root / "workspace with spaces")
@@ -249,7 +263,7 @@ def main() -> None:
                 and service_exe.is_file()
             )
             assert service_exe.with_name("workgate.exe").is_file()
-            asyncio.run(
+            last_seen = asyncio.run(
                 wait_for_executor_online(
                     url,
                     control,
@@ -274,6 +288,17 @@ def main() -> None:
             assert task.status()["state"].lower() == "running", (
                 "bad checksum damaged installed service"
             )
+            asyncio.run(
+                wait_for_executor_online(
+                    url,
+                    control,
+                    executor_id,
+                    after_last_seen=last_seen,
+                    timeout_s=25,
+                    stdout_path=root / "control.out",
+                    stderr_path=root / "control.err",
+                )
+            )
     finally:
         if boot is not None and boot.poll() is None:
             subprocess.run(
@@ -293,11 +318,7 @@ def main() -> None:
                 timeout=70,
             )
             if removed.returncode:
-                print(
-                    "frozen Executor uninstall failed: "
-                    + (removed.stderr or removed.stdout)[-1500:],
-                    file=sys.stderr,
-                )
+                uninstall_error = (removed.stderr or removed.stdout)[-1500:]
         # Only the disposable CI runner is eligible for this smoke; fail closed
         # if the service is still registered rather than printing PASS.
         if task.status() is not None:
@@ -305,28 +326,23 @@ def main() -> None:
         assert task.status() is None, "frozen Executor task cleanup failed"
         if control is not None:
             stop_process(control)
-        for attempt in range(60):
-            try:
-                shutil.rmtree(root)
-                break
-            except PermissionError as exc:
-                if attempt == 59:
-                    # An unregistered task may still have a PyInstaller child
-                    # holding executor.log open. Diagnose rather than ignoring it.
-                    processes = subprocess.run(
-                        ["tasklist.exe", "/FI", "IMAGENAME eq workgatew.exe"],
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                        timeout=10,
-                    )
-                    raise RuntimeError(
-                        f"frozen Windows Executor cleanup retained a file: {exc}; "
-                        f"workgatew processes={processes.stdout[-2000:]}"
-                    ) from exc
-                time.sleep(0.5)
+        _remove_tree(root)
+        if install is not None:
+            # Bootstrap creates a unique versioned directory under LOCALAPPDATA.
+            runtime_root = (
+                Path(env["LOCALAPPDATA"]) / "workgate" / "executor-bootstrap"
+            )
+            if install.parent.parent != runtime_root:
+                raise AssertionError(
+                    "refusing to clean an unexpected install directory"
+                )
+            _remove_tree(install.parent)
+        if uninstall_error is not None:
+            raise AssertionError(
+                f"frozen Executor uninstall failed: {uninstall_error}"
+            )
     print(
-        "Native frozen Windows bootstrap ZIP, paired persistent service and checksum rollback: PASS"
+        "Native frozen Windows bootstrap ZIP, paired service, uninstall and checksum rejection: PASS"
     )
 
 
