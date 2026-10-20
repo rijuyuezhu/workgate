@@ -11,6 +11,7 @@ from ..runtime import ControlRuntime
 from .config_inspection import config_inspection_routes
 from .executor_admin import executor_admin_routes
 from .executor_routes import executor_routes
+from .integration_oauth import browser_mcp_oauth_routes
 from .stream_routes import terminal_stream_routes
 
 
@@ -45,4 +46,8 @@ def control_http_routes(
                 api_prefix=UI_API_PREFIX,
             )
         )
+    if runtime is not None:
+        oauth_protected, oauth_public = browser_mcp_oauth_routes()
+        ui_routes.extend(oauth_protected)
+        ui_public_routes.extend(oauth_public)
     return core_routes, ui_routes, [*core_routes, *ui_public_routes]

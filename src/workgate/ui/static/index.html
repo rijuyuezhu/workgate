@@ -327,7 +327,12 @@
                 </div>
               </details>
               <div id="executor-mcp-oauth-actions" hidden>
-                <p class="muted">Authorize on host: <code>workgate mcp auth SERVER</code></p>
+                <button id="executor-mcp-oauth-authorize" type="button">Authorize in browser</button>
+                <a id="executor-mcp-oauth-link" href="#" target="_blank" rel="noopener noreferrer" hidden>Continue authorization ↗</a>
+                <button id="executor-mcp-oauth-check" type="button" hidden>Check status</button>
+                <button id="executor-mcp-oauth-cancel" type="button" hidden>Cancel authorization</button>
+                <p id="executor-mcp-oauth-progress" class="muted" role="status" aria-live="polite"></p>
+                <button id="executor-mcp-oauth-logout" type="button">Sign out (try revocation)</button>
                 <button id="executor-mcp-oauth-clear" class="danger-action" type="button">Clear local OAuth credentials</button>
               </div>
             </div>
