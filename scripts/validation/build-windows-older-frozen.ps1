@@ -3,7 +3,7 @@
 $ErrorActionPreference = 'Stop'
 $source = 'src/workgate/__init__.py'
 $original = [IO.File]::ReadAllText((Resolve-Path $source).Path)
-$older = $original -replace '(?m)^__version__ = "[^"]+"$', '__version__ = "5.0.0a3.dev0"'
+$older = $original -replace '(?m)^__version__ = "[^"\r\n]+"\r?$', '__version__ = "5.0.0a3.dev0"'
 if ($older -eq $original) { throw 'Unable to substitute synthetic old frozen version' }
 try {
     [IO.File]::WriteAllText((Resolve-Path $source).Path, $older)
