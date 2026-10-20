@@ -2703,13 +2703,21 @@ async def test_control_agent_bridge_routes_by_explicit_owner(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "executor_row",
+    [
+        {"enabled": True},
+        {"enabled": True, "available": False},
+        {"available": False},
+    ],
+)
 async def test_control_agent_bridge_masks_shadowed_tools_when_listing_all(
-    monkeypatch,
+    monkeypatch, executor_row
 ):
     class Sessions:
         async def call_session_tool(self, op, args):
             if op == "agent_mcp.list_servers":
-                return {"same": {"enabled": True}}
+                return {"same": executor_row}
             assert op == "agent_mcp.list_tools"
             assert args == {"session_id": "sess", "server": None}
             return {"tools": [{"server": "same", "tool": "executor"}]}
@@ -2766,7 +2774,7 @@ async def test_control_agent_bridge_masks_shadowed_tools_when_listing_all(
     )
     assert (await service.list_servers("sess")).root == {
         "other": {"enabled": True},
-        "same": {"enabled": True},
+        "same": executor_row,
     }
     assert probed_control == [frozenset({"same"}), frozenset({"same"})]
     assert service._merge_server_rows(
@@ -2784,7 +2792,7 @@ async def test_control_agent_bridge_disabled_executor_reveals_control(
         async def call_session_tool(self, op, args):
             if op == "agent_mcp.list_servers":
                 return {
-                    "same": {"enabled": False},
+                    "same": {"enabled": False, "available": False},
                     "executor": {"enabled": True},
                 }
             if op == "agent_mcp.list_tools":

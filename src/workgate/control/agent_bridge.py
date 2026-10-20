@@ -221,14 +221,17 @@ class ControlAgentBridgeService:
         # Disabled entries do not mask lower-priority sources, as with Skills.
         # Management still needs to address a disabled Executor entry.
         if executor_row is not None and (
-            include_disabled
-            or not isinstance(executor_row, dict)
-            or executor_row.get("enabled") is not False
+            include_disabled or self._executor_masks_control(executor_row)
         ):
             return registry, "executor"
         if control_has:
             return registry, "control"
         return registry, "unknown"
+
+    @staticmethod
+    def _executor_masks_control(row: Any) -> bool:
+        # Only explicitly disabled Executor MCPs permit Control fallback.
+        return not isinstance(row, dict) or row.get("enabled") is not False
 
     @staticmethod
     def _merge_server_rows(
@@ -238,8 +241,7 @@ class ControlAgentBridgeService:
         for name, row in executor_rows.items():
             if (
                 name not in merged
-                or not isinstance(row, dict)
-                or row.get("enabled") is not False
+                or ControlAgentBridgeService._executor_masks_control(row)
             ):
                 merged[name] = row
         return merged
@@ -257,7 +259,7 @@ class ControlAgentBridgeService:
         excluded = frozenset(
             name
             for name, row in executor.items()
-            if not isinstance(row, dict) or row.get("enabled") is not False
+            if self._executor_masks_control(row)
         )
         control = list_agent_mcp_servers_payload(
             await asyncio.to_thread(
@@ -303,7 +305,7 @@ class ControlAgentBridgeService:
             for name, row in ListAgentMcpServersOutput.model_validate(
                 inventory
             ).root.items()
-            if not isinstance(row, dict) or row.get("enabled") is not False
+            if self._executor_masks_control(row)
         )
         registry = await asyncio.to_thread(
             self._network_registry,
