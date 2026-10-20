@@ -132,7 +132,12 @@ async def main() -> None:
             )
             assert task.status()["state"].lower() == "running"
             task.stop()
-            assert task.status()["state"].lower() != "running"
+            deadline = asyncio.get_running_loop().time() + 15
+            while task.status()["state"].lower() in {"running", "queued"}:
+                assert asyncio.get_running_loop().time() < deadline, (
+                    "Task Scheduler did not stop the Executor"
+                )
+                await asyncio.sleep(0.2)
             task.start()
             await wait_for_executor_online(
                 url,
@@ -144,9 +149,6 @@ async def main() -> None:
                 stderr_path=root / "control.err",
             )
             assert task.status()["state"].lower() == "running"
-            print(
-                "Native Windows paired Task Scheduler Executor stop/restart/reconnect: PASS"
-            )
         except Exception:
             error_file = root / "executor-error.log"
             diagnostic = (
@@ -171,6 +173,13 @@ async def main() -> None:
                     break
                 except PermissionError:
                     time.sleep(0.2)
+            else:
+                shutil.rmtree(
+                    root
+                )  # Do not report success if cleanup never finishes.
+    print(
+        "Native Windows paired Task Scheduler Executor stop/restart/reconnect: PASS"
+    )
 
 
 if __name__ == "__main__":
