@@ -47,10 +47,17 @@ attached to that job. Any binding failure refuses execution; normal return,
 timeout or cancellation closes the job and kills surviving descendants.
 The durable job runner also uses a gated Job Object for command attempts;
 its native completion and forced-stop descendant cleanup are covered by smoke
-tests. Native colocate attaches its parent process to a kill-on-close Job
-before launching Control and Executor; role descendants and nested bounded
-command Job Objects are covered when colocate exits, including forced stop. Full tracked-job
-recovery and service-level lifecycle remain separate work in #387 and #388.
+tests. The shared Parent/Child Supervisor now owns individual Control and
+Executor roles as well as Colocate. On Windows, the Parent and each role Child
+join nested kill-on-close Job Objects; role restarts preserve containment.
+Private IPC uses a socketpair and an explicit inherited Windows handle list,
+not a second service or Colocate-specific supervisor. Native smoke tests cover
+forced Parent exit, descendant cleanup, independent role restart and shared
+configuration Apply. Colocate user services use Windows Task Scheduler or Linux
+systemd; `install-service`, `start-service`, `stop-service`, `restart-service`,
+`status-service` and `uninstall-service` are exposed through the same CLI.
+Frozen Windows Colocate service installation is not yet supported; use the
+native source `pythonw.exe` launcher instead.
 
 ## Interactive terminal (#386)
 
