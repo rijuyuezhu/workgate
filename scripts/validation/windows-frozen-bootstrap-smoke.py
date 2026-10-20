@@ -284,13 +284,20 @@ def main() -> None:
             )
             boot.wait(timeout=20)
         if install is not None:
-            subprocess.run(
+            removed = subprocess.run(
                 [str(install), "executor", "uninstall-service"],
                 env=env,
                 check=False,
                 capture_output=True,
+                text=True,
                 timeout=70,
             )
+            if removed.returncode:
+                print(
+                    "frozen Executor uninstall failed: "
+                    + (removed.stderr or removed.stdout)[-1500:],
+                    file=sys.stderr,
+                )
         # Only the disposable CI runner is eligible for this smoke; fail closed
         # if the service is still registered rather than printing PASS.
         if task.status() is not None:
@@ -298,14 +305,26 @@ def main() -> None:
         assert task.status() is None, "frozen Executor task cleanup failed"
         if control is not None:
             stop_process(control)
-        for attempt in range(40):
+        for attempt in range(60):
             try:
                 shutil.rmtree(root)
                 break
-            except PermissionError:
-                if attempt == 39:
-                    raise
-                time.sleep(0.25)
+            except PermissionError as exc:
+                if attempt == 59:
+                    # An unregistered task may still have a PyInstaller child
+                    # holding executor.log open. Diagnose rather than ignoring it.
+                    processes = subprocess.run(
+                        ["tasklist.exe", "/FI", "IMAGENAME eq workgatew.exe"],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=10,
+                    )
+                    raise RuntimeError(
+                        f"frozen Windows Executor cleanup retained a file: {exc}; "
+                        f"workgatew processes={processes.stdout[-2000:]}"
+                    ) from exc
+                time.sleep(0.5)
     print(
         "Native frozen Windows bootstrap ZIP, paired persistent service and checksum rollback: PASS"
     )
