@@ -91,6 +91,8 @@ jobs:
         run: uv run python scripts/validation/windows-pairing-approval-smoke.py
       - name: Native paired Task Scheduler Executor lifecycle and reconnect E2E
         run: uv run python scripts/validation/windows-paired-service-smoke.py
+      - name: Native Windows Parent/Child IPC, restart and crash cleanup
+        run: uv run python scripts/validation/windows-supervisor-smoke.py
       - name: Verify clean Windows wheel installation
         shell: pwsh
         run: |

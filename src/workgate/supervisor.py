@@ -25,6 +25,16 @@ PARENT_FD_ENV = "WORKGATE_PARENT_IPC_FD"
 _STOP_TIMEOUT_SECONDS = 3
 _APPLY_TIMEOUT_SECONDS = 20
 _CHANNEL_LOCK = threading.Lock()
+_WINDOWS_CHILD_JOB: Any = None
+
+
+def _borrow_child_socket(fd: int) -> socket.socket:
+    """Duplicate the inherited socket without closing the child's original."""
+    borrowed = socket.socket(fileno=fd)
+    try:
+        return borrowed.dup()
+    finally:
+        borrowed.detach()
 
 
 def child_command(*args: str) -> list[str]:
@@ -38,6 +48,12 @@ def is_child() -> bool:
     """An environment marker alone cannot accidentally bypass supervision."""
     try:
         fd = int(os.environ[PARENT_FD_ENV])
+        if os.name == "nt":
+            with _borrow_child_socket(fd) as channel:
+                return (
+                    channel.getsockopt(socket.SOL_SOCKET, socket.SO_TYPE)
+                    == socket.SOCK_STREAM
+                )
         return stat.S_ISSOCK(os.fstat(fd).st_mode)
     except KeyError, ValueError, OSError:
         return False
@@ -49,7 +65,24 @@ def supervise_cli_role(role: str, args: argparse.Namespace) -> bool:
     Direct CLI handler calls without root argv remain usable for tests.
     """
     arguments = getattr(args, "_workgate_argv", None)
-    if arguments is None or is_child():
+    if arguments is None:
+        return False
+    if is_child():
+        if os.name == "nt":
+            # Each role owns its descendants across Parent-requested restarts.
+            global _WINDOWS_CHILD_JOB
+            if _WINDOWS_CHILD_JOB is None:
+                from .platform.windows_job import WindowsJob
+
+                job = WindowsJob()
+                try:
+                    job.attach_current_process()
+                except BaseException:
+                    job.close()
+                    raise
+                _WINDOWS_CHILD_JOB = (
+                    job  # Keep handle open for the child's life.
+                )
         return False
     run_parent([ChildCommand(role, tuple(child_command(*arguments)))])
     return True
@@ -57,10 +90,13 @@ def supervise_cli_role(role: str, args: argparse.Namespace) -> bool:
 
 def _parent_message(message: bytes) -> bytes:
     """Serialize all queries over the single inherited Child/Parent socket."""
-    with (
-        _CHANNEL_LOCK,
-        socket.socket(fileno=os.dup(int(os.environ[PARENT_FD_ENV]))) as channel,
-    ):
+    fd = int(os.environ[PARENT_FD_ENV])
+    channel = (
+        _borrow_child_socket(fd)
+        if os.name == "nt"
+        else socket.socket(fileno=os.dup(fd))
+    )
+    with _CHANNEL_LOCK, channel:
         channel.settimeout(5)
         channel.sendall(message)
         response = channel.recv(64)
@@ -250,6 +286,16 @@ def supervise(commands: list[ChildCommand]) -> int:
     children: dict[str, _Child] = {}
     good_files: dict[Path, _GoodFile] = {}
     applying: _Applying | None = None
+    if os.name == "nt":
+        from .platform.windows_job import WindowsJob
+
+        parent_job = WindowsJob()
+        try:
+            parent_job.attach_current_process()
+        except BaseException:
+            parent_job.close()
+            raise
+        # This owner handle closes when Parent exits, including an abrupt crash.
     previous_sigterm = signal.getsignal(signal.SIGTERM)
     previous_sigint = signal.getsignal(signal.SIGINT)
 
@@ -261,13 +307,27 @@ def supervise(commands: list[ChildCommand]) -> int:
         def spawn(command: ChildCommand, *, status: str = "starting") -> None:
             parent_sock, child_sock = socket.socketpair()
             try:
-                process = subprocess.Popen(
+                kwargs: dict[str, Any]
+                if os.name == "nt":
+                    child_sock.set_inheritable(True)
+                    startup = subprocess.STARTUPINFO()
+                    startup.lpAttributeList = {
+                        "handle_list": [child_sock.fileno()]
+                    }
+                    kwargs = {
+                        "startupinfo": startup,
+                        "close_fds": True,
+                        "creationflags": subprocess.CREATE_NO_WINDOW,
+                    }
+                else:
+                    kwargs = {"pass_fds": (child_sock.fileno(),)}
+                process = subprocess.Popen[bytes](
                     command.argv,
                     env={
                         **environment,
                         PARENT_FD_ENV: str(child_sock.fileno()),
                     },
-                    pass_fds=(child_sock.fileno(),),
+                    **kwargs,
                 )
             except BaseException:
                 parent_sock.close()
@@ -353,6 +413,11 @@ def supervise(commands: list[ChildCommand]) -> int:
                     > _APPLY_TIMEOUT_SECONDS
                 ) and not recover():
                     return 1
+                # Windows select() rejects an empty socket set. A role may
+                # close IPC just before its process exit is observable.
+                if not selector.get_map():
+                    time.sleep(0.2)
+                    continue
                 for key, _events in selector.select(timeout=0.2):
                     role: str = key.data
                     child = children[role]
