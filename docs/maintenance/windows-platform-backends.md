@@ -167,6 +167,14 @@ action limits and snapshot cleanup. Source Python invokes the isolated capture
 module; frozen Windows re-enters the bundled executable through a private,
 timeout-bounded capture entry point (verified in Windows binary smoke).
 
+Mandatory `windows-2022` native CI runs `windows-gui-task-smoke.py --ci`
+and inspects the **actual** desktop state: if interactive, it requires a real
+disposable Tk window's UIA enumeration, bounded capture and physical input to
+**pass**; if headless, it requires that the Executor does not advertise GUI
+capability and real UIA enumeration fails closed. Neither case treats a
+`skipped` result as CI success. To test just the no-desktop safety guard on a
+known noninteractive host, run `--assert-headless` (no task/input created).
+
 `python scripts/validation/windows-gui-task-smoke.py` can run on **native**
 Windows in a disposable logged-in Task Scheduler user task. It creates a
 temporary Tk window, tests UIA enumeration and isolated capture, then attempts
