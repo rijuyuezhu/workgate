@@ -150,7 +150,9 @@ def main() -> None:
             assert "$MaxArchiveBytes" in response.text
             script = root / "bootstrap.ps1"
             script.write_text(response.text, encoding="utf-8")
-            shell = shutil.which("powershell.exe") or shutil.which("pwsh.exe")
+            # CI itself runs in PowerShell 7; mixing its PSModulePath with
+            # Windows PowerShell 5.1 hides built-in cmdlets like Get-FileHash.
+            shell = shutil.which("pwsh.exe") or shutil.which("powershell.exe")
             assert shell
             cmd = [
                 shell,
