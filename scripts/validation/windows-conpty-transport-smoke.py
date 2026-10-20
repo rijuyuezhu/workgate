@@ -68,6 +68,15 @@ async def main() -> None:
                 "shell_executable": "powershell.exe",
             },
         )
+        # The Parent accepts readiness only for a snapshot-safe config file.
+        from workgate.supervisor import _snapshot_file
+
+        snapshot = _snapshot_file(str(control_conf))
+        assert snapshot is not None, (
+            "Windows Control config file did not meet Parent snapshot policy: "
+            f"absolute={control_conf.absolute() == control_conf.resolve()}"
+        )
+        assert snapshot.content == control_conf.read_bytes()
         control = start_control_process(
             control_conf,
             env=env,
