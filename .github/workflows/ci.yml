@@ -215,6 +215,8 @@ jobs:
       - if: runner.os == 'Windows'
         run: python scripts/release/smoke-binary.py dist/workgate.exe
       - if: runner.os == 'Windows'
+        run: uv run pytest -q tests/contracts/test_windows_frozen_service.py
+      - if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/release/package-windows.ps1
 

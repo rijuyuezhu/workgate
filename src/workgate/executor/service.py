@@ -340,6 +340,17 @@ class ExecutorServiceManager:
         executable = self.executable.absolute()
         ownership = runtime_ownership or self._runtime_ownership()
         if getattr(sys, "frozen", False):
+            if (
+                host_os(self.system) is HostOS.WINDOWS
+                and executable.name.lower() == "workgate.exe"
+            ):
+                # CLI remains console-capable; Task Scheduler runs the windowless
+                # sibling from the same verified release installation.
+                executable = executable.with_name("workgatew.exe")
+                if not executable.is_file():
+                    raise UnsupportedExecutorServiceError(
+                        "Windows frozen service requires the bundled workgatew.exe"
+                    )
             return [
                 str(executable),
                 "executor",
@@ -555,18 +566,12 @@ class ExecutorServiceManager:
         """Install or refresh the native per-user service and start it."""
 
         self._ensure_paired()
-        if host_os(self.system) is HostOS.WINDOWS and getattr(
-            sys, "frozen", False
-        ):
-            raise UnsupportedExecutorServiceError(
-                "Windows frozen service requires a windowless executable; "
-                "this frozen build is not yet service-capable"
-            )
         runtime_store = ExecutorRuntimeStateStore(self.state_store)
         runtime_state = runtime_store.install_state(runtime_ownership)
+        # Validate the windowless frozen sibling before any service-side effects.
+        command = self._runtime_command(runtime_state.ownership)
         backend = self.backend(require_available=True)
         self._write_service_config()
-        command = self._runtime_command(runtime_state.ownership)
         self._write_launcher(
             command,
             runtime_ownership=runtime_state.ownership,

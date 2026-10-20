@@ -200,6 +200,10 @@ jobs:
           cd release
           tar -czf workgate-${{ matrix.artifact }}.tar.gz workgate-${{ matrix.artifact }}
 
+      - name: Validate native windowless Task Scheduler binary
+        if: runner.os == 'Windows'
+        run: uv run pytest -q tests/contracts/test_windows_frozen_service.py
+
       - name: Package and verify Windows executable
         if: runner.os == 'Windows'
         shell: pwsh

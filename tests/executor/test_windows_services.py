@@ -280,17 +280,75 @@ def test_windows_executor_missing_pythonw_reports_stale_service(
     assert not status.runtime_current
 
 
-def test_windows_executor_service_rejects_console_frozen_before_install(
+def test_windows_frozen_service_requires_windowless_sibling_before_install(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     manager, _profile = _paired_manager(tmp_path, system="Windows")
+    manager.executable = tmp_path / "workgate.exe"
     monkeypatch.setattr(executor_service.sys, "frozen", True, raising=False)
     with pytest.raises(
-        executor_service.UnsupportedExecutorServiceError, match="windowless"
+        executor_service.UnsupportedExecutorServiceError, match="workgatew.exe"
     ):
         manager.install()
     assert not manager.config_path.exists()
     assert not manager.metadata_path.exists()
+
+
+def test_windows_frozen_service_uses_windowless_sibling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    manager, _profile = _paired_manager(tmp_path, system="Windows")
+    manager.executable = tmp_path / "workgate.exe"
+    sibling = tmp_path / "workgatew.exe"
+    sibling.write_bytes(b"MZ")
+    monkeypatch.setattr(executor_service.sys, "frozen", True, raising=False)
+    command = manager._runtime_command()
+    assert command[:4] == [str(sibling), "executor", "run", "--managed-service"]
+    assert command[4:6] == ["--runtime-ownership", "self-contained"]
+
+
+def test_windows_frozen_sibling_can_install_paired_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager, _profile = _paired_manager(tmp_path, system="Windows")
+    manager.executable = tmp_path / "workgate.exe"
+    windowless = tmp_path / "workgatew.exe"
+    windowless.write_bytes(b"MZ")
+    monkeypatch.setattr(executor_service.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        executor_service.WindowsUserTask, "available", lambda: True
+    )
+    installed = False
+    started = False
+    recorded = []
+
+    class Task:
+        def status(self):
+            return (
+                {"state": "Running" if started else "Ready", "last_result": 0}
+                if installed
+                else None
+            )
+
+        def install(self, command, *, cwd):
+            nonlocal installed
+            installed = True
+            recorded.append(command)
+
+        def start(self):
+            nonlocal started
+            started = True
+
+    monkeypatch.setattr(manager, "_windows_task", Task)
+    result = manager.install()
+    assert result.installed and result.running
+    assert recorded[0][0] == str(windowless)
+    assert "--managed-service" in recorded[0]
+    assert (
+        not manager.launcher_path.exists()
+    )  # Frozen service needs no Python shim.
+    metadata = manager._read_metadata()
+    assert metadata is not None and metadata["command"] == recorded[0]
 
 
 def test_windows_colocate_requires_pythonw_before_writing_files(

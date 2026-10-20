@@ -4,13 +4,14 @@ $artifact = 'workgate-windows-x86_64'
 $directory = Join-Path release $artifact
 $archive = Join-Path release "$artifact.zip"
 New-Item -ItemType Directory -Force -Path $directory | Out-Null
-Copy-Item dist/workgate.exe, README.md, LICENSE -Destination $directory
+Copy-Item dist/workgate.exe, dist/workgatew.exe, README.md, LICENSE -Destination $directory
 @'
 Start a network Control in one terminal:
   .\workgate.exe control --mode http
 Pair and start an Executor in a second terminal:
   .\workgate.exe executor connect http://127.0.0.1:8765
   .\workgate.exe executor run
+Persistent Executor: .\workgate.exe executor install-service (uses workgatew.exe).
 A native Windows interactive user session is required for GUI actions.
 '@ | Set-Content -Encoding utf8 (Join-Path $directory 'QUICKSTART.txt')
 # Compress-Archive writes backslash member names on Windows. The bootstrap
@@ -28,9 +29,11 @@ try {
 finally { $zip.Dispose() }
 $zip = [IO.Compression.ZipFile]::OpenRead((Resolve-Path $archive).Path)
 try {
-    $entry = $zip.GetEntry("$artifact/workgate.exe")
-    if ($null -eq $entry -or $entry.Length -le 0) {
-        throw 'Windows archive is missing the expected workgate.exe'
+    foreach ($name in @('workgate.exe', 'workgatew.exe')) {
+        $entry = $zip.GetEntry("$artifact/$name")
+        if ($null -eq $entry -or $entry.Length -le 0) {
+            throw "Windows archive is missing $name"
+        }
     }
 }
 finally { $zip.Dispose() }

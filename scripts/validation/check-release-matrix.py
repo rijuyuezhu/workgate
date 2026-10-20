@@ -102,6 +102,8 @@ def main() -> int:
         "scripts/release/smoke-binary.py dist/workgate.exe",
     )
     for section in (binary, binary_smoke):
+        if "tests/contracts/test_windows_frozen_service.py" not in section:
+            raise SystemExit("Windows frozen service task smoke is missing")
         for fragment in windows_contract:
             if fragment not in section:
                 raise SystemExit(f"Windows binary job is missing {fragment}")
@@ -113,7 +115,7 @@ def main() -> int:
     for fragment in (
         "[IO.Compression.ZipFileExtensions]::CreateEntryFromFile",
         "Get-FileHash -Algorithm SHA256",
-        '"$artifact/workgate.exe"',
+        "foreach ($name in @('workgate.exe', 'workgatew.exe'))",
     ):
         if fragment not in packager:
             raise SystemExit(f"Windows package contract missing {fragment}")
@@ -192,6 +194,7 @@ def main() -> int:
     for fragment in (
         "--clean --noconfirm --onefile --name workgate",
         "--collect-all workgate",
+        "--windowed --name workgatew",
         "scripts/release/pyinstaller-entry.py",
     ):
         if fragment not in powershell_builder:
