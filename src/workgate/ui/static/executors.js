@@ -147,9 +147,13 @@ export function createExecutorsController({
         status: executor.revoked_at ? "revoked" : executor.draining ? "draining" : executor.online ? "online" : "offline",
       })),
     ];
-    const existing = new Map(Array.from(elements.executorList.children,
+    const controlGroup = elements.executorList.querySelector(".executor-control-group");
+    const peerGroup = elements.executorList.querySelector(".executor-peer-group");
+    const peerRows = peerGroup.querySelector(".executor-peer-rows");
+    peerGroup.hidden = state.executors.length === 0;
+    const existing = new Map(Array.from(elements.executorList.querySelectorAll(".executor-row"),
       child => [child.dataset.selection, child]));
-    let position = 0;
+    let peerPosition = 0;
     for (const entry of entries) {
       let button = existing.get(entry.key);
       existing.delete(entry.key);
@@ -186,9 +190,10 @@ export function createExecutorsController({
       status.textContent = entry.status;
       status.dataset.status = entry.status === "available" ? "online"
         : entry.status === "unavailable" ? "offline" : entry.status;
-      if (elements.executorList.children[position] !== button)
-        elements.executorList.insertBefore(button, elements.executorList.children[position] || null);
-      position++;
+      const group = entry.key === CONTROL_SELECTION ? controlGroup : peerRows;
+      const position = entry.key === CONTROL_SELECTION ? 0 : peerPosition++;
+      if (group.children[position] !== button)
+        group.insertBefore(button, group.children[position] || null);
     }
     for (const stale of existing.values()) stale.remove();
   }

@@ -3183,7 +3183,12 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 #executors-panel .executor-overview-body[hidden] { display: none !important; }
 /* Executor management workspace: a quiet selector + one readable work area. */
 #executors-panel .executors-layout { min-height: 430px; }
-#executors-panel .executor-list { padding: 10px 8px; gap: 3px; background: #fafbfe; }
+#executors-panel .executor-list { padding: 10px 8px; gap: 16px; background: #fafbfe; }
+#executors-panel .executor-control-group,
+#executors-panel .executor-peer-rows { display: grid; gap: 3px; }
+#executors-panel .executor-peer-group { padding-top: 12px; border-top: 1px solid #e1e5ed; }
+#executors-panel .executor-peer-heading { margin: 0 12px 7px; color: #818b9e; font-size: 11px; font-weight: 650; }
+
 #executors-panel .executor-band {
   display: grid; grid-template-columns: minmax(0, 1fr) 9px;
   gap: 8px; min-height: 54px; padding: 9px 12px;

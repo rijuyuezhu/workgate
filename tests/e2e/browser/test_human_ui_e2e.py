@@ -415,6 +415,15 @@ def test_control_card_switching_config_refresh_and_mobile(
         '#executor-list button:not([data-selection="__control__"])'
     ).first
     expect(control).to_be_visible()
+    expect(control.locator("xpath=..")).to_have_class("executor-control-group")
+    expect(executor.locator("xpath=..")).to_have_class("executor-peer-rows")
+    expect(page.locator("#executor-list .executor-peer-heading")).to_have_text(
+        "Executors"
+    )
+    assert page.locator(".executor-peer-group").evaluate(
+        "(group) => group.getBoundingClientRect().top - "
+        "group.previousElementSibling.getBoundingClientRect().bottom >= 12"
+    )
     expect(page.locator("#executor-list button").first).to_have_attribute(
         "data-selection", "__control__"
     )
@@ -540,6 +549,7 @@ def test_standalone_control_mcp_real_chromium(
     )
     expect(control_card).to_be_visible()
     expect(page.locator("#executor-list button")).to_have_count(1)
+    expect(page.locator(".executor-peer-group")).to_be_hidden()
     control_card.click()
     expect(page.locator(".executor-details")).to_be_visible()
     expect(page.locator("#executor-detail-name")).to_have_text("Control")
