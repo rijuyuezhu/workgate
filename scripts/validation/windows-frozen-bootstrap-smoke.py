@@ -400,25 +400,12 @@ def main() -> None:
                             break
                     time.sleep(0.5)
                 else:
-                    service_log = (
-                        root
-                        / "executor-state"
-                        / "executor"
-                        / "service"
-                        / "executor.log"
-                    )
-                    log_tail = (
-                        service_log.read_text(
-                            encoding="utf-8", errors="replace"
-                        )[-2500:]
-                        if service_log.is_file()
-                        else "[no service log]"
-                    )
+                    # State and native task status are enough for CI failures;
+                    # service.log might contain private executor information.
                     raise AssertionError(
                         "old frozen Executor did not auto-publish newer PE; "
                         f"update_state={runtime_store.load()!r}; "
-                        f"task_status={task.status()!r}; "
-                        f"service_errors={log_tail!r}"
+                        f"task_status={task.status()!r}"
                     )
                 action = task._powershell(
                     f"(Get-ScheduledTask {task._task} -ErrorAction Stop).Actions[0].Execute"
@@ -601,7 +588,8 @@ def main() -> None:
                 f"frozen Executor uninstall failed: {uninstall_error}"
             )
     print(
-        "Native frozen Windows bootstrap ZIP, paired service, uninstall and checksum rejection: PASS"
+        "Native frozen Windows bootstrap, managed upgrade, rejected invalid "
+        "updates and safe uninstall: PASS"
     )
 
 
