@@ -207,12 +207,17 @@ async def test_routed_call_probes_no_servers_and_starts_only_target_child(
     original_network_registry = service._network_registry
 
     def observed_network_registry(
-        *, probe_mcp_tools=True, mcp_server_name=None
+        *,
+        probe_mcp_tools=True,
+        mcp_server_name=None,
+        excluded_mcp_server_names=frozenset(),
     ):
         if probe_mcp_tools:
             assert threading.get_ident() != loop_thread
         return original_network_registry(
-            probe_mcp_tools=probe_mcp_tools, mcp_server_name=mcp_server_name
+            probe_mcp_tools=probe_mcp_tools,
+            mcp_server_name=mcp_server_name,
+            excluded_mcp_server_names=excluded_mcp_server_names,
         )
 
     monkeypatch.setattr(service, "_network_registry", observed_network_registry)
