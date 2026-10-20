@@ -81,6 +81,16 @@ jobs:
         run: |
           uv run python -c "import winpty, uiautomation; print('Windows native dependencies imported')"
           uv run pytest -q tests/contracts/test_windows_conpty_core.py tests/contracts/test_windows_file_lock.py tests/contracts/test_windows_shell_dialect.py tests/contracts/test_windows_subprocess_env.py tests/contracts/test_windows_path.py tests/contracts/test_windows_native_runner.py tests/executor/test_windows_services.py tests/executor/test_windows_gui.py tests/executor/test_windows_gui_edges.py tests/executor/test_windows_gui_desktop.py tests/executor/test_windows_capture.py
+      - name: Verify clean Windows wheel installation
+        shell: pwsh
+        run: |
+          uv build --wheel --out-dir dist
+          $wheel = (Get-ChildItem dist -Filter '*.whl' | Select-Object -First 1).FullName
+          $environment = Join-Path $env:RUNNER_TEMP 'wg391-wheel'
+          uv venv --python 3.14 $environment
+          uv pip install --python (Join-Path $environment 'Scripts/python.exe') $wheel
+          & (Join-Path $environment 'Scripts/workgate.exe') --version
+
 
   topology:
     name: Deployment topology

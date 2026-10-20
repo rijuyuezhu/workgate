@@ -117,6 +117,7 @@ def main() -> int:
         "import winpty, uiautomation",
         "tests/contracts/test_windows_conpty_core.py",
         "tests/contracts/test_windows_native_runner.py",
+        "uv build --wheel --out-dir dist",
         "tests/executor/test_windows_services.py",
     ):
         if fragment not in windows_native:

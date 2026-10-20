@@ -159,18 +159,23 @@ _WINDOW_CAPTURE_TIMEOUT_S = 15.0
 
 def _capture_window_image(hwnd: int, destination: Path) -> None:
     if getattr(sys, "frozen", False):
-        raise GuiUnavailableError(
-            "Frozen Windows window capture requires release integration (#391)"
-        )
+        command = [
+            sys.executable,
+            "--_windows-capture",
+            str(hwnd),
+            str(destination),
+        ]
+    else:
+        command = [
+            sys.executable,
+            "-m",
+            "workgate.executor.gui.windows_capture",
+            str(hwnd),
+            str(destination),
+        ]
     try:
         result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "workgate.executor.gui.windows_capture",
-                str(hwnd),
-                str(destination),
-            ],
+            command,
             capture_output=True,
             text=True,
             check=False,

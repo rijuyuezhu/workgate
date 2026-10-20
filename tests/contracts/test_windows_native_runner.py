@@ -62,3 +62,31 @@ async def test_real_windows_job_gates_bounded_subprocess(
         assert b"WG391_JOB_OK" in stdout
     finally:
         close_process_job(process)
+
+
+@pytest.mark.asyncio
+async def test_real_windows_job_cancellation_reaps_process(
+    tmp_path: Path,
+) -> None:
+    """Job Object cancellation must kill the native child, not leave it alive."""
+    from workgate.platform.windows_job import terminate_process_job
+
+    process = await spawn_bounded_runner(
+        [
+            sys.executable,
+            "-c",
+            "import sys,time; sys.stdin.buffer.read(1); print('WG391_READY',flush=True); time.sleep(120)",
+        ],
+        cwd=str(tmp_path),
+        env=os.environ.copy(),
+    )
+    try:
+        assert process.stdout is not None
+        ready = await asyncio.wait_for(process.stdout.readline(), timeout=12)
+        assert b"WG391_READY" in ready
+        assert await terminate_process_job(process, timeout_s=10) == ""
+        assert process.returncode is not None
+    finally:
+        if process.returncode is None:
+            close_process_job(process)
+            await asyncio.wait_for(process.wait(), timeout=10)

@@ -188,3 +188,9 @@ Release archives use `workgate-windows-x86_64.zip`, containing
 QUICKSTART.txt. The matching SHA-256 checksum follows the existing release
 proxy format and is verified by Control bootstrap and managed updates.
 Existing four Linux/macOS release targets remain required.
+
+The frozen Windows GUI screenshot worker re-enters the existing bundled
+`workgate.exe` through a private `--_windows-capture` subcommand. Source builds
+continue to use the Python module. Both paths use the same bounded per-window
+PrintWindow implementation and child-process timeout; no machine-wide screen
+capture fallback is added.

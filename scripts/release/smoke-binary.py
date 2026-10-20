@@ -29,6 +29,24 @@ def main() -> None:
             stdout=subprocess.DEVNULL,
         )
 
+    if os.name == "nt":
+        # Verify the bundled capture child routes inside the frozen EXE,
+        # without attempting to snapshot an unrelated user desktop.
+        invalid = subprocess.run(
+            [str(binary), "--_windows-capture", "0", "unused.png"],
+            capture_output=True,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+        if (
+            invalid.returncode == 0
+            or "invalid window handle" not in invalid.stderr
+        ):
+            raise RuntimeError(
+                "frozen Windows GUI capture child entrypoint is unavailable"
+            )
+
     with tempfile.TemporaryDirectory(
         prefix="workgate-binary-smoke-"
     ) as directory:
