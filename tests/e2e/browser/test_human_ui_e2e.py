@@ -171,6 +171,7 @@ def test_executor_integration_management_real_chromium(
         has_text="browser-managed"
     )
     expect(row).to_be_visible()
+    expect(row).to_have_css("background-color", "rgb(244, 251, 247)")
     row.get_by_role("button", name="Manage").click()
     expect(page.locator("#executor-integration-content")).to_have_value(body)
     page.locator("#executor-integration-toggle").click()
@@ -200,7 +201,7 @@ def test_executor_integration_management_real_chromium(
         has_text="browser-local"
     )
     expect(local).to_be_visible()
-    expect(local).to_have_css("background-color", "rgb(255, 255, 255)")
+    expect(local).to_have_css("background-color", "rgb(244, 251, 247)")
     local.get_by_role("button", name="Manage").click()
     expect(page.locator("#executor-integration-command")).to_have_value("echo")
     # Editing must preserve disabled state; an unrelated edit cannot turn a

@@ -161,7 +161,7 @@ export function createSkillFileEditor({ request, onClose = () => {} }) {
     } catch (error) {
       if (ctx === context) notice(
         (error instanceof Error ? error.message : "File operation failed") +
-        " · Reload before retrying if the outcome is uncertain.", true,
+        ". Reload before retrying if the outcome is uncertain.", true,
       );
     } finally {
       busy = false;
@@ -187,7 +187,7 @@ export function createSkillFileEditor({ request, onClose = () => {} }) {
     listGeneration++;
     loading = false;
     busy = false;
-    title.textContent = name + " · Executor";
+    title.textContent = name + " (Executor)";
     current = { path: "", revision: "", baseline: "", existing: false };
     list.replaceChildren(new Option("Select file…", ""));
     path.value = "";

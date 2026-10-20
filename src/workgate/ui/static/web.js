@@ -528,7 +528,7 @@ void (async () => {
     const definition = viewDefinitions[view];
     document.body.dataset.activeView = view;
     elements.pageTitle.textContent = definition.title;
-    document.title = `${definition.title} · Workgate`;
+    document.title = `${definition.title} — Workgate`;
 
     for (const item of elements.appNavItems) {
       const active = item.dataset.view === view;

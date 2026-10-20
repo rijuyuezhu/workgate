@@ -139,7 +139,7 @@ def test_config_save_is_file_only_with_role_ownership(tmp_path: Path):
             ).to_have_count(1)
             only_changed.uncheck()
             control.get_by_role("button", name="Save changes").click()
-            expect(control).to_contain_text("Saved · Restart to apply")
+            expect(control).to_contain_text("Saved. Restart to apply.")
             assert "log_level: info" in (tmp_path / "control.yaml").read_text()
             assert "warning" in (tmp_path / "control.yaml.bak").read_text()
             assert h.server.pid == control_pid
@@ -179,7 +179,7 @@ def test_config_save_is_file_only_with_role_ownership(tmp_path: Path):
             row.get_by_role("button", name="Set", exact=True).click()
             expect(row).to_have_class(re.compile("executor-config-changed"))
             executor.get_by_role("button", name="Save changes").click()
-            expect(executor).to_contain_text("Saved · Restart to apply")
+            expect(executor).to_contain_text("Saved. Restart to apply.")
             assert '"max_jobs": 32' in (tmp_path / "executor.json").read_text()
             assert h.executor.pid == executor_pid
             expect(

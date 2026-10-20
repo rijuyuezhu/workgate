@@ -73,7 +73,7 @@ export function createSessionIntegrationsViewer({ request, onManage, onOpen = ()
         group(view.list, sources[key], rows.filter((row) => row.source === key && typeof row.name === "string")
           .map((row) => ({ name: row.name, state: "Effective" })));
       }
-      view.status.textContent = `${rows.length} effective Skills · Project is read-only`;
+      view.status.textContent = `${rows.length} effective Skills (project read-only)`;
       loaded.skills = true;
     } catch (error) {
       if (revision === generation) view.status.textContent = error instanceof Error ? error.message : String(error);
@@ -111,7 +111,7 @@ export function createSessionIntegrationsViewer({ request, onManage, onOpen = ()
       group(view.list, "Control", controls.filter((row) => typeof row.name === "string")
         .map((row) => describe(row, activeExecutorNames.has(row.name))));
       view.status.textContent = executorUnavailable
-        ? `${controls.length} Control MCPs · Executor unavailable`
+        ? `${controls.length} Control MCPs (Executor unavailable)`
         : `${executors.length + controls.length} configured MCPs`;
       loaded.mcp = true;
     } catch (error) {

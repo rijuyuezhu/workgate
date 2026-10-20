@@ -24,7 +24,7 @@ export function createAuditController({
 
   function auditScopeLabel() {
     return controllerState.auditSessionId
-      ? `Session · ${controllerState.auditSessionId}`
+      ? `Session ${controllerState.auditSessionId}`
       : "Global";
   }
 
@@ -55,10 +55,10 @@ export function createAuditController({
     elements.auditList.replaceChildren();
     const empty = document.createElement("div");
     empty.className = "empty-state";
-    empty.textContent = `${auditScopeLabel()} Audit records are not loaded.`;
+    empty.textContent = `No records loaded for ${auditScopeLabel()}.`;
     elements.auditList.append(empty);
     elements.auditSummary.textContent = "0 entries";
-    elements.auditState.textContent = "Not loaded · control";
+    elements.auditState.textContent = "Not loaded";
     clearAuditDetail();
     setAuditControls();
   }
@@ -82,7 +82,7 @@ export function createAuditController({
     if (!controllerState.auditEntries.length) {
       const empty = document.createElement("div");
       empty.className = "empty-state";
-      empty.textContent = `No ${auditScopeLabel()} Audit records match.`;
+      empty.textContent = `No matching records for ${auditScopeLabel()}.`;
       elements.auditList.append(empty);
       clearAuditDetail(`No matching Audit record is available for ${auditScopeLabel()}.`);
       return;
@@ -152,7 +152,7 @@ export function createAuditController({
       const entry = payload && payload.entry && typeof payload.entry === "object" ? payload.entry : null;
       if (!entry) throw new Error("Audit detail response was malformed");
       elements.auditDetailTitle.textContent = auditEntryTitle(entry);
-      elements.auditDetailMeta.textContent = `${auditScopeLabel()} · ${auditTimestamp(entry.ts)}`;
+      elements.auditDetailMeta.textContent = `${auditScopeLabel()} (${auditTimestamp(entry.ts)})`;
       renderAuditDetailInto(entry, elements.auditDetailBody);
       return entry;
     } catch (error) {
@@ -192,13 +192,13 @@ export function createAuditController({
       const total = Number.isInteger(payload.total_matched)
         ? payload.total_matched
         : controllerState.auditEntries.length;
-      elements.auditSummary.textContent = `${controllerState.auditEntries.length} shown · ${total} matched · ${auditScopeLabel()}`;
-      elements.auditState.textContent = `Loaded ${controllerState.auditEntries.length} records · ${auditScopeLabel()}`;
+      elements.auditSummary.textContent = `${controllerState.auditEntries.length} of ${total} matching records (${auditScopeLabel()})`;
+      elements.auditState.textContent = `${controllerState.auditEntries.length} records loaded`;
       renderAuditList();
       const selected = payload && payload.entry && typeof payload.entry === "object" ? payload.entry : null;
       if (selected && selected.id === controllerState.auditSelectedId) {
         elements.auditDetailTitle.textContent = auditEntryTitle(selected);
-        elements.auditDetailMeta.textContent = `${auditScopeLabel()} · ${auditTimestamp(selected.ts)}`;
+        elements.auditDetailMeta.textContent = `${auditScopeLabel()} (${auditTimestamp(selected.ts)})`;
         renderAuditDetailInto(selected, elements.auditDetailBody);
       } else if (payload && payload.entry_error && !background) {
         elements.auditDetailMeta.textContent = "Details unavailable";

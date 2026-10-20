@@ -130,7 +130,7 @@ export function createTasksController({
     button.querySelector(".session-entry-meta").textContent = sessionEntryMetaText(
       session, button.classList.contains("unattached-session-entry"),
     );
-    button.title = `${sessionOptionLabel(session)} · ${name}`;
+    button.title = `${sessionOptionLabel(session)} — ${name}`;
   }
 
   function appendSessionEntryContent(button, session, title, meta) {
@@ -176,15 +176,15 @@ export function createTasksController({
 
   function sessionEntryMetaText(session, legacy = false) {
     const updated = sessionTimestamp(session.updated_at);
-    if (session.status === "ended") return `ended · ${updated}`;
+    if (session.status === "ended") return `ended (${updated})`;
     if (legacy) {
-      return `${sessionUnavailableLabel(session) || text(session.status, "session")} · ${updated}`;
+      return `${sessionUnavailableLabel(session) || text(session.status, "session")} (${updated})`;
     }
-    if (session.status === "terminating") return `terminating · ${updated}`;
+    if (session.status === "terminating") return `terminating (${updated})`;
     const unavailable = sessionUnavailableLabel(session);
     return unavailable
-      ? `${unavailable.toLowerCase()} · ${updated}`
-      : `available · ${sessionActivityTimestamp(session)}`;
+      ? `${unavailable.toLowerCase()} (${updated})`
+      : `available (${sessionActivityTimestamp(session)})`;
   }
 
   function sessionActivityTimestamp(session = selectedSession()) {
@@ -345,7 +345,7 @@ export function createTasksController({
     const sessionId = text(session && session.session_id, "");
     const label = text(session && session.label, "");
     const workdir = text(session && session.workdir, "");
-    return `${label || workdir || "session"} · ${sessionId}`;
+    return `${label || workdir || "session"} (${sessionId})`;
   }
 
   function renderSessionDetail() {
@@ -378,14 +378,14 @@ export function createTasksController({
     elements.sessionDetailStatus.dataset.state = state;
     elements.sessionDetailTitle.textContent = text(session.label, text(session.session_id, "session"));
     elements.sessionDetailStatus.textContent = finalStatus === "ended"
-      ? "Ended · retained history available"
+      ? "Ended (history retained)"
       : finalStatus === "terminating"
-        ? "Termination in progress · waiting for executor absence"
+        ? "Terminating (awaiting Executor absence)"
         : availability === "missing_on_executor"
-          ? "Unavailable · missing on executor"
+          ? "Unavailable (missing on executor)"
           : availability === "executor_offline"
-            ? "Unavailable · executor offline"
-            : `Available · ${sessionActivityTimestamp(session)}`;
+            ? "Unavailable (executor offline)"
+            : `Available (${sessionActivityTimestamp(session)})`;
     elements.sessionDetailId.textContent = text(session.session_id);
     const name = executorName(session.executor_id);
     elements.sessionDetailExecutor.textContent = name;
@@ -448,13 +448,13 @@ export function createTasksController({
   function taskMeta(task) {
     const sessions = Array.isArray(task && task.sessions) ? task.sessions : [];
     const count = Number.isInteger(task?.session_count) ? task.session_count : sessions.length;
-    return `${count} session${count === 1 ? "" : "s"} · ${sessionTimestamp(task && task.updated_at)}`;
+    return `${count} session${count === 1 ? "" : "s"} (updated ${sessionTimestamp(task && task.updated_at)})`;
   }
 
   function renderTaskList() {
     document.getElementById("task-count-active").textContent = String(controllerState.taskActiveTotal);
     document.getElementById("task-count-total").textContent = String(controllerState.taskOverallCount);
-    elements.tasksPageState.textContent = `Page ${controllerState.taskCursorStack.length + 1} · ${controllerState.taskPageCount} of ${controllerState.taskTotal}`;
+    elements.tasksPageState.textContent = `Page ${controllerState.taskCursorStack.length + 1} (${controllerState.taskPageCount} of ${controllerState.taskTotal})`;
     document.getElementById("tasks-panel").dataset.taskFilter = controllerState.taskFilter;
     elements.taskList.replaceChildren();
     if (!controllerState.tasks.length && !controllerState.unattachedSessions.length) {

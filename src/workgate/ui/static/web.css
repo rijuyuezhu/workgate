@@ -3276,9 +3276,7 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 #executor-integration-args-wrap[hidden], #executor-integration-validate[hidden],
 #executor-integration-delete[hidden], #executor-integration-toggle[hidden] { display: none !important; }
 
-/* MCP management rows remain neutral when enabled; disabled rows are muted. */
-#executors-panel #executor-mcp-body .executor-manage-row[data-state="enabled"],
-#executors-panel #executor-mcp-body .executor-manage-pill[data-state="enabled"] { background: #fff; }
+/* MCPs share the enabled styling with Skills; disabled entries remain muted. */
 #executors-panel #executor-mcp-body .executor-manage-row[data-state="disabled"] { background: #eef0f3; }
 #executors-panel #executor-mcp-body .executor-manage-row[data-state="disabled"] strong,
 #executors-panel #executor-mcp-body .executor-manage-row[data-state="disabled"] .executor-row-mark { color: #858d9a; }
