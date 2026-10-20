@@ -172,5 +172,39 @@ owned by their installer and are not self-mutated. The prior Windows image
 remains on disk during a switch because the running process owns it; old
 Workgate-generated runtime images are retained until an explicit cleanup so an
 otherwise idle service or another owned task never loses its referenced binary.
-A native Windows binary with a windowless service entry point is required for
-end-to-end frozen update acceptance (#391).
+Windows frozen Task Scheduler services use the bundled windowless entry point.
+Native pairing and complete runtime-update acceptance remain gated by #392.
+
+## Windows x86-64 native CI and release (#391)
+
+The `windows-2022` x64 GitHub Actions runner uses Python 3.14 to run native
+ConPTY, Win32 Job Object, file-lock, Scheduler and GUI contract tests. The
+Windows PyInstaller build is a native PowerShell invocation of the existing
+one-file CLI entrypoint. CI runs the same frozen executable CLI/HTTP/WebUI
+smoke as Linux/macOS. No WSL/Bash installation is required for Windows.
+
+Release archives use `workgate-windows-x86_64.zip`, containing
+`workgate-windows-x86_64/workgate.exe` and
+`workgate-windows-x86_64/workgatew.exe` alongside README, LICENSE and
+QUICKSTART.txt. The matching SHA-256 checksum follows the existing release
+proxy format and is verified by Control bootstrap and managed updates.
+Existing four Linux/macOS release targets remain required.
+The Windows release contains a console CLI (`workgate.exe`) and a windowless
+Task Scheduler runtime (`workgatew.exe`) built from the same entry point. The
+service installer checks for the windowless sibling before writing its service
+config, and CI registers a disposable real Task Scheduler task to verify the
+built binary's PE subsystem and process start. The two binaries must remain
+adjacent for local persistent Executor installation.
+Control-managed updates switch the windowless Executor image referenced by
+Task Scheduler; they do **not** overwrite the interactive `workgate.exe` while
+it is installed. The CLI can therefore report its original package version
+while the managed Executor is running a newer version. Executor service status
+uses the recorded Task Scheduler executable to avoid reporting a healthy
+versioned Executor as stale. Full cross-version pairing and upgrade E2E are
+tracked in #392.
+
+The frozen Windows GUI screenshot worker re-enters the existing bundled
+`workgate.exe` through a private `--_windows-capture` subcommand. Source builds
+continue to use the Python module. Both paths use the same bounded per-window
+PrintWindow implementation and child-process timeout; no machine-wide screen
+capture fallback is added.

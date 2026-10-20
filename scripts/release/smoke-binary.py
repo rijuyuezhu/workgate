@@ -29,6 +29,24 @@ def main() -> None:
             stdout=subprocess.DEVNULL,
         )
 
+    if os.name == "nt":
+        # Verify the bundled capture child routes inside the frozen EXE,
+        # without attempting to snapshot an unrelated user desktop.
+        invalid = subprocess.run(
+            [str(binary), "--_windows-capture", "0", "unused.png"],
+            capture_output=True,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+        if (
+            invalid.returncode == 0
+            or "invalid window handle" not in invalid.stderr
+        ):
+            raise RuntimeError(
+                "frozen Windows GUI capture child entrypoint is unavailable"
+            )
+
     with tempfile.TemporaryDirectory(
         prefix="workgate-binary-smoke-"
     ) as directory:
@@ -91,7 +109,25 @@ def main() -> None:
                 raise
             finally:
                 if process.poll() is None:
-                    process.terminate()
+                    if os.name == "nt":
+                        # A PyInstaller one-file EXE has a bootloader parent and
+                        # child. Terminating only the parent leaves the child
+                        # holding the Windows state lock and breaks cleanup.
+                        killed = subprocess.run(
+                            ["taskkill", "/T", "/F", "/PID", str(process.pid)],
+                            check=False,
+                            capture_output=True,
+                            timeout=15,
+                        )
+                        # The bootloader may exit between poll() and taskkill.
+                        # Only that race is benign; do not hide failed cleanup.
+                        if killed.returncode and process.poll() is None:
+                            raise RuntimeError(
+                                "could not terminate frozen Windows control tree: "
+                                + killed.stderr.decode(errors="replace")[-1000:]
+                            )
+                    else:
+                        process.terminate()
                 try:
                     process.wait(timeout=15)
                 except subprocess.TimeoutExpired:
