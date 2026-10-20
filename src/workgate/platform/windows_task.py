@@ -212,9 +212,13 @@ class WindowsUserTask:
                 "if (@($task.Actions).Count -ne 1) { throw 'unexpected task actions' }",
                 "$action = $task.Actions[0]",
                 "$exe = [IO.Path]::GetFullPath([string]$action.Execute)",
-                "if ([IO.Path]::GetFileName($exe) -ieq 'workgatew.exe' -and "
+                "$name = [IO.Path]::GetFileName($exe)",
+                # Updates use a uniquely named PE rather than overwriting a
+                # mapped image. Reject all other image names even for owned tasks.
+                "if (($name -ieq 'workgatew.exe' -or "
+                r"$name -match '^\.workgate\.runtime\.[0-9]+\.[0-9a-f]{16}\.exe$') -and "
                 "[string]$action.Arguments -match '--managed-service') {",
-                "  Get-CimInstance Win32_Process -Filter \"Name = 'workgatew.exe'\" | "
+                "  Get-CimInstance Win32_Process -Filter (\"Name = '$name'\") | "
                 "Where-Object { $_.ExecutablePath -and $_.CommandLine -and "
                 "[string]::Equals([string]$_.ExecutablePath, $exe, "
                 "[StringComparison]::OrdinalIgnoreCase) -and "
