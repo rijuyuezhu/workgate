@@ -173,9 +173,9 @@ jobs:
           cp dist/workgate release/workgate-${{ matrix.artifact }}/
           cp README.md LICENSE release/workgate-${{ matrix.artifact }}/
           cat > release/workgate-${{ matrix.artifact }}/QUICKSTART.txt <<'EOF'
-          Start the Workgate control:
+          Start a network Workgate control:
 
-            ./workgate control --mode mcp
+            ./workgate control --mode http
 
           Pair an executor in another terminal, then run it:
 

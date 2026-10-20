@@ -19,11 +19,15 @@ pytestmark = pytest.mark.skipif(
 
 
 def _pe_subsystem(path: Path) -> int:
-    binary = path.read_bytes()
-    assert binary[:2] == b"MZ"
-    header = struct.unpack_from("<I", binary, 0x3C)[0]
-    assert binary[header : header + 4] == b"PE\x00\x00"
-    return struct.unpack_from("<H", binary, header + 4 + 20 + 68)[0]
+    # Read only PE headers; a PyInstaller one-file executable can be very large.
+    with path.open("rb") as binary:
+        dos_header = binary.read(64)
+        assert dos_header[:2] == b"MZ"
+        header_offset = struct.unpack_from("<I", dos_header, 0x3C)[0]
+        binary.seek(header_offset)
+        assert binary.read(4) == b"PE\x00\x00"
+        binary.seek(header_offset + 4 + 20 + 68)
+        return struct.unpack("<H", binary.read(2))[0]
 
 
 def test_frozen_executor_windowless_task_smoke(tmp_path: Path) -> None:
@@ -33,7 +37,10 @@ def test_frozen_executor_windowless_task_smoke(tmp_path: Path) -> None:
     assert _pe_subsystem(console) == 3  # IMAGE_SUBSYSTEM_WINDOWS_CUI
     assert _pe_subsystem(service) == 2  # IMAGE_SUBSYSTEM_WINDOWS_GUI
 
-    output = tmp_path / "service-version.txt"
+    # Real Task Scheduler invocation must preserve quoted paths with spaces.
+    working_dir = tmp_path / "task directory with spaces"
+    working_dir.mkdir()
+    output = working_dir / "service-version.txt"
     task = WindowsUserTask(
         "WG391-Disposable-" + uuid4().hex[:12],
         description="Disposable Workgate release smoke, safe to remove",
@@ -44,7 +51,7 @@ def test_frozen_executor_windowless_task_smoke(tmp_path: Path) -> None:
     try:
         task.install(
             [str(service), "--_windows-version-file", str(output)],
-            cwd=str(tmp_path),
+            cwd=str(working_dir),
         )
         task.start()
         deadline = time.monotonic() + 45
@@ -66,7 +73,9 @@ def test_windowless_executor_reports_startup_errors_in_service_log(
 ) -> None:
     """The real GUI-subsystem binary must not silently lose service failures."""
     service = Path("dist/workgatew.exe").resolve()
-    config = tmp_path / "config.json"
+    working_dir = tmp_path / "service directory with spaces"
+    working_dir.mkdir()
+    config = working_dir / "config.json"
     config.write_text(
         json.dumps(
             {
@@ -75,7 +84,7 @@ def test_windowless_executor_reports_startup_errors_in_service_log(
             }
         )
     )
-    log = tmp_path / "executor.log"
+    log = working_dir / "executor.log"
     task = WindowsUserTask(
         "WG391-Disposable-" + uuid4().hex[:12],
         description="Disposable Workgate service log smoke, safe to remove",
@@ -93,7 +102,7 @@ def test_windowless_executor_reports_startup_errors_in_service_log(
                 "--config",
                 str(config),
             ],
-            cwd=str(tmp_path),
+            cwd=str(working_dir),
         )
         task.start()
         deadline = time.monotonic() + 45

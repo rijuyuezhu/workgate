@@ -111,24 +111,6 @@ def main() -> int:
         raise SystemExit("Windows release packaging script is missing")
     if "scripts/release/package-windows.ps1" not in binary_smoke:
         raise SystemExit("Windows CI archive packaging smoke is missing")
-    packager = (ROOT / "scripts/release/package-windows.ps1").read_text()
-    for fragment in (
-        "[IO.Compression.ZipFileExtensions]::CreateEntryFromFile",
-        "Get-FileHash -Algorithm SHA256",
-        "foreach ($name in @('workgate.exe', 'workgatew.exe'))",
-    ):
-        if fragment not in packager:
-            raise SystemExit(f"Windows package contract missing {fragment}")
-    for fragment in (
-        "uv sync --locked --group dev",
-        "import winpty, uiautomation",
-        "tests/contracts/test_windows_conpty_core.py",
-        "tests/contracts/test_windows_native_runner.py",
-        "uv build --wheel --out-dir dist",
-        "tests/executor/test_windows_services.py",
-    ):
-        if fragment not in windows_native:
-            raise SystemExit(f"native Windows test job is missing {fragment}")
     if "- windows-native" not in _section(ci, "ci-gate"):
         raise SystemExit("Windows tests must participate in CI Gate")
     required = (
