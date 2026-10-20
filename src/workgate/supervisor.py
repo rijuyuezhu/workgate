@@ -319,6 +319,12 @@ def supervise(commands: list[ChildCommand]) -> int:
                         "close_fds": True,
                         "creationflags": subprocess.CREATE_NO_WINDOW,
                     }
+                    # Keep the child's CLI/diagnostic streams when the Parent
+                    # has them; close_fds otherwise inherits only the IPC socket.
+                    for stream in ("stdin", "stdout", "stderr"):
+                        value = getattr(sys, stream, None)
+                        if value is not None:
+                            kwargs[stream] = value
                 else:
                     kwargs = {"pass_fds": (child_sock.fileno(),)}
                 process = subprocess.Popen[bytes](
