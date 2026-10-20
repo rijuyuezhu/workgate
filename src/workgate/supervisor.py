@@ -167,8 +167,12 @@ def notify_ready(
     )
     if len(message) > 8192:
         raise RuntimeError("configuration path is too long")
-    if _parent_message(message) != b"accepted\n":
-        raise RuntimeError("Workgate Parent did not confirm Child readiness")
+    response = _parent_message(message)
+    if response != b"accepted\n":
+        raise RuntimeError(
+            "Workgate Parent did not confirm Child readiness: "
+            + response.decode("ascii", errors="replace").strip()
+        )
 
 
 def restart_status() -> str:
