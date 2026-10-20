@@ -195,6 +195,13 @@ service installer checks for the windowless sibling before writing its service
 config, and CI registers a disposable real Task Scheduler task to verify the
 built binary's PE subsystem and process start. The two binaries must remain
 adjacent for local persistent Executor installation.
+Control-managed updates switch the windowless Executor image referenced by
+Task Scheduler; they do **not** overwrite the interactive `workgate.exe` while
+it is installed. The CLI can therefore report its original package version
+while the managed Executor is running a newer version. Executor service status
+uses the recorded Task Scheduler executable to avoid reporting a healthy
+versioned Executor as stale. Full cross-version pairing and upgrade E2E are
+tracked in #392.
 
 The frozen Windows GUI screenshot worker re-enters the existing bundled
 `workgate.exe` through a private `--_windows-capture` subcommand. Source builds

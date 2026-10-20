@@ -459,7 +459,19 @@ class ExecutorServiceManager:
         ):
             return False
         try:
-            return command == self._runtime_command()
+            expected = self._runtime_command()
+            if (
+                self.backend() == "scheduled-task"
+                and runtime is not None
+                and runtime.ownership
+                is ExecutorRuntimeOwnership.CONTROL_MANAGED
+                and runtime.executable is not None
+            ):
+                # A managed Windows service updates its executable independently
+                # from the interactive installer CLI. Compare the recorded task
+                # image, not the CLI's original adjacent workgatew.exe.
+                expected[0] = runtime.executable
+            return command == expected
         except UnsupportedExecutorServiceError:
             return False
 

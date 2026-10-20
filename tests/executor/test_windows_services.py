@@ -417,6 +417,34 @@ def test_windows_control_managed_install_records_service_not_cli_path(
     assert state.executable == str(windowless)
 
 
+def test_windows_control_managed_service_remains_current_after_runtime_switch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from workgate.executor.runtime_update import ExecutorRuntimeState
+
+    manager, _ = _paired_manager(tmp_path, system="Windows")
+    manager.executable = tmp_path / "workgate.exe"
+    (tmp_path / "workgatew.exe").write_bytes(_fake_gui_pe())
+    newer = tmp_path / ".workgate.runtime.updated.exe"
+    newer.write_bytes(_fake_gui_pe())
+    monkeypatch.setattr(executor_service.sys, "frozen", True, raising=False)
+    manager._write_service_config()
+    command = manager._runtime_command(ExecutorRuntimeOwnership.CONTROL_MANAGED)
+    command[0] = str(newer)
+    manager._write_metadata("scheduled-task", command)
+    ExecutorRuntimeStateStore(manager.state_store).save(
+        ExecutorRuntimeState(
+            ownership=ExecutorRuntimeOwnership.CONTROL_MANAGED,
+            executable=str(newer),
+        )
+    )
+    assert manager._runtime_current()
+    manager._write_metadata(
+        "scheduled-task", [str(tmp_path / "wrong.exe"), *command[1:]]
+    )
+    assert not manager._runtime_current()
+
+
 def test_windows_colocate_requires_pythonw_before_writing_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

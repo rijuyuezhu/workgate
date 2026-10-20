@@ -46,7 +46,7 @@ if __name__ == "__main__":
             ):
                 try:
                     main(args)
-                except BaseException:
+                except Exception:
                     traceback.print_exc()
                     raise
         else:
