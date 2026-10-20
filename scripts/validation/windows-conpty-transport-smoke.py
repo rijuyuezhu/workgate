@@ -76,7 +76,13 @@ async def main() -> None:
         )
         executor = None
         try:
-            await wait_for_http_ready(base_url, control, timeout_s=35)
+            await wait_for_http_ready(
+                base_url,
+                control,
+                stdout_path=logs / "control.out",
+                stderr_path=logs / "control.err",
+                timeout_s=35,
+            )
             executor = start_executor_process(
                 executor_conf,
                 env=env,
