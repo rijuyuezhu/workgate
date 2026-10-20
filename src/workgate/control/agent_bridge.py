@@ -180,12 +180,14 @@ class ControlAgentBridgeService:
         *,
         probe_mcp_tools: bool = True,
         mcp_server_name: str | None = None,
+        excluded_mcp_server_names: frozenset[str] = frozenset(),
     ) -> AgentCapabilityRegistry:
         return build_network_agent_registry_from_settings(
             self._settings,
             AgentMcpClientManager,
             probe_mcp_tools=probe_mcp_tools,
             mcp_server_name=mcp_server_name,
+            excluded_mcp_server_names=excluded_mcp_server_names,
         )
 
     @staticmethod
@@ -245,15 +247,24 @@ class ControlAgentBridgeService:
     async def list_servers(
         self, session_id: str | None = None
     ) -> ListAgentMcpServersOutput:
-        control = list_agent_mcp_servers_payload(
-            await asyncio.to_thread(self._network_registry)
-        ).root
         if session_id is None:
-            return ListAgentMcpServersOutput(root=control)
+            registry = await asyncio.to_thread(self._network_registry)
+            return list_agent_mcp_servers_payload(registry)
         payload = await self._sessions.call_session_tool(
             "agent_mcp.list_servers", {"session_id": session_id}
         )
         executor = ListAgentMcpServersOutput.model_validate(payload).root
+        excluded = frozenset(
+            name
+            for name, row in executor.items()
+            if not isinstance(row, dict) or row.get("enabled") is not False
+        )
+        control = list_agent_mcp_servers_payload(
+            await asyncio.to_thread(
+                self._network_registry,
+                excluded_mcp_server_names=excluded,
+            )
+        ).root
         return ListAgentMcpServersOutput(
             root=self._merge_server_rows(control, executor)
         )
@@ -277,37 +288,33 @@ class ControlAgentBridgeService:
             )
             return ListAgentMcpToolsOutput.model_validate(payload)
 
-        registry = await asyncio.to_thread(self._network_registry)
-        control = list_agent_mcp_tools_payload(registry).tools
         if session_id is None:
-            return ListAgentMcpToolsOutput(tools=control)
-        # Tool listing omits disabled/unavailable servers. Resolve masking
-        # from the configured Executor inventory, not discovered tool rows.
+            registry = await asyncio.to_thread(self._network_registry)
+            return list_agent_mcp_tools_payload(registry)
+
+        # Choose the effective owner before any Control network probe.
+        # Disabled Executor entries do not shadow the Control fallback.
         inventory = await self._sessions.call_session_tool(
             "agent_mcp.list_servers",
             {"session_id": session_id, "probe_mcp_tools": False},
         )
-        executor_names = {
+        executor_names = frozenset(
             name
             for name, row in ListAgentMcpServersOutput.model_validate(
                 inventory
             ).root.items()
             if not isinstance(row, dict) or row.get("enabled") is not False
-        }
+        )
+        registry = await asyncio.to_thread(
+            self._network_registry,
+            excluded_mcp_server_names=executor_names,
+        )
+        control = list_agent_mcp_tools_payload(registry).tools
         payload = await self._sessions.call_session_tool(
             "agent_mcp.list_tools", {"session_id": session_id, "server": None}
         )
         executor = ListAgentMcpToolsOutput.model_validate(payload).tools
-        return ListAgentMcpToolsOutput(
-            tools=[
-                *(
-                    row
-                    for row in control
-                    if row.get("server") not in executor_names
-                ),
-                *executor,
-            ]
-        )
+        return ListAgentMcpToolsOutput(tools=[*control, *executor])
 
     async def _discovery_rows(
         self, session_id: str | None, server: str | None
