@@ -1833,6 +1833,9 @@ async def test_browser_managed_screenshot_byte_pruning_and_image_read(
             browser_session_id=browser_id,
         )
     )
+    # Pruning orders by mtime; rapid screenshots can have equal timestamps.
+    # Give the oldest one an unambiguous timestamp before asserting eviction.
+    os.utime(path1, (1, 1))
     path3 = Path(
         await service._screenshot(
             session_id,
