@@ -177,7 +177,33 @@ def main() -> None:
                     code = match.group(1)
                     break
                 time.sleep(0.2)
-            assert code, "frozen bootstrap never reached real pairing"
+            if code is None:
+                output = (root / "bootstrap.out").read_text(errors="replace")
+                output = re.sub(
+                    r"(?m)^Code: [^\r\n]+", "Code: [redacted]", output
+                )
+                errors = (root / "bootstrap.err").read_text(errors="replace")
+                staged = []
+                for item in Path(tempfile.gettempdir()).glob(
+                    "workgate-bootstrap-*"
+                ):
+                    try:
+                        staged.append(
+                            (
+                                item.name,
+                                [
+                                    (file.name, file.stat().st_size)
+                                    for file in item.iterdir()
+                                ],
+                            )
+                        )
+                    except OSError:
+                        continue
+                raise AssertionError(
+                    "frozen PowerShell bootstrap never reached pairing; "
+                    f"stdout={output[-1800:]!r}, stderr={errors[-1800:]!r}, "
+                    f"staged={staged[-3:]!r}"
+                )
             inspected = client.get(f"{url}/api/ui/pair", params={"code": code})
             assert inspected.status_code == 200, inspected.text
             assert (
