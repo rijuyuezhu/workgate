@@ -420,17 +420,6 @@ def main() -> None:
                         f"task_status={task.status()!r}; "
                         f"service_errors={log_tail!r}"
                     )
-                last_seen = asyncio.run(
-                    wait_for_executor_online(
-                        url,
-                        control,
-                        executor_id,
-                        after_last_seen=last_seen,
-                        timeout_s=120,
-                        stdout_path=root / "control.out",
-                        stderr_path=root / "control.err",
-                    )
-                )
                 action = task._powershell(
                     f"(Get-ScheduledTask {task._task} -ErrorAction Stop).Actions[0].Execute"
                 )
@@ -438,7 +427,57 @@ def main() -> None:
                     Path(action.stdout.strip()).resolve()
                     == service_exe.resolve()
                 )
-                assert task.status()["state"].lower() == "running"
+                # The older A's authenticated hello updates last_seen before
+                # Scheduler's delayed B restart. Require the *new* B runtime
+                # inventory and a truly running native task before success.
+                deadline = time.monotonic() + 120
+                observed = None
+                while time.monotonic() < deadline:
+                    assert control.poll() is None, (
+                        "Control exited during upgrade"
+                    )
+                    response = client.get(f"{url}/api/ui/executors")
+                    assert response.status_code == 200, response.text
+                    rows = response.json()["data"]["executors"]
+                    observed = next(
+                        (
+                            row
+                            for row in rows
+                            if row["executor_id"] == executor_id
+                        ),
+                        None,
+                    )
+                    if (
+                        observed is not None
+                        and observed["online"]
+                        and (observed.get("runtime") or {}).get(
+                            "workgate_version"
+                        )
+                        == __version__
+                        and isinstance(
+                            observed.get("last_seen_at"), int | float
+                        )
+                        and observed["last_seen_at"] > last_seen
+                        and task.status()["state"].lower() == "running"
+                    ):
+                        break
+                    time.sleep(0.5)
+                else:
+                    raise AssertionError(
+                        "new frozen Executor never restarted with B runtime: "
+                        f"fleet={observed!r}, task={task.status()!r}"
+                    )
+                last_seen = asyncio.run(
+                    wait_for_executor_online(
+                        url,
+                        control,
+                        executor_id,
+                        after_last_seen=float(observed["last_seen_at"]),
+                        timeout_s=45,
+                        stdout_path=root / "control.out",
+                        stderr_path=root / "control.err",
+                    )
+                )
                 task.stop()
             (root / "digest.txt").write_text(digest, encoding="ascii")
             published = asyncio.run(
