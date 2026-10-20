@@ -186,6 +186,17 @@ async def main() -> None:
             if executor is not None:
                 stop_process(executor)
             stop_process(control)
+            # The Windows Parent's Job Object kills its Child on close, but
+            # the Child may release its locked state file just after Parent exits.
+            lock = state / "control" / "run.lock"
+            for attempt in range(100):
+                try:
+                    lock.unlink(missing_ok=True)
+                    break
+                except PermissionError:
+                    if attempt == 99:
+                        raise
+                    await asyncio.sleep(0.05)
 
 
 if __name__ == "__main__":
