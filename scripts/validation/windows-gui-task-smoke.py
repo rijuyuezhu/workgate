@@ -128,6 +128,9 @@ def _desktop_probe(output: Path) -> None:
             await backend.perform_action(
                 snap.window, None, {"type": "type", "text": "native-ui"}
             )
+            # SendInput is queued on the desktop: allow Tk's event loop to
+            # process the typed keys before issuing Backspace.
+            await asyncio.sleep(0.15)
             await backend.perform_action(
                 snap.window, None, {"type": "key", "keys": "Backspace"}
             )
