@@ -143,6 +143,29 @@ def test_control_mcp_oauth_browser_actions(
         {"session_id": "browser_session_id_000000000000000001"}
     ]
 
+    # A server-side expiry restores Authorize without forcing a page reload.
+    page.route(
+        "**/api/ui/integrations/oauth/status?*",
+        lambda route: route.fulfill(
+            status=404,
+            json={"ok": False, "message": "Authorization session not found"},
+        ),
+    )
+    page.locator("#executor-mcp-oauth-check").click()
+    expect(page.locator("#executor-integration-status")).to_contain_text(
+        "Authorization session expired"
+    )
+    expect(page.locator("#executor-mcp-oauth-authorize")).to_be_visible()
+    # Chromium reports the deliberately mocked 404 to the console; consume
+    # exactly that expected error while keeping all other browser checks.
+    expected_errors = [
+        message
+        for message in harness.console_errors
+        if "Failed to load resource" in message and "404 (Not Found)" in message
+    ]
+    assert len(expected_errors) == 1
+    harness.console_errors.remove(expected_errors[0])
+
     page.set_viewport_size({"width": 1360, "height": 900})
     page.once("dialog", lambda dialog: dialog.accept())
     page.locator("#executor-integration-delete").click()

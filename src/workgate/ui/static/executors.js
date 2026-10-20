@@ -802,7 +802,13 @@ export function createExecutorsController({
       }
       if (state.editor === edit) renderBrowserOAuth(edit);
     } catch (error) {
-      if (state.editor === edit) editorStatus(error instanceof Error ? error.message : String(error), "error");
+      if (state.editor === edit) {
+        if (error?.status === 404 && session && action !== "start") {
+          state.oauthSessions.delete(name);
+          renderBrowserOAuth(edit);
+          editorStatus("Authorization session expired. Start again.", "warning");
+        } else editorStatus(error instanceof Error ? error.message : String(error), "error");
+      }
     } finally {
       if (state.editor === edit) setEditorBusy(edit, false);
     }
