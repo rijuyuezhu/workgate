@@ -97,6 +97,13 @@ WebSocket protocol or session manager is introduced.
   Control + Executor, real WebUI API and two authenticated WebSocket terminal
   clients sharing one PowerShell, with independent detach and continued use.
   This full native-process scenario is enforced in the Windows Python 3.14 CI lane.
+- scripts/validation/windows-frozen-bootstrap-smoke.py: on disposable
+  `windows-2022` CI, serve the actual newly built release ZIP through the
+  standard Control bootstrap HTTP routes, run the real downloaded PowerShell
+  script with `-Persist`, approve device-code pairing, verify the windowless
+  Task Scheduler Executor reaches Control, then reject a tampered checksum
+  without stopping the existing service and uninstall the temporary task.
+  CI uses a local archive because the development version is not yet released.
 - scripts/validation/windows-pairing-approval-smoke.py: actual native
   `executor connect` device-code request against an independent loopback
   Control, owner lookup and approval through the Control UI API, profile
