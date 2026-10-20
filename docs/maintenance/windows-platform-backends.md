@@ -218,7 +218,18 @@ task stop path reaps only processes matching the verified owned task's exact
 windowless executable path and managed-service command arguments.
 
 Windows frozen Task Scheduler services use the bundled windowless entry point.
-Native pairing and complete runtime-update acceptance remain gated by #392.
+CI also builds an **acceptance-only synthetic older** windowless PE with version
+`5.0.0a3.dev0` in `scripts/validation/build-windows-older-frozen.ps1` while
+preserving the tracked source. Against the current locally built Control,
+`windows-frozen-bootstrap-smoke.py` installs a disposable service, switches it
+to this older PE, then checks its **automatic policy-driven upgrade** to the
+current independently built version, real Task Scheduler scheduled restart,
+re-authentication and failure recovery. The synthetic PE reuses this checkout's
+source except for the version string; it is **not** the historical v5.0.0a3
+release, and cannot substitute for testing upgrade across real historical
+release artifacts. The CI test never publishes this synthetic build.
+Complete real-release cross-version and two-host OAuth acceptance remain gated
+by #392.
 
 ## Windows x86-64 native CI and release (#391)
 
