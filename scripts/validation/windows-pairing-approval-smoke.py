@@ -95,25 +95,25 @@ def _pair_one(root: Path, url: str, *, approve: bool) -> None:
                 },
             )
             assert decision.status_code == 200, decision.text
+            owner = decision.json()["data"]
+            assert owner["status"] == ("approved" if approve else "denied")
         assert process.wait(timeout=35) == (0 if approve else 1), (
             errors.read_text(encoding="utf-8", errors="replace")
         )
         profile = ExecutorProfileStore(FileStateStore(lambda: state)).load()
         if approve:
             assert profile is not None and profile.control_url == url
+            assert profile.executor_id == owner["executor_id"]
             assert (
                 f"Paired executor: {profile.executor_id}"
                 in output.read_text(encoding="utf-8")
             )
         else:
+            assert owner["executor_id"] is None
+            assert "pairing_denied" in errors.read_text(encoding="utf-8")
             assert profile is None, (
                 "denied pairing wrote an executor credential"
             )
-        print(
-            "Native Windows device-code owner approval: PASS"
-            if approve
-            else "Native Windows pairing denial leaves no profile: PASS"
-        )
     finally:
         if process.poll() is None:
             process.kill()
@@ -164,16 +164,19 @@ def main() -> None:
         _pair_one(root, url, approve=True)
         _pair_one(root, url, approve=False)
     finally:
-        if control is not None:
-            stop_process(control)
-        for attempt in range(40):
-            try:
-                shutil.rmtree(root)
-                break
-            except PermissionError:
-                if attempt == 39:
-                    raise
-                time.sleep(0.15)
+        try:
+            if control is not None:
+                stop_process(control)
+        finally:
+            for attempt in range(40):
+                try:
+                    shutil.rmtree(root)
+                    break
+                except PermissionError:
+                    if attempt == 39:
+                        raise
+                    time.sleep(0.15)
+    print("Native Windows CLI owner approval and denial, profile cleanup: PASS")
 
 
 if __name__ == "__main__":
