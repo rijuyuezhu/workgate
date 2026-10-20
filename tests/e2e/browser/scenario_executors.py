@@ -1,7 +1,20 @@
+import re
+import subprocess
+import sys
+import time
+
 import httpx
 from playwright.sync_api import expect
 
 from tests.e2e.browser.harness import BrowserHarness
+from tests.e2e.helpers import (
+    PROJECT_ROOT,
+    isolated_process_env,
+    isolated_xdg_env,
+    write_yaml_config,
+)
+from workgate.executor.profile import ExecutorProfileStore
+from workgate.persistence import FileStateStore
 
 
 def run_executor_admin(harness: BrowserHarness) -> None:
@@ -96,3 +109,115 @@ def run_executor_admin(harness: BrowserHarness) -> None:
         expect(
             page.locator(f'#{view}-executor option[value="{executor_id}"]')
         ).to_have_count(0)
+
+
+def run_browser_approved_cli_pairing(harness: BrowserHarness) -> None:
+    """Complete real CLI pairing through the owner's browser OAuth session."""
+    harness.login()  # Real Chromium OAuth authorization-code + PKCE + UI session.
+    page = harness.page  # login restores a fresh page after the OAuth callback.
+    expect(page.locator("#connection-state")).to_have_text("Connected")
+
+    for approve in (True, False):
+        name = "browser-cli-approved" if approve else "browser-cli-denied"
+        root = harness.root / name
+        root.mkdir()
+        state_dir = root / "state"
+        config = write_yaml_config(
+            root / "executor.yaml", {"state_dir": str(state_dir)}
+        )
+        stdout_path = harness.artifacts / f"{name}.stdout.log"
+        stderr_path = harness.artifacts / f"{name}.stderr.log"
+        env = isolated_process_env(isolated_xdg_env(root / "xdg"))
+        with (
+            stdout_path.open("w", encoding="utf-8") as stdout,
+            stderr_path.open("w", encoding="utf-8") as stderr,
+        ):
+            process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "workgate.main",
+                    "executor",
+                    "connect",
+                    harness.base_url,
+                    "--name",
+                    name,
+                    "--config",
+                    str(config),
+                ],
+                cwd=PROJECT_ROOT,
+                env=env,
+                stdout=stdout,
+                stderr=stderr,
+                text=True,
+            )
+        try:
+            deadline = time.monotonic() + 35
+            code = None
+            while time.monotonic() < deadline:
+                assert process.poll() is None, (
+                    f"real Executor CLI exited before browser approval: {process.returncode}"
+                )
+                match = re.search(
+                    r"(?m)^Code: (\S+)$",
+                    stdout_path.read_text(encoding="utf-8"),
+                )
+                if match:
+                    code = match.group(1)
+                    break
+                time.sleep(0.1)
+            assert code, "real Executor CLI did not print pairing user code"
+
+            page.goto(f"{harness.base_url}/pair", wait_until="domcontentloaded")
+            expect(page.locator("#connection-state")).to_have_text("Connected")
+            page.locator("#executor-pair-open").click()
+            page.locator("#executor-pair-code").fill(code.lower())
+            page.locator("#executor-pair-form").get_by_role(
+                "button", name="Inspect request"
+            ).click()
+            expect(page.locator("#executor-pair-review")).to_be_visible()
+            expect(page.locator("#executor-pair-requested-name")).to_have_text(
+                name
+            )
+            if approve:
+                page.locator("#executor-pair-name").fill(name)
+                page.locator("#executor-pair-approve").click()
+            else:
+                page.locator("#executor-pair-deny").click()
+            expect(page.locator("#executor-pair-dialog")).to_be_hidden()
+
+            assert process.wait(timeout=35) == (0 if approve else 1), (
+                f"real Executor CLI pairing exit: {process.returncode}"
+            )
+            profile = ExecutorProfileStore(
+                FileStateStore(lambda state_dir=state_dir: state_dir)
+            ).load()
+            if approve:
+                assert (
+                    profile is not None
+                    and profile.control_url == harness.base_url
+                )
+                expect(page.locator("#executor-list")).to_contain_text(name)
+                page.locator("#executor-list").get_by_text(
+                    name, exact=True
+                ).click()
+                expect(page.locator("#executor-detail-id")).to_have_text(
+                    profile.executor_id
+                )
+            else:
+                assert profile is None, (
+                    "browser-denied CLI pairing persisted credentials"
+                )
+                assert "pairing_denied" in stderr_path.read_text(
+                    encoding="utf-8", errors="replace"
+                )
+                expect(page.locator("#executor-list")).not_to_contain_text(name)
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+    harness.assert_clean_browser()
