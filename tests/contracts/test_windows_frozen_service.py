@@ -1,5 +1,6 @@
 """Native smoke for the actual windowless, frozen Windows service executable."""
 
+import json
 import struct
 import subprocess
 import sys
@@ -56,5 +57,55 @@ def test_frozen_executor_windowless_task_smoke(tmp_path: Path) -> None:
             output.read_text(encoding="ascii").strip()
             == f"workgate {__version__}"
         )
+    finally:
+        task.uninstall()
+
+
+def test_windowless_executor_reports_startup_errors_in_service_log(
+    tmp_path: Path,
+) -> None:
+    """The real GUI-subsystem binary must not silently lose service failures."""
+    service = Path("dist/workgatew.exe").resolve()
+    config = tmp_path / "config.json"
+    config.write_text(
+        json.dumps(
+            {
+                "state_dir": str(tmp_path / "state"),
+                "default_workdir": str(tmp_path),
+            }
+        )
+    )
+    log = tmp_path / "executor.log"
+    task = WindowsUserTask(
+        "WG391-Disposable-" + uuid4().hex[:12],
+        description="Disposable Workgate service log smoke, safe to remove",
+        run=lambda argv: subprocess.run(
+            argv, check=True, capture_output=True, text=True, timeout=20
+        ),
+    )
+    try:
+        task.install(
+            [
+                str(service),
+                "executor",
+                "run",
+                "--managed-service",
+                "--config",
+                str(config),
+            ],
+            cwd=str(tmp_path),
+        )
+        task.start()
+        deadline = time.monotonic() + 45
+        while time.monotonic() < deadline:
+            if log.is_file() and "executor command failed" in log.read_text(
+                errors="replace"
+            ):
+                break
+            time.sleep(0.2)
+        assert log.is_file(), (
+            f"windowless Executor created no service log: {task.status()}"
+        )
+        assert "executor command failed" in log.read_text(errors="replace")
     finally:
         task.uninstall()

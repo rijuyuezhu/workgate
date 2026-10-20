@@ -14,9 +14,11 @@ from tests.executor.test_executor_service import _paired_manager
 from workgate.colocate import service as colocate_service
 from workgate.executor import service as executor_service
 from workgate.executor.profile import ExecutorProfile, ExecutorProfileStore
+from workgate.executor.runtime_update import ExecutorRuntimeStateStore
 from workgate.persistence import FileStateStore
 from workgate.platform.windows_task import WindowsUserTask, _literal
 from workgate.protocol.credentials import new_executor_credential
+from workgate.protocol.executor import ExecutorRuntimeOwnership
 from workgate.protocol.ids import new_executor_id
 
 
@@ -280,6 +282,33 @@ def test_windows_executor_missing_pythonw_reports_stale_service(
     assert not status.runtime_current
 
 
+def _fake_gui_pe(*, subsystem: int = 2) -> bytes:
+    executable = bytearray(256)
+    executable[:2] = b"MZ"
+    executable[0x3C:0x40] = (128).to_bytes(4, "little")
+    executable[128:132] = b"PE\0\0"
+    executable[128 + 4 + 20 + 68 : 128 + 4 + 20 + 70] = subsystem.to_bytes(
+        2, "little"
+    )
+    return bytes(executable)
+
+
+def test_windows_frozen_service_rejects_console_subsystem_sibling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager, _profile = _paired_manager(tmp_path, system="Windows")
+    manager.executable = tmp_path / "workgate.exe"
+    (tmp_path / "workgatew.exe").write_bytes(_fake_gui_pe(subsystem=3))
+    monkeypatch.setattr(executor_service.sys, "frozen", True, raising=False)
+    with pytest.raises(
+        executor_service.UnsupportedExecutorServiceError,
+        match="valid windowless",
+    ):
+        manager.install()
+    assert not manager.config_path.exists()
+    assert not manager.metadata_path.exists()
+
+
 def test_windows_frozen_service_requires_windowless_sibling_before_install(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -300,7 +329,7 @@ def test_windows_frozen_service_uses_windowless_sibling(
     manager, _profile = _paired_manager(tmp_path, system="Windows")
     manager.executable = tmp_path / "workgate.exe"
     sibling = tmp_path / "workgatew.exe"
-    sibling.write_bytes(b"MZ")
+    sibling.write_bytes(_fake_gui_pe())
     monkeypatch.setattr(executor_service.sys, "frozen", True, raising=False)
     command = manager._runtime_command()
     assert command[:4] == [str(sibling), "executor", "run", "--managed-service"]
@@ -313,7 +342,7 @@ def test_windows_frozen_sibling_can_install_paired_service(
     manager, _profile = _paired_manager(tmp_path, system="Windows")
     manager.executable = tmp_path / "workgate.exe"
     windowless = tmp_path / "workgatew.exe"
-    windowless.write_bytes(b"MZ")
+    windowless.write_bytes(_fake_gui_pe())
     monkeypatch.setattr(executor_service.sys, "frozen", True, raising=False)
     monkeypatch.setattr(
         executor_service.WindowsUserTask, "available", lambda: True
@@ -349,6 +378,43 @@ def test_windows_frozen_sibling_can_install_paired_service(
     )  # Frozen service needs no Python shim.
     metadata = manager._read_metadata()
     assert metadata is not None and metadata["command"] == recorded[0]
+    assert manager._runtime_command(ExecutorRuntimeOwnership.CONTROL_MANAGED)[
+        0
+    ] == str(windowless)
+
+
+def test_windows_control_managed_install_records_service_not_cli_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+
+    manager, _ = _paired_manager(tmp_path, system="Windows")
+    manager.executable = tmp_path / "workgate.exe"
+    windowless = tmp_path / "workgatew.exe"
+    windowless.write_bytes(_fake_gui_pe())
+    monkeypatch.setattr(executor_service.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        executor_service.sys, "executable", str(manager.executable)
+    )
+    monkeypatch.setattr(
+        executor_service.WindowsUserTask, "available", lambda: True
+    )
+
+    class Task:
+        def install(self, command, *, cwd):
+            assert command[0] == str(windowless)
+
+        def start(self):
+            pass
+
+        def status(self):
+            return {"state": "Running", "last_result": 0}
+
+    monkeypatch.setattr(manager, "_windows_task", Task)
+    manager.install(runtime_ownership=ExecutorRuntimeOwnership.CONTROL_MANAGED)
+    state = ExecutorRuntimeStateStore(manager.state_store).load()
+    assert state is not None
+    assert state.ownership is ExecutorRuntimeOwnership.CONTROL_MANAGED
+    assert state.executable == str(windowless)
 
 
 def test_windows_colocate_requires_pythonw_before_writing_files(
@@ -565,6 +631,7 @@ def test_windows_runtime_switch_preserves_existing_task_and_cli_arguments(
     manager, _ = _paired_manager(tmp_path, system="Windows")
     old = tmp_path / "original.exe"
     new = tmp_path / "verified version.exe"
+    new.write_bytes(_fake_gui_pe())
     command = [
         str(old),
         "executor",
@@ -594,6 +661,7 @@ def test_windows_runtime_switch_recovers_task_on_metadata_write_failure(
     manager, _ = _paired_manager(tmp_path, system="Windows")
     old = tmp_path / "original.exe"
     new = tmp_path / "verified.exe"
+    new.write_bytes(_fake_gui_pe())
     manager._write_metadata("scheduled-task", [str(old), "executor", "run"])
     calls = []
 
@@ -621,6 +689,7 @@ def test_windows_runtime_switch_failure_restores_metadata(
     manager, _ = _paired_manager(tmp_path, system="Windows")
     old = tmp_path / "old.exe"
     new = tmp_path / "new.exe"
+    new.write_bytes(_fake_gui_pe())
     manager._write_metadata("scheduled-task", [str(old), "executor", "run"])
 
     class Task:
@@ -641,6 +710,7 @@ def test_windows_runtime_switch_reports_failed_metadata_rollback(
 ) -> None:
     manager, _ = _paired_manager(tmp_path, system="Windows")
     old, new = tmp_path / "old.exe", tmp_path / "new.exe"
+    new.write_bytes(_fake_gui_pe())
     manager._write_metadata("scheduled-task", [str(old), "executor", "run"])
     original_write = manager._write_metadata
     writes = []
@@ -663,6 +733,22 @@ def test_windows_runtime_switch_reports_failed_metadata_rollback(
         [str(new), "executor", "run"],
         [str(old), "executor", "run"],
     ]
+
+
+def test_windows_runtime_switch_rejects_console_executable_before_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager, _ = _paired_manager(tmp_path, system="Windows")
+    old, new = tmp_path / "old.exe", tmp_path / "new.exe"
+    new.write_bytes(_fake_gui_pe(subsystem=3))
+    manager._write_metadata("scheduled-task", [str(old), "executor", "run"])
+    monkeypatch.setattr(
+        manager, "_windows_task", lambda: pytest.fail("task must not change")
+    )
+    with pytest.raises(RuntimeError, match="not a windowless executable"):
+        manager.activate_windows_runtime(old, new)
+    metadata = manager._read_metadata()
+    assert metadata is not None and metadata["command"][0] == str(old)
 
 
 def test_windows_runtime_switch_rejects_wrong_owner_metadata(

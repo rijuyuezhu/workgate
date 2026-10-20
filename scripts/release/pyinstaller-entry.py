@@ -20,4 +20,34 @@ if __name__ == "__main__":
     else:
         from workgate.main import main
 
-        main(sys.argv[1:])
+        # PyInstaller --windowed has no stdout/stderr. Managed Windows service
+        # errors belong in the existing Executor log, not a silent GUI process.
+        if sys.platform == "win32" and sys.argv[1:4] == [
+            "executor",
+            "run",
+            "--managed-service",
+        ]:
+            import contextlib
+            import traceback
+            from pathlib import Path
+
+            args = sys.argv[1:]
+            if "--config" not in args or args.index("--config") + 1 >= len(
+                args
+            ):
+                raise SystemExit(2)
+            log = Path(args[args.index("--config") + 1]).with_name(
+                "executor.log"
+            )
+            with (
+                log.open("a", encoding="utf-8", buffering=1) as output,
+                contextlib.redirect_stdout(output),
+                contextlib.redirect_stderr(output),
+            ):
+                try:
+                    main(args)
+                except BaseException:
+                    traceback.print_exc()
+                    raise
+        else:
+            main(sys.argv[1:])
