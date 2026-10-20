@@ -371,6 +371,10 @@ def main() -> None:
                     Path(action.stdout.strip()).resolve()
                     == old_service.resolve()
                 )
+                # Earlier in this smoke we deliberately corrupt the checksum
+                # to prove bootstrap rejection. The automatic A->B upgrade
+                # must instead see the genuine checksum for the B archive.
+                (root / "digest.txt").write_text(digest, encoding="ascii")
                 task.start()
                 # Real older frozen service receives Control's newer-version
                 # policy, fetches B, switches the actual scheduled action and
