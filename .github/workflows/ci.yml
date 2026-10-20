@@ -214,6 +214,9 @@ jobs:
         run: python scripts/release/smoke-binary.py dist/workgate
       - if: runner.os == 'Windows'
         run: python scripts/release/smoke-binary.py dist/workgate.exe
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/release/package-windows.ps1
 
   package-smoke:
     name: Package smoke

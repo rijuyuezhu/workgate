@@ -27,15 +27,15 @@ def test_real_conpty_input_output_and_shutdown(tmp_path: Path) -> None:
     try:
         reader = shell.subscribe()
         shell.resize(95, 34)
-        shell.write("Write-Output WG391_NATIVE_CONPTY\r")
+        shell.write("Write-Output ('WG391_' + 'NATIVE_CONPTY_OK')\r")
         deadline = time.monotonic() + 12
         output = bytearray()
         while time.monotonic() < deadline:
             chunk, _finished = reader.read_wait(4096, 200)
             output.extend(chunk)
-            if b"WG391_NATIVE_CONPTY" in output:
+            if b"WG391_NATIVE_CONPTY_OK" in output:
                 break
-        assert b"WG391_NATIVE_CONPTY" in output
+        assert b"WG391_NATIVE_CONPTY_OK" in output
     finally:
         shell.close()
     assert shell.closed

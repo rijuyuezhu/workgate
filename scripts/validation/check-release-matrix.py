@@ -105,13 +105,18 @@ def main() -> int:
         for fragment in windows_contract:
             if fragment not in section:
                 raise SystemExit(f"Windows binary job is missing {fragment}")
+    if "scripts/release/package-windows.ps1" not in binary:
+        raise SystemExit("Windows release packaging script is missing")
+    if "scripts/release/package-windows.ps1" not in binary_smoke:
+        raise SystemExit("Windows CI archive packaging smoke is missing")
+    packager = (ROOT / "scripts/release/package-windows.ps1").read_text()
     for fragment in (
-        "Compress-Archive",
+        "[IO.Compression.ZipFileExtensions]::CreateEntryFromFile",
         "Get-FileHash -Algorithm SHA256",
-        "workgate-${{ matrix.artifact }}.zip",
+        '"$artifact/workgate.exe"',
     ):
-        if fragment not in binary:
-            raise SystemExit(f"Windows release packaging missing {fragment}")
+        if fragment not in packager:
+            raise SystemExit(f"Windows package contract missing {fragment}")
     for fragment in (
         "uv sync --locked --group dev",
         "import winpty, uiautomation",

@@ -200,30 +200,10 @@ jobs:
           cd release
           tar -czf workgate-${{ matrix.artifact }}.tar.gz workgate-${{ matrix.artifact }}
 
-      - name: Package Windows executable
+      - name: Package and verify Windows executable
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          $directory = "release/workgate-${{ matrix.artifact }}"
-          New-Item -ItemType Directory -Force -Path $directory | Out-Null
-          Copy-Item dist/workgate.exe, README.md, LICENSE -Destination $directory
-          @'
-          Start the Workgate control:
-            .\workgate.exe control --mode mcp
-          Pair and start an executor:
-            .\workgate.exe executor connect http://127.0.0.1:8765
-            .\workgate.exe executor run
-          A native Windows interactive user session is required for GUI actions.
-          '@ | Set-Content -Encoding utf8 (Join-Path $directory 'QUICKSTART.txt')
-          Compress-Archive -Path $directory -DestinationPath "release/workgate-${{ matrix.artifact }}.zip"
-
-      - name: Generate Windows binary checksum
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $name = "workgate-${{ matrix.artifact }}.zip"
-          $digest = (Get-FileHash -Algorithm SHA256 (Join-Path release $name)).Hash.ToLowerInvariant()
-          "$digest  $name" | Set-Content -Encoding ascii "release/workgate-${{ matrix.artifact }}.sha256"
+        run: ./scripts/release/package-windows.ps1
 
       - name: Generate binary checksums
         if: runner.os != 'Windows'

@@ -27,6 +27,7 @@ def test_release_matrix_rejects_stale_binary_packaging(tmp_path):
         "pyproject.toml",
         "scripts/release/build-binary.sh",
         "scripts/release/build-binary.ps1",
+        "scripts/release/package-windows.ps1",
         "scripts/validation/check-release-matrix.py",
     )
     for relative in paths:
@@ -68,6 +69,7 @@ def test_release_matrix_rejects_mismatched_package_version(tmp_path):
         "pyproject.toml",
         "src/workgate/__init__.py",
         "scripts/release/build-binary.ps1",
+        "scripts/release/package-windows.ps1",
         "scripts/validation/check-release-matrix.py",
     )
     for relative in paths:
@@ -99,6 +101,7 @@ def test_release_matrix_rejects_missing_windows_binary(tmp_path):
         "src/workgate/__init__.py",
         "scripts/release/build-binary.sh",
         "scripts/release/build-binary.ps1",
+        "scripts/release/package-windows.ps1",
         "scripts/validation/check-release-matrix.py",
     ):
         destination = tmp_path / relative
