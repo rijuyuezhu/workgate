@@ -37,6 +37,10 @@ try {
     }
 }
 finally { $zip.Dispose() }
+# Control bootstrap and managed runtime updates reject archives over 256 MiB.
+if ((Get-Item -LiteralPath $archive).Length -gt 256MB) {
+    throw 'Windows release archive exceeds the Control bootstrap size limit'
+}
 
 $digest = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
 "$digest  $artifact.zip" | Set-Content -Encoding ascii (Join-Path release "$artifact.sha256")
