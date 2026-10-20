@@ -30,8 +30,8 @@ def test_browser_applies_control_and_executor_saved_files(tmp_path: Path):
             page = h.page
             page.set_default_timeout(45000)
             h.navigate("executors")
-            page.locator("#executor-control-config-open").click()
-            body = page.locator("#executor-control-config-body")
+            page.locator('[data-executor-subtab="config"]').click()
+            body = page.locator("#executor-config-body")
             row = body.locator(".executor-config-row").filter(
                 has=page.locator('.executor-config-name:text-is("log_level")')
             )
@@ -51,9 +51,11 @@ def test_browser_applies_control_and_executor_saved_files(tmp_path: Path):
                 tmp_path / "control.yaml"
             ).read_text() == "log_level: info\n"
 
-            page.locator("#executor-control-config-close").click()
+            page.locator('[data-executor-subtab="overview"]').click()
             h.wait_executor_online()
-            page.locator("#executor-list button").first.click()
+            page.locator(
+                '#executor-list button:not([data-selection="__control__"])'
+            ).first.click()
             page.locator('[data-executor-subtab="config"]').click()
             executor = page.locator("#executor-config-body")
             row = executor.locator(".executor-config-row").filter(

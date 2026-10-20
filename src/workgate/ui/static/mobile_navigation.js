@@ -2,7 +2,7 @@
 export function createMobileNavigation() {
   const pages = {
     tasks: { task: ["All tasks", "Task details"], session: ["Task", "Session audit"], "session-record": ["Session audit", "Audit record"] },
-    executors: { detail: ["Executors", "Executor details"] },
+    executors: { detail: ["Executors", "Details"] },
     files: { detail: ["Files", "File preview"] },
     terminals: { detail: ["Terminals", "Terminal"] },
     audit: { detail: ["Audit records", "Audit record"] },

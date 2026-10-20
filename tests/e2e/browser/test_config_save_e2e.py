@@ -8,6 +8,7 @@ import pytest
 from playwright.sync_api import expect, sync_playwright
 
 from tests.e2e.browser.harness import BrowserHarness
+from workgate.config.roles import CONTROL_SETTING_NAMES, EXECUTOR_SETTING_NAMES
 
 
 def test_config_save_is_file_only_with_role_ownership(tmp_path: Path):
@@ -30,12 +31,14 @@ def test_config_save_is_file_only_with_role_ownership(tmp_path: Path):
             control_pid, executor_pid = h.server.pid, h.executor.pid
             page = h.page
             h.navigate("executors")
-            page.locator("#executor-control-config-open").click()
-            control = page.locator("#executor-control-config-body")
-            expect(control.locator(".executor-config-row")).to_have_count(64)
+            page.locator('[data-executor-subtab="config"]').click()
+            control = page.locator("#executor-config-body")
+            expect(control.locator(".executor-config-row")).to_have_count(
+                len(CONTROL_SETTING_NAMES)
+            )
             expect(
                 control.locator(".executor-config-default code")
-            ).to_have_count(64)
+            ).to_have_count(len(CONTROL_SETTING_NAMES))
             assert control.locator("details:not([open])").count() == 0
             row = control.locator(".executor-config-row").filter(
                 has=page.locator('.executor-config-name:text-is("log_level")')
@@ -137,15 +140,19 @@ def test_config_save_is_file_only_with_role_ownership(tmp_path: Path):
             assert "log_level: info" in (tmp_path / "control.yaml").read_text()
             assert "warning" in (tmp_path / "control.yaml.bak").read_text()
             assert h.server.pid == control_pid
-            page.locator("#executor-control-config-close").click()
+            page.locator('[data-executor-subtab="overview"]').click()
 
-            page.locator("#executor-list button").first.click()
+            page.locator(
+                '#executor-list button:not([data-selection="__control__"])'
+            ).first.click()
             page.locator('[data-executor-subtab="config"]').click()
             executor = page.locator("#executor-config-body")
-            expect(executor.locator(".executor-config-row")).to_have_count(47)
+            expect(executor.locator(".executor-config-row")).to_have_count(
+                len(EXECUTOR_SETTING_NAMES)
+            )
             expect(
                 executor.locator(".executor-config-default code")
-            ).to_have_count(47)
+            ).to_have_count(len(EXECUTOR_SETTING_NAMES))
             assert executor.locator("details:not([open])").count() == 0
             expect(executor).to_contain_text("max_jobs")
             exec_non_default = (
@@ -156,7 +163,7 @@ def test_config_save_is_file_only_with_role_ownership(tmp_path: Path):
             exec_non_default.check()
             expect(
                 executor.locator(".executor-config-row:visible")
-            ).not_to_have_count(47)
+            ).not_to_have_count(len(EXECUTOR_SETTING_NAMES))
             exec_non_default.uncheck()
             row = executor.locator(".executor-config-row").filter(
                 has=page.locator('.executor-config-name:text-is("max_jobs")')

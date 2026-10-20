@@ -193,29 +193,12 @@
           <span id="executor-revoked-summary" hidden><strong id="executor-revoked">—</strong> revoked</span>
         </div>
         <div class="executors-actions">
-          <button id="executor-control-config-open" type="button">Control config</button>
           <button id="executor-topology-open" type="button">Topology</button>
           <button id="executor-pair-open" class="primary-action" type="button">Pair executor</button>
           <span id="executor-state" class="muted">Not loaded</span>
         </div>
       </div>
       <p id="executor-action-status" role="status" aria-live="polite"></p>
-      <section id="executor-control-config-view" class="executor-config-view" hidden aria-label="Control configuration">
-        <div class="executor-section-heading"><button id="executor-control-config-close" type="button">← Executors</button><h3>Control config</h3></div>
-        <div id="executor-control-config-body"></div>
-      </section>
-      <section id="executor-control-standalone" class="executor-control-standalone" hidden aria-label="Standalone Control integrations">
-        <div class="executor-section-heading">
-          <h3>Control MCP</h3>
-          <button type="button" id="executor-control-mcp-add" disabled>+ Add MCP</button>
-        </div>
-        <div id="executor-control-mcp-body" class="executor-subtab-content"></div>
-        <div class="executor-section-heading">
-          <h3>Control Skills</h3>
-          <button type="button" id="executor-control-skills-add" disabled>+ Add Skill</button>
-        </div>
-        <div id="executor-control-skills-body" class="executor-subtab-content"></div>
-      </section>
       <section id="executor-topology" class="executor-topology" aria-label="Peer topology" hidden>
         <div class="topology-heading">
           <div><button id="topology-back" type="button">← Executors</button><h2>Peer Direct topology</h2></div>
@@ -257,7 +240,7 @@
         </section>
       </section>
       <div class="executors-layout">
-        <nav id="executor-list" class="executor-list" aria-label="Paired executors" aria-live="polite">
+        <nav id="executor-list" class="executor-list" aria-label="Control and executors" aria-live="polite">
           <div class="empty-state">Loading executors…</div>
         </nav>
         <article class="executor-details">
@@ -273,15 +256,22 @@
               <button id="executor-revoke-open" class="danger-action" type="button" disabled>Revoke</button>
             </div>
           </div>
-          <nav id="executor-subtabs" class="executor-subtabs" role="tablist" aria-label="Executor details">
+          <nav id="executor-subtabs" class="executor-subtabs" role="tablist" aria-label="Control and executor details">
             <button type="button" role="tab" data-executor-subtab="overview" aria-selected="true">Overview</button>
             <button type="button" role="tab" data-executor-subtab="mcp" aria-selected="false">MCP</button>
             <button type="button" role="tab" data-executor-subtab="skills" aria-selected="false">Skills</button>
             <button type="button" role="tab" data-executor-subtab="config" aria-selected="false">Config</button>
           </nav>
-          <section class="executor-subtab-pane" data-executor-pane="overview" aria-label="Executor overview">
+          <section class="executor-subtab-pane" data-executor-pane="overview" aria-label="Overview">
             <div id="executor-overview-metrics" class="executor-overview-body"></div>
-          <dl class="executor-detail-grid">
+            <div id="executor-control-overview" hidden>
+              <dl class="executor-detail-grid">
+                <div><dt>Role</dt><dd>Control</dd></div>
+                <div><dt>Connection</dt><dd id="executor-control-connection">Unavailable</dd></div>
+                <div><dt>Online Executors</dt><dd id="executor-control-online">0</dd></div>
+              </dl>
+            </div>
+          <dl id="executor-detail-grid" class="executor-detail-grid">
             <div><dt>Executor ID</dt><dd id="executor-detail-id">—</dd></div>
             <div><dt>Workgate version</dt><dd id="executor-detail-version">—</dd></div>
             <div><dt>Runtime owner</dt><dd id="executor-detail-runtime-owner">—</dd></div>
@@ -303,7 +293,7 @@
             <div class="executor-section-heading executor-manage-toolbar"><button type="button" id="executor-skills-add">+ Add Skill</button></div>
             <div id="executor-skills-body" class="executor-subtab-content"></div>
           </section>
-          <section class="executor-subtab-pane" data-executor-pane="config" aria-label="Executor configuration" hidden>
+          <section class="executor-subtab-pane" data-executor-pane="config" aria-label="Configuration" hidden>
             <div id="executor-config-body" class="executor-subtab-content"></div>
           </section>
         </article>
