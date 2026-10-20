@@ -112,6 +112,18 @@ WebSocket protocol or session manager is introduced.
   persistence/validation, and rejection without credential persistence.
   Uses local test-only `auth_mode: none`; OAuth-protected owner workflows and
   cross-host interoperability need separate acceptance under #392.
+- scripts/validation/windows-linux-pairing-smoke.py: **manual WSL / native
+  Windows cross-OS** acceptance on DOM, with owner-approved Windows device-code
+  pairing against a Linux Control, fresh authenticated online activity and
+  restart using the same issued Executor identity. Both sides run the same
+  checkout, but keep private state on their respective native filesystems.
+  The Linux Control listens on loopback only, and no installed service is
+  touched. Run with `uv run python scripts/validation/windows-linux-pairing-smoke.py
+  --windows-python /mnt/c/path/to/.venv/Scripts/python.exe
+  --windows-temp /mnt/c/Users/USER/AppData/Local/Temp` (one shell command).
+  This proves protocol interoperability across WSL and Windows, **not**
+  routing, firewall or network behavior between two physical hosts; no
+  portable CI runner has both OS stacks available for this smoke.
 - scripts/validation/windows-paired-service-smoke.py: a separately running
   Control authenticates a pre-provisioned native Windows Executor started by
   a **disposable limited-user Task Scheduler task**. Stop and restart must
