@@ -87,7 +87,8 @@ WebSocket protocol or session manager is introduced.
   owner isolation, retries and new-process state reconciliation on native Windows.
 - scripts/validation/windows-user-service-smoke.py: native Task Scheduler
   source `pythonw.exe`, least-privilege owner, Unicode/quote paths, stop/uninstall,
-  and Colocate Windows Job Object descendant cleanup.
+  and Colocate Windows Job Object descendant cleanup. CI runs this scenario
+  against real per-user Task Scheduler tasks.
 - scripts/validation/windows-colocate-job-smoke.py: launcher/role/grandchild
   containment on normal and forced colocate termination.
 - scripts/validation/windows-conpty-owner-smoke.py: abrupt Executor-owner
@@ -95,6 +96,13 @@ WebSocket protocol or session manager is introduced.
 - scripts/validation/windows-conpty-transport-smoke.py: native Windows
   Control + Executor, real WebUI API and two authenticated WebSocket terminal
   clients sharing one PowerShell, with independent detach and continued use.
+  This full native-process scenario is enforced in the Windows Python 3.14 CI lane.
+- scripts/validation/windows-paired-service-smoke.py: a separately running
+  Control authenticates a pre-provisioned native Windows Executor started by
+  a **disposable limited-user Task Scheduler task**. Stop and restart must
+  re-establish authenticated activity without changing the paired identity.
+  For elevated test runners, only the current account is granted access to the
+  test directory; the production service permission model is unchanged.
 - scripts/validation/windows-conpty-smoke.py: native terminal resize,
   independent subscribers, detachment and natural EOF.
 - scripts/validation/windows-conpty-shell-smoke.py: WorkGate persistent
@@ -124,8 +132,9 @@ pixels, including negative origins for other monitors.
 Screenshots use a short-lived, timeout-bounded Win32 `PrintWindow` child to
 capture **only the requested window**, rather than cropping a full-desktop image.
 The shared GUI service enforces session ownership, screenshot/element bounds,
-action limits and snapshot cleanup. Source Python is supported; frozen Windows
-window-capture entrypoint integration is deferred to #391.
+action limits and snapshot cleanup. Source Python invokes the isolated capture
+module; frozen Windows re-enters the bundled executable through a private,
+timeout-bounded capture entry point (verified in Windows binary smoke).
 
 `python scripts/validation/windows-gui-task-smoke.py` can run on **native**
 Windows in a disposable logged-in Task Scheduler user task. It creates a
@@ -139,13 +148,16 @@ It always unregisters the disposable task and removes the temporary files.
 
 Native Windows uses the public `/executor/v1/bootstrap.ps1` PowerShell endpoint
 and the same checksum/release proxy as POSIX, with a
-`workgate-windows-x86_64.zip` archive containing
-`workgate-windows-x86_64/workgate.exe`. Only the expected ZIP entry is
-extracted, with a bounded decompression budget. The Windows release build that
-produces this artifact belongs to #391; the endpoint otherwise fails closed
-instead of providing a mismatched POSIX runtime. Persistent fresh-machine
-bootstrap installs a per-user Task Scheduler service; it does not require
-administrator elevation, WSL, or Bash.
+`workgate-windows-x86_64.zip` archive containing both
+`workgate-windows-x86_64/workgate.exe` (interactive CLI) and
+`workgate-windows-x86_64/workgatew.exe` (windowless Executor). The bootstrap
+extracts exactly these two entries with bounded decompression, verifies both
+versions, and installs into a separate versioned directory rather than replacing
+an in-use executable. Native Windows build, PE subsystem and disposable Task
+Scheduler startup checks are required by #391 CI; production release still
+requires full end-to-end acceptance under #392. Persistent fresh-machine
+bootstrap installs a per-user Task Scheduler service without administrator
+elevation, WSL, or Bash.
 
 For global Agent Skills discovery, Windows defaults to
 `%APPDATA%\agents\skills` rather than a POSIX `~/.config` path. An absolute
@@ -156,7 +168,8 @@ source priority (project > managed > global).
 
 Windows Executors cannot replace their own mapped `.exe` in place. A
 control-managed Windows update validates the Control-proxied checksum, extracts
-only `workgate-windows-x86_64/workgate.exe`, and checks the requested version.
+only `workgate-windows-x86_64/workgatew.exe`, and checks the requested version
+using its private output-file probe (the windowless executable has no stdout).
 It publishes the verified executable to a unique versioned filename and updates
 the **existing owned Task Scheduler action** to launch that file. The task's
 original logon trigger is preserved; a short, bounded one-time trigger retry
