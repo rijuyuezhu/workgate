@@ -14,6 +14,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import httpx
+import pytest
 
 if os.name != "nt":
     raise RuntimeError("This smoke requires native Windows Python")
@@ -28,11 +29,22 @@ from tests.e2e.helpers import (  # noqa: E402
     wait_for_executor_online,
     write_yaml_config,
 )
+from workgate import __version__  # noqa: E402
+from workgate.config.executor import resolve_executor_config  # noqa: E402
+from workgate.config.settings import Settings  # noqa: E402
+from workgate.executor.runtime_update import (  # noqa: E402
+    ExecutorRuntimeState,
+    ExecutorRuntimeStateStore,
+    ExecutorRuntimeUpdateStatus,
+    apply_control_managed_update,
+)
 from workgate.executor.service import (  # noqa: E402
     _WINDOWS_TASK_DESCRIPTION,
     _WINDOWS_TASK_NAME,
+    ExecutorServiceManager,  # noqa: E402
 )
 from workgate.platform.windows_task import WindowsUserTask  # noqa: E402
+from workgate.protocol.executor import ExecutorRuntimeOwnership  # noqa: E402
 
 
 def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
@@ -299,6 +311,103 @@ def main() -> None:
                     stderr_path=root / "control.err",
                 )
             )
+            # Exercise the actual verified ZIP -> versioned PE -> owned Task
+            # Scheduler action switch. This uses the *same* build/version;
+            # separate distinct-version release acceptance is still required.
+            task.stop()
+            assert task.status()["state"].lower() != "running"
+            manager = ExecutorServiceManager(
+                resolve_executor_config(
+                    Settings(
+                        state_dir=Path(env["WORKGATE_STATE_DIR"]),
+                        default_workdir=Path(env["WORKGATE_DEFAULT_WORKDIR"]),
+                    )
+                ),
+                executable=install,
+            )
+            runtime_store = ExecutorRuntimeStateStore(manager.state_store)
+            runtime_store.save(
+                ExecutorRuntimeState(
+                    ownership=ExecutorRuntimeOwnership.CONTROL_MANAGED,
+                    executable=str(service_exe),
+                )
+            )
+            (root / "digest.txt").write_text(digest, encoding="ascii")
+            published = asyncio.run(
+                apply_control_managed_update(
+                    control_url=url,
+                    target_version=__version__,
+                    store=runtime_store,
+                    windows_activate=manager.activate_windows_runtime,
+                )
+            )
+            assert published != service_exe and published.is_file()
+            state = runtime_store.load()
+            assert state is not None and state.executable == str(published)
+            assert state.update_status is ExecutorRuntimeUpdateStatus.IDLE
+            next_metadata = manager._read_metadata()
+            assert next_metadata is not None
+            assert next_metadata["command"][0] == str(published)
+            action = task._powershell(
+                f"(Get-ScheduledTask {task._task} -ErrorAction Stop).Actions[0].Execute"
+            )
+            assert (
+                Path(action.stdout.strip()).resolve() == published.resolve()
+            ), "native scheduled task still targets the old frozen executable"
+            task.start()
+            upgraded_seen = asyncio.run(
+                wait_for_executor_online(
+                    url,
+                    control,
+                    executor_id,
+                    after_last_seen=last_seen,
+                    timeout_s=65,
+                    stdout_path=root / "control.out",
+                    stderr_path=root / "control.err",
+                )
+            )
+            assert task.status()["state"].lower() == "running"
+            (root / "digest.txt").write_text("0" * 64, encoding="ascii")
+            with pytest.raises(RuntimeError, match="checksum mismatch"):
+                asyncio.run(
+                    apply_control_managed_update(
+                        control_url=url,
+                        target_version=__version__,
+                        store=runtime_store,
+                        windows_activate=manager.activate_windows_runtime,
+                    )
+                )
+            rejected = runtime_store.load()
+            assert rejected is not None
+            assert rejected.executable == str(published)
+            assert rejected.update_status is ExecutorRuntimeUpdateStatus.FAILED
+            (root / "digest.txt").write_text(digest, encoding="ascii")
+            with pytest.raises(RuntimeError, match="validation failed"):
+                asyncio.run(
+                    apply_control_managed_update(
+                        control_url=url,
+                        target_version="9.9.9",
+                        store=runtime_store,
+                        windows_activate=manager.activate_windows_runtime,
+                    )
+                )
+            rejected = runtime_store.load()
+            assert rejected is not None and rejected.executable == str(
+                published
+            )
+            assert rejected.update_status is ExecutorRuntimeUpdateStatus.FAILED
+            assert task.status()["state"].lower() == "running"
+            asyncio.run(
+                wait_for_executor_online(
+                    url,
+                    control,
+                    executor_id,
+                    after_last_seen=upgraded_seen,
+                    timeout_s=25,
+                    stdout_path=root / "control.out",
+                    stderr_path=root / "control.err",
+                )
+            )
     finally:
         if boot is not None and boot.poll() is None:
             subprocess.run(
@@ -328,6 +437,9 @@ def main() -> None:
             stop_process(control)
         _remove_tree(root)
         if install is not None:
+            # Remove only updater-created detached runtimes after full service stop.
+            for runtime in install.parent.glob(".workgate.runtime.*.exe"):
+                runtime.unlink()
             # Bootstrap creates a unique versioned directory under LOCALAPPDATA.
             runtime_root = (
                 Path(env["LOCALAPPDATA"]) / "workgate" / "executor-bootstrap"

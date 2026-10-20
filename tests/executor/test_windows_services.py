@@ -586,6 +586,9 @@ def test_windows_task_stop_targets_only_owned_frozen_executor_image(
     cleanup = next(script for script in scripts if "Get-CimInstance" in script)
     assert "Get-ScheduledTask" in cleanup
     assert "workgatew.exe" in cleanup
+    assert ".workgate" in cleanup and "runtime" in cleanup
+    assert "[0-9a-f]{16}" in cleanup  # Only own updater-published PE name.
+    assert "Name = '$name'" in cleanup  # Query the actual task image name.
     assert "--managed-service" in cleanup
     assert "ExecutablePath" in cleanup
     assert "taskkill.exe /T /F /PID" in cleanup
