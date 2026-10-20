@@ -44,6 +44,9 @@ def test_windows_env_filter_removes_case_variant_secrets(monkeypatch):
         blocked_prefixes=("PRIVATE_",),
         frozen=False,
     )
-    assert "workgate_hidden_secret" not in cleaned
-    assert "pRiVaTe_KeY" not in cleaned
-    assert cleaned["visible_windows_test"] == "safe"
+    # Windows normalizes environment names case-insensitively; POSIX preserves
+    # caller casing. Neither changes the filtering guarantee.
+    folded = {key.casefold(): value for key, value in cleaned.items()}
+    assert "workgate_hidden_secret" not in folded
+    assert "private_key" not in folded
+    assert folded["visible_windows_test"] == "safe"

@@ -91,7 +91,18 @@ def main() -> None:
                 raise
             finally:
                 if process.poll() is None:
-                    process.terminate()
+                    if os.name == "nt":
+                        # A PyInstaller one-file EXE has a bootloader parent and
+                        # child. Terminating only the parent leaves the child
+                        # holding the Windows state lock and breaks cleanup.
+                        subprocess.run(
+                            ["taskkill", "/T", "/F", "/PID", str(process.pid)],
+                            check=True,
+                            capture_output=True,
+                            timeout=15,
+                        )
+                    else:
+                        process.terminate()
                 try:
                     process.wait(timeout=15)
                 except subprocess.TimeoutExpired:
