@@ -136,32 +136,18 @@ async def test_browser_oauth_callback_replay_and_wrong_user(relay):
         assert "private-access-token" not in str(started)
 
     assert broker.receive(
-        _request(app, urlencode({"state": state, "code": "approved"}))
+        _request(app, urlencode({"state": state, "code": "approved"})),
+        config.agent_config_dir,
     )
-    # Polling must not exchange tokens, even when repeated.
-    with _Subject("alice"):
-        for _ in range(3):
-            assert broker.status(sid)["status"] == "awaiting_confirmation"
-    assert AgentAuthStore(config.agent_auth_dir).get_tokens("docs") is None
     assert not broker.receive(
-        _request(app, urlencode({"state": state, "code": "approved"}))
+        _request(app, urlencode({"state": state, "code": "approved"})),
+        config.agent_config_dir,
     )
     with _Subject("mallory"):
         with pytest.raises(HTTPException) as exc:
             broker.status(sid)
         assert exc.value.status_code == 404
-        with pytest.raises(HTTPException) as exc:
-            broker.complete(sid, config.agent_config_dir)
-        assert exc.value.status_code == 404
-    with _Subject("alice"):
-        assert broker.status(sid)["status"] == "awaiting_confirmation"
-        assert (
-            broker.complete(sid, config.agent_config_dir)["status"]
-            == "completing"
-        )
-    with _Subject("alice"), pytest.raises(HTTPException) as exc:
-        broker.complete(sid, config.agent_config_dir)
-    assert exc.value.status_code == 409  # Single use.
+        assert broker.current("docs") is None
     await asyncio.sleep(0.1)
     with _Subject("alice"):
         assert broker.status(sid)["status"] == "authorized"
@@ -188,26 +174,27 @@ async def test_current_handshake_recovery_is_owner_bound_read_only_and_expires(
         assert broker.current("docs") is None
     state = parse_qs(urlsplit(started["authorization_url"]).query)["state"][0]
     assert broker.receive(
-        _request(app, urlencode({"state": state, "code": "approved"}))
+        _request(app, urlencode({"state": state, "code": "approved"})),
+        config.agent_config_dir,
     )
     with _Subject("alice"):
         recovered = broker.current("docs")
         assert recovered is not None
-        assert recovered["status"] == "awaiting_confirmation"
+        assert recovered["status"] == "completing"
         assert recovered["authorization_url"] == ""
-        assert broker.status(sid)["status"] == "awaiting_confirmation"
+        assert broker.status(sid)["status"] == "completing"
     assert AgentAuthStore(config.agent_auth_dir).get_tokens("docs") is None
     broker.sessions[sid].expires = 0
     with _Subject("alice"):
         assert broker.current("docs") is None
         with pytest.raises(HTTPException) as exc:
-            broker.complete(sid, config.agent_config_dir)
+            broker.status(sid)
         assert exc.value.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_oauth_rejects_ambiguous_callback_parameters(relay):
-    broker, app, _ = relay
+    broker, app, config = relay
     with _Subject("alice"):
         started = await broker.begin(_request(app), "docs")
     sid = started["session_id"]
@@ -218,7 +205,8 @@ async def test_oauth_rejects_ambiguous_callback_parameters(relay):
             urlencode(
                 [("state", state), ("state", state), ("code", "approved")]
             ),
-        )
+        ),
+        config.agent_config_dir,
     )
     assert not broker.receive(
         _request(
@@ -226,28 +214,32 @@ async def test_oauth_rejects_ambiguous_callback_parameters(relay):
             urlencode(
                 [("state", state), ("code", "approved"), ("code", "other")]
             ),
-        )
+        ),
+        config.agent_config_dir,
     )
     with _Subject("alice"):
         assert broker.status(sid)["status"] == "waiting"
     assert broker.receive(
-        _request(app, urlencode({"state": state, "error": "access_denied"}))
+        _request(app, urlencode({"state": state, "error": "access_denied"})),
+        config.agent_config_dir,
     )
     broker.cancel(sid)
 
 
 @pytest.mark.asyncio
-async def test_callback_does_not_exchange_until_owner_confirms(relay):
+async def test_callback_automatically_exchanges_without_owner_post(relay):
     broker, app, config = relay
     with _Subject("alice"):
         started = await broker.begin(_request(app), "docs")
     sid = started["session_id"]
     state = parse_qs(urlsplit(started["authorization_url"]).query)["state"][0]
     assert broker.receive(
-        _request(app, urlencode({"state": state, "code": "approved"}))
+        _request(app, urlencode({"state": state, "code": "approved"})),
+        config.agent_config_dir,
     )
-    await asyncio.sleep(0.02)
-    assert AgentAuthStore(config.agent_auth_dir).get_tokens("docs") is None
+    await asyncio.sleep(0.1)
+    assert broker.sessions[sid].status == "authorized"
+    assert AgentAuthStore(config.agent_auth_dir).get_tokens("docs") is not None
     broker.cancel(sid)
 
 
@@ -258,19 +250,9 @@ async def test_oauth_denial_cancel_and_expiry(relay):
         started = await broker.begin(_request(app), "docs")
     state = parse_qs(urlsplit(started["authorization_url"]).query)["state"][0]
     assert broker.receive(
-        _request(app, urlencode({"state": state, "error": "access_denied"}))
+        _request(app, urlencode({"state": state, "error": "access_denied"})),
+        config.agent_config_dir,
     )
-    with _Subject("alice"):
-        assert (
-            broker.status(started["session_id"])["status"]
-            == "awaiting_confirmation"
-        )
-        assert (
-            broker.complete(started["session_id"], config.agent_config_dir)[
-                "status"
-            ]
-            == "completing"
-        )
     await asyncio.sleep(0.02)
     with _Subject("alice"):
         assert broker.status(started["session_id"])["status"] == "denied"
@@ -282,7 +264,9 @@ async def test_oauth_denial_cancel_and_expiry(relay):
     with _Subject("alice"):
         expired = await broker.begin(_request(app), "docs")
     broker.sessions[expired["session_id"]].expires = 0
-    assert not broker.receive(_request(app, "state=invalid&code=approved"))
+    assert not broker.receive(
+        _request(app, "state=invalid&code=approved"), config.agent_config_dir
+    )
     with _Subject("alice"), pytest.raises(HTTPException):
         broker.status(expired["session_id"])
 
@@ -296,9 +280,6 @@ async def test_rejects_modified_integration_before_token_exchange(
         started = await broker.begin(_request(app), "docs")
     sid = started["session_id"]
     state = parse_qs(urlsplit(started["authorization_url"]).query)["state"][0]
-    assert broker.receive(
-        _request(app, urlencode({"state": state, "code": "approved"}))
-    )
     altered = AgentMcpServerConfig.model_validate(
         {
             "type": "http",
@@ -314,9 +295,10 @@ async def test_rejects_modified_integration_before_token_exchange(
             data=SimpleNamespace(mcp_servers={"docs": altered})
         ),
     )
-    with _Subject("alice"), pytest.raises(HTTPException) as exc:
-        broker.complete(sid, config.agent_config_dir)
-    assert exc.value.status_code == 409
+    assert not broker.receive(
+        _request(app, urlencode({"state": state, "code": "approved"})),
+        config.agent_config_dir,
+    )
     assert AgentAuthStore(config.agent_auth_dir).get_tokens("docs") is None
     with _Subject("alice"), pytest.raises(HTTPException):
         broker.status(sid)
@@ -327,20 +309,12 @@ async def test_clear_or_logout_invalidates_pending_handshake(relay):
     broker, app, config = relay
     with _Subject("alice"):
         started = await broker.begin(_request(app), "docs")
-    sid = started["session_id"]
     state = parse_qs(urlsplit(started["authorization_url"]).query)["state"][0]
-    assert broker.receive(
-        _request(app, urlencode({"state": state, "code": "approved"}))
-    )
-    with _Subject("alice"):
-        assert broker.status(sid)["status"] == "awaiting_confirmation"
     broker.cancel_credential("docs")
     assert not broker.receive(
-        _request(app, urlencode({"state": state, "code": "approved"}))
+        _request(app, urlencode({"state": state, "code": "approved"})),
+        config.agent_config_dir,
     )
-    with _Subject("alice"), pytest.raises(HTTPException) as exc:
-        broker.complete(sid, config.agent_config_dir)
-    assert exc.value.status_code == 404
     assert AgentAuthStore(config.agent_auth_dir).get_tokens("docs") is None
 
 
@@ -484,18 +458,9 @@ async def test_actual_mcp_sdk_pkce_exchange_uses_public_callback(
     callback_params = {"state": query["state"][0], "code": "approved"}
     if response_issuer:
         callback_params["iss"] = response_issuer
-    assert broker.receive(_request(app, urlencode(callback_params)))
-    with _Subject("alice"):
-        assert (
-            broker.status(started["session_id"])["status"]
-            == "awaiting_confirmation"
-        )
-        assert (
-            broker.complete(started["session_id"], config.agent_config_dir)[
-                "status"
-            ]
-            == "completing"
-        )
+    assert broker.receive(
+        _request(app, urlencode(callback_params)), config.agent_config_dir
+    )
     observed = "completing"
     for _ in range(30):
         await asyncio.sleep(0.02)
@@ -543,5 +508,6 @@ def test_browser_oauth_callback_is_a_routed_public_endpoint(tmp_path):
         callback = client.get(ui._CALLBACK + "?state=bogus")
         assert callback.status_code == 400  # Not a 404 or auth redirect.
         assert "expired or was already used" in callback.text
-        protected = client.post("/api/ui/integrations/oauth/complete", json={})
+        assert "/api/ui/integrations/oauth/complete" not in actual
+        protected = client.post("/api/ui/integrations/oauth/cancel", json={})
         assert protected.status_code == 401

@@ -341,13 +341,11 @@ class BrowserMcpOAuth:
             raise HTTPException(404, "Authorization session not found")
         return {"status": pending.status, "name": pending.name}
 
-    def complete(self, sid: str, config_dir) -> dict[str, str]:
-        self.expire()
+    def finish_callback(self, sid: str, config_dir) -> bool:
+        """Complete an SDK handshake after a valid, one-use provider callback."""
         pending = self.sessions.get(sid)
-        if pending is None or pending.owner != _subject():
-            raise HTTPException(404, "Authorization session not found")
-        if pending.status != "awaiting_confirmation":
-            raise HTTPException(409, "Authorization is not ready to complete")
+        if pending is None or pending.status != "awaiting_confirmation":
+            return False
         manifest = load_agent_manifest(config_dir, read_only=True)
         current = manifest.data.mcp_servers.get(pending.name)
         if (
@@ -356,19 +354,16 @@ class BrowserMcpOAuth:
             != pending.config_digest
         ):
             self.cancel(sid)
-            raise HTTPException(
-                409, "MCP configuration changed during authorization"
-            )
-        # Only an explicit authenticated POST releases the code to the SDK.
+            return False
         pending.status = "completing"
         if pending.denied:
             pending.callback.set_exception(ValueError("Authorization denied"))
         elif pending.response:
             pending.callback.set_result(pending.response)
         pending.response = None
-        return {"status": pending.status, "name": pending.name}
+        return True
 
-    def receive(self, request: Request) -> bool:
+    def receive(self, request: Request, config_dir) -> bool:
         self.expire()
         values = request.query_params
         if any(len(values.getlist(key)) != 1 for key in ("state",)) or any(
@@ -398,7 +393,7 @@ class BrowserMcpOAuth:
                 code=code, state=state, iss=values.get("iss")
             )
         pending.status = "awaiting_confirmation"
-        return True
+        return self.finish_callback(sid, config_dir)
 
 
 def _subject() -> str:
@@ -411,7 +406,7 @@ def _subject() -> str:
 
 
 def browser_mcp_oauth_routes() -> tuple[list[BaseRoute], list[BaseRoute]]:
-    """Protected start/status/cancel API; the callback alone is public."""
+    """Protected start/status/cancel API; the one-use OAuth callback is public."""
 
     def runtime(request: Request) -> BrowserMcpOAuth:
         # Keep one broker per HTTP application, not global across test Controls.
@@ -453,22 +448,6 @@ def browser_mcp_oauth_routes() -> tuple[list[BaseRoute], list[BaseRoute]]:
             headers={"Cache-Control": "no-store"},
         )
 
-    async def complete(request: Request) -> Response:
-        require_oauth_scopes((SCOPE_EXECUTOR_USE, SCOPE_SHELL_WRITE))
-        body = _SessionSelection.model_validate(await request.json())
-        control = request.app.state.control_runtime
-        if control is None:
-            raise HTTPException(503, "Control unavailable")
-        return JSONResponse(
-            {
-                "ok": True,
-                "data": runtime(request).complete(
-                    body.session_id, control.config.agent_config_dir
-                ),
-            },
-            headers={"Cache-Control": "no-store"},
-        )
-
     async def cancel(request: Request) -> Response:
         require_oauth_scopes((SCOPE_EXECUTOR_USE, SCOPE_SHELL_WRITE))
         body = _SessionSelection.model_validate(await request.json())
@@ -502,9 +481,11 @@ def browser_mcp_oauth_routes() -> tuple[list[BaseRoute], list[BaseRoute]]:
             return HTMLResponse(
                 "Invalid authorization callback", status_code=400
             )
-        result = runtime(request).receive(request)
+        result = runtime(request).receive(
+            request, control.config.agent_config_dir
+        )
         return HTMLResponse(
-            "Authorization received. Return to the WorkGate tab and check status."
+            "Authorization received. Return to WorkGate; status updates automatically."
             if result
             else "Authorization has expired or was already used.",
             status_code=200 if result else 400,
@@ -518,9 +499,6 @@ def browser_mcp_oauth_routes() -> tuple[list[BaseRoute], list[BaseRoute]]:
         Route("/api/ui/integrations/oauth/start", start, methods=["POST"]),
         Route("/api/ui/integrations/oauth/status", status, methods=["GET"]),
         Route("/api/ui/integrations/oauth/current", current, methods=["GET"]),
-        Route(
-            "/api/ui/integrations/oauth/complete", complete, methods=["POST"]
-        ),
         Route("/api/ui/integrations/oauth/cancel", cancel, methods=["POST"]),
     ]
     public: list[BaseRoute] = [Route(_CALLBACK, callback, methods=["GET"])]

@@ -1,4 +1,4 @@
-"""Real Chromium: Control MCP OAuth subflow UI at desktop and narrow widths."""
+"""Real Chromium: minimal MCP OAuth UI, link copy and passive completion."""
 
 import pytest
 from playwright.sync_api import expect
@@ -33,11 +33,13 @@ def test_control_mcp_oauth_browser_actions(
     expect(row).to_be_visible()
     row.get_by_role("button", name="Manage").click()
     expect(page.locator("#executor-mcp-oauth-authorize")).to_be_visible()
+    expect(page.locator("#executor-mcp-secret-details")).to_be_hidden()
+    expect(page.locator("#executor-integration-test")).to_be_hidden()
     expect(page.locator("#executor-mcp-oauth-link")).to_be_hidden()
-    expect(page.locator("#executor-mcp-oauth-check")).to_be_hidden()
 
     initiated = []
     authorization_url = "https://auth.example.test/authorize?state=sdk-csrf"
+    sid = "browser_session_id_000000000000000001"
 
     def start(route):
         initiated.append(route.request.post_data_json)
@@ -45,7 +47,7 @@ def test_control_mcp_oauth_browser_actions(
             json={
                 "ok": True,
                 "data": {
-                    "session_id": "browser_session_id_000000000000000001",
+                    "session_id": sid,
                     "authorization_url": authorization_url,
                     "expires_in": 300,
                 },
@@ -53,16 +55,31 @@ def test_control_mcp_oauth_browser_actions(
         )
 
     page.route("**/api/ui/integrations/oauth/start", start)
+    page.route(
+        "**/api/ui/integrations/oauth/status?*",
+        lambda route: route.fulfill(
+            json={
+                "ok": True,
+                "data": {"status": "waiting", "name": "oauth-example"},
+            }
+        ),
+    )
     page.wait_for_timeout(200)
-    assert not initiated  # Inventory refresh must not trigger authorization.
+    assert not initiated  # Opening inventory must not start third-party OAuth.
     page.locator("#executor-mcp-oauth-authorize").click()
-    expect(page.locator("#executor-mcp-oauth-link")).to_be_visible()
     expect(page.locator("#executor-mcp-oauth-link")).to_have_attribute(
         "href", authorization_url
     )
+    expect(page.locator("#executor-mcp-oauth-copy")).to_be_visible()
     assert initiated == [{"owner": "control", "name": "oauth-example"}]
+    page.context.grant_permissions(["clipboard-read", "clipboard-write"])
+    page.locator("#executor-mcp-oauth-copy").click()
+    expect(page.locator("#executor-mcp-oauth-progress")).to_contain_text(
+        "Link copied"
+    )
+    assert page.evaluate("navigator.clipboard.readText()") == authorization_url
 
-    # Reload without starting OAuth again: recover the same owner-bound session.
+    # Reload: recover the same owner's link without another OAuth start.
     recovered = []
 
     def current(route):
@@ -71,7 +88,7 @@ def test_control_mcp_oauth_browser_actions(
             json={
                 "ok": True,
                 "data": {
-                    "session_id": "browser_session_id_000000000000000001",
+                    "session_id": sid,
                     "authorization_url": authorization_url,
                     "status": "waiting",
                     "expires_in": 300,
@@ -90,12 +107,12 @@ def test_control_mcp_oauth_browser_actions(
     expect(page.locator("#executor-mcp-oauth-link")).to_have_attribute(
         "href", authorization_url
     )
-    assert initiated == [{"owner": "control", "name": "oauth-example"}]
     assert len(recovered) == 1
+    assert len(initiated) == 1
 
-    # Cancel a still-pending flow on mobile before any token exchange.
+    # Mobile: pending OAuth can be cancelled without a manual Complete step.
     page.set_viewport_size({"width": 390, "height": 844})
-    expect(page.locator("#executor-mcp-oauth-link")).to_be_visible()
+    expect(page.locator("#executor-mcp-oauth-copy")).to_be_visible()
     page.route(
         "**/api/ui/integrations/oauth/cancel",
         lambda route: route.fulfill(
@@ -104,67 +121,52 @@ def test_control_mcp_oauth_browser_actions(
     )
     page.locator("#executor-mcp-oauth-cancel").click()
     expect(page.locator("#executor-mcp-oauth-link")).to_be_hidden()
-    expect(page.locator("#executor-mcp-oauth-check")).to_be_hidden()
+    expect(page.locator("#executor-mcp-oauth-authorize")).to_be_visible()
 
-    # Retry, then observe callback and complete in the initiating browser.
-    page.locator("#executor-mcp-oauth-authorize").click()
-    expect(page.locator("#executor-mcp-oauth-link")).to_be_visible()
+    # Restart; passive polling receives an automatic backend completion.
+    polls = []
+
+    def status(route):
+        polls.append(route.request.url)
+        state = "completing" if len(polls) == 1 else "authorized"
+        route.fulfill(
+            json={
+                "ok": True,
+                "data": {"status": state, "name": "oauth-example"},
+            }
+        )
+
+    page.route("**/api/ui/integrations/oauth/status?*", status)
     page.route(
-        "**/api/ui/integrations/oauth/status?*",
+        "**/api/ui/integrations/auth?*",
         lambda route: route.fulfill(
             json={
                 "ok": True,
                 "data": {
-                    "status": "awaiting_confirmation",
                     "name": "oauth-example",
+                    "auth": {
+                        "mode": "oauth",
+                        "authorized": True,
+                        "status": "authorized",
+                    },
+                    "secret_names": [],
                 },
             }
         ),
     )
-    page.locator("#executor-mcp-oauth-check").click()
-    expect(page.locator("#executor-mcp-oauth-progress")).to_have_text(
-        "awaiting_confirmation"
-    )
-    expect(page.locator("#executor-mcp-oauth-link")).to_be_hidden()
-    expect(page.locator("#executor-mcp-oauth-complete")).to_be_visible()
-    completed = []
-
-    def complete(route):
-        completed.append(route.request.post_data_json)
-        route.fulfill(json={"ok": True, "data": {"status": "completing"}})
-
-    page.route("**/api/ui/integrations/oauth/complete", complete)
-    page.locator("#executor-mcp-oauth-complete").click()
-    expect(page.locator("#executor-mcp-oauth-progress")).to_have_text(
-        "completing"
-    )
-    expect(page.locator("#executor-mcp-oauth-cancel")).to_be_hidden()
-    assert completed == [
-        {"session_id": "browser_session_id_000000000000000001"}
-    ]
-
-    # A server-side expiry restores Authorize without forcing a page reload.
     page.route(
-        "**/api/ui/integrations/oauth/status?*",
-        lambda route: route.fulfill(
-            status=404,
-            json={"ok": False, "message": "Authorization session not found"},
-        ),
+        "**/api/ui/integrations/oauth/current?*",
+        lambda route: route.fulfill(json={"ok": True, "data": None}),
     )
-    page.locator("#executor-mcp-oauth-check").click()
-    expect(page.locator("#executor-integration-status")).to_contain_text(
-        "Authorization session expired"
+    page.locator("#executor-mcp-oauth-authorize").click()
+    expect(page.locator("#executor-mcp-auth-status")).to_contain_text(
+        "Connected", timeout=16000
     )
-    expect(page.locator("#executor-mcp-oauth-authorize")).to_be_visible()
-    # Chromium reports the deliberately mocked 404 to the console; consume
-    # exactly that expected error while keeping all other browser checks.
-    expected_errors = [
-        message
-        for message in harness.console_errors
-        if "Failed to load resource" in message and "404 (Not Found)" in message
-    ]
-    assert len(expected_errors) == 1
-    harness.console_errors.remove(expected_errors[0])
+    expect(page.locator("#executor-mcp-oauth-logout")).to_be_visible()
+    expect(page.locator("#executor-mcp-oauth-link")).to_be_hidden()
+    assert len(polls) >= 2
+    assert len(initiated) == 2
+    assert not page.locator("#executor-mcp-oauth-complete").count()
 
     page.set_viewport_size({"width": 1360, "height": 900})
     page.once("dialog", lambda dialog: dialog.accept())
