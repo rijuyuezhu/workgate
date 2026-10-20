@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -90,3 +91,42 @@ async def test_real_windows_job_cancellation_reaps_process(
         if process.returncode is None:
             close_process_job(process)
             await asyncio.wait_for(process.wait(), timeout=10)
+
+
+def test_real_windows_file_lock_contended_across_processes(
+    tmp_path: Path,
+) -> None:
+    """Use real msvcrt handles, not a patched Windows API."""
+    from workgate.utils.private_files import _try_lock_handle
+
+    locked = tmp_path / "resource.lock"
+    locked.write_bytes(b"\0")
+    ready = tmp_path / "locked.ready"
+    program = (
+        "import msvcrt,sys; from pathlib import Path; "
+        "f=open(sys.argv[1],'r+b'); msvcrt.locking(f.fileno(),msvcrt.LK_NBLCK,1); "
+        "Path(sys.argv[2]).write_text('ready'); sys.stdin.buffer.read(1)"
+    )
+    child = subprocess.Popen(
+        [sys.executable, "-c", program, str(locked), str(ready)],
+        stdin=subprocess.PIPE,
+    )
+    try:
+        deadline = time.monotonic() + 8
+        while not ready.is_file() and time.monotonic() < deadline:
+            if child.poll() is not None:
+                pytest.fail(
+                    f"Windows lock child exited early: {child.returncode}"
+                )
+            time.sleep(0.05)
+        assert ready.is_file(), "native Windows lock child did not start"
+        with locked.open("r+b") as handle:
+            assert not _try_lock_handle(handle)
+    finally:
+        assert child.stdin is not None
+        child.stdin.close()
+        try:
+            child.wait(timeout=6)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.wait(timeout=5)

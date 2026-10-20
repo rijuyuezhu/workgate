@@ -6,9 +6,9 @@ $archive = Join-Path release "$artifact.zip"
 New-Item -ItemType Directory -Force -Path $directory | Out-Null
 Copy-Item dist/workgate.exe, README.md, LICENSE -Destination $directory
 @'
-Start the Workgate control:
-  .\workgate.exe control --mode mcp
-Pair and start an executor:
+Start a network Control in one terminal:
+  .\workgate.exe control --mode http
+Pair and start an Executor in a second terminal:
   .\workgate.exe executor connect http://127.0.0.1:8765
   .\workgate.exe executor run
 A native Windows interactive user session is required for GUI actions.

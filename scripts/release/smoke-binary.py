@@ -113,12 +113,19 @@ def main() -> None:
                         # A PyInstaller one-file EXE has a bootloader parent and
                         # child. Terminating only the parent leaves the child
                         # holding the Windows state lock and breaks cleanup.
-                        subprocess.run(
+                        killed = subprocess.run(
                             ["taskkill", "/T", "/F", "/PID", str(process.pid)],
-                            check=True,
+                            check=False,
                             capture_output=True,
                             timeout=15,
                         )
+                        # The bootloader may exit between poll() and taskkill.
+                        # Only that race is benign; do not hide failed cleanup.
+                        if killed.returncode and process.poll() is None:
+                            raise RuntimeError(
+                                "could not terminate frozen Windows control tree: "
+                                + killed.stderr.decode(errors="replace")[-1000:]
+                            )
                     else:
                         process.terminate()
                 try:

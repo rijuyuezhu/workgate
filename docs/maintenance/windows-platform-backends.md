@@ -188,6 +188,11 @@ Release archives use `workgate-windows-x86_64.zip`, containing
 QUICKSTART.txt. The matching SHA-256 checksum follows the existing release
 proxy format and is verified by Control bootstrap and managed updates.
 Existing four Linux/macOS release targets remain required.
+The current frozen Windows CLI executable is console-subsystem and remains
+**unsuitable for persistent Task Scheduler service installation**: that path
+intentionally fails closed until a windowless runtime entry point and native
+service smoke are provided. Passing binary smoke does not imply frozen service
+or managed-update acceptance.
 
 The frozen Windows GUI screenshot worker re-enters the existing bundled
 `workgate.exe` through a private `--_windows-capture` subcommand. Source builds
