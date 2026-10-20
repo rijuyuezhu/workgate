@@ -92,16 +92,16 @@ when that user logs in, not as machine-wide Windows services before login.
 `restart`, `status`, `logs`, and `uninstall-service` operations; Colocate offers
 `install-service`, `start-service`, `stop-service`, `restart-service`,
 `status-service`, and `uninstall-service`. Installation requires a paired
-executor and durable role configuration. Frozen Windows bundles are not yet
-service-capable; their windowless launcher/release integration is tracked
-under #391 rather than hiding a console executable behind an unmanaged
-PowerShell child process.
+executor and durable role configuration. Frozen Windows bundles use the
+adjacent `workgatew.exe` windowless runtime for the Task Scheduler service;
+new-style frozen managed Executor updates replace the owned task action, not
+the running executable in place.
 
 Windows GUI automation also requires a logged-in, unlocked foreground
 desktop. It uses native UI Automation and isolated per-window screenshots;
 Windows service processes with no accessible input desktop still expose
-non-GUI Executor operations. GUI capture in frozen Windows bundles awaits
-#391 integration.
+non-GUI Executor operations. Frozen bundles use the bundled CLI for the
+screenshot helper without installing an additional executable.
 
 Temporary network or control outages reconnect with the same profile. Normal
 reboots or long periods offline do not require pairing again. If the executor

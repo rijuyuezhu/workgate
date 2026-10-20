@@ -67,10 +67,10 @@ explicitly; GUI tools never fall back to the control machine.
 
 ## Native Windows (PowerShell)
 
-On native Windows x86-64, use the ordinary Python 3.14 source checkout or the
-release-backed PowerShell bootstrap when the matching Windows release archive
-is available (the Windows self-contained release artifact is added in #391).
-Neither option requires Bash or WSL. For a source checkout:
+On native Windows x86-64, use a Python 3.14 source checkout or the
+release-backed PowerShell bootstrap with a matching Windows archive containing
+both `workgate.exe` and `workgatew.exe`. Neither option requires Bash or
+WSL. For a source checkout:
 
 ```powershell
 git clone https://github.com/rijuyuezhu/workgate.git
@@ -89,11 +89,18 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\workgate-bootstrap.ps1
 ```
 
 The script downloads only the matching Windows x86-64 release asset from the
-Control's release proxy, verifies the release's SHA-256 checksum, extracts only
-the expected executable, checks its version, and prompts for normal pairing
-approval. `-Persist` installs the user-level Task Scheduler Executor; omit it
-to run in the foreground instead. An unattended service cannot use native GUI
+Control's release proxy, verifies the release's SHA-256 checksum, extracts the
+console and windowless executables, checks their versions, and prompts for
+normal pairing approval. `-Persist` installs the user-level Task Scheduler
+Executor; omit it to run in the foreground instead. An unattended service cannot use native GUI
 input unless the user's interactive desktop is accessible and unlocked.
+
+Older Windows releases such as `v5.0.0a1` used the former `worker`/TUI model:
+the published ZIP contains `workgate.exe` and `workgate-tui.exe`, not
+`workgatew.exe`, and its CLI has no `executor` command. **Do not attempt an
+in-place managed Executor upgrade from that layout.** Stop the old deployment,
+install the current Executor separately, and complete a new owner-approved
+pairing; legacy worker credentials are not an Executor profile.
 
 ## Release archive
 
