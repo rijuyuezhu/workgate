@@ -127,7 +127,7 @@ def test_executor_mcp_auth_real_chromium(
     expect(remote).to_be_visible()
     remote.get_by_role("button", name="Manage").click()
     expect(page.locator("#executor-mcp-auth-status")).to_contain_text(
-        "unauthorized"
+        "Not connected"
     )
     expect(page.locator("#executor-integration-auth-mode")).to_have_value(
         "oauth"
@@ -572,6 +572,7 @@ def test_standalone_control_mcp_real_chromium(
     expect(page.locator("#executor-integration-dialog")).not_to_be_visible()
     expect(row).to_contain_text("Disabled")
     row.get_by_role("button", name="Manage").click()
+    page.locator("#executor-mcp-advanced-settings > summary").click()
     page.locator("#executor-integration-test").click()
     expect(page.locator("#executor-integration-test-result")).to_contain_text(
         "disabled"

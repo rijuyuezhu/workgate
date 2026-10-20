@@ -471,7 +471,8 @@ export function createExecutorsController({
     const mode = elements.executorIntegrationAuthMode.value;
     elements.executorIntegrationOAuthScopesWrap.hidden = mode !== "oauth";
     elements.executorMcpOAuthActions.hidden = mode !== "oauth" || !editing.item;
-    elements.executorMcpSecretDetails.hidden = mode !== "secret" || !editing.item;
+    // Secrets can be pre-stored even before an MCP switches to secret auth.
+    elements.executorMcpSecretDetails.hidden = mode === "oauth" || !editing.item;
     elements.executorMcpOAuthAdvanced.hidden = mode !== "oauth" || !editing.item;
     renderBrowserOAuth(editing);
     elements.executorIntegrationUrlWrap.hidden = owner !== "control";
