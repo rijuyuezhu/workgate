@@ -88,10 +88,21 @@ def main() -> None:
         )
         # Use the real Control bootstrap routes, but serve the *locally built*
         # ZIP instead of requiring a published release for an unreleased SHA.
+        # PowerShell may buffer the nested frozen CLI's stdout until pairing
+        # completes. Observe the real Control pairing event in this test-only
+        # process, then approve through the unmodified owner HTTP endpoint.
         source = root / "control.py"
         source.write_text(
             "from pathlib import Path\n"
             "from workgate.control import executor_bootstrap as b\n"
+            "from workgate.control import pairing as p\n"
+            f"_code_file = Path({str(root / 'pair-code.txt')!r})\n"
+            "_start_pairing = p.ExecutorPairingService.start_pairing\n"
+            "async def _traced_start_pairing(self, request):\n"
+            "    result = await _start_pairing(self, request)\n"
+            "    _code_file.write_text(result.user_code, encoding='ascii')\n"
+            "    return result\n"
+            "p.ExecutorPairingService.start_pairing = _traced_start_pairing\n"
             f"_archive = Path({str(archive)!r})\n"
             f"_checksum = Path({str(root / 'digest.txt')!r})\n"
             "async def _fetch_checksum(target):\n"
@@ -168,13 +179,9 @@ def main() -> None:
                 assert boot.poll() is None, (root / "bootstrap.err").read_text(
                     errors="replace"
                 )
-                match = re.search(
-                    r"^Code: (\S+)$",
-                    (root / "bootstrap.out").read_text(errors="replace"),
-                    flags=re.MULTILINE,
-                )
-                if match:
-                    code = match.group(1)
+                challenge = root / "pair-code.txt"
+                if challenge.is_file():
+                    code = challenge.read_text(encoding="ascii").strip()
                     break
                 time.sleep(0.2)
             if code is None:
