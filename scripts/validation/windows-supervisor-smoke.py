@@ -1,6 +1,7 @@
 """Native Windows Parent/Child IPC, restart and descendant cleanup acceptance."""
 
 import ctypes
+import hashlib
 import os
 import subprocess
 import sys
@@ -58,14 +59,25 @@ def _role(root: Path, name: str) -> None:
     (root / f"{name}.{os.getpid()}.pids").write_text(
         f"{os.getpid()} {descendant.pid}", encoding="ascii"
     )
-    supervisor.notify_config_selected(None, None)
-    supervisor.notify_ready(None, None)
+    config = root / "config.yaml"
+    digest = (
+        hashlib.sha256(config.read_bytes()).hexdigest()
+        if config.exists()
+        else None
+    )
+    selected = config if digest is not None else None
+    supervisor.notify_config_selected(selected, digest)
+    supervisor.notify_ready(selected, digest)
+    (root / f"{name}.{os.getpid()}.ready").touch()
     while True:
         if (root / f"{name}.exit").exists():
             return
         if (root / f"{name}.restart").exists():
             (root / f"{name}.restart").unlink()
             supervisor.request_restart()
+        if (root / f"{name}.apply").exists():
+            (root / f"{name}.apply").unlink()
+            supervisor.request_restart((root / "candidate.sha").read_text())
         time.sleep(0.05)
 
 
@@ -87,8 +99,10 @@ def _rows(root: Path, name: str) -> list[tuple[int, int]]:
     ]
 
 
-def _test(root: Path, *, forced: bool) -> None:
+def _test(root: Path, *, forced: bool, apply: bool = False) -> None:
     root.mkdir()
+    if apply:
+        (root / "config.yaml").write_text("before\n", encoding="utf-8")
     parent = subprocess.Popen(
         [sys.executable, str(Path(__file__)), "parent", str(root)],
         creationflags=subprocess.CREATE_NO_WINDOW,
@@ -102,9 +116,37 @@ def _test(root: Path, *, forced: bool) -> None:
             lambda: bool(_rows(root, "control") and _rows(root, "executor")),
             "both supervised Windows roles",
         )
+        _wait_for(
+            lambda: (
+                bool(list(root.glob("control.*.ready")))
+                and bool(list(root.glob("executor.*.ready")))
+            ),
+            "both registered and ready",
+        )
         assert parent.poll() is None
         seen.extend(_rows(root, "control") + _rows(root, "executor"))
-        if not forced:
+        if apply:
+            candidate = b"after\n"
+            (root / "config.yaml").write_bytes(candidate)
+            (root / "candidate.sha").write_text(
+                hashlib.sha256(candidate).hexdigest(), encoding="ascii"
+            )
+            (root / "control.apply").touch()
+            _wait_for(
+                lambda: (
+                    len(_rows(root, "control")) == 2
+                    and len(_rows(root, "executor")) == 2
+                ),
+                "both roles restarted for shared config Apply",
+            )
+            for name, old in (("control", seen[0]), ("executor", seen[1])):
+                new_role = next(row for row in _rows(root, name) if row != old)
+                seen.append(new_role)
+                assert _dead(old[0]) and _dead(old[1]), f"{name} was not reaped"
+            assert parent.poll() is None
+            (root / "control.exit").touch()
+            assert parent.wait(timeout=15) == 0
+        elif not forced:
             (root / "control.restart").touch()
             _wait_for(
                 lambda: len(_rows(root, "control")) == 2,
@@ -174,9 +216,10 @@ def run() -> None:
     with tempfile.TemporaryDirectory(prefix="workgate-supervisor-win-") as temp:
         root = Path(temp)
         _test(root / "restart", forced=False)
+        _test(root / "apply", forced=False, apply=True)
         _test(root / "crash", forced=True)
     print(
-        "Native Windows shared Parent/Child IPC, restart and crash cleanup: PASS"
+        "Native Windows Parent/Child IPC, restart, config Apply and crash cleanup: PASS"
     )
 
 
