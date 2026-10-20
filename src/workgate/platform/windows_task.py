@@ -199,11 +199,32 @@ class WindowsUserTask:
 
     def stop(self) -> None:
         current = self.status()
-        if current is not None and current["state"].lower() in {
-            "running",
-            "queued",
-        }:
+        if current is None:
+            return
+        if current["state"].lower() in {"running", "queued"}:
             self._powershell(f"Stop-ScheduledTask {self._task}")
+        # One-file PyInstaller starts a second process: Task Scheduler can stop
+        # its bootloader while the child still owns executor.log. Only terminate
+        # processes using this verified task's *exact* windowless service image.
+        script = "\n".join(
+            [
+                f"$task = Get-ScheduledTask {self._task} -ErrorAction Stop",
+                "if (@($task.Actions).Count -ne 1) { throw 'unexpected task actions' }",
+                "$action = $task.Actions[0]",
+                "$exe = [IO.Path]::GetFullPath([string]$action.Execute)",
+                "if ([IO.Path]::GetFileName($exe) -ieq 'workgatew.exe' -and "
+                "[string]$action.Arguments -match '--managed-service') {",
+                "  Get-CimInstance Win32_Process -Filter \"Name = 'workgatew.exe'\" | "
+                "Where-Object { $_.ExecutablePath -and $_.CommandLine -and "
+                "[string]::Equals([string]$_.ExecutablePath, $exe, "
+                "[StringComparison]::OrdinalIgnoreCase) -and "
+                "$_.CommandLine.Contains([string]$action.Arguments) } | ForEach-Object {",
+                "    & taskkill.exe /T /F /PID $_.ProcessId | Out-Null",
+                "  }",
+                "}",
+            ]
+        )
+        self._powershell(script)
 
     def uninstall(self) -> None:
         if self.status() is None:

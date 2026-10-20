@@ -227,6 +227,9 @@ jobs:
       - if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/release/package-windows.ps1
+      - name: Native frozen Windows PowerShell bootstrap, persistent pairing and checksum rejection
+        if: runner.os == 'Windows'
+        run: uv run python scripts/validation/windows-frozen-bootstrap-smoke.py
 
   package-smoke:
     name: Package smoke

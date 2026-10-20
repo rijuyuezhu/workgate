@@ -560,6 +560,37 @@ def test_windows_task_lifecycle_and_idempotent_uninstall(monkeypatch):
     assert operations == ["register", "start", "stop", "unregister"]
 
 
+def test_windows_task_stop_targets_only_owned_frozen_executor_image(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "workgate.platform.windows_task.shutil.which",
+        lambda _: "powershell.exe",
+    )
+    scripts = []
+
+    def run(argv):
+        script = argv[-1]
+        scripts.append(script)
+        if "Get-ScheduledTask -TaskPath" in script:
+            return subprocess.CompletedProcess(
+                argv, 0, '{"state":"Running","last_result":0}', ""
+            )
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    task = WindowsUserTask(
+        "Workgate Test", description="Managed by Workgate: test", run=run
+    )
+    task.stop()
+    assert any("Stop-ScheduledTask" in script for script in scripts)
+    cleanup = next(script for script in scripts if "Get-CimInstance" in script)
+    assert "Get-ScheduledTask" in cleanup
+    assert "workgatew.exe" in cleanup
+    assert "--managed-service" in cleanup
+    assert "ExecutablePath" in cleanup
+    assert "taskkill.exe /T /F /PID" in cleanup
+
+
 @pytest.mark.parametrize("payload", ["broken-json", "[]", '{"state": 2}'])
 def test_windows_task_rejects_invalid_scheduler_status(monkeypatch, payload):
     monkeypatch.setattr(
