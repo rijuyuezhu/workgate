@@ -4,9 +4,29 @@ import json
 import shutil
 import subprocess
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 RunCommand = Callable[..., subprocess.CompletedProcess[str]]
+
+
+def is_windowless_pe(path: Path) -> bool:
+    """Check that a frozen Windows Task Scheduler target is actually GUI-subsystem."""
+    try:
+        with path.open("rb") as executable:
+            header = executable.read(64)
+            if len(header) < 64 or header[:2] != b"MZ":
+                return False
+            offset = int.from_bytes(header[0x3C:0x40], "little")
+            if offset > 65536:
+                return False
+            executable.seek(offset)
+            if executable.read(4) != b"PE\0\0":
+                return False
+            executable.seek(offset + 4 + 20 + 68)
+            return int.from_bytes(executable.read(2), "little") == 2
+    except OSError:
+        return False
 
 
 def _literal(value: str) -> str:

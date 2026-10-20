@@ -279,11 +279,14 @@ def test_windows_bootstrap_script_route_and_release_asset_names() -> None:
     assert "$Target = 'windows-x86_64'" in script
     assert "Get-FileHash" in script
     assert "Executor runtime checksum mismatch" in script
-    assert "workgate-$Target/workgate.exe" in script
+    assert '"workgate-$Target/$binary"' in script
+    assert "@('workgate.exe', 'workgatew.exe')" in script
+    assert "--_windows-version-file" in script
     assert "$source.Read($buffer" in script
     assert "executor-bootstrap" in script
-    assert "$rollbackError = $_" in script
-    assert "previous executable preserved at" in script
+    assert "$installDirectory = Join-Path $runtime" in script
+    assert "$installStarted = $true" in script
+    assert "retain the versioned files even on failure" in script
     assert "--runtime-ownership" in script
     assert "Invoke-Expression" not in script
     assert "Expand-Archive" not in script

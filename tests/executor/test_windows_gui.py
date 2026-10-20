@@ -75,6 +75,9 @@ def provider(monkeypatch):
     bounds = {"x": 20, "y": 30, "width": 200, "height": 100}
     monkeypatch.setattr(windows, "_automation", lambda: auto)
     monkeypatch.setattr(windows, "_initialize_uia_thread", lambda: None)
+    # This fixture has no real HWND/foreground window: only native desktop
+    # safety tests should exercise the actual foreground guard.
+    monkeypatch.setattr(windows, "_require_foreground", lambda _hwnd: None)
     monkeypatch.setattr(
         windows, "_native_window_bounds", lambda _hwnd: dict(bounds)
     )
