@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..app_paths import ensure_private_directory
 from ..utils.private_files import atomic_write_private_text, private_file_lock
+from .auth import oauth_status
 from .auth_store import AgentAuthStore
 from .models import (
     AgentMcpAuthConfig,
@@ -211,13 +212,34 @@ def manage_mcp_manifest(
             return (server.type == "stdio") == (owner_type == "stdio")
 
         if action == "list":
-            return {
-                "servers": [
-                    _safe_row(key, server)
-                    for key, server in servers.items()
-                    if is_owned(server)
-                ]
-            }
+            owned = [
+                (key, server)
+                for key, server in servers.items()
+                if is_owned(server)
+            ]
+            # Read only private credential metadata; never probe remote MCPs.
+            store = (
+                AgentAuthStore(auth_dir)
+                if auth_dir is not None
+                and any(
+                    server.enabled and server.auth.mode != "none"
+                    for _, server in owned
+                )
+                else None
+            )
+            rows = []
+            for key, server in owned:
+                row = _safe_row(key, server)
+                if (
+                    server.enabled
+                    and server.auth.mode != "none"
+                    and store is not None
+                ):
+                    row["auth_authorized"] = oauth_status(store, key, server)[
+                        "authorized"
+                    ]
+                rows.append(row)
+            return {"servers": rows}
         assert name is not None
         current = servers.get(name)
         if (

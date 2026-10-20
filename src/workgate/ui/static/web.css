@@ -3277,6 +3277,11 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 #executor-integration-delete[hidden], #executor-integration-toggle[hidden] { display: none !important; }
 
 /* MCPs share the enabled styling with Skills; disabled entries remain muted. */
+/* Only enabled MCPs needing credentials acquire an auth label. Plain MCPs keep their existing row. */
+#executors-panel #executor-mcp-body .executor-manage-row[data-auth="required"] { background: #fff8e9; }
+#executors-panel #executor-mcp-body .executor-manage-row[data-auth="required"] .executor-manage-pill::before { background: #c48a26; }
+#executors-panel #executor-mcp-body .executor-row-auth { color: #23825c; font-size: 11px; }
+#executors-panel #executor-mcp-body .executor-manage-row[data-auth="required"] .executor-row-auth { color: #a16a11; }
 #executors-panel #executor-mcp-body .executor-manage-row[data-state="disabled"] { background: #eef0f3; }
 #executors-panel #executor-mcp-body .executor-manage-row[data-state="disabled"] strong,
 #executors-panel #executor-mcp-body .executor-manage-row[data-state="disabled"] .executor-row-mark { color: #858d9a; }

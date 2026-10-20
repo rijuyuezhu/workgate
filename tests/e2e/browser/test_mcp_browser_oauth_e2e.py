@@ -173,3 +173,102 @@ def test_control_mcp_oauth_browser_actions(
     page.locator("#executor-integration-delete").click()
     expect(page.locator("#executor-integration-dialog")).not_to_be_visible()
     harness.assert_clean_browser()
+
+
+def test_enabled_mcp_rows_distinguish_private_auth_without_probes(
+    browser_harness: BrowserHarness,
+) -> None:
+    """Only enabled MCPs that need credentials show authorization readiness."""
+    from urllib.parse import parse_qs, urlsplit
+
+    harness = browser_harness
+    harness.login()
+    page = harness.page
+    unauthorized_calls = []
+
+    def management(route):
+        params = parse_qs(urlsplit(route.request.url).query)
+        if params.get("owner") != ["control"] or params.get("kind") != ["mcp"]:
+            route.continue_()
+            return
+        rows = [
+            ("normal-mcp", "none", True, None),
+            ("oauth-pending", "oauth", True, False),
+            ("secret-ready", "secret", True, True),
+            ("oauth-disabled", "oauth", False, False),
+        ]
+        route.fulfill(
+            json={
+                "ok": True,
+                "data": {
+                    "can_manage": True,
+                    "servers": [
+                        {
+                            "name": name,
+                            "type": "http",
+                            "enabled": enabled,
+                            "auth": {"mode": mode},
+                            **(
+                                {"auth_authorized": authorized}
+                                if authorized is not None
+                                else {}
+                            ),
+                        }
+                        for name, mode, enabled, authorized in rows
+                    ],
+                },
+            }
+        )
+
+    page.route("**/api/ui/integrations?*", management)
+    page.on(
+        "request",
+        lambda req: (
+            unauthorized_calls.append(req.url)
+            if "/api/ui/integrations/test" in req.url
+            or "/api/ui/integrations/oauth/start" in req.url
+            else None
+        ),
+    )
+    page.goto(f"{harness.base_url}/ui#executors")
+    page.locator('[data-executor-subtab="mcp"]').click()
+    entries = page.locator("#executor-mcp-body .executor-manage-row")
+    normal = entries.filter(has_text="normal-mcp")
+    pending = entries.filter(has_text="oauth-pending")
+    ready = entries.filter(has_text="secret-ready")
+    disabled = entries.filter(has_text="oauth-disabled")
+    for entry in [normal, pending, ready, disabled]:
+        expect(entry).to_be_visible()
+
+    expect(normal).to_have_attribute("data-state", "enabled")
+    assert normal.get_attribute("data-auth") is None
+    assert "auth" not in normal.inner_text().lower().replace("normal-mcp", "")
+    expect(pending).to_have_attribute("data-auth", "required")
+    expect(pending.locator(".executor-row-auth")).to_have_text(
+        "Authorization required"
+    )
+    expect(ready).to_have_attribute("data-auth", "authorized")
+    expect(ready.locator(".executor-row-auth")).to_have_text(
+        "✓ Secret configured"
+    )
+    expect(disabled).to_have_attribute("data-state", "disabled")
+    assert disabled.get_attribute("data-auth") is None
+
+    # Color differs visibly from the ordinary (light-green) enabled row.
+    backgrounds = [
+        entry.evaluate("(element) => getComputedStyle(element).backgroundColor")
+        for entry in [normal, pending, ready, disabled]
+    ]
+    assert backgrounds[0] != backgrounds[1]
+    assert backgrounds[1] != backgrounds[2]
+    assert not unauthorized_calls
+    page.set_viewport_size({"width": 390, "height": 844})
+    # Mobile uses a list → detail drilldown, not the desktop split pane.
+    page.locator("#executor-list .executor-row").first.click()
+    page.locator('[data-executor-subtab="mcp"]').click()
+    for entry in [normal, pending, ready, disabled]:
+        expect(entry).to_be_visible()
+        assert entry.evaluate(
+            "(element) => element.scrollWidth <= element.clientWidth + 2"
+        )
+    harness.assert_clean_browser()

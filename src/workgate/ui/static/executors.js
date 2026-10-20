@@ -262,6 +262,7 @@ export function createExecutorsController({
       if (row.status === "Disabled") item.dataset.state = "disabled";
       if (row.status === "Enabled") item.dataset.state = "enabled";
       if (row.status === "Overridden") item.dataset.state = "overridden";
+      if (row.authState) item.dataset.auth = row.authState;
       const icon = rowIcon(row.icon);
       if (icon) {
         const mark = document.createElement('span');
@@ -284,6 +285,14 @@ export function createExecutorsController({
       detail.textContent = row.detail || "";
       text.append(name);
       if (row.detail) text.append(detail);
+      if (row.authState) {
+        const auth = document.createElement("span");
+        auth.className = "executor-row-auth";
+        auth.textContent = row.authMode === "secret"
+          ? (row.authState === "authorized" ? "✓ Secret configured" : "Secret required")
+          : (row.authState === "authorized" ? "✓ Authorized" : "Authorization required");
+        text.append(auth);
+      }
       item.append(text);
       const tail = document.createElement("div");
       tail.className = "executor-manage-tail";
@@ -378,6 +387,10 @@ export function createExecutorsController({
         title: item.name,
         detail: kind === "mcp" ? item.type : "SKILL.md",
         status: item.enabled ? (shadowed.has(item.name) ? "Overridden" : "Enabled") : "Disabled",
+        authMode: kind === "mcp" ? item.auth?.mode : null,
+        authState: kind === "mcp" && item.enabled && !shadowed.has(item.name)
+          && item.auth?.mode !== "none" && typeof item.auth_authorized === "boolean"
+          ? (item.auth_authorized ? "authorized" : "required") : null,
         manage: result.can_manage ? () => void openEditor({owner, kind, item}) : null,
       }));
       addGroup(container, title, rows.length ? rows : stateRows("None"));
@@ -814,7 +827,10 @@ export function createExecutorsController({
         const result = await request("/integrations/oauth/status?session_id=" + encodeURIComponent(session.id));
         session.status = result.status;
         if (["completing", "authorized", "denied", "failed", "expired"].includes(result.status)) session.url = "";
-        if (result.status === "authorized") await loadEditorAuth(edit);
+        if (result.status === "authorized") {
+          await loadEditorAuth(edit);
+          void loadManagement(true);
+        }
       }
     } catch (error) {
       if (state.editor === edit) {
@@ -852,6 +868,7 @@ export function createExecutorsController({
         renderBrowserOAuth(edit);
       }
       await loadEditorAuth(edit);
+      void loadManagement(true);
     } catch (error) {
       if (state.editor === edit) editorStatus(error instanceof Error ? error.message : String(error), "error");
     } finally {

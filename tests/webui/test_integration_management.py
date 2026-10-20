@@ -76,6 +76,7 @@ def test_control_and_executor_mcp_and_skill_crud(tmp_path):
         )
         control = get(client, "control", "mcp").json()["data"]
         assert control["servers"][0]["name"] == "remote"
+        assert "auth_authorized" not in control["servers"][0]
         assert (
             post(client, "control", "mcp", "disable", name="remote").status_code
             == 400
@@ -564,7 +565,11 @@ def test_mcp_auth_endpoint_denied_without_management_scope(tmp_path):
 
 
 def test_authenticated_mcp_registration_assigns_stable_identity(tmp_path):
-    """Users may select OAuth/Secret Auth without inventing a store identity."""
+    """List status is read from existing private owner credentials, never remote probes."""
+    from mcp.shared.auth import OAuthToken
+
+    from workgate.agent_bridge.auth_store import AgentAuthStore
+
     project = tmp_path / "project"
     project.mkdir()
     settings = Settings(
@@ -627,6 +632,53 @@ def test_authenticated_mcp_registration_assigns_stable_identity(tmp_path):
             identity = server["integrationId"]
             assert isinstance(identity, str) and identity.startswith("ui-")
             assert len(identity) <= 128
+            assert server["auth_authorized"] is False
+            private_dir = (
+                harness.control.config.agent_auth_dir
+                if owner == "control"
+                else harness.executor.config.agent_auth_dir
+            )
+            store = AgentAuthStore(private_dir)
+            if owner == "control":
+                store.set_tokens(
+                    identity,
+                    OAuthToken(
+                        access_token="NEVER_EXPOSE_AUTH_TOKEN",
+                        token_type="Bearer",
+                    ),
+                )
+            else:
+                store.set_secret(identity, "api_token", "NEVER_EXPOSE_SECRET")
+            refreshed = client.get(
+                "/api/ui/integrations",
+                params={
+                    "owner": owner,
+                    "kind": "mcp",
+                    "executor_id": harness.executor_id,
+                },
+            )
+            assert refreshed.status_code == 200, refreshed.text
+            assert (
+                refreshed.json()["data"]["servers"][0]["auth_authorized"]
+                is True
+            )
+            assert "NEVER_EXPOSE" not in refreshed.text
+            if owner == "control":
+                store.clear_oauth(identity)
+            else:
+                assert store.delete_secret(identity, "api_token")
+            reset = client.get(
+                "/api/ui/integrations",
+                params={
+                    "owner": owner,
+                    "kind": "mcp",
+                    "executor_id": harness.executor_id,
+                },
+            )
+            assert reset.status_code == 200, reset.text
+            assert (
+                reset.json()["data"]["servers"][0]["auth_authorized"] is False
+            )
             detail = client.get(
                 "/api/ui/integrations",
                 params={
