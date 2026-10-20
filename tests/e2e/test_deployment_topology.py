@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 import httpx
@@ -182,6 +183,15 @@ async def test_separate_process_topology_reuses_identity_and_rehydrates_inventor
         assert "topology" in after_executor_restart["content"]
 
         stop_process(control)
+        # Keep the Control genuinely unavailable across multiple long-poll
+        # attempts, not just the instant between stop() and restart().
+        async with httpx.AsyncClient(timeout=2, trust_env=False) as probe:
+            with pytest.raises((httpx.ConnectError, httpx.ConnectTimeout)):
+                await probe.get(base_url)
+        await asyncio.sleep(3)
+        assert restarted_executor.poll() is None
+        assert profile_path.read_bytes() == profile_before
+
         restarted_control = start_control_process(
             control_config,
             env=process_env,
@@ -206,6 +216,7 @@ async def test_separate_process_topology_reuses_identity_and_rehydrates_inventor
         rehydrated_target = await _executor_target(base_url, executor_id)
         assert rehydrated_target["status"] == "online"
         assert rehydrated_target["default_workdir"] == str(workspace)
+        assert rehydrated_target["executor_id"] == executor_id
 
         after_control_restart = await client.call_tool(
             "read", {"session_id": session_id, "path": "marker.txt"}
