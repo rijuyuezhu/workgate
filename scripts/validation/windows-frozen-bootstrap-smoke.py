@@ -348,8 +348,14 @@ def main() -> None:
             next_metadata = manager._read_metadata()
             assert next_metadata is not None
             assert next_metadata["command"][0] == str(published)
+            action = task._powershell(
+                f"(Get-ScheduledTask {task._task} -ErrorAction Stop).Actions[0].Execute"
+            )
+            assert (
+                Path(action.stdout.strip()).resolve() == published.resolve()
+            ), "native scheduled task still targets the old frozen executable"
             task.start()
-            asyncio.run(
+            upgraded_seen = asyncio.run(
                 wait_for_executor_online(
                     url,
                     control,
@@ -375,6 +381,33 @@ def main() -> None:
             assert rejected is not None
             assert rejected.executable == str(published)
             assert rejected.update_status is ExecutorRuntimeUpdateStatus.FAILED
+            (root / "digest.txt").write_text(digest, encoding="ascii")
+            with pytest.raises(RuntimeError, match="validation failed"):
+                asyncio.run(
+                    apply_control_managed_update(
+                        control_url=url,
+                        target_version="9.9.9",
+                        store=runtime_store,
+                        windows_activate=manager.activate_windows_runtime,
+                    )
+                )
+            rejected = runtime_store.load()
+            assert rejected is not None and rejected.executable == str(
+                published
+            )
+            assert rejected.update_status is ExecutorRuntimeUpdateStatus.FAILED
+            assert task.status()["state"].lower() == "running"
+            asyncio.run(
+                wait_for_executor_online(
+                    url,
+                    control,
+                    executor_id,
+                    after_last_seen=upgraded_seen,
+                    timeout_s=25,
+                    stdout_path=root / "control.out",
+                    stderr_path=root / "control.err",
+                )
+            )
     finally:
         if boot is not None and boot.poll() is None:
             subprocess.run(
