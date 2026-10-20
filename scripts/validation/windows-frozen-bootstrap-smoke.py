@@ -396,8 +396,25 @@ def main() -> None:
                             break
                     time.sleep(0.5)
                 else:
+                    service_log = (
+                        root
+                        / "executor-state"
+                        / "executor"
+                        / "service"
+                        / "executor.log"
+                    )
+                    log_tail = (
+                        service_log.read_text(
+                            encoding="utf-8", errors="replace"
+                        )[-2500:]
+                        if service_log.is_file()
+                        else "[no service log]"
+                    )
                     raise AssertionError(
-                        "old frozen Executor did not auto-publish newer PE"
+                        "old frozen Executor did not auto-publish newer PE; "
+                        f"update_state={runtime_store.load()!r}; "
+                        f"task_status={task.status()!r}; "
+                        f"service_errors={log_tail!r}"
                     )
                 last_seen = asyncio.run(
                     wait_for_executor_online(
