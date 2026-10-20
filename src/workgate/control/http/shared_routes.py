@@ -48,6 +48,6 @@ def control_http_routes(
         )
     if runtime is not None:
         oauth_protected, oauth_public = browser_mcp_oauth_routes()
-        ui_routes.extend(oauth_protected)
+        ui_routes.extend([*oauth_protected, *oauth_public])
         ui_public_routes.extend(oauth_public)
     return core_routes, ui_routes, [*core_routes, *ui_public_routes]

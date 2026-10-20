@@ -515,7 +515,8 @@ def executor_admin_routes(
                     "OfflineExecutor", "Executor offline", status_code=503
                 )
         try:
-            if owner == "control" and action == "logout":
+            server = None
+            if owner == "control" and action in {"logout", "clear_oauth"}:
                 configured = load_agent_manifest(
                     runtime.config.agent_config_dir, read_only=True
                 )
@@ -526,6 +527,11 @@ def executor_admin_routes(
                     or server.auth.mode != "oauth"
                 ):
                     raise ValueError("Select a configured Control OAuth MCP")
+                broker = getattr(request.app.state, "browser_mcp_oauth", None)
+                if broker is not None:
+                    broker.cancel_credential(credential_store_key(name, server))
+            if owner == "control" and action == "logout":
+                assert server is not None
                 store = AgentAuthStore(runtime.config.agent_auth_dir)
                 revocation = await revoke_stored_oauth(store, name, server)
                 changed = store.clear_oauth(credential_store_key(name, server))

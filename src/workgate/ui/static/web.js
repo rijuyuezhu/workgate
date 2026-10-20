@@ -222,6 +222,7 @@ void (async () => {
     executorMcpOAuthAuthorize: document.getElementById("executor-mcp-oauth-authorize"),
     executorMcpOAuthLink: document.getElementById("executor-mcp-oauth-link"),
     executorMcpOAuthCheck: document.getElementById("executor-mcp-oauth-check"),
+    executorMcpOAuthComplete: document.getElementById("executor-mcp-oauth-complete"),
     executorMcpOAuthCancel: document.getElementById("executor-mcp-oauth-cancel"),
     executorMcpOAuthProgress: document.getElementById("executor-mcp-oauth-progress"),
     executorMcpOAuthLogout: document.getElementById("executor-mcp-oauth-logout"),

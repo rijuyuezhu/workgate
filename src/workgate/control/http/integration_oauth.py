@@ -72,16 +72,9 @@ class BrowserMcpOAuth:
 
     def expire(self) -> None:
         now = time.monotonic()
+        # Completed outcomes remain queryable until their original TTL.
         for sid, pending in list(self.sessions.items()):
-            if (
-                pending.expires <= now
-                or pending.task
-                and pending.task.done()
-                and pending.status != "preparing"
-            ):
-                # Retain completed outcomes until expiry for explicit status lookup.
-                if pending.expires > now:
-                    continue
+            if pending.expires <= now:
                 self.cancel(sid)
 
     def cancel(self, sid: str) -> None:
@@ -93,6 +86,12 @@ class BrowserMcpOAuth:
             pending.task.cancel()
         if not pending.callback.done():
             pending.callback.cancel()
+
+    def cancel_credential(self, key: str) -> None:
+        """Drop any outstanding browser handshake for an owner-held identity."""
+        for sid, pending in list(self.sessions.items()):
+            if pending.credential_key == key:
+                self.cancel(sid)
 
     async def begin(self, request: Request, name: str) -> dict[str, object]:
         require_oauth_scopes((SCOPE_EXECUTOR_USE, SCOPE_SHELL_WRITE))
@@ -209,6 +208,21 @@ class BrowserMcpOAuth:
                 raise ValueError(
                     "OAuth SDK callback or PKCE parameters were invalid"
                 )
+            challenges = query.get("code_challenge", [])
+            if (
+                len(challenges) != 1
+                or not 43 <= len(challenges[0]) <= 128
+                or any(
+                    not (
+                        character.isascii()
+                        and (character.isalnum() or character in "-_")
+                    )
+                    for character in challenges[0]
+                )
+            ):
+                raise ValueError(
+                    "OAuth SDK PKCE challenge is missing or invalid"
+                )
             if len(states) != 1 or not states[0] or states[0] in self.states:
                 raise ValueError("OAuth SDK did not provide a unique state")
             pending.csrf_state = states[0]
@@ -288,39 +302,79 @@ class BrowserMcpOAuth:
             ) from None
         return {"session_id": sid, "authorization_url": url, "expires_in": _TTL}
 
-    def status(self, sid: str, config_dir=None) -> dict[str, str]:
+    def current(self, name: str) -> dict[str, object] | None:
+        """Recover an active browser handshake after the same user reloads the editor."""
+        self.expire()
+        for sid, pending in self.sessions.items():
+            if (
+                pending.owner == _subject()
+                and pending.name == name
+                and pending.status
+                in {
+                    "preparing",
+                    "waiting",
+                    "awaiting_confirmation",
+                    "completing",
+                }
+            ):
+                url = ""
+                if (
+                    pending.status == "waiting"
+                    and pending.ready.done()
+                    and not pending.ready.cancelled()
+                ):
+                    url = pending.ready.result()
+                return {
+                    "session_id": sid,
+                    "authorization_url": url,
+                    "status": pending.status,
+                    "expires_in": max(
+                        0, int(pending.expires - time.monotonic())
+                    ),
+                }
+        return None
+
+    def status(self, sid: str) -> dict[str, str]:
         self.expire()
         pending = self.sessions.get(sid)
         if pending is None or pending.owner != _subject():
             raise HTTPException(404, "Authorization session not found")
-        if config_dir is not None and pending.status == "awaiting_confirmation":
-            manifest = load_agent_manifest(config_dir, read_only=True)
-            current = manifest.data.mcp_servers.get(pending.name)
-            if (
-                current is None
-                or hashlib.sha256(current.model_dump_json().encode()).digest()
-                != pending.config_digest
-            ):
-                self.cancel(sid)
-                raise HTTPException(
-                    409, "MCP configuration changed during authorization"
-                )
-        if pending.status == "awaiting_confirmation":
-            # Only the initiating authenticated browser can release the code
-            # to the SDK for token exchange; public callback cannot complete it.
-            pending.status = "completing"
-            if pending.denied:
-                pending.callback.set_exception(
-                    ValueError("Authorization denied")
-                )
-            elif pending.response:
-                pending.callback.set_result(pending.response)
-            pending.response = None
+        return {"status": pending.status, "name": pending.name}
+
+    def complete(self, sid: str, config_dir) -> dict[str, str]:
+        self.expire()
+        pending = self.sessions.get(sid)
+        if pending is None or pending.owner != _subject():
+            raise HTTPException(404, "Authorization session not found")
+        if pending.status != "awaiting_confirmation":
+            raise HTTPException(409, "Authorization is not ready to complete")
+        manifest = load_agent_manifest(config_dir, read_only=True)
+        current = manifest.data.mcp_servers.get(pending.name)
+        if (
+            current is None
+            or hashlib.sha256(current.model_dump_json().encode()).digest()
+            != pending.config_digest
+        ):
+            self.cancel(sid)
+            raise HTTPException(
+                409, "MCP configuration changed during authorization"
+            )
+        # Only an explicit authenticated POST releases the code to the SDK.
+        pending.status = "completing"
+        if pending.denied:
+            pending.callback.set_exception(ValueError("Authorization denied"))
+        elif pending.response:
+            pending.callback.set_result(pending.response)
+        pending.response = None
         return {"status": pending.status, "name": pending.name}
 
     def receive(self, request: Request) -> bool:
         self.expire()
         values = request.query_params
+        if any(len(values.getlist(key)) != 1 for key in ("state",)) or any(
+            len(values.getlist(key)) > 1 for key in ("code", "iss", "error")
+        ):
+            return False
         state = values.get("state", "")
         sid = self.states.pop(state, None)
         if sid is None:
@@ -334,7 +388,7 @@ class BrowserMcpOAuth:
             return False
         pending.csrf_state = ""
         # The callback only records the response. Only the initiating owner
-        # can release it through the authenticated/CSRF-checked status endpoint.
+        # can release it through the authenticated/CSRF-checked POST endpoint.
         pending.denied = bool(values.get("error"))
         code = values.get("code", "")
         if not pending.denied and (not code or len(code) > 4096):
@@ -384,12 +438,32 @@ def browser_mcp_oauth_routes() -> tuple[list[BaseRoute], list[BaseRoute]]:
     async def status(request: Request) -> Response:
         require_oauth_scopes((SCOPE_EXECUTOR_USE, SCOPE_SHELL_WRITE))
         sid = request.query_params.get("session_id", "")
+        return JSONResponse(
+            {"ok": True, "data": runtime(request).status(sid)},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    async def current(request: Request) -> Response:
+        require_oauth_scopes((SCOPE_EXECUTOR_USE, SCOPE_SHELL_WRITE))
+        name = request.query_params.get("name", "")
+        if not name or len(name) > 128:
+            raise HTTPException(400, "Select a configured MCP server")
+        return JSONResponse(
+            {"ok": True, "data": runtime(request).current(name)},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    async def complete(request: Request) -> Response:
+        require_oauth_scopes((SCOPE_EXECUTOR_USE, SCOPE_SHELL_WRITE))
+        body = _SessionSelection.model_validate(await request.json())
         control = request.app.state.control_runtime
+        if control is None:
+            raise HTTPException(503, "Control unavailable")
         return JSONResponse(
             {
                 "ok": True,
-                "data": runtime(request).status(
-                    sid, control.config.agent_config_dir
+                "data": runtime(request).complete(
+                    body.session_id, control.config.agent_config_dir
                 ),
             },
             headers={"Cache-Control": "no-store"},
@@ -422,6 +496,7 @@ def browser_mcp_oauth_routes() -> tuple[list[BaseRoute], list[BaseRoute]]:
         if (
             request.headers.get("host", "").lower() != public.netloc.lower()
             or request.url.path != _CALLBACK
+            or len(request.scope.get("query_string", b"")) > 8192
             or any(len(value) > 4096 for value in request.query_params.values())
         ):
             return HTMLResponse(
@@ -442,6 +517,10 @@ def browser_mcp_oauth_routes() -> tuple[list[BaseRoute], list[BaseRoute]]:
     protected: list[BaseRoute] = [
         Route("/api/ui/integrations/oauth/start", start, methods=["POST"]),
         Route("/api/ui/integrations/oauth/status", status, methods=["GET"]),
+        Route("/api/ui/integrations/oauth/current", current, methods=["GET"]),
+        Route(
+            "/api/ui/integrations/oauth/complete", complete, methods=["POST"]
+        ),
         Route("/api/ui/integrations/oauth/cancel", cancel, methods=["POST"]),
     ]
     public: list[BaseRoute] = [Route(_CALLBACK, callback, methods=["GET"])]

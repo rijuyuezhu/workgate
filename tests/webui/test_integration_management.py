@@ -801,3 +801,59 @@ def test_unpaired_control_manages_network_mcp_without_executor(tmp_path):
             ]
             == []
         )
+
+
+def test_control_oauth_clear_cancels_pending_browser_authorization(tmp_path):
+    """Credential reset must retire any in-flight handshake for the same identity."""
+    from workgate.agent_bridge.auth import credential_store_key
+    from workgate.agent_bridge.state import load_agent_manifest
+
+    project = tmp_path / "project"
+    project.mkdir()
+    settings = Settings(
+        default_workdir=project,
+        state_dir=tmp_path / "state",
+        auth_mode="none",
+        base_url=BASE,
+        agent_bridge_enabled=True,
+    )
+    app, harness = build_paired_http_app(settings)
+    harness.control.config = replace(
+        harness.control.config, agent_config_dir=tmp_path / "control-agent"
+    )
+    cancelled: list[str] = []
+
+    class Broker:
+        def cancel_credential(self, key: str) -> None:
+            cancelled.append(key)
+
+    app.state.browser_mcp_oauth = Broker()
+    with TestClient(app, base_url=BASE) as client:
+        created = client.post(
+            "/api/ui/integrations",
+            json={
+                "owner": "control",
+                "kind": "mcp",
+                "action": "register",
+                "name": "oauth-test",
+                "config": {
+                    "type": "http",
+                    "url": "https://example.test/mcp",
+                    "auth": {"mode": "oauth", "scopes": ["tools.read"]},
+                },
+            },
+        )
+        assert created.status_code == 200, created.text
+        stored = load_agent_manifest(harness.control.config.agent_config_dir)
+        configured = stored.data.mcp_servers["oauth-test"]
+        assert configured.integration_id
+        result = client.post(
+            "/api/ui/integrations/auth",
+            json={
+                "owner": "control",
+                "name": "oauth-test",
+                "action": "clear_oauth",
+            },
+        )
+        assert result.status_code == 200, result.text
+        assert cancelled == [credential_store_key("oauth-test", configured)]
