@@ -1,9 +1,13 @@
 """Windows path syntax is host-independent; no Control-side normalization."""
 
+import ctypes
+import subprocess
+import sys
 from pathlib import Path, PureWindowsPath
 
 import pytest
 
+from workgate import supervisor
 from workgate.app_paths import _windows_absolute_base, _windows_roots
 from workgate.platform.path import remote_path_name
 
@@ -173,3 +177,70 @@ def test_cross_platform_directory_listing_is_ordinary_pathlib(tmp_path):
     )
     assert result.count == 1
     assert result.entries[0].type == "file"
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="requires Windows 8.3 paths"
+)
+def test_windows_short_config_alias_fails_before_parent_readiness(
+    tmp_path: Path, monkeypatch
+):
+    config_dir = tmp_path / "A Directory With Long Components"
+    config_dir.mkdir()
+    config = config_dir / "config.yaml"
+    config.write_text("port: 8765\n")
+    kernel = ctypes.WinDLL("kernel32")  # pyright: ignore[reportAttributeAccessIssue]
+    kernel.GetShortPathNameW.argtypes = [
+        ctypes.c_wchar_p,
+        ctypes.c_wchar_p,
+        ctypes.c_ulong,
+    ]
+    buffer = ctypes.create_unicode_buffer(32768)
+    length = kernel.GetShortPathNameW(str(config), buffer, len(buffer))
+    assert 0 < length < len(buffer)
+    alias = Path(buffer.value)
+    if alias == config:
+        pytest.skip("8.3 short names disabled on this Windows volume")
+    assert alias.resolve() == config.resolve()
+    assert alias.absolute() != alias.resolve()
+    monkeypatch.setattr(supervisor, "is_child", lambda: True)
+    monkeypatch.setattr(
+        supervisor,
+        "_parent_message",
+        lambda _message: pytest.fail("noncanonical path reached the Parent"),
+    )
+    with pytest.raises(ValueError, match="not canonical"):
+        supervisor.notify_config_selected(alias, "digest")
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="requires Windows junctions"
+)
+def test_windows_junction_config_alias_fails_before_parent_readiness(
+    tmp_path: Path, monkeypatch
+):
+    config_dir = tmp_path / "real directory"
+    config_dir.mkdir()
+    config = config_dir / "config.yaml"
+    config.write_text("port: 8765\n")
+    junction = tmp_path / "linked directory"
+    created = subprocess.run(
+        ["cmd.exe", "/d", "/c", "mklink", "/J", str(junction), str(config_dir)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert created.returncode == 0, created.stderr
+    try:
+        redirected = junction / config.name
+        assert redirected.resolve() == config.resolve()
+        monkeypatch.setattr(supervisor, "is_child", lambda: True)
+        monkeypatch.setattr(
+            supervisor,
+            "_parent_message",
+            lambda _message: pytest.fail("junction path reached the Parent"),
+        )
+        with pytest.raises(ValueError, match="not canonical"):
+            supervisor.notify_config_selected(redirected, "digest")
+    finally:
+        junction.rmdir()

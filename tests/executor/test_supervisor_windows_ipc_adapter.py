@@ -3,6 +3,8 @@
 import argparse
 import os
 import socket
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -101,3 +103,27 @@ def test_windows_supervised_child_refuses_missing_containment(monkeypatch):
         )
     assert job.closed
     assert supervisor._WINDOWS_CHILD_JOB is None
+
+
+def test_selected_config_reports_noncanonical_path_before_parent_ipc(
+    tmp_path: Path, monkeypatch
+):
+    config = tmp_path / "config.yaml"
+    config.write_text("port: 8765\n")
+    monkeypatch.setattr(supervisor, "is_child", lambda: True)
+    messages = []
+    monkeypatch.setattr(
+        supervisor,
+        "_parent_message",
+        lambda message: messages.append(message) or b"accepted\n",
+    )
+    supervisor.notify_config_selected(config, "digest")
+    assert len(messages) == 1
+
+    if sys.platform == "win32":
+        return  # The Windows alias case is covered by the native short-path test.
+    alias = tmp_path / "alias.yaml"
+    alias.symlink_to(config)
+    with pytest.raises(ValueError, match="not canonical"):
+        supervisor.notify_config_selected(alias, "digest")
+    assert len(messages) == 1  # No noncanonical dependency is registered.
