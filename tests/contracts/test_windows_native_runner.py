@@ -1,6 +1,7 @@
 """Actual Windows ConPTY and descendant containment; never mocked or WSL."""
 
 import asyncio
+import ctypes
 import os
 import subprocess
 import sys
@@ -9,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from workgate.platform.shell import shell_join_argv
 from workgate.platform.windows_conpty import is_available, spawn_conpty
 from workgate.platform.windows_job import (
     close_process_job,
@@ -40,6 +42,95 @@ def test_real_conpty_input_output_and_shutdown(tmp_path: Path) -> None:
     finally:
         shell.close()
     assert shell.closed
+
+
+def test_real_conpty_natural_exit_delivers_eof(tmp_path: Path) -> None:
+    shell = spawn_conpty(
+        ["powershell.exe", "-NoLogo", "-NoProfile"], cwd=str(tmp_path)
+    )
+    try:
+        reader = shell.subscribe()
+        # Subscribe before triggering natural exit so a fast process cannot
+        # finish before an observer attaches. Avoid accepting echoed input.
+        shell.write("Write-Output ('WG_' + 'NATIVE_EOF'); exit\r")
+        output = bytearray()
+        deadline = time.monotonic() + 12
+        eof = False
+        while time.monotonic() < deadline and not eof:
+            chunk, eof = reader.read_wait(4096, 250)
+            output.extend(chunk)
+        assert b"WG_NATIVE_EOF" in output
+        assert eof and shell.ended, "natural ConPTY exit did not reach EOF"
+    finally:
+        shell.close()
+    assert shell.closed
+
+
+def _windows_pid_exited(pid: int, wait_ms: int) -> bool:
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # pyright: ignore[reportAttributeAccessIssue]
+    kernel.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+    kernel.OpenProcess.restype = ctypes.c_void_p
+    kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    kernel.WaitForSingleObject.restype = ctypes.c_ulong
+    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel.CloseHandle.restype = ctypes.c_int
+    handle = kernel.OpenProcess(0x100000, False, pid)
+    if not handle:
+        # ERROR_INVALID_PARAMETER means the PID no longer exists; denied access
+        # is not evidence that the child exited.
+        return ctypes.get_last_error() == 87  # pyright: ignore[reportAttributeAccessIssue]
+    try:
+        return kernel.WaitForSingleObject(handle, wait_ms) == 0
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def test_real_conpty_close_reaps_descendant(tmp_path: Path) -> None:
+    """Closing a PowerShell ConPTY must also stop the process it spawned."""
+    pidfile = tmp_path / "child.pid"
+    script = tmp_path / "spawn child.py"
+    script.write_text(
+        "import subprocess,sys,time,pathlib\n"
+        "child = subprocess.Popen([sys.executable, '-c', "
+        "'import time; time.sleep(40)'],stdin=subprocess.DEVNULL,"
+        "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n"
+        "pidfile = pathlib.Path(sys.argv[1])\n"
+        "staged = pidfile.with_suffix('.tmp')\n"
+        "staged.write_text(str(child.pid),encoding='ascii')\n"
+        "staged.replace(pidfile)\n"
+        "time.sleep(40)\n",
+        encoding="utf-8",
+    )
+    shell = spawn_conpty(
+        ["powershell.exe", "-NoLogo", "-NoProfile"], cwd=str(tmp_path)
+    )
+    pid = None
+    try:
+        shell.write(
+            shell_join_argv(
+                [sys.executable, str(script), str(pidfile)],
+                shell="powershell.exe",
+            )
+            + "\r"
+        )
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not pidfile.exists():
+            time.sleep(0.05)
+        assert pidfile.is_file(), "ConPTY child process was never spawned"
+        pid = int(pidfile.read_text(encoding="ascii"))
+        assert not _windows_pid_exited(pid, 0), (
+            "child exited before ConPTY closed"
+        )
+        shell.close()
+        assert _windows_pid_exited(pid, 5000), "ConPTY close leaked a child"
+    finally:
+        shell.close()
+        if pid is not None and not _windows_pid_exited(pid, 0):
+            subprocess.run(
+                ["taskkill", "/F", "/PID", str(pid)],
+                capture_output=True,
+                check=False,
+            )
 
 
 @pytest.mark.asyncio

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -186,12 +187,11 @@ async def main() -> None:
             if executor is not None:
                 stop_process(executor)
             stop_process(control)
-            # The Windows Parent's Job Object kills its Child on close, but
-            # the Child may release its locked state file just after Parent exits.
-            lock = state / "control" / "run.lock"
+            # A Windows Parent may exit just before the killed Child closes its
+            # log/state handles. Retry cleanup, but fail on persistent leaks.
             for attempt in range(100):
                 try:
-                    lock.unlink(missing_ok=True)
+                    shutil.rmtree(root)
                     break
                 except PermissionError:
                     if attempt == 99:

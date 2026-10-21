@@ -132,6 +132,14 @@ def notify_config_selected(
     """Register the file dependency at settings load, before runtime readiness."""
     if not is_child():
         return
+    if (
+        config_path is not None
+        and config_path.resolve() != config_path.absolute()
+    ):
+        raise ValueError(
+            f"Config path is not canonical: {config_path}; "
+            "use the resolved path (no shortcuts, symlinks or junctions)"
+        )
     selected = str(config_path) if config_path is not None else None
     message = (
         json.dumps({"config": selected, "digest": file_digest}).encode() + b"\n"
