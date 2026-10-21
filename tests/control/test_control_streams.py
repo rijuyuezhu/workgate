@@ -193,7 +193,7 @@ async def test_stream_hub_idle_timeout_tracks_activity_across_both_directions():
     await asyncio.sleep(0.05)
     assert hub.active_count() == 1
 
-    await asyncio.sleep(0.2)
+    await asyncio.wait_for(hub.wait_closed(grant.stream_id), timeout=1.0)
     assert hub.active_count() == 0
 
 
