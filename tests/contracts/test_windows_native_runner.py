@@ -94,7 +94,10 @@ def test_real_conpty_close_reaps_descendant(tmp_path: Path) -> None:
         "child = subprocess.Popen([sys.executable, '-c', "
         "'import time; time.sleep(40)'],stdin=subprocess.DEVNULL,"
         "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n"
-        "pathlib.Path(sys.argv[1]).write_text(str(child.pid),encoding='ascii')\n"
+        "pidfile = pathlib.Path(sys.argv[1])\n"
+        "staged = pidfile.with_suffix('.tmp')\n"
+        "staged.write_text(str(child.pid),encoding='ascii')\n"
+        "staged.replace(pidfile)\n"
         "time.sleep(40)\n",
         encoding="utf-8",
     )
