@@ -10,6 +10,10 @@ custom Windows ACLs, or implement a second file/patch engine.
 - Application config lives under %APPDATA%/workgate; local state and data live
   under %LOCALAPPDATA%/workgate. Host-independent Windows syntax is parsed
   with PureWindowsPath.
+- Supervised Control/Executor `--config` paths must use their canonical
+  absolute spelling. Windows 8.3 aliases and symlink/junction paths are
+  rejected with an actionable error before Parent registration, rather than
+  failing later during readiness or weakening config Apply rollback checks.
 - Private cross-process locks use Python's msvcrt.locking on Windows and
   fcntl.flock on POSIX. Other file operations use shared Python stdlib code.
 - A missing default workdir falls back to the current drive root.
