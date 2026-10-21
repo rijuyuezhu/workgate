@@ -46,17 +46,13 @@ def test_real_conpty_input_output_and_shutdown(tmp_path: Path) -> None:
 
 def test_real_conpty_natural_exit_delivers_eof(tmp_path: Path) -> None:
     shell = spawn_conpty(
-        [
-            "powershell.exe",
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "Write-Output WG_NATIVE_EOF",
-        ],
-        cwd=str(tmp_path),
+        ["powershell.exe", "-NoLogo", "-NoProfile"], cwd=str(tmp_path)
     )
-    reader = shell.subscribe()
     try:
+        reader = shell.subscribe()
+        # Subscribe before triggering natural exit so a fast process cannot
+        # finish before an observer attaches. Avoid accepting echoed input.
+        shell.write("Write-Output ('WG_' + 'NATIVE_EOF'); exit\r")
         output = bytearray()
         deadline = time.monotonic() + 12
         eof = False
