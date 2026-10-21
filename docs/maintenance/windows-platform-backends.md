@@ -145,12 +145,13 @@ WebSocket protocol or session manager is introduced.
   re-establish authenticated activity without changing the paired identity.
   For elevated test runners, only the current account is granted access to the
   test directory; the production service permission model is unchanged.
-- scripts/validation/windows-conpty-smoke.py: native terminal resize,
-  independent subscribers, detachment and natural EOF.
 - scripts/validation/windows-conpty-shell-smoke.py: WorkGate persistent
   shell CRUD, two concurrent WebUI bridges, session limit and restart.
-- scripts/validation/windows-conpty-descendant-smoke.py: child and descendant
-  cleanup when an interactive ConPTY closes.
+
+Native Windows pytest (`tests/contracts/test_windows_native_runner.py`) now
+verifies actual ConPTY natural EOF and child cleanup on shell close, alongside
+the mandatory multi-client WebSocket acceptance above. These replace the two
+earlier standalone ConPTY smoke scripts.
 
 Linux/macOS tests cover the shared implementation.
 
