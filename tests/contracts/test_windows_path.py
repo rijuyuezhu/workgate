@@ -1,6 +1,7 @@
 """Windows path syntax is host-independent; no Control-side normalization."""
 
 import ctypes
+import subprocess
 import sys
 from pathlib import Path, PureWindowsPath
 
@@ -210,3 +211,36 @@ def test_windows_short_config_alias_fails_before_parent_readiness(
     )
     with pytest.raises(ValueError, match="not canonical"):
         supervisor.notify_config_selected(alias, "digest")
+
+
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="requires Windows junctions"
+)
+def test_windows_junction_config_alias_fails_before_parent_readiness(
+    tmp_path: Path, monkeypatch
+):
+    config_dir = tmp_path / "real directory"
+    config_dir.mkdir()
+    config = config_dir / "config.yaml"
+    config.write_text("port: 8765\n")
+    junction = tmp_path / "linked directory"
+    created = subprocess.run(
+        ["cmd.exe", "/d", "/c", "mklink", "/J", str(junction), str(config_dir)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert created.returncode == 0, created.stderr
+    try:
+        redirected = junction / config.name
+        assert redirected.resolve() == config.resolve()
+        monkeypatch.setattr(supervisor, "is_child", lambda: True)
+        monkeypatch.setattr(
+            supervisor,
+            "_parent_message",
+            lambda _message: pytest.fail("junction path reached the Parent"),
+        )
+        with pytest.raises(ValueError, match="not canonical"):
+            supervisor.notify_config_selected(redirected, "digest")
+    finally:
+        junction.rmdir()
