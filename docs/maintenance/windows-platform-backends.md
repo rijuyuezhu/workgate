@@ -126,7 +126,7 @@ WebSocket protocol or session manager is introduced.
   disabled even in the isolated OAuth test. The bearer is issued directly by
   the test using temporary shared signing state; this covers authorization
   enforcement, **not** the interactive browser OAuth consent/code exchange.
-  Cross-physical-host interoperability remains a separate #392 requirement.
+  Real human-approved two-host OAuth pairing was verified separately in #392.
 - scripts/validation/windows-linux-pairing-smoke.py: **manual WSL / native
   Windows cross-OS** acceptance on DOM, with owner-approved Windows device-code
   pairing against a Linux Control, fresh authenticated online activity and
@@ -205,8 +205,10 @@ and the same checksum/release proxy as POSIX, with a
 extracts exactly these two entries with bounded decompression, verifies both
 versions, and installs into a separate versioned directory rather than replacing
 an in-use executable. Native Windows build, PE subsystem and disposable Task
-Scheduler startup checks are required by #391 CI; production release still
-requires full end-to-end acceptance under #392. Persistent fresh-machine
+Scheduler startup checks are required by #391 CI. A native Windows
+PowerShell Bootstrap E2E also passed pairing, Executor Online, managed frozen
+A-to-B auto-upgrade and safe uninstall on a physical Windows host (#390),
+using an isolated Control with test-only approval. Persistent fresh-machine
 bootstrap installs a per-user Task Scheduler service without administrator
 elevation, WSL, or Bash.
 
@@ -258,8 +260,12 @@ still uses `worker` and has no `executor` command, so it cannot serve as an
 older managed-Executor image for this update test. Moving from that legacy
 worker/TUI installation to the current Executor requires a fresh installation
 and owner-approved pairing, not a compatibility shim or in-place managed update.
-Real-release upgrade acceptance for newer compatible Executor layouts and
-complete two-host OAuth acceptance remain gated by #392.
+Upgrade between published compatible Windows Executor releases awaits an
+actual older release archive with the managed Executor layout. The real
+human-approved HP Linux to native Windows Control OAuth pairing, cross-host
+file/shell commands, preserved Session after Executor restart, and scoped HTTPS
+outage/recovery passed on two physical hosts (#392). A full Tailscale route
+partition was not tested, to avoid disrupting production connectivity.
 
 ## Windows x86-64 native CI and release (#391)
 
@@ -286,8 +292,8 @@ Task Scheduler; they do **not** overwrite the interactive `workgate.exe` while
 it is installed. The CLI can therefore report its original package version
 while the managed Executor is running a newer version. Executor service status
 uses the recorded Task Scheduler executable to avoid reporting a healthy
-versioned Executor as stale. Full cross-version pairing and upgrade E2E are
-tracked in #392.
+versioned Executor as stale. The real native Windows persistent Bootstrap
+and managed A-to-B automatic upgrade E2E passed independently (#390).
 
 The frozen Windows GUI screenshot worker re-enters the existing bundled
 `workgate.exe` through a private `--_windows-capture` subcommand. Source builds
