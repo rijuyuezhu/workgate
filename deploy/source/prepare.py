@@ -5,6 +5,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import tempfile
 from pathlib import Path
@@ -44,6 +45,17 @@ def _python(checkout: Path) -> Path:
         / ".venv"
         / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     )
+
+
+def _remove_temporary_checkout(path: Path) -> None:
+    # Only this invocation's scratch checkout; installed versions are untouched.
+    def retry_readonly(func, name: str, error: BaseException) -> None:
+        if not isinstance(error, PermissionError):
+            raise error
+        os.chmod(name, stat.S_IWRITE)
+        func(name)
+
+    shutil.rmtree(path, onexc=retry_readonly)
 
 
 def _write_launcher(root: Path, python: Path) -> Path:
@@ -201,7 +213,7 @@ def prepare(
         return target
     finally:
         if temporary.exists():
-            shutil.rmtree(temporary)
+            _remove_temporary_checkout(temporary)
 
 
 def main() -> None:
