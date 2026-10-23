@@ -79,7 +79,8 @@ def test_apply_patch_uses_no_console_flag(monkeypatch, tmp_path):
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="native Windows only")
-def test_pythonw_child_has_no_console_and_keeps_output(tmp_path):
+@pytest.mark.parametrize("exit_code", [0, 7])
+def test_pythonw_child_has_no_console_and_keeps_output(tmp_path, exit_code):
     """Exercise a native console-subsystem subprocess from pythonw.exe."""
     import json
 
@@ -90,7 +91,8 @@ def test_pythonw_child_has_no_console_and_keeps_output(tmp_path):
     script.write_text(
         "import ctypes, json, pathlib, subprocess, sys\n"
         "result = subprocess.run([sys.argv[2], '-c', "
-        "'import ctypes; print(ctypes.windll.kernel32.GetConsoleWindow())'], "
+        "'import ctypes, sys; print(ctypes.windll.kernel32.GetConsoleWindow()); "
+        "sys.exit(int(sys.argv[1]))', sys.argv[3]], "
         "stdin=subprocess.DEVNULL, capture_output=True, text=True, "
         "creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)\n"
         "pathlib.Path(sys.argv[1]).write_text(json.dumps({"
@@ -99,7 +101,13 @@ def test_pythonw_child_has_no_console_and_keeps_output(tmp_path):
         encoding="utf-8",
     )
     process = subprocess.run(
-        [str(pythonw), str(script), str(output), sys.executable],
+        [
+            str(pythonw),
+            str(script),
+            str(output),
+            sys.executable,
+            str(exit_code),
+        ],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
@@ -109,4 +117,4 @@ def test_pythonw_child_has_no_console_and_keeps_output(tmp_path):
     )
     assert process.returncode == 0, process.stderr
     result = json.loads(output.read_text(encoding="utf-8"))
-    assert result == {"rc": 0, "out": "0"}
+    assert result == {"rc": exit_code, "out": "0"}
