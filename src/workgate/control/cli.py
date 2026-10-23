@@ -42,11 +42,11 @@ def register_control_cli(subparsers: Any) -> argparse.ArgumentParser:
         "init-config",
         help="Create private OAuth-enabled HTTP Control config once",
     )
-    init.add_argument("--config", default=None, metavar="PATH")
-    init.add_argument("--host", default="127.0.0.1")
-    init.add_argument("--port", type=int, default=8765)
-    init.add_argument("--base-url", default=None)
-    init.add_argument("--state-dir", default=None, metavar="PATH")
+    init.add_argument("--config", default=argparse.SUPPRESS, metavar="PATH")
+    init.add_argument("--host", default=argparse.SUPPRESS)
+    init.add_argument("--port", type=int, default=argparse.SUPPRESS)
+    init.add_argument("--base-url", default=argparse.SUPPRESS)
+    init.add_argument("--state-dir", default=argparse.SUPPRESS, metavar="PATH")
     init.set_defaults(handler=initialize_control_from_args)
     install = actions.add_parser(
         "install-service",
