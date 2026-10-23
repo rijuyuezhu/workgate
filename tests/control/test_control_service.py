@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from workgate.control import service
+from workgate.utils.systemd import systemd_quote
 
 
 @pytest.fixture
@@ -62,7 +63,7 @@ def test_control_systemd_unit_is_pinned_private_and_idempotent(manager):
     first = unit.read_text()
     assert first.startswith("# Managed by workgate control install-service")
     assert "workgate.main" in first and '"control"' in first
-    assert str(Path(sys.executable).absolute()) in first
+    assert systemd_quote(str(Path(sys.executable).absolute())) in first
     assert "--config" in first
     assert "$$%%.yaml" in first
     assert "UMask=0077" in first
