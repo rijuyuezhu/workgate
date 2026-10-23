@@ -3,6 +3,7 @@
 import asyncio
 import gzip
 import json
+import os
 import random
 import string
 from pathlib import Path
@@ -376,3 +377,128 @@ def test_cold_segments_coalesce_out_of_order_nested_events(
     assert len(matches) == 1
     assert matches[0]["paired"] is True
     assert matches[0]["related_events"][0]["detail"] == "nested"
+
+
+def test_incremental_index_updates_without_reparsing_history(
+    tmp_path, monkeypatch
+):
+    """Repeated queries must reuse cold history and pair appended hot events."""
+    path = _configure(tmp_path, monkeypatch)
+    import workgate.audit.core as core
+
+    for index in range(40):
+        audit("index_filler", index=index, payload="x" * 400)
+    assert archive_paths(get_role_config())
+    query_audit()
+
+    original_read = core._read_audit_records
+    reads = 0
+
+    def counted_read(*args, **kwargs):
+        nonlocal reads
+        reads += 1
+        return original_read(*args, **kwargs)
+
+    monkeypatch.setattr(core, "_read_audit_records", counted_read)
+
+    call_id = "incremental-cache-test"
+    audit_tool_call_start(
+        call_id=call_id,
+        transport="mcp",
+        tool="bash",
+        input={"command": "echo safe"},
+    )
+    start = get_audit_entry(f"call:{call_id}")
+    assert start["status"] == "running"
+    audit_tool_call_end(
+        call_id=call_id,
+        transport="mcp",
+        tool="bash",
+        ok=True,
+        duration_ms=1,
+        output={"stdout": "safe"},
+    )
+    finished = get_audit_entry(f"call:{call_id}")
+    assert finished["status"] == "success"
+    assert finished["paired"] is True
+    assert finished["output"]["stdout"] == "safe"
+    assert reads == 0
+
+    # Returned nested objects do not mutate the retained shared index.
+    finished["output"]["stdout"] = "tampered"
+    assert get_audit_entry(f"call:{call_id}")["output"]["stdout"] == "safe"
+
+    # Direct external replacement, including same-length rewrite, invalidates.
+    # Explicitly avoid archive rotation in this small write.
+    original = path.read_bytes()
+    assert original
+    path.write_bytes(original.replace(b"index_filler", b"index_Filler"))
+    # The host filesystem can have coarse timestamp resolution. Simulate a
+    # rewrite committed at a distinguishable timestamp.
+    stat = path.stat()
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
+    # File rewrite modifies the canonical current hot records, even if bytes
+    # and timestamps of historical archives happen to be unchanged.
+    query_audit()
+    assert reads >= 1
+
+
+def test_incremental_index_handles_duplicate_ids_in_one_append(
+    tmp_path, monkeypatch
+):
+    path = _configure(tmp_path, monkeypatch)
+    query_audit()
+    record = {"id": "one-id", "ts": 777, "event": "once"}
+    encoded = (json.dumps(record) + "\n").encode()
+    # Simulate crash recovery replay after a previously served query.
+    with path.open("ab") as stream:
+        stream.write(encoded + encoded)
+    assert query_audit(event="once")["total_matched"] == 1
+    assert get_audit_entry("one-id")["event"] == "once"
+
+
+def test_index_rebuilds_after_external_archive_removal(tmp_path, monkeypatch):
+    _configure(tmp_path, monkeypatch)
+    settings = get_role_config()
+    archive_evicted(
+        [
+            (
+                json.dumps({"id": "cold-only", "ts": 1, "event": "cold"}) + "\n"
+            ).encode()
+        ],
+        settings,
+    )
+    assert get_audit_entry("cold-only")["event"] == "cold"
+    for archived in archive_paths(settings):
+        archived.unlink()
+    assert query_audit(event="cold")["count"] == 0
+    with pytest.raises(ValueError, match="Unknown audit entry"):
+        get_audit_entry("cold-only")
+
+
+def test_backdated_hot_append_rebuilds_sorted_cold_history(
+    tmp_path, monkeypatch
+):
+    path = _configure(tmp_path, monkeypatch)
+    settings = get_role_config()
+    archive_evicted(
+        [
+            (
+                json.dumps({"id": "old-cold", "ts": 10, "event": "ordered"})
+                + "\n"
+            ).encode()
+        ],
+        settings,
+    )
+    audit("hot-now")
+    assert query_audit(event="ordered")["count"] == 1
+    # Historical backfill cannot be appended to an already time-sorted view.
+    with path.open("ab") as stream:
+        stream.write(
+            (
+                json.dumps({"id": "backdated", "ts": 5, "event": "ordered"})
+                + "\n"
+            ).encode()
+        )
+    result = query_audit(event="ordered", sort="asc")["entries"]
+    assert [row["id"] for row in result] == ["backdated", "old-cold"]
