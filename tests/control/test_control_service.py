@@ -67,7 +67,8 @@ def test_control_systemd_unit_is_pinned_private_and_idempotent(manager):
     assert "--config" in first
     assert "$$%%.yaml" in first
     assert "UMask=0077" in first
-    assert unit.stat().st_mode & 0o777 == 0o600
+    if os.name == "posix":
+        assert unit.stat().st_mode & 0o777 == 0o600
     assert commands[-3:] == [
         ["systemctl", "--user", "daemon-reload"],
         ["systemctl", "--user", "enable", "workgate-control.service"],
