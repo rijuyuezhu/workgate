@@ -68,6 +68,11 @@ export function createExecutorsController({
     return state.executors.find((item) => item.executor_id === state.selectedId) || null;
   }
 
+  function canManageSource(result, owner) {
+    return Boolean(result?.can_manage && !result._stale && !state.inventoryStale
+      && (owner === "control" || Boolean(selectedExecutor()?.online && !selectedExecutor()?.revoked_at)));
+  }
+
   // Shared presentation for actionable state. Plain progress/empty states stay quiet.
   function notice(element, message, tone = "plain") {
     element.textContent = message;
@@ -141,7 +146,7 @@ export function createExecutorsController({
     // Preserve card DOM/focus through the 4-second inventory refresh.
     const entries = [
       {key: CONTROL_SELECTION, name: "Control", label: "Control plane",
-       status: state.controlAvailable ? "available" : "unavailable"},
+       status: state.inventoryStale ? "stale" : state.controlAvailable ? "available" : "unavailable"},
       ...state.executors.map(executor => ({
         key: executor.executor_id,
         name: executor.name || executor.executor_id,
@@ -212,7 +217,13 @@ export function createExecutorsController({
     if (tab === "config") void executorConfigView.open(isControlSelected() ? "" : state.selectedId);
     else executorConfigView.clear();
     if (tab === "overview") void refreshMetrics();
-    if (tab === "mcp" || tab === "skills") void loadManagement();
+    if (tab === "mcp" || tab === "skills") {
+      // An Executor state transition can invalidate just its own sources while
+      // Control's cached sources remain valid.
+      const missing = !state.management || (!isControlSelected() &&
+        (!state.management.executorMcp || !state.management.skills));
+      void loadManagement(missing);
+    }
   }
 
   function renderSubtabs() {
@@ -250,8 +261,16 @@ export function createExecutorsController({
     return svg;
   }
 
-  function addGroup(container, title, rows) {
+  function addGroup(container, title, rows, key, revision = 0) {
+    const signature = JSON.stringify([title, revision, rows.map((row) => [
+      row.title, row.detail, row.status, row.authState, row.authMode, row.notice,
+      row.icon, row.revision, row.warning, row.empty, Boolean(row.manage),
+    ])]);
+    const previous = Array.from(container.children).find((node) => node.dataset.sourceKey === key);
+    if (previous?.dataset.signature === signature) return;
     const group = document.createElement("section");
+    group.dataset.sourceKey = key;
+    group.dataset.signature = signature;
     group.className = "executor-manage-group";
     const heading = document.createElement("h4");
     heading.textContent = title;
@@ -324,7 +343,8 @@ export function createExecutorsController({
       item.append(tail);
       group.append(item);
     }
-    container.append(group);
+    if (previous) previous.replaceWith(group);
+    else container.append(group);
   }
 
   function renderDiagnosticCards(container, system) {
@@ -348,7 +368,7 @@ export function createExecutorsController({
     return `/integrations?${params.toString()}`;
   }
 
-  function loadManagement(force = false) {
+  async function loadManagement(force = false) {
     const executorId = state.selectedId;
     if (state.managementId === executorId && !force) return;
     const generation = ++state.managementGeneration;
@@ -366,45 +386,42 @@ export function createExecutorsController({
     }
     renderManagement();
     const online = Boolean(selectedExecutor()?.online && !selectedExecutor()?.revoked_at);
-    for (const [owner, kind, field] of sources) {
-      void (async () => {
-        let result;
-        if (owner === "executor" && !online) result = { error: "Offline" };
-        else {
-          try { result = await request(managementQuery(owner, kind)); }
-          catch (error) {
-            if (error.authenticationRequired) {
-              void reloadApp();
-              return;
-            }
-            result = { error: error instanceof Error ? error.message : String(error),
-                       denied: error.status === 403 };
+    await Promise.all(sources.map(async ([owner, kind, field]) => {
+      let result;
+      if (owner === "executor" && !online) result = { error: "Offline" };
+      else {
+        try { result = await request(managementQuery(owner, kind)); }
+        catch (error) {
+          if (error.authenticationRequired) {
+            void reloadApp();
+            return;
           }
+          result = { error: error instanceof Error ? error.message : String(error),
+                     denied: error.status === 403 };
         }
-        if (generation !== state.managementGeneration || executorId !== state.selectedId) return;
-        if (!state.management) state.management = {};
-        // Keep prior data only for transient failures, never for revoked access.
-        if (!result.error) state.management[field] = {...result, _updated: Date.now()};
-        else if (result.denied || !state.management[field] || state.management[field].error)
-          state.management[field] = result;
-        renderManagement();
-      })();
-    }
+      }
+      if (generation !== state.managementGeneration || executorId !== state.selectedId) return;
+      if (!state.management) state.management = {};
+      // Keep prior data only for transient failures, never for revoked access.
+      if (!result.error) state.management[field] = {...result, _updated: Date.now()};
+      else if (result.denied || !state.management[field] || state.management[field].error)
+        state.management[field] = result;
+      renderManagement();
+    }));
   }
 
   function renderManagement() {
     const mcp = elements.executorMcpBody;
     const skills = elements.executorSkillsBody;
-    mcp.replaceChildren();
-    skills.replaceChildren();
     const stateRows = (message) => [{ title: message, detail: "" }];
     const snap = state.controlAvailable ? state.management : null;
     const unavailable = state.controlAvailable ? null : {error: "Unavailable"};
     const renderGroup = (container, title, result, owner, kind, shadowed = new Set()) => {
+      const key = `${owner}-${kind}`;
       if (!result || result.error) {
         addGroup(container, title, result?.error
           ? [{title: result.error, notice: result.error === "Offline" ? "warning" : "error"}]
-          : stateRows("Loading…"));
+          : stateRows("Loading…"), key);
         return;
       }
       const label = result._stale
@@ -412,16 +429,17 @@ export function createExecutorsController({
       const items = kind === "mcp" ? result.servers : result.skills;
       const rows = (Array.isArray(items) ? items : []).map((item) => ({
         title: item.name,
+        revision: item.revision,
         detail: kind === "mcp" ? item.type : "SKILL.md",
         status: item.enabled ? (shadowed.has(item.name) ? "Overridden" : "Enabled") : "Disabled",
         authMode: kind === "mcp" ? item.auth?.mode : null,
         authState: kind === "mcp" && item.enabled && !shadowed.has(item.name)
           && item.auth?.mode !== "none" && typeof item.auth_authorized === "boolean"
           ? (item.auth_authorized ? "authorized" : "required") : null,
-        manage: result.can_manage && !result._stale && !state.inventoryStale
+        manage: canManageSource(result, owner)
           ? () => void openEditor({owner, kind, item}) : null,
       }));
-      addGroup(container, label, rows.length ? rows : stateRows("None"));
+      addGroup(container, label, rows.length ? rows : stateRows("None"), key, result._updated);
     };
     if (!isControlSelected()) renderGroup(mcp, "Executor", unavailable || snap?.executorMcp, "executor", "mcp");
     const shadowedMcp = new Set((snap?.executorMcp?._stale ? [] : snap?.executorMcp?.servers || [])
@@ -440,7 +458,7 @@ export function createExecutorsController({
       : !globalsAvailable ? "Unavailable" : "None";
     if (!isControlSelected()) addGroup(skills, "User Global", readOnly.length ? readOnly
       : globalStatus === "None" ? stateRows(globalStatus)
-      : [{title: globalStatus, notice: "warning"}]);
+      : [{title: globalStatus, notice: "warning"}], "user-global-skill");
     // Control is the lowest-priority source; a same-name Executor or global
     // Skill masks it. Project-specific overrides are resolved per Session.
     const shadowed = new Set([
@@ -448,11 +466,26 @@ export function createExecutorsController({
       ...(globalsAvailable ? (globalSkills?.selected || []).filter((skill) => skill.source === "global").map((skill) => skill.name) : []),
     ]);
     renderGroup(skills, "Control", unavailable || snap?.controlSkills, "control", "skill", shadowed);
+    // Preserve unrelated groups and their focused controls as each source resolves.
+    for (const [container, keys] of [
+      [mcp, isControlSelected() ? ["control-mcp"] : ["executor-mcp", "control-mcp"]],
+      [skills, isControlSelected() ? ["control-skill"] : ["executor-skill", "user-global-skill", "control-skill"]],
+    ]) {
+      const sections = new Map(Array.from(container.children).map((node) => [node.dataset.sourceKey, node]));
+      for (const [index, key] of keys.entries()) {
+        const node = sections.get(key);
+        if (node && container.children[index] !== node)
+          container.insertBefore(node, container.children[index] || null);
+      }
+      for (const node of Array.from(container.children)) {
+        if (!keys.includes(node.dataset.sourceKey)) node.remove();
+      }
+    }
 
-    const editable = (result) => Boolean(result?.can_manage && !result._stale && !state.inventoryStale);
-    const active = editable(snap?.skills) && Boolean(selectedExecutor()?.online);
-    elements.executorSkillsAdd.disabled = !(active || editable(snap?.controlSkills));
-    elements.executorMcpAdd.disabled = !(editable(snap?.control) || editable(snap?.executorMcp));
+    elements.executorSkillsAdd.disabled =
+      !(canManageSource(snap?.skills, "executor") || canManageSource(snap?.controlSkills, "control"));
+    elements.executorMcpAdd.disabled =
+      !(canManageSource(snap?.control, "control") || canManageSource(snap?.executorMcp, "executor"));
   }
 
   // Existing Location selector: Control, current Executor, and other online Executors.
@@ -1033,9 +1066,10 @@ export function createExecutorsController({
     document.getElementById("executor-overview-metrics").hidden = control || !executor?.online;
     if (control) {
       elements.executorDetailName.textContent = "Control";
-      elements.executorDetailStatus.textContent = state.controlAvailable ? "Available" : "Unavailable";
+      elements.executorDetailStatus.textContent = state.inventoryStale
+        ? "Stale" : state.controlAvailable ? "Available" : "Unavailable";
       document.getElementById("executor-control-connection").textContent =
-        state.controlAvailable ? "Connected" : "Unavailable";
+        state.inventoryStale ? "Stale" : state.controlAvailable ? "Connected" : "Unavailable";
       document.getElementById("executor-control-online").textContent =
         String(state.executors.filter((item) => item.online && !item.revoked_at).length);
       setControls();
@@ -1142,11 +1176,14 @@ export function createExecutorsController({
       if (showMetrics !== state.metricOnline) {
         resetMetrics();
         state.metricOnline = showMetrics;
+        // Executor connectivity invalidates its own data, not Control's.
         state.managementGeneration += 1;
-        state.managementId = "";
-        state.management = null;
+        if (state.management) {
+          state.management.executorMcp = showMetrics ? null : {error: "Offline"};
+          state.management.skills = showMetrics ? null : {error: "Offline"};
+        }
         renderManagement();
-        if (["mcp", "skills"].includes(activeSubtab())) void loadManagement();
+        if (["mcp", "skills"].includes(activeSubtab())) void loadManagement(true);
         if (showMetrics) {
           void loadSkillSources(true);
           void refreshMetrics();
@@ -1156,8 +1193,7 @@ export function createExecutorsController({
       if (metricsBody) metricsBody.hidden = !showMetrics;
     }
     onInventory(state.executors);
-    if (wasStale && ["mcp", "skills"].includes(activeSubtab())) void loadManagement(true);
-    if (recovered && ["mcp", "skills"].includes(activeSubtab())) void loadManagement(true);
+    if ((wasStale || recovered) && ["mcp", "skills"].includes(activeSubtab())) void loadManagement(true);
   }
 
   async function refresh({ force = false } = {}) {
@@ -1183,6 +1219,8 @@ export function createExecutorsController({
           if (value && !value.error) state.management[field] = {...value, _stale: true};
         }
         renderManagement();
+        renderList();
+        renderDetails();
         return null;
       }
       state.controlAvailable = false;
@@ -1325,12 +1363,12 @@ export function createExecutorsController({
     document.getElementById("executor-topology-open").addEventListener("click", () => topology.open());
     elements.executorIntegrationTest.addEventListener("click", () => void testEditorMcp());
     elements.executorMcpAdd.addEventListener("click", () => {
-      const owner = selectedExecutor()?.online && state.management?.executorMcp?.can_manage
+      const owner = canManageSource(state.management?.executorMcp, "executor")
         ? "executor" : "control";
       void openEditor({owner, kind: "mcp"});
     });
     elements.executorSkillsAdd.addEventListener("click", () => void openEditor({
-      owner: selectedExecutor()?.online && state.management?.skills?.can_manage ? "executor" : "control",
+      owner: canManageSource(state.management?.skills, "executor") ? "executor" : "control",
       kind: "skill",
     }));
     elements.executorIntegrationOwner.addEventListener("change", () => {

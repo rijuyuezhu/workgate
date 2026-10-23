@@ -66,7 +66,9 @@ def test_control_integrations_render_before_executor_source(
                 if (path.includes('/api/ui/integrations?')
                     && path.includes('owner=executor') && path.includes('kind=skill')) {
                   window.__slowExecutorSkillStarted = true;
-                  return new Promise(() => {});
+                  return new Promise((resolve, reject) => {
+                    window.__releaseExecutorSkill = () => original(url, options).then(resolve, reject);
+                  });
                 }
                 return original(url, options);
               };
@@ -93,6 +95,20 @@ def test_control_integrations_render_before_executor_source(
                 has=page.locator("h4", has_text="Executor")
             )
         ).to_contain_text("Loading")
+        page.evaluate("""() => {
+          window.__controlSkillGroup = [...document.querySelectorAll(
+            '#executor-skills-body .executor-manage-group'
+          )].find(group => group.querySelector('h4')?.textContent.startsWith('Control'));
+          window.__releaseExecutorSkill();
+        }""")
+        expect(
+            page.locator("#executor-skills-body .executor-manage-group").filter(
+                has=page.locator("h4", has_text="Executor")
+            )
+        ).not_to_contain_text("Loading", timeout=10000)
+        assert page.evaluate("""() =>
+          document.querySelector('#executor-skills-body').contains(window.__controlSkillGroup)
+        """), "An unrelated slow Executor response replaced the Control DOM"
     finally:
         page.close()
 
