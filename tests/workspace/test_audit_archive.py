@@ -502,3 +502,122 @@ def test_backdated_hot_append_rebuilds_sorted_cold_history(
         )
     result = query_audit(event="ordered", sort="asc")["entries"]
     assert [row["id"] for row in result] == ["backdated", "old-cold"]
+
+
+def test_incremental_index_matches_full_scan_through_rollovers(
+    tmp_path, monkeypatch
+):
+    """The full canonical scan is the oracle for incremental queries."""
+    _configure(tmp_path, monkeypatch, archive_bytes=300_000)
+    import workgate.audit.core as core
+
+    def compare() -> None:
+        full = core._coalesce_audit_records(core._read_audit_records())
+        expected = [core._public_audit_entry(row) for row in full]
+        expected.sort(key=lambda row: row["ts"], reverse=True)
+        observed = query_audit(limit=2_000)
+        assert observed["entries"] == expected
+        assert observed["total_matched"] == len(expected)
+        assert observed["failed_matched"] == sum(
+            row.get("ok") is False or row.get("status") == "failed"
+            for row in expected
+        )
+        for row in expected[-3:]:
+            assert get_audit_entry(row["id"]) == row
+
+    compare()
+    for index in range(72):
+        call_id = f"roundtrip-{index}"
+        audit_tool_call_start(
+            call_id=call_id,
+            transport="mcp",
+            tool="bash",
+            input={"command": f"echo {index}"},
+        )
+        if index % 4 == 0:
+            audit(
+                "nested_progress",
+                parent_call_id=call_id,
+                tool="bash",
+                message=f"progress-{index}",
+            )
+        if index % 3 != 0:
+            audit_tool_call_end(
+                call_id=call_id,
+                transport="mcp",
+                tool="bash",
+                ok=index % 5 != 0,
+                duration_ms=1,
+                output={"stdout": f"done-{index}"},
+            )
+        audit("filler", payload=f"x{index}" * 40)
+        if index % 9 == 0:
+            compare()
+    assert archive_paths(get_role_config())
+    compare()
+
+
+def test_full_payload_lookup_does_not_hold_audit_index_lock(
+    tmp_path, monkeypatch
+):
+    """Slow payload disk access must not block other readers of the index."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    import workgate.audit.core as core
+
+    _configure(tmp_path, monkeypatch)
+    audit("unblocked", marker="visible")
+    entry_id = query_audit(event="unblocked")["entries"][0]["id"]
+
+    entered = Event()
+    release = Event()
+
+    def slow_resolve(entry, _settings):
+        entered.set()
+        assert release.wait(timeout=5)
+        return entry
+
+    monkeypatch.setattr(core, "resolve_payload_references", slow_resolve)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        full = pool.submit(
+            get_audit_entry, entry_id, include_full_payloads=True
+        )
+        try:
+            assert entered.wait(timeout=2)
+            quick = pool.submit(query_audit, event="unblocked")
+            assert quick.result(timeout=2)["entries"][0]["id"] == entry_id
+        finally:
+            release.set()
+        assert full.result(timeout=2)["id"] == entry_id
+
+
+def test_cache_initialization_survives_concurrent_append(tmp_path, monkeypatch):
+    """Writes during pairing must not cause repeated costly initial scans."""
+    import workgate.audit.core as core
+
+    _configure(tmp_path, monkeypatch)
+    audit("before-build")
+    read = core._read_audit_records
+    construct = core._new_audit_index
+    scans = 0
+    writing = False
+
+    def counted_read(*args, **kwargs):
+        nonlocal scans
+        scans += 1
+        return read(*args, **kwargs)
+
+    def racing_build(records, sources):
+        nonlocal writing
+        if not writing:
+            writing = True
+            audit("during-build")
+        return construct(records, sources)
+
+    monkeypatch.setattr(core, "_read_audit_records", counted_read)
+    monkeypatch.setattr(core, "_new_audit_index", racing_build)
+
+    assert query_audit(event="before-build")["count"] == 1
+    assert query_audit(event="during-build")["count"] == 1
+    assert scans == 1

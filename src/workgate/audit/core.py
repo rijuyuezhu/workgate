@@ -914,8 +914,12 @@ def audit_query_snapshot(
     return snapshot
 
 
-def _read_audit_records(path: Path | None = None) -> list[dict[str, Any]]:
-    """Read the retained hot log, bounded by its configured storage budget."""
+def _read_audit_records(
+    path: Path | None = None,
+    *,
+    _sources_out: list[tuple[Any, ...]] | None = None,
+) -> list[dict[str, Any]]:
+    """Read retained records and optionally capture their source signature."""
     settings = get_role_config()
     path = path or StateLayout(settings.state_dir).audit_log_path
     max_bytes = int(settings.max_audit_log_bytes)
@@ -934,6 +938,11 @@ def _read_audit_records(path: Path | None = None) -> list[dict[str, Any]]:
                     handle.seek(size - max_bytes)
                     handle.readline()
                 raw = handle.read(max_bytes if max_bytes > 0 else -1)
+        if _sources_out is not None:
+            # Record the source version under the same lock as the snapshot.
+            # A writer arriving during later parsing is caught by the next
+            # incremental read, rather than preventing cache initialization.
+            _sources_out.append(_audit_sources(path, settings))
 
     records: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -1101,17 +1110,15 @@ def _cached_audit_index(path: Path | None = None) -> _AuditIndex:
     ):
         _AUDIT_INDEXES.move_to_end(key)
         return cached
-    # If another process writes between signatures, avoid caching a false
-    # snapshot. A subsequent query can retry once the file settles.
-    records = _read_audit_records(target)
-    index = _new_audit_index(records, sources)
-    if _audit_sources(target, settings) == sources:
-        _AUDIT_INDEXES[key] = index
-        _AUDIT_INDEXES.move_to_end(key)
-        if len(_AUDIT_INDEXES) > _AUDIT_INDEX_LIMIT:
-            _AUDIT_INDEXES.popitem(last=False)
-    else:
-        _AUDIT_INDEXES.pop(key, None)
+    # Build from a single locked snapshot. New writes during the expensive
+    # coalescing step will be ingested on the next query, not invalidate it.
+    captured: list[tuple[Any, ...]] = []
+    records = _read_audit_records(target, _sources_out=captured)
+    index = _new_audit_index(records, captured[0])
+    _AUDIT_INDEXES[key] = index
+    _AUDIT_INDEXES.move_to_end(key)
+    if len(_AUDIT_INDEXES) > _AUDIT_INDEX_LIMIT:
+        _AUDIT_INDEXES.popitem(last=False)
     return index
 
 
@@ -1278,7 +1285,6 @@ def query_audit(
     }
 
 
-@_audit_index_guard
 def get_audit_entry(
     entry_id: str,
     *,
@@ -1290,15 +1296,18 @@ def get_audit_entry(
     normalized = str(entry_id).strip()
     if not normalized:
         raise ValueError("audit entry id is required")
-    row = _cached_audit_index(_path).accumulator.by_id.get(normalized)
-    if row is not None and (
-        not exclude_call_id or str(row.get("call_id") or "") != exclude_call_id
-    ):
+    with _AUDIT_INDEX_LOCK:
+        row = _cached_audit_index(_path).accumulator.by_id.get(normalized)
+        if row is None or (
+            exclude_call_id and str(row.get("call_id") or "") == exclude_call_id
+        ):
+            raise ValueError(f"Unknown audit entry: {normalized}")
         entry = _public_audit_entry(row)
-        if include_full_payloads:
-            return resolve_payload_references(entry, get_role_config())
-        return entry
-    raise ValueError(f"Unknown audit entry: {normalized}")
+    # Resolving protected payloads may do slow I/O. Do not stall other Audit
+    # requests once the entry has been copied from the shared index.
+    if include_full_payloads:
+        return resolve_payload_references(entry, get_role_config())
+    return entry
 
 
 def query_session_audit(
