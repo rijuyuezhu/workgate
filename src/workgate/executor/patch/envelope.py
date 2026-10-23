@@ -5,6 +5,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from ...platform.process import noninteractive_creationflags
+
 _BEGIN_PATCH = "*** Begin Patch"
 _END_PATCH = "*** End Patch"
 _ACTION_PREFIXES = {
@@ -39,6 +41,7 @@ def git_apply_prefix(git_bin: str, cwd: str) -> str | None:
             capture_output=True,
             text=True,
             timeout=5,
+            creationflags=noninteractive_creationflags(),
             check=False,
         )
     except OSError, subprocess.SubprocessError:

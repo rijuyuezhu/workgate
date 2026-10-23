@@ -41,6 +41,9 @@ def test_overlay_detects_tailscale_and_hello_advertises_it(
         return SimpleNamespace(returncode=0, stdout=_status())
 
     monkeypatch.setattr(overlay_module.subprocess, "run", run)
+    monkeypatch.setattr(
+        overlay_module, "noninteractive_creationflags", lambda: 0x08000000
+    )
     overlay = detect_tailscale_overlay()
     assert overlay is not None
     assert overlay.provider == "tailscale"
@@ -48,6 +51,7 @@ def test_overlay_detects_tailscale_and_hello_advertises_it(
     assert overlay.tailnet_id == "tailnet-id"
     assert seen[0][0] == ["tailscale", "status", "--json", "--peers=false"]
     assert seen[0][1]["timeout"] == 2
+    assert seen[0][1]["creationflags"] == 0x08000000
     monkeypatch.setattr(
         hello_module, "browser_capability_available", lambda: False
     )

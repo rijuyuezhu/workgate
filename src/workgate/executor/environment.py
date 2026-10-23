@@ -17,6 +17,7 @@ from pathlib import Path
 from .. import __version__
 from ..config.executor import ExecutorConfig
 from ..platform.posix.tmux import resolve_tmux
+from ..platform.process import noninteractive_creationflags
 from ..platform.terminal import supports_raw_terminal_host
 from ..schemas.result_models.session import (
     SessionCapabilitiesEnvironment,
@@ -104,6 +105,7 @@ def _probe_command(spec: _CommandProbe) -> SessionToolProbe:
             errors="replace",
             check=False,
             timeout=_PROBE_TIMEOUT_S,
+            creationflags=noninteractive_creationflags(),
         )
     except subprocess.TimeoutExpired:
         return SessionToolProbe(

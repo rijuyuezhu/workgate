@@ -23,6 +23,7 @@ from ..app_paths import ensure_private_directory
 from ..config.executor import EXECUTOR_SETTING_NAMES, ExecutorConfig
 from ..persistence import FileStateStore
 from ..platform.host import HostOS, host_os
+from ..platform.process import noninteractive_creationflags
 from ..platform.windows_task import WindowsUserTask, is_windowless_pe
 from ..protocol.executor import ExecutorRuntimeOwnership
 from ..utils.private_files import (
@@ -215,6 +216,7 @@ class ExecutorServiceManager:
             capture_output=True,
             text=True,
             timeout=timeout,
+            creationflags=noninteractive_creationflags(system=self.system),
         )
         if check and result.returncode:
             detail = (result.stderr or result.stdout).strip()

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from pathspec import PathSpec
 
+from ..platform.process import noninteractive_creationflags
 from ..schemas.result_models.secret_scan import SecretFinding, SecretScanOutput
 from .files import (
     FilesConfig,
@@ -105,6 +106,7 @@ def _candidate_paths_from_rg(
             text=True,
             capture_output=True,
             timeout=30,
+            creationflags=noninteractive_creationflags(),
             check=False,
         )
     except OSError, subprocess.SubprocessError:

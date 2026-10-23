@@ -279,11 +279,19 @@ async def test_local_search_runner_parses_fake_rg_process_without_binary(
         def kill(self) -> None:
             raise AssertionError("normal fake search should not kill")
 
-    async def fake_spawn(*_args, **_kwargs):
+    launched = []
+
+    async def fake_spawn(*_args, **kwargs):
+        launched.append(kwargs)
         return FakeProc()
 
     monkeypatch.setattr(
         search_service_module.asyncio, "create_subprocess_exec", fake_spawn
+    )
+    monkeypatch.setattr(
+        search_service_module,
+        "noninteractive_creationflags",
+        lambda: 0x08000000,
     )
     result = await runner.search(
         SearchRequest(
@@ -297,6 +305,10 @@ async def test_local_search_runner_parses_fake_rg_process_without_binary(
         binding=binding,
     )
 
+    assert launched[0]["creationflags"] == 0x08000000
+    assert (
+        launched[0]["stdin"] is search_service_module.asyncio.subprocess.DEVNULL
+    )
     assert result.ok is True
     assert result.count == 1
     assert result.matches[0].line == 2

@@ -10,6 +10,11 @@ from typing import Any
 from .host import HostOS, host_os
 
 
+def noninteractive_creationflags(*, system: str | None = None) -> int:
+    """Suppress visible Windows consoles for captured, non-interactive tools."""
+    return 0x08000000 if host_os(system) is HostOS.WINDOWS else 0
+
+
 def new_process_group_kwargs(*, system: str | None = None) -> dict[str, Any]:
     """Start a POSIX child process in an independently owned session."""
     current = host_os(system)
