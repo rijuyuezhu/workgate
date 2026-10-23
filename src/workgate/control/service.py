@@ -234,6 +234,8 @@ def manage_control_service(action: str) -> None:
             _systemctl("daemon-reload")
         print("Uninstalled Workgate Control service")
         return
-    _owned_unit()  # Reject an unrelated unit before acting on it.
+    unit = _owned_unit()
+    if not unit.is_file():
+        raise RuntimeError("Control service is not installed")
     _systemctl(action, _SERVICE)
     print(f"Control service: {action}")

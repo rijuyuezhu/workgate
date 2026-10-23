@@ -121,6 +121,16 @@ def test_control_service_rejects_stdio_and_mcp_modes(manager):
     assert commands == []
 
 
+def test_control_service_does_not_manage_uninstalled_unit(manager):
+    _args, _unit, commands = manager
+    for action in ("start", "stop", "restart"):
+        with pytest.raises(RuntimeError, match="not installed"):
+            service.manage_control_service(action)
+    assert all(
+        command[-1] != "workgate-control.service" for command in commands
+    )
+
+
 def test_control_service_uninstall_preserves_config(manager):
     args, unit, commands = manager
     service.install_control_service(args)
