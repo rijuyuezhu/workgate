@@ -169,7 +169,7 @@ def test_windows_control_service_windowless_launcher(tmp_path, monkeypatch):
     launcher = tmp_path / "state" / "control" / "service" / "launcher.py"
     assert launcher.is_file()
     assert "workgate.main import main" in launcher.read_text()
-    assert str(config) in launcher.read_text()
+    assert repr(str(config)) in launcher.read_text()
     service.manage_control_service("uninstall")
     assert not launcher.exists()
     assert config.exists()
