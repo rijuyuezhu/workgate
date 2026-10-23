@@ -92,6 +92,7 @@ def _write_launcher(root: Path, python: Path) -> Path:
     with tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
+        newline="",  # Avoid double CRLF translation of Windows .cmd launchers.
         dir=directory,
         prefix=".workgate-",
         delete=False,

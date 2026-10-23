@@ -221,6 +221,8 @@ def test_launcher_replaces_only_managed_file(tmp_path, preparer):
     module, _calls, _fail = preparer
     launcher = module._write_launcher(tmp_path, Path(sys.executable))
     assert "Managed by Workgate source preparation" in launcher.read_text()
+    if os.name == "nt":
+        assert b"\r\r\n" not in launcher.read_bytes()
     updated = module._write_launcher(tmp_path, Path(sys.executable))
     assert updated == launcher
     assert "Managed by Workgate source preparation" in launcher.read_text()
