@@ -8,9 +8,11 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import tomllib
 from pathlib import Path
 
 REPOSITORY = "https://github.com/rijuyuezhu/workgate.git"
+_LAUNCHER_MARKER = "Managed by Workgate source preparation"
 
 
 def _run(*args: str, cwd: Path | None = None, timeout: int = 600) -> str:
@@ -66,10 +68,27 @@ def _write_launcher(root: Path, python: Path) -> Path:
         # Keep batch file ASCII-only, including when the user's home path
         # contains non-ASCII characters; CMD expands %~dp0 itself.
         relative = os.path.relpath(python, directory)
-        content = f'@echo off\r\n"%~dp0{relative}" -m workgate.main %*\r\n'
+        content = (
+            f"@echo off\r\nrem {_LAUNCHER_MARKER}\r\n"
+            f'"%~dp0{relative}" -m workgate.main %*\r\n'
+        )
     else:
         launcher = directory / "workgate"
-        content = f'#!/bin/sh\nexec {shlex.quote(str(python))} -m workgate.main "$@"\n'
+        content = (
+            f"#!/bin/sh\n# {_LAUNCHER_MARKER}\n"
+            f'exec {shlex.quote(str(python))} -m workgate.main "$@"\n'
+        )
+    marker = ("rem " if os.name == "nt" else "# ") + _LAUNCHER_MARKER
+    if launcher.is_symlink() or (
+        launcher.exists()
+        and launcher.read_text(encoding="utf-8", errors="replace").splitlines()[
+            :2
+        ]
+        != content.splitlines()[:1] + [marker]
+    ):
+        raise RuntimeError(
+            f"refusing to replace an unmanaged launcher: {launcher}"
+        )
     with tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
@@ -143,6 +162,15 @@ def prepare(
             raise RuntimeError(
                 "release checkout lacks a uv lockfile or project metadata"
             )
+        with (temporary / "pyproject.toml").open("rb") as metadata:
+            project = tomllib.load(metadata).get("project", {})
+        if (
+            project.get("name") != "workgate"
+            or project.get("version") != tag[1:]
+        ):
+            raise RuntimeError(
+                "release tag does not match Workgate project metadata"
+            )
         target = versions / sha
         if target.is_symlink():
             raise RuntimeError(
@@ -165,7 +193,7 @@ def prepare(
                 "git",
                 "status",
                 "--porcelain",
-                "--untracked-files=no",
+                "--untracked-files=normal",
                 cwd=target,
                 timeout=15,
             ):
@@ -198,6 +226,8 @@ def prepare(
         version = _run(
             str(python), "-m", "workgate.main", "--version", cwd=target
         )
+        if version != f"workgate {tag[1:]}":
+            raise RuntimeError(f"installed CLI version does not match {tag}")
         launcher = _write_launcher(root, python)
         print(f"Prepared Workgate {version} ({tag}, {sha}) for {role}")
         print(f"Versioned checkout: {target}")

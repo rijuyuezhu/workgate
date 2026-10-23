@@ -34,7 +34,7 @@ def preparer(monkeypatch):
                 raise subprocess.CalledProcessError(1, args)
             return ""
         if args[1:3] == ("-m", "workgate.main"):
-            return "v5.0.0a5"
+            return "workgate 5.0.0a5"
         return original(*args, cwd=cwd, timeout=timeout)
 
     monkeypatch.setattr(module, "_run", invoke)
@@ -145,6 +145,37 @@ def test_modified_checkout_is_not_overwritten(tmp_path, repo, preparer):
         )
 
 
+def test_refuses_untracked_source_files(tmp_path, repo, preparer):
+    origin, _git = repo
+    module, _calls, _fail = preparer
+    root = tmp_path / "install"
+    checkout = module.prepare(
+        tag="v5.0.0a5", role="executor", root=root, repository=str(origin)
+    )
+    (checkout / "extra.py").write_text(
+        "raise RuntimeError('not from release')\n"
+    )
+    with pytest.raises(RuntimeError, match="modified release checkout"):
+        module.prepare(
+            tag="v5.0.0a5", role="executor", root=root, repository=str(origin)
+        )
+
+
+def test_tag_must_match_project_version(tmp_path, repo, preparer):
+    origin, git = repo
+    module, _calls, _fail = preparer
+    git("tag", "-d", "v5.0.0a5")
+    git("tag", "v5.0.0a6")
+    with pytest.raises(RuntimeError, match="does not match"):
+        module.prepare(
+            tag="v5.0.0a6",
+            role="control",
+            root=tmp_path,
+            repository=str(origin),
+        )
+    assert not (tmp_path / "bin").exists()
+
+
 @pytest.mark.parametrize("tag", ["main", "v5.0", "v5.0.0;echo x", "feature/a"])
 def test_rejects_branches(tmp_path, preparer, tag):
     module, calls, _fail = preparer
@@ -166,3 +197,68 @@ def test_stable_launcher_can_run_real_workgate(tmp_path, preparer):
     )
     assert result.returncode == 0, result.stderr
     assert "workgate" in result.stdout.lower()
+
+
+def test_does_not_replace_unmanaged_launcher(tmp_path, repo, preparer):
+    origin, _git = repo
+    module, _calls, _fail = preparer
+    launcher = (
+        tmp_path / "bin" / ("workgate.cmd" if os.name == "nt" else "workgate")
+    )
+    launcher.parent.mkdir()
+    launcher.write_text("my unrelated command", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="unmanaged launcher"):
+        module.prepare(
+            tag="v5.0.0a5",
+            role="executor",
+            root=tmp_path,
+            repository=str(origin),
+        )
+    assert launcher.read_text(encoding="utf-8") == "my unrelated command"
+
+
+def test_launcher_replaces_only_managed_file(tmp_path, preparer):
+    module, _calls, _fail = preparer
+    launcher = module._write_launcher(tmp_path, Path(sys.executable))
+    assert "Managed by Workgate source preparation" in launcher.read_text()
+    updated = module._write_launcher(tmp_path, Path(sys.executable))
+    assert updated == launcher
+    assert "Managed by Workgate source preparation" in launcher.read_text()
+
+
+def test_marker_in_unrelated_file_does_not_grant_ownership(tmp_path, preparer):
+    module, _calls, _fail = preparer
+    launcher = (
+        tmp_path / "bin" / ("workgate.cmd" if os.name == "nt" else "workgate")
+    )
+    launcher.parent.mkdir()
+    content = (
+        "not a Workgate launcher\nManaged by Workgate source preparation\n"
+    )
+    launcher.write_text(content)
+    with pytest.raises(RuntimeError, match="unmanaged launcher"):
+        module._write_launcher(tmp_path, Path(sys.executable))
+    assert launcher.read_text() == content
+
+
+def test_mismatched_cli_version_cannot_replace_launcher(
+    tmp_path, repo, preparer
+):
+    origin, _git = repo
+    module, calls, _fail = preparer
+    original = module._run
+
+    def wrong_version(*args, cwd=None, timeout=600):
+        if args[1:3] == ("-m", "workgate.main"):
+            return "workgate 5.0.0a4"
+        return original(*args, cwd=cwd, timeout=timeout)
+
+    module._run = wrong_version
+    with pytest.raises(RuntimeError, match="CLI version does not match"):
+        module.prepare(
+            tag="v5.0.0a5",
+            role="control",
+            root=tmp_path,
+            repository=str(origin),
+        )
+    assert not (tmp_path / "bin").exists()
