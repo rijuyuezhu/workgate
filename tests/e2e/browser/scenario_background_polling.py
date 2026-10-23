@@ -170,8 +170,19 @@ def run_background_polling(harness: BrowserHarness) -> None:
     page.locator("#file-editor").fill("unsaved draft through background polls")
     file_executor = page.locator("#file-executor").input_value()
     terminal_executor = page.locator("#terminal-executor").input_value()
-    advance_poll("global")
-    advance_poll("global")
+    # Hidden Audit no longer polls. Let two app timer cycles run and verify
+    # neither hidden Audit requests nor inventory updates lose this draft.
+    audit_requests = []
+    page.on(
+        "request",
+        lambda request: (
+            audit_requests.append(request.url)
+            if "/api/ui/audit?" in request.url
+            else None
+        ),
+    )
+    page.wait_for_timeout(1900)
+    assert audit_requests == []
     expect(page.locator("#file-editor")).to_have_value(
         "unsaved draft through background polls"
     )

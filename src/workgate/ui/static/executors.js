@@ -19,6 +19,8 @@ export function createExecutorsController({
     executors: [],
     selectedId: CONTROL_SELECTION,
     controlAvailable: false,
+    inventoryUpdatedAt: 0,
+    inventoryStale: false,
     loading: false,
     generation: 0,
     timer: null,
@@ -126,7 +128,7 @@ export function createExecutorsController({
   function setControls() {
     elements.executorPairOpen.disabled = state.loading;
     const selected = selectedExecutor();
-    const mutable = selected && !selected.revoked_at;
+    const mutable = selected && !selected.revoked_at && !state.inventoryStale;
     elements.executorReset.disabled = state.loading || !mutable;
     elements.executorDrain.disabled = state.loading || !mutable;
     elements.executorRenameOpen.disabled = state.loading || !mutable;
@@ -346,30 +348,48 @@ export function createExecutorsController({
     return `/integrations?${params.toString()}`;
   }
 
-  async function loadManagement(force = false) {
+  function loadManagement(force = false) {
     const executorId = state.selectedId;
     if (state.managementId === executorId && !force) return;
     const generation = ++state.managementGeneration;
+    const sameSelection = state.managementId === executorId;
     state.managementId = executorId;
-    state.management = null;
-    renderManagement();
     const sources = isControlSelected()
-      ? [["control", "mcp"], ["control", "skill"]]
-      : [["control", "mcp"], ["executor", "mcp"], ["executor", "skill"], ["control", "skill"]];
-    const online = Boolean(selectedExecutor()?.online && !selectedExecutor()?.revoked_at);
-    const results = await Promise.all(sources.map(async ([owner, kind]) => {
-      if (owner === "executor" && !online) return { error: "Offline" };
-      try { return await request(managementQuery(owner, kind)); }
-      catch (error) {
-        if (error.authenticationRequired) { void reloadApp(); return { error: "Authentication required" }; }
-        return { error: error instanceof Error ? error.message : String(error) };
-      }
-    }));
-    if (generation !== state.managementGeneration || executorId !== state.selectedId) return;
-    state.management = isControlSelected()
-      ? {control: results[0], controlSkills: results[1]}
-      : {control: results[0], executorMcp: results[1], skills: results[2], controlSkills: results[3]};
+      ? [["control", "mcp", "control"], ["control", "skill", "controlSkills"]]
+      : [["control", "mcp", "control"], ["executor", "mcp", "executorMcp"],
+         ["executor", "skill", "skills"], ["control", "skill", "controlSkills"]];
+    // Stale values are read-only and scoped to this selected Executor.
+    if (!sameSelection) state.management = null;
+    else if (state.management) for (const [, , field] of sources) {
+      if (state.management[field] && !state.management[field].error)
+        state.management[field] = {...state.management[field], _stale: true};
+    }
     renderManagement();
+    const online = Boolean(selectedExecutor()?.online && !selectedExecutor()?.revoked_at);
+    for (const [owner, kind, field] of sources) {
+      void (async () => {
+        let result;
+        if (owner === "executor" && !online) result = { error: "Offline" };
+        else {
+          try { result = await request(managementQuery(owner, kind)); }
+          catch (error) {
+            if (error.authenticationRequired) {
+              void reloadApp();
+              return;
+            }
+            result = { error: error instanceof Error ? error.message : String(error),
+                       denied: error.status === 403 };
+          }
+        }
+        if (generation !== state.managementGeneration || executorId !== state.selectedId) return;
+        if (!state.management) state.management = {};
+        // Keep prior data only for transient failures, never for revoked access.
+        if (!result.error) state.management[field] = {...result, _updated: Date.now()};
+        else if (result.denied || !state.management[field] || state.management[field].error)
+          state.management[field] = result;
+        renderManagement();
+      })();
+    }
   }
 
   function renderManagement() {
@@ -387,6 +407,8 @@ export function createExecutorsController({
           : stateRows("Loading…"));
         return;
       }
+      const label = result._stale
+        ? `${title} (stale ${new Date(result._updated).toLocaleTimeString()})` : title;
       const items = kind === "mcp" ? result.servers : result.skills;
       const rows = (Array.isArray(items) ? items : []).map((item) => ({
         title: item.name,
@@ -396,12 +418,13 @@ export function createExecutorsController({
         authState: kind === "mcp" && item.enabled && !shadowed.has(item.name)
           && item.auth?.mode !== "none" && typeof item.auth_authorized === "boolean"
           ? (item.auth_authorized ? "authorized" : "required") : null,
-        manage: result.can_manage ? () => void openEditor({owner, kind, item}) : null,
+        manage: result.can_manage && !result._stale && !state.inventoryStale
+          ? () => void openEditor({owner, kind, item}) : null,
       }));
-      addGroup(container, title, rows.length ? rows : stateRows("None"));
+      addGroup(container, label, rows.length ? rows : stateRows("None"));
     };
     if (!isControlSelected()) renderGroup(mcp, "Executor", unavailable || snap?.executorMcp, "executor", "mcp");
-    const shadowedMcp = new Set((snap?.executorMcp?.servers || [])
+    const shadowedMcp = new Set((snap?.executorMcp?._stale ? [] : snap?.executorMcp?.servers || [])
       .filter((server) => server.enabled).map((server) => server.name));
     renderGroup(mcp, "Control", unavailable || snap?.control, "control", "mcp", shadowedMcp);
     if (!isControlSelected()) renderGroup(skills, "Executor", unavailable || snap?.skills, "executor", "skill");
@@ -421,14 +444,15 @@ export function createExecutorsController({
     // Control is the lowest-priority source; a same-name Executor or global
     // Skill masks it. Project-specific overrides are resolved per Session.
     const shadowed = new Set([
-      ...((snap?.skills?.skills || []).filter((skill) => skill.enabled).map((skill) => skill.name)),
+      ...((snap?.skills?._stale ? [] : snap?.skills?.skills || []).filter((skill) => skill.enabled).map((skill) => skill.name)),
       ...(globalsAvailable ? (globalSkills?.selected || []).filter((skill) => skill.source === "global").map((skill) => skill.name) : []),
     ]);
     renderGroup(skills, "Control", unavailable || snap?.controlSkills, "control", "skill", shadowed);
 
-    const active = Boolean(snap?.skills?.can_manage && selectedExecutor()?.online);
-    elements.executorSkillsAdd.disabled = !(active || snap?.controlSkills?.can_manage);
-    elements.executorMcpAdd.disabled = !Boolean((snap?.control?.can_manage || snap?.executorMcp?.can_manage));
+    const editable = (result) => Boolean(result?.can_manage && !result._stale && !state.inventoryStale);
+    const active = editable(snap?.skills) && Boolean(selectedExecutor()?.online);
+    elements.executorSkillsAdd.disabled = !(active || editable(snap?.controlSkills));
+    elements.executorMcpAdd.disabled = !(editable(snap?.control) || editable(snap?.executorMcp));
   }
 
   // Existing Location selector: Control, current Executor, and other online Executors.
@@ -1067,6 +1091,9 @@ export function createExecutorsController({
 
   function render(payload) {
     const previousId = state.selectedId;
+    const wasStale = state.inventoryStale;
+    state.inventoryStale = false;
+    state.inventoryUpdatedAt = Date.now();
     state.executors = Array.isArray(payload?.executors) ? payload.executors : [];
     const recovered = !state.controlAvailable;
     state.controlAvailable = true;
@@ -1129,6 +1156,7 @@ export function createExecutorsController({
       if (metricsBody) metricsBody.hidden = !showMetrics;
     }
     onInventory(state.executors);
+    if (wasStale && ["mcp", "skills"].includes(activeSubtab())) void loadManagement(true);
     if (recovered && ["mcp", "skills"].includes(activeSubtab())) void loadManagement(true);
   }
 
@@ -1146,6 +1174,17 @@ export function createExecutorsController({
     } catch (error) {
       if (error.authenticationRequired) throw error;
       if (generation !== state.generation) return null;
+      if (state.controlAvailable) {
+        state.inventoryStale = true;
+        notice(elements.executorState,
+          `Stale (updated ${new Date(state.inventoryUpdatedAt).toLocaleTimeString()})`, "warning");
+        if (state.management) for (const field of Object.keys(state.management)) {
+          const value = state.management[field];
+          if (value && !value.error) state.management[field] = {...value, _stale: true};
+        }
+        renderManagement();
+        return null;
+      }
       state.controlAvailable = false;
       state.managementGeneration += 1;
       state.managementId = "";
@@ -1246,6 +1285,8 @@ export function createExecutorsController({
     state.executors = [];
     state.selectedId = CONTROL_SELECTION;
     state.controlAvailable = false;
+    state.inventoryStale = false;
+    state.inventoryUpdatedAt = 0;
     clearConfiguration();
     state.skillSourceGeneration += 1;
     state.skillSourceId = "";
