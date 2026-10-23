@@ -222,7 +222,7 @@ export function createExecutorsController({
       // Control's cached sources remain valid.
       const missing = !state.management || (!isControlSelected() &&
         (!state.management.executorMcp || !state.management.skills));
-      void loadManagement(missing);
+      void loadManagement(missing, missing);
     }
   }
 
@@ -368,16 +368,22 @@ export function createExecutorsController({
     return `/integrations?${params.toString()}`;
   }
 
-  async function loadManagement(force = false) {
+  async function loadManagement(force = false, executorOnly = false) {
     const executorId = state.selectedId;
     if (state.managementId === executorId && !force) return;
     const generation = ++state.managementGeneration;
     const sameSelection = state.managementId === executorId;
     state.managementId = executorId;
-    const sources = isControlSelected()
+    const allSources = isControlSelected()
       ? [["control", "mcp", "control"], ["control", "skill", "controlSkills"]]
       : [["control", "mcp", "control"], ["executor", "mcp", "executorMcp"],
          ["executor", "skill", "skills"], ["control", "skill", "controlSkills"]];
+    // Connectivity changes affect only this Executor; do not refetch any
+    // already-fresh Control source just because another source is still loading.
+    const sources = executorOnly && sameSelection && state.management
+      ? allSources.filter(([owner, , field]) => owner === "executor"
+          || !state.management[field] || state.management[field].error || state.management[field]._stale)
+      : allSources;
     // Stale values are read-only and scoped to this selected Executor.
     if (!sameSelection) state.management = null;
     else if (state.management) for (const [, , field] of sources) {
@@ -1183,7 +1189,7 @@ export function createExecutorsController({
           state.management.skills = showMetrics ? null : {error: "Offline"};
         }
         renderManagement();
-        if (["mcp", "skills"].includes(activeSubtab())) void loadManagement(true);
+        if (["mcp", "skills"].includes(activeSubtab())) void loadManagement(true, true);
         if (showMetrics) {
           void loadSkillSources(true);
           void refreshMetrics();

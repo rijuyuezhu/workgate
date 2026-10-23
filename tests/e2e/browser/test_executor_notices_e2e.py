@@ -207,6 +207,15 @@ def test_executor_offline_and_reconnect_notice_matrix(
     expect(
         page.locator("#executor-mcp-body .executor-manage-group").first
     ).to_be_visible()
+    control_group = page.locator(
+        "#executor-mcp-body .executor-manage-group"
+    ).filter(has=page.locator("h4", has_text="Control"))
+    expect(control_group).not_to_contain_text("Loading")
+    page.evaluate("""() => {
+      window.__controlMcpBeforeDisconnect = [...document.querySelectorAll(
+        '#executor-mcp-body .executor-manage-group'
+      )].find(group => group.querySelector('h4')?.textContent.startsWith('Control'));
+    }""")
     h.stop_executor()
     expect(page.locator("#executor-detail-status")).to_have_text(
         "offline", timeout=85000
@@ -223,6 +232,11 @@ def test_executor_offline_and_reconnect_notice_matrix(
     expect(
         page.locator("#executor-mcp-add")
     ).to_be_enabled()  # Control can still manage MCP.
+    assert page.evaluate("""() => document.querySelector(
+      '#executor-mcp-body'
+    ).contains(window.__controlMcpBeforeDisconnect)"""), (
+        "Disconnecting Executor replaced unrelated Control MCP data"
+    )
     page.locator('[data-executor-subtab="skills"]').click()
     expect(
         page.locator("#executor-skills-body .executor-manage-group").first
