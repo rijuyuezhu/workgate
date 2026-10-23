@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from workgate.config.control import CONTROL_SETTING_NAMES
 from workgate.control import service
 from workgate.utils.systemd import systemd_quote
 
@@ -67,6 +68,12 @@ def test_control_systemd_unit_is_pinned_private_and_idempotent(manager):
     assert "--config" in first
     assert "$$%%.yaml" in first
     assert "UMask=0077" in first
+    assert "UnsetEnvironment=" in first
+    assert "WORKGATE_PORT" in first and "WORKGATE_OAUTH_ADMIN_PIN" in first
+    assert "WORKGATE_CONFIG" in first
+    assert all(
+        f"WORKGATE_{field.upper()}" in first for field in CONTROL_SETTING_NAMES
+    )
     if os.name == "posix":
         assert unit.stat().st_mode & 0o777 == 0o600
     assert commands[-3:] == [
@@ -87,6 +94,8 @@ def test_control_service_refuses_unmanaged_unit(manager):
     assert unit.read_text() == "[Service]\nExecStart=/bin/true\n"
     with pytest.raises(RuntimeError, match="unmanaged"):
         service.manage_control_service("uninstall")
+    with pytest.raises(RuntimeError, match="unmanaged"):
+        service.manage_control_service("status")
 
 
 def test_control_service_requires_durable_config(manager, monkeypatch):
@@ -121,8 +130,10 @@ def test_control_service_rejects_stdio_and_mcp_modes(manager):
     assert commands == []
 
 
-def test_control_service_does_not_manage_uninstalled_unit(manager):
+def test_control_service_does_not_manage_uninstalled_unit(manager, capsys):
     _args, _unit, commands = manager
+    service.manage_control_service("status")
+    assert "not-installed" in capsys.readouterr().out
     for action in ("start", "stop", "restart"):
         with pytest.raises(RuntimeError, match="not installed"):
             service.manage_control_service(action)
@@ -173,25 +184,68 @@ def test_windows_control_service_windowless_launcher(tmp_path, monkeypatch):
     calls = []
 
     class Task:
+        installed = False
+
         def status(self):
-            return None
+            return {"state": "Ready"} if self.installed else None
 
         def install(self, command, *, cwd):
+            self.installed = True
             calls.append(("install", command, cwd))
 
         def start(self):
             calls.append(("start",))
 
         def uninstall(self):
+            self.installed = False
             calls.append(("uninstall",))
 
-    monkeypatch.setattr(service, "_task", Task)
+    task = Task()
+    monkeypatch.setattr(service, "_task", lambda: task)
     service.install_control_service(argparse.Namespace(config=str(config)))
     assert calls[0][1][0].endswith("pythonw.exe")
     launcher = tmp_path / "state" / "control" / "service" / "launcher.py"
     assert launcher.is_file()
     assert "workgate.main import main" in launcher.read_text()
     assert repr(str(config)) in launcher.read_text()
+    log = launcher.parent / "control.log"
+    log.write_text("retain service diagnostics")
     service.manage_control_service("uninstall")
     assert not launcher.exists()
+    assert log.read_text() == "retain service diagnostics"
     assert config.exists()
+
+
+def test_windows_uninstall_without_owned_task_preserves_existing_files(
+    tmp_path, monkeypatch
+):
+    for key in tuple(os.environ):
+        if key.startswith("WORKGATE_"):
+            monkeypatch.delenv(key)
+    monkeypatch.setattr(service.sys, "platform", "win32")
+    monkeypatch.setattr(service.WindowsUserTask, "available", lambda: True)
+    monkeypatch.setattr(
+        service,
+        "app_paths",
+        lambda: argparse.Namespace(state_dir=tmp_path),
+    )
+    directory = tmp_path / "control" / "service"
+    directory.mkdir(parents=True)
+    launcher = directory / "launcher.py"
+    log = directory / "control.log"
+    launcher.write_text("do not delete an unowned file")
+    log.write_text("retain log")
+    called = []
+
+    class NoTask:
+        def status(self):
+            return None
+
+        def uninstall(self):
+            called.append("unexpected")
+
+    monkeypatch.setattr(service, "_task", NoTask)
+    service.manage_control_service("uninstall")
+    assert called == []
+    assert launcher.read_text() == "do not delete an unowned file"
+    assert log.read_text() == "retain log"

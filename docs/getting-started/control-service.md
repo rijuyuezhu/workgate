@@ -31,7 +31,11 @@ On Linux, this installs `workgate-control.service` under
 configure user lingering and the host's own startup separately. On native
 Windows, it installs the non-elevated current-user `Workgate Control` Task
 Scheduler task using `pythonw.exe`; it runs at user logon and writes its own
-private service log under the Workgate state directory.
+private service log under the Workgate state directory. The log is retained when
+uninstalling so startup failures remain diagnosable. On Linux, systemd's
+imported `WORKGATE_*` overrides for Control are explicitly unset so the pinned
+YAML remains authoritative even if the login shell and user service manager
+have different environments.
 
 Reinstall updates only this managed service definition, not existing Control
 state or OAuth signing identity. The installer refuses to overwrite an

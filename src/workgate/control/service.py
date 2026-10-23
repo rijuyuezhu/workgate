@@ -155,7 +155,6 @@ def install_control_service(args: argparse.Namespace) -> None:
         return
     if sys.platform != "linux" or not shutil.which("systemctl"):
         raise RuntimeError("Control service requires Linux systemd --user")
-    _systemctl("show-environment")
     unit = _owned_unit()
     content = "\n".join(
         [
@@ -172,6 +171,20 @@ def install_control_service(args: argparse.Namespace) -> None:
             "Restart=always",
             "RestartSec=5",
             'Environment="PYTHONUNBUFFERED=1"',
+            # User systemd managers inherit imported environment variables.
+            # A service pinned to YAML must not be silently overridden by them.
+            "UnsetEnvironment="
+            + " ".join(
+                sorted(
+                    {
+                        "WORKGATE_CONFIG",
+                        *(
+                            f"WORKGATE_{field.upper()}"
+                            for field in CONTROL_SETTING_NAMES
+                        ),
+                    }
+                )
+            ),
             "",
             "[Install]",
             "WantedBy=default.target",
@@ -200,10 +213,11 @@ def manage_control_service(action: str) -> None:
             )
             return
         if action == "uninstall":
-            task.uninstall()
-            directory = app_paths().state_dir / "control" / "service"
-            (directory / "launcher.py").unlink(missing_ok=True)
-            (directory / "control.log").unlink(missing_ok=True)
+            if status is not None:
+                task.uninstall()
+                directory = app_paths().state_dir / "control" / "service"
+                (directory / "launcher.py").unlink(missing_ok=True)
+            # Retain the log, state, and files if no managed task existed.
             print("Uninstalled Workgate Control task")
             return
         if status is None:
@@ -217,6 +231,9 @@ def manage_control_service(action: str) -> None:
     if sys.platform != "linux" or not shutil.which("systemctl"):
         raise RuntimeError("Control service requires Linux systemd --user")
     if action == "status":
+        if not _owned_unit().is_file():
+            print("Control service: not-installed")
+            return
         result = subprocess.run(
             ["systemctl", "--user", "is-active", _SERVICE],
             capture_output=True,
@@ -224,7 +241,7 @@ def manage_control_service(action: str) -> None:
             timeout=15,
             check=False,
         )
-        print(f"Control service: {result.stdout.strip() or 'not-installed'}")
+        print(f"Control service: {result.stdout.strip() or 'unknown'}")
         return
     if action == "uninstall":
         unit = _owned_unit()
