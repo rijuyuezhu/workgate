@@ -42,6 +42,30 @@ check establishes consistency with the Git repository, not a separately
 verified publisher signature; trusted public bootstrap delivery is a later
 stage of #456.
 
+## Executor-only: pairing and native service
+
+After runtime preparation, use the stable source CLI with the intended
+Control URL (HTTPS, except loopback):
+
+```sh
+~/.local/opt/workgate/bin/workgate executor setup https://control.example.com --name workstation
+```
+
+On Windows PowerShell, use:
+
+```powershell
+& "$env:LOCALAPPDATA\Workgate\source\bin\workgate.cmd" executor setup https://control.example.com --name workstation
+```
+
+The command prints Control's existing device-approval URL/code and
+waits for the owner to approve; **only after approval** does it call the
+existing native Executor `install-service` lifecycle. Pairing failure leaves
+the service untouched. On re-run a still-valid profile is reused, not
+overwritten. `--config` or `--state-dir` select the same durable settings for
+pairing and service installation; avoid temporary environment overrides.
+This is the Executor-only step: Control and colocated roles require their own
+initialization and service checks.
+
 This is **not yet** the final external `curl | sh` or `irm` install endpoint.
 The next stage must securely publish and validate those entrypoints, initialize
 Control configuration/approval, handle Executor and Colocate pairing, and

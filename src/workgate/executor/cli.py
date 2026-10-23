@@ -165,6 +165,12 @@ def _connect_from_args(args: argparse.Namespace) -> None:
     _run_async(_connect(args))
 
 
+def _setup_from_args(args: argparse.Namespace) -> None:
+    """Pair first, install the native service only after successful approval."""
+    _connect_from_args(args)
+    _run_service_action(args, "install")
+
+
 def _run_from_args(args: argparse.Namespace) -> None:
     if supervise_cli_role("executor", args):
         return
@@ -272,6 +278,21 @@ def register_executor_cli(subparsers: Any) -> argparse.ArgumentParser:
         setting_defaults={"state_dir": app_paths().executor_state_dir},
     )
     connect.set_defaults(handler=_connect_from_args)
+
+    setup = actions.add_parser(
+        "setup",
+        help="Pair with Control, then install and start the executor user service",
+    )
+    setup.add_argument("control_url")
+    setup.add_argument("--name", default=None)
+    register_config_and_setting_args(
+        setup,
+        setting_names=EXECUTOR_SETTING_NAMES,
+        cli_setting_names={"state_dir"},
+        default_config_path=app_paths().executor_config_file,
+        setting_defaults={"state_dir": app_paths().executor_state_dir},
+    )
+    setup.set_defaults(handler=_setup_from_args)
 
     run = actions.add_parser(
         "run", help="Run using the stored executor profile"
