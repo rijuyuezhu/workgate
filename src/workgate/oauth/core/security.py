@@ -55,6 +55,19 @@ def oauth_signing_secret(settings: ControlConfig | None = None) -> str:
         return secret
 
 
+def validate_oauth_admin_pin(pin: str | None) -> None:
+    """Apply the same strong approval-PIN policy on setup and public startup."""
+    value = (pin or "").strip()
+    if (
+        value.casefold() in _WEAK_APPROVAL_PINS
+        or len(value) < MIN_OAUTH_ADMIN_PIN_CHARS
+    ):
+        raise RuntimeError(
+            "WORKGATE_OAUTH_ADMIN_PIN must be a non-placeholder value "
+            f"of at least {MIN_OAUTH_ADMIN_PIN_CHARS} characters"
+        )
+
+
 def validate_public_oauth_configuration(
     settings: ControlConfig | None = None,
 ) -> None:
@@ -63,15 +76,5 @@ def validate_public_oauth_configuration(
     if settings.auth_mode != "oauth" or not settings.base_url:
         return
 
-    pin = (settings.oauth_admin_pin or "").strip()
-    if (
-        pin.casefold() in _WEAK_APPROVAL_PINS
-        or len(pin) < MIN_OAUTH_ADMIN_PIN_CHARS
-    ):
-        raise RuntimeError(
-            "WORKGATE_OAUTH_ADMIN_PIN must be set to a non-placeholder value "
-            f"of at least {MIN_OAUTH_ADMIN_PIN_CHARS} characters when "
-            "WORKGATE_BASE_URL is configured for OAuth."
-        )
-
+    validate_oauth_admin_pin(settings.oauth_admin_pin)
     oauth_signing_secret(settings)
