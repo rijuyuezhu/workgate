@@ -1,17 +1,20 @@
 """Append portable, resource-bounded audit events to a private JSONL log."""
 
 import contextlib
+import copy
 import hashlib
 import json
 import math
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import fields, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +28,12 @@ from ..utils.private_files import (
     atomic_write_private_bytes,
     private_file_lock,
 )
-from .archive import archive_evicted, archived_records, prune_archives
+from .archive import (
+    archive_evicted,
+    archive_paths,
+    archived_records,
+    prune_archives,
+)
 from .payloads import (
     externalize_audit_value,
     payload_file_sizes,
@@ -758,53 +766,59 @@ def _nested_audit_event(record: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def _coalesce_audit_records(
-    records: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Pair tool calls and fold child events into stable WebUI rows."""
-    rows: list[dict[str, Any]] = []
-    pending_by_id: dict[str, dict[str, Any]] = {}
-    entries_by_id: dict[str, dict[str, Any]] = {}
-    pending_legacy: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+class _AuditAccumulator:
+    """Incrementally pair canonical records, retaining stable row identities."""
 
-    for index, record in enumerate(records):
+    def __init__(self) -> None:
+        self.rows: list[dict[str, Any]] = []
+        self.by_id: dict[str, dict[str, Any]] = {}
+        self.pending_by_id: dict[str, dict[str, Any]] = {}
+        self.entries_by_id: dict[str, dict[str, Any]] = {}
+        self.pending_legacy: dict[
+            tuple[str, str, str], list[dict[str, Any]]
+        ] = {}
+
+    def add(self, record: dict[str, Any], index: int) -> None:
         event = str(record.get("event") or "")
         parent_call_id = str(record.get("parent_call_id") or "")
         if parent_call_id:
-            parent = entries_by_id.get(parent_call_id)
+            parent = self.entries_by_id.get(parent_call_id)
             if parent is not None:
                 parent[_AUDIT_SOURCE_INDEXES].append(index)
                 nested = _nested_audit_event(record)
                 if nested is not None:
                     parent.setdefault("related_events", []).append(nested)
                     _merge_audit_identity(parent, record)
-                continue
+                return
             if event in _AUDIT_LIFECYCLE_EVENTS:
-                continue
+                return
         if event == "tool_call_start":
             entry = _new_audit_call_entry(record, index)
-            rows.append(entry)
+            self.rows.append(entry)
+            self.by_id.setdefault(str(entry["id"]), entry)
             call_id = str(record.get("call_id") or "")
             if call_id:
-                pending_by_id[call_id] = entry
-                entries_by_id[call_id] = entry
+                self.pending_by_id[call_id] = entry
+                self.entries_by_id[call_id] = entry
             else:
-                pending_legacy.setdefault(_audit_call_key(record), []).append(
-                    entry
-                )
-            continue
+                self.pending_legacy.setdefault(
+                    _audit_call_key(record), []
+                ).append(entry)
+            return
         if event == "tool_call_end":
             call_id = str(record.get("call_id") or "")
-            entry = pending_by_id.pop(call_id, None) if call_id else None
+            entry = self.pending_by_id.pop(call_id, None) if call_id else None
             if entry is None and not call_id:
-                pending = pending_legacy.get(_audit_call_key(record), [])
+                pending = self.pending_legacy.get(_audit_call_key(record), [])
                 if pending:
                     entry = pending.pop(0)
             if entry is None:
-                rows.append(_unpaired_audit_end_entry(record, index))
+                unpaired = _unpaired_audit_end_entry(record, index)
+                self.rows.append(unpaired)
+                self.by_id.setdefault(str(unpaired["id"]), unpaired)
             else:
                 _finish_audit_call_entry(entry, record, index)
-            continue
+            return
 
         row = {
             **record,
@@ -817,16 +831,28 @@ def _coalesce_audit_records(
             _AUDIT_SOURCE_INDEXES: [index],
         }
         _merge_audit_identity(row, record)
-        rows.append(row)
-    return rows
+        self.rows.append(row)
+        self.by_id.setdefault(str(row["id"]), row)
+
+
+def _coalesce_audit_records(
+    records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Pair tool calls and fold child events into stable WebUI rows."""
+    accumulator = _AuditAccumulator()
+    for index, record in enumerate(records):
+        accumulator.add(record, index)
+    return accumulator.rows
 
 
 def _public_audit_entry(row: dict[str, Any]) -> dict[str, Any]:
-    return {
-        name: value
-        for name, value in row.items()
-        if name != _AUDIT_SOURCE_INDEXES
-    }
+    return copy.deepcopy(
+        {
+            name: value
+            for name, value in row.items()
+            if name != _AUDIT_SOURCE_INDEXES
+        }
+    )
 
 
 def summarize_audit_entry(entry: dict[str, Any]) -> dict[str, Any]:
@@ -888,8 +914,12 @@ def audit_query_snapshot(
     return snapshot
 
 
-def _read_audit_records(path: Path | None = None) -> list[dict[str, Any]]:
-    """Read the retained hot log, bounded by its configured storage budget."""
+def _read_audit_records(
+    path: Path | None = None,
+    *,
+    _sources_out: list[tuple[Any, ...]] | None = None,
+) -> list[dict[str, Any]]:
+    """Read retained records and optionally capture their source signature."""
     settings = get_role_config()
     path = path or StateLayout(settings.state_dir).audit_log_path
     max_bytes = int(settings.max_audit_log_bytes)
@@ -908,6 +938,11 @@ def _read_audit_records(path: Path | None = None) -> list[dict[str, Any]]:
                     handle.seek(size - max_bytes)
                     handle.readline()
                 raw = handle.read(max_bytes if max_bytes > 0 else -1)
+        if _sources_out is not None:
+            # Record the source version under the same lock as the snapshot.
+            # A writer arriving during later parsing is caught by the next
+            # incremental read, rather than preventing cache initialization.
+            _sources_out.append(_audit_sources(path, settings))
 
     records: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -932,6 +967,168 @@ def _read_audit_records(path: Path | None = None) -> list[dict[str, Any]]:
     if cold:
         records.sort(key=lambda record: _audit_timestamp(record.get("ts")))
     return records
+
+
+# Query indexes are private process-local views; JSONL and archive files remain
+# authoritative. Keep only a few recent roots (tests use many temporary roots).
+_AUDIT_INDEX_LOCK = threading.RLock()
+_AUDIT_INDEXES: OrderedDict[tuple[Path, int, int], _AuditIndex] = OrderedDict()
+_AUDIT_INDEX_LIMIT = 3
+
+
+@dataclass
+class _AuditIndex:
+    sources: tuple[Any, ...]
+    accumulator: _AuditAccumulator
+    seen: set[str]
+    count: int
+    last_ts: float
+
+
+def _audit_sources(path: Path, settings: SharedRoleConfig) -> tuple[Any, ...]:
+    """Track replacements, appends, rotations and external archive changes."""
+
+    def stamp(candidate: Path) -> tuple[int, ...] | None:
+        try:
+            stat = candidate.stat()
+        except FileNotFoundError:
+            return None
+        return (
+            stat.st_dev,
+            stat.st_ino,
+            stat.st_size,
+            stat.st_mtime_ns,
+            stat.st_ctime_ns,
+        )
+
+    canonical = StateLayout(settings.state_dir).audit_log_path
+    archives = (
+        tuple((item.name, stamp(item)) for item in archive_paths(settings))
+        if path == canonical and settings.max_audit_archive_bytes > 0
+        else ()
+    )
+    return (stamp(path), archives)
+
+
+def _new_audit_index(
+    records: list[dict[str, Any]], sources: tuple[Any, ...]
+) -> _AuditIndex:
+    accumulator = _AuditAccumulator()
+    for index, record in enumerate(records):
+        accumulator.add(record, index)
+    return _AuditIndex(
+        sources=sources,
+        accumulator=accumulator,
+        seen={str(row["id"]) for row in records if row.get("id")},
+        count=len(records),
+        last_ts=max(
+            (_audit_timestamp(record.get("ts")) for record in records),
+            default=0.0,
+        ),
+    )
+
+
+def _append_to_audit_index(
+    index: _AuditIndex,
+    path: Path,
+    settings: SharedRoleConfig,
+    before: tuple[Any, ...],
+) -> bool:
+    """Read only complete new lines if the prior hot file is unchanged."""
+    previous, previous_archives = index.sources
+    current, current_archives = before
+    if (
+        previous is None
+        or current is None
+        or (previous[0], previous[1]) != (current[0], current[1])
+        or current[2] <= previous[2]
+        or current_archives != previous_archives
+        or (
+            settings.max_audit_log_bytes > 0
+            and current[2] > settings.max_audit_log_bytes
+        )
+    ):
+        return False
+    with _audit_transaction(path):
+        if _audit_sources(path, settings) != before:
+            return False
+        with path.open("rb") as handle:
+            handle.seek(previous[2])
+            raw = handle.read(current[2] - previous[2])
+    if raw and not raw.endswith(b"\n"):
+        return False
+    additions: list[dict[str, Any]] = []
+    new_ids: set[str] = set()
+    for line in raw.splitlines():
+        try:
+            item = json.loads(line)
+        except ValueError, UnicodeDecodeError:
+            continue
+        if not isinstance(item, dict):
+            continue
+        identifier = str(item.get("id") or "")
+        if identifier and (identifier in index.seen or identifier in new_ids):
+            continue
+        additions.append(item)
+        if identifier:
+            new_ids.add(identifier)
+    # Cold history is sorted by timestamp on full load. Preserve its order
+    # only when new timestamps extend that ordering; otherwise rebuild.
+    if previous_archives and any(
+        _audit_timestamp(item.get("ts")) < index.last_ts for item in additions
+    ):
+        return False
+    for item in additions:
+        identifier = str(item.get("id") or "")
+        if identifier:
+            index.seen.add(identifier)
+        index.accumulator.add(item, index.count)
+        index.count += 1
+        index.last_ts = max(index.last_ts, _audit_timestamp(item.get("ts")))
+    index.sources = before
+    return True
+
+
+def _cached_audit_index(path: Path | None = None) -> _AuditIndex:
+    """Reuse paired history and incrementally ingest append-only hot records.
+
+    Callers hold _AUDIT_INDEX_LOCK through filtering/detail projection so a
+    second request cannot mutate a shared row while it is being serialized.
+    """
+    settings = get_role_config()
+    target = path or StateLayout(settings.state_dir).audit_log_path
+    key = (
+        target,
+        int(settings.max_audit_log_bytes),
+        int(settings.max_audit_archive_bytes),
+    )
+    sources = _audit_sources(target, settings)
+    cached = _AUDIT_INDEXES.get(key)
+    if cached is not None and (
+        sources == cached.sources
+        or _append_to_audit_index(cached, target, settings, sources)
+    ):
+        _AUDIT_INDEXES.move_to_end(key)
+        return cached
+    # Build from a single locked snapshot. New writes during the expensive
+    # coalescing step will be ingested on the next query, not invalidate it.
+    captured: list[tuple[Any, ...]] = []
+    records = _read_audit_records(target, _sources_out=captured)
+    index = _new_audit_index(records, captured[0])
+    _AUDIT_INDEXES[key] = index
+    _AUDIT_INDEXES.move_to_end(key)
+    if len(_AUDIT_INDEXES) > _AUDIT_INDEX_LIMIT:
+        _AUDIT_INDEXES.popitem(last=False)
+    return index
+
+
+def _audit_index_guard(function: Any) -> Any:
+    @wraps(function)
+    def guarded(*args: Any, **kwargs: Any) -> Any:
+        with _AUDIT_INDEX_LOCK:
+            return function(*args, **kwargs)
+
+    return guarded
 
 
 def _audit_timestamp(value: Any) -> float:
@@ -974,6 +1171,7 @@ def _audit_search_document(row: dict[str, Any]) -> str:
     return json.dumps(summary, ensure_ascii=False, default=str).casefold()
 
 
+@_audit_index_guard
 def query_audit(
     *,
     limit: int = 300,
@@ -996,7 +1194,7 @@ def query_audit(
     if start_ts is not None and end_ts is not None and start_ts > end_ts:
         raise ValueError("start_ts must not be greater than end_ts")
 
-    rows = _coalesce_audit_records(_read_audit_records(_path))
+    rows = _cached_audit_index(_path).accumulator.rows
     needle = (search or "").casefold().strip()
     event_filter = (event or "").casefold().strip()
     operation_filter = (operation or "").casefold().strip()
@@ -1016,31 +1214,36 @@ def query_audit(
             continue
         if end_ts is not None and timestamp > end_ts:
             continue
-        event_text = " ".join(
-            [
-                str(row.get("event") or ""),
-                *map(str, row.get("source_events") or []),
-            ]
-        )
-        if event_filter and event_filter not in event_text.casefold():
-            continue
+        if event_filter:
+            event_text = " ".join(
+                [
+                    str(row.get("event") or ""),
+                    *map(str, row.get("source_events") or []),
+                ]
+            )
+            if event_filter not in event_text.casefold():
+                continue
         if (
             operation_filter
             and operation_filter != str(row.get("operation") or "").casefold()
         ):
             continue
-        row_sessions = {
-            value.casefold()
-            for value in (
-                *_record_string_ids(row.get("session_ids")),
-                *(
-                    (str(row["session"]),)
-                    if isinstance(row.get("session"), str)
-                    and row.get("session")
-                    else ()
-                ),
-            )
-        }
+        row_sessions = (
+            {
+                value.casefold()
+                for value in (
+                    *_record_string_ids(row.get("session_ids")),
+                    *(
+                        (str(row["session"]),)
+                        if isinstance(row.get("session"), str)
+                        and row.get("session")
+                        else ()
+                    ),
+                )
+            }
+            if session_filter or task_filter
+            else set()
+        )
         if session_filter and session_filter not in row_sessions:
             continue
         if task_filter:
@@ -1093,15 +1296,18 @@ def get_audit_entry(
     normalized = str(entry_id).strip()
     if not normalized:
         raise ValueError("audit entry id is required")
-    for row in _coalesce_audit_records(_read_audit_records(_path)):
-        if exclude_call_id and str(row.get("call_id") or "") == exclude_call_id:
-            continue
-        if str(row.get("id") or "") == normalized:
-            entry = _public_audit_entry(row)
-            if include_full_payloads:
-                return resolve_payload_references(entry, get_role_config())
-            return entry
-    raise ValueError(f"Unknown audit entry: {normalized}")
+    with _AUDIT_INDEX_LOCK:
+        row = _cached_audit_index(_path).accumulator.by_id.get(normalized)
+        if row is None or (
+            exclude_call_id and str(row.get("call_id") or "") == exclude_call_id
+        ):
+            raise ValueError(f"Unknown audit entry: {normalized}")
+        entry = _public_audit_entry(row)
+    # Resolving protected payloads may do slow I/O. Do not stall other Audit
+    # requests once the entry has been copied from the shared index.
+    if include_full_payloads:
+        return resolve_payload_references(entry, get_role_config())
+    return entry
 
 
 def query_session_audit(

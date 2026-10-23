@@ -3,6 +3,7 @@
 import asyncio
 import gzip
 import json
+import os
 import random
 import string
 from pathlib import Path
@@ -376,3 +377,247 @@ def test_cold_segments_coalesce_out_of_order_nested_events(
     assert len(matches) == 1
     assert matches[0]["paired"] is True
     assert matches[0]["related_events"][0]["detail"] == "nested"
+
+
+def test_incremental_index_updates_without_reparsing_history(
+    tmp_path, monkeypatch
+):
+    """Repeated queries must reuse cold history and pair appended hot events."""
+    path = _configure(tmp_path, monkeypatch)
+    import workgate.audit.core as core
+
+    for index in range(40):
+        audit("index_filler", index=index, payload="x" * 400)
+    assert archive_paths(get_role_config())
+    query_audit()
+
+    original_read = core._read_audit_records
+    reads = 0
+
+    def counted_read(*args, **kwargs):
+        nonlocal reads
+        reads += 1
+        return original_read(*args, **kwargs)
+
+    monkeypatch.setattr(core, "_read_audit_records", counted_read)
+
+    call_id = "incremental-cache-test"
+    audit_tool_call_start(
+        call_id=call_id,
+        transport="mcp",
+        tool="bash",
+        input={"command": "echo safe"},
+    )
+    start = get_audit_entry(f"call:{call_id}")
+    assert start["status"] == "running"
+    audit_tool_call_end(
+        call_id=call_id,
+        transport="mcp",
+        tool="bash",
+        ok=True,
+        duration_ms=1,
+        output={"stdout": "safe"},
+    )
+    finished = get_audit_entry(f"call:{call_id}")
+    assert finished["status"] == "success"
+    assert finished["paired"] is True
+    assert finished["output"]["stdout"] == "safe"
+    assert reads == 0
+
+    # Returned nested objects do not mutate the retained shared index.
+    finished["output"]["stdout"] = "tampered"
+    assert get_audit_entry(f"call:{call_id}")["output"]["stdout"] == "safe"
+
+    # Direct external replacement, including same-length rewrite, invalidates.
+    # Explicitly avoid archive rotation in this small write.
+    original = path.read_bytes()
+    assert original
+    path.write_bytes(original.replace(b"index_filler", b"index_Filler"))
+    # The host filesystem can have coarse timestamp resolution. Simulate a
+    # rewrite committed at a distinguishable timestamp.
+    stat = path.stat()
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 2_000_000_000))
+    # File rewrite modifies the canonical current hot records, even if bytes
+    # and timestamps of historical archives happen to be unchanged.
+    query_audit()
+    assert reads >= 1
+
+
+def test_incremental_index_handles_duplicate_ids_in_one_append(
+    tmp_path, monkeypatch
+):
+    path = _configure(tmp_path, monkeypatch)
+    query_audit()
+    record = {"id": "one-id", "ts": 777, "event": "once"}
+    encoded = (json.dumps(record) + "\n").encode()
+    # Simulate crash recovery replay after a previously served query.
+    with path.open("ab") as stream:
+        stream.write(encoded + encoded)
+    assert query_audit(event="once")["total_matched"] == 1
+    assert get_audit_entry("one-id")["event"] == "once"
+
+
+def test_index_rebuilds_after_external_archive_removal(tmp_path, monkeypatch):
+    _configure(tmp_path, monkeypatch)
+    settings = get_role_config()
+    archive_evicted(
+        [
+            (
+                json.dumps({"id": "cold-only", "ts": 1, "event": "cold"}) + "\n"
+            ).encode()
+        ],
+        settings,
+    )
+    assert get_audit_entry("cold-only")["event"] == "cold"
+    for archived in archive_paths(settings):
+        archived.unlink()
+    assert query_audit(event="cold")["count"] == 0
+    with pytest.raises(ValueError, match="Unknown audit entry"):
+        get_audit_entry("cold-only")
+
+
+def test_backdated_hot_append_rebuilds_sorted_cold_history(
+    tmp_path, monkeypatch
+):
+    path = _configure(tmp_path, monkeypatch)
+    settings = get_role_config()
+    archive_evicted(
+        [
+            (
+                json.dumps({"id": "old-cold", "ts": 10, "event": "ordered"})
+                + "\n"
+            ).encode()
+        ],
+        settings,
+    )
+    audit("hot-now")
+    assert query_audit(event="ordered")["count"] == 1
+    # Historical backfill cannot be appended to an already time-sorted view.
+    with path.open("ab") as stream:
+        stream.write(
+            (
+                json.dumps({"id": "backdated", "ts": 5, "event": "ordered"})
+                + "\n"
+            ).encode()
+        )
+    result = query_audit(event="ordered", sort="asc")["entries"]
+    assert [row["id"] for row in result] == ["backdated", "old-cold"]
+
+
+def test_incremental_index_matches_full_scan_through_rollovers(
+    tmp_path, monkeypatch
+):
+    """The full canonical scan is the oracle for incremental queries."""
+    _configure(tmp_path, monkeypatch, archive_bytes=300_000)
+    import workgate.audit.core as core
+
+    def compare() -> None:
+        full = core._coalesce_audit_records(core._read_audit_records())
+        expected = [core._public_audit_entry(row) for row in full]
+        expected.sort(key=lambda row: row["ts"], reverse=True)
+        observed = query_audit(limit=2_000)
+        assert observed["entries"] == expected
+        assert observed["total_matched"] == len(expected)
+        assert observed["failed_matched"] == sum(
+            row.get("ok") is False or row.get("status") == "failed"
+            for row in expected
+        )
+        for row in expected[-3:]:
+            assert get_audit_entry(row["id"]) == row
+
+    compare()
+    for index in range(72):
+        call_id = f"roundtrip-{index}"
+        audit_tool_call_start(
+            call_id=call_id,
+            transport="mcp",
+            tool="bash",
+            input={"command": f"echo {index}"},
+        )
+        if index % 4 == 0:
+            audit(
+                "nested_progress",
+                parent_call_id=call_id,
+                tool="bash",
+                message=f"progress-{index}",
+            )
+        if index % 3 != 0:
+            audit_tool_call_end(
+                call_id=call_id,
+                transport="mcp",
+                tool="bash",
+                ok=index % 5 != 0,
+                duration_ms=1,
+                output={"stdout": f"done-{index}"},
+            )
+        audit("filler", payload=f"x{index}" * 40)
+        if index % 9 == 0:
+            compare()
+    assert archive_paths(get_role_config())
+    compare()
+
+
+def test_full_payload_lookup_does_not_hold_audit_index_lock(
+    tmp_path, monkeypatch
+):
+    """Slow payload disk access must not block other readers of the index."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    import workgate.audit.core as core
+
+    _configure(tmp_path, monkeypatch)
+    audit("unblocked", marker="visible")
+    entry_id = query_audit(event="unblocked")["entries"][0]["id"]
+
+    entered = Event()
+    release = Event()
+
+    def slow_resolve(entry, _settings):
+        entered.set()
+        assert release.wait(timeout=5)
+        return entry
+
+    monkeypatch.setattr(core, "resolve_payload_references", slow_resolve)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        full = pool.submit(
+            get_audit_entry, entry_id, include_full_payloads=True
+        )
+        try:
+            assert entered.wait(timeout=2)
+            quick = pool.submit(query_audit, event="unblocked")
+            assert quick.result(timeout=2)["entries"][0]["id"] == entry_id
+        finally:
+            release.set()
+        assert full.result(timeout=2)["id"] == entry_id
+
+
+def test_cache_initialization_survives_concurrent_append(tmp_path, monkeypatch):
+    """Writes during pairing must not cause repeated costly initial scans."""
+    import workgate.audit.core as core
+
+    _configure(tmp_path, monkeypatch)
+    audit("before-build")
+    read = core._read_audit_records
+    construct = core._new_audit_index
+    scans = 0
+    writing = False
+
+    def counted_read(*args, **kwargs):
+        nonlocal scans
+        scans += 1
+        return read(*args, **kwargs)
+
+    def racing_build(records, sources):
+        nonlocal writing
+        if not writing:
+            writing = True
+            audit("during-build")
+        return construct(records, sources)
+
+    monkeypatch.setattr(core, "_read_audit_records", counted_read)
+    monkeypatch.setattr(core, "_new_audit_index", racing_build)
+
+    assert query_audit(event="before-build")["count"] == 1
+    assert query_audit(event="during-build")["count"] == 1
+    assert scans == 1
