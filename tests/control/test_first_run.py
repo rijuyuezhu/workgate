@@ -105,6 +105,10 @@ def test_transient_env_rejected(tmp_path, monkeypatch):
     assert not config.exists()
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="creating symlinks requires Windows developer privileges",
+)
 def test_rejects_symlinked_config(tmp_path):
     config, state_dir = _paths(tmp_path)
     target = tmp_path / "user-other-file"
