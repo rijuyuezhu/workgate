@@ -101,6 +101,18 @@ def test_control_service_requires_durable_config(manager, monkeypatch):
     assert commands == []
 
 
+def test_control_service_rejects_transient_cli_overrides(manager):
+    from workgate.main import _build_parser
+
+    _args, _unit, commands = manager
+    args = _build_parser().parse_args(
+        ["control", "--port", "9090", "install-service"]
+    )
+    with pytest.raises(RuntimeError, match="CLI setting overrides"):
+        service.install_control_service(args)
+    assert commands == []
+
+
 def test_control_service_rejects_stdio_and_mcp_modes(manager):
     args, _unit, commands = manager
     Path(args.config).write_text("mode: stdio\n")

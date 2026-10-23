@@ -10,6 +10,7 @@ from pathlib import Path
 from ..app_paths import app_paths, ensure_private_directory
 from ..config.control import CONTROL_SETTING_NAMES
 from ..config.settings import load_settings
+from ..config.surface import CLI_UNSET
 from ..platform.process import noninteractive_creationflags
 from ..platform.windows_task import WindowsUserTask
 from ..utils.private_files import atomic_write_private_text
@@ -86,6 +87,14 @@ def _config(value: str | None) -> Path:
 
 def install_control_service(args: argparse.Namespace) -> None:
     """Install and start Control without changing settings or its state identity."""
+    if any(
+        getattr(args, field, CLI_UNSET) is not CLI_UNSET
+        for field in CONTROL_SETTING_NAMES
+    ):
+        raise RuntimeError(
+            "control install-service accepts --config, but not transient "
+            "Control CLI setting overrides; save them in YAML"
+        )
     if any(key.startswith("WORKGATE_") for key in os.environ):
         raise RuntimeError(
             "control install-service requires durable YAML configuration, "
