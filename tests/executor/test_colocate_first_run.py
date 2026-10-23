@@ -191,6 +191,7 @@ def test_colocate_service_conflict_stops_before_config_creation(
     assert events == []
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Linux systemd unit paths")
 def test_linux_control_unit_conflict_even_when_not_running(
     tmp_path, monkeypatch
 ):
@@ -284,6 +285,7 @@ def test_windows_native_control_service_conflict_is_fail_closed(
         first_run._reject_existing_services(args(tmp_path))
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Linux systemd unit paths")
 def test_linux_stopped_executor_service_conflict(tmp_path, monkeypatch):
     from workgate.colocate import service as colocate_service
     from workgate.control import service as control_service
@@ -389,6 +391,7 @@ def test_windows_existing_colocate_task_conflict(tmp_path, monkeypatch):
         first_run._reject_existing_services(args(tmp_path))
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Linux systemd unit paths")
 def test_linux_clean_native_service_preflight_allows_setup(
     tmp_path, monkeypatch
 ):
