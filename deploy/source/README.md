@@ -34,8 +34,13 @@ the default root is `~/.local/opt/workgate`, on Windows
 `%LOCALAPPDATA%\Workgate\source`. Each commit has a distinct checkout under
 `versions/<full commit SHA>`; the user-facing `bin/workgate` (or
 `bin/workgate.cmd`) switches **only after** all preparation checks pass.
+It refuses to replace existing unrelated launchers, symbolic links or
+modified/untracked source files in an already managed release checkout.
 Place that `bin` directory on PATH if desired. Old checkouts and running
-services remain unchanged so an upgrade can be rolled back.
+services remain unchanged so an upgrade can be rolled back. The tag/commit
+check establishes consistency with the Git repository, not a separately
+verified publisher signature; trusted public bootstrap delivery is a later
+stage of #456.
 
 This is **not yet** the final external `curl | sh` or `irm` install endpoint.
 The next stage must securely publish and validate those entrypoints, initialize
