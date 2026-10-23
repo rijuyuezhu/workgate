@@ -27,7 +27,9 @@ Non-loopback listeners need an explicit `--base-url` for secure OAuth metadata.
 Re-running validates and preserves the existing YAML, PIN, and signing identity
 rather than replacing them. If a preexisting file is weak, public or invalid,
 the command stops and instructs you to correct it; it will never silently
-rewrite credentials.
+rewrite credentials. On Windows, custom configuration files inherit the parent
+directory's NTFS ACL: use an account-private directory, not a shared/public
+folder. The default per-user AppData location is preferred.
 
 Install the Control service afterwards:
 
