@@ -321,6 +321,7 @@ class LocalSearchRunner:
             proc = await asyncio.create_subprocess_exec(
                 *args,
                 cwd=str(base),
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 creationflags=noninteractive_creationflags(),
