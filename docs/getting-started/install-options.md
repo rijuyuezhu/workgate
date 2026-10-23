@@ -20,7 +20,7 @@ Control-only user service without modifying its state.
 
 For a **versioned, full-extras** runtime without changing the currently running
 services, use the repository's [source preparation scripts]
-(../../deploy/source/README.md). They resolve a specific release tag to a
+(https://github.com/rijuyuezhu/workgate/tree/main/deploy/source). They resolve a specific release tag to a
 commit-addressed checkout, run locked uv installation and provision Chromium.
 They are not yet the final unattended `curl | sh` or PowerShell first-run
 installers; service setup and pairing remain explicit follow-up actions.

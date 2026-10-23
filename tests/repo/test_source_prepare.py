@@ -3,6 +3,7 @@
 import importlib.util
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -150,3 +151,18 @@ def test_rejects_branches(tmp_path, preparer, tag):
     with pytest.raises(ValueError, match="explicit version tag"):
         module.prepare(tag=tag, role="executor", root=tmp_path)
     assert calls == []
+
+
+def test_stable_launcher_can_run_real_workgate(tmp_path, preparer):
+    module, _calls, _failed = preparer
+    path = module._write_launcher(tmp_path, Path(sys.executable))
+    result = subprocess.run(
+        [str(path), "--version"],
+        shell=os.name == "nt",
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "workgate" in result.stdout.lower()
