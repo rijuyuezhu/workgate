@@ -102,8 +102,12 @@ def initialize_control_config(
     ensure_private_directory(settings.state_dir)
     ensure_private_directory(StateLayout(settings.state_dir).locks_dir)
     control = resolve_control_config(settings)
-    validate_public_oauth_configuration(control)
-    oauth_signing_secret(control)  # Private, stable identity; never print it.
+    # Public OAuth validation also initializes the canonical signing key.
+    # Loopback-only Control needs the same durable identity but no public URL.
+    if control.base_url:
+        validate_public_oauth_configuration(control)
+    else:
+        oauth_signing_secret(control)
     return created
 
 
