@@ -19,6 +19,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..persistence import StateStore
+from ..platform.process import noninteractive_creationflags
 from ..protocol.executor import ExecutorRuntimeOwnership
 
 _RUNTIME_STATE_MAX_BYTES = 16 * 1024
@@ -339,6 +340,7 @@ def _validate_executable(path: Path, version: str) -> None:
         capture_output=True,
         text=True,
         timeout=15.0,
+        creationflags=noninteractive_creationflags(),
     )
     expected = f"workgate {version}"
     if result.returncode != 0 or result.stdout.strip() != expected:
@@ -356,6 +358,7 @@ def _validate_windows_service_executable(path: Path, version: str) -> None:
             check=False,
             capture_output=True,
             timeout=30.0,
+            creationflags=noninteractive_creationflags(),
         )
         reported = (
             output.read_text(encoding="ascii").strip()

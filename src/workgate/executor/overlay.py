@@ -4,6 +4,7 @@ import ipaddress
 import json
 import subprocess
 
+from ..platform.process import noninteractive_creationflags
 from ..protocol.executor import TrustedOverlay
 
 _STATUS_TIMEOUT_S = 2
@@ -17,6 +18,7 @@ def detect_tailscale_overlay() -> TrustedOverlay | None:
             capture_output=True,
             check=False,
             timeout=_STATUS_TIMEOUT_S,
+            creationflags=noninteractive_creationflags(),
         )
         if result.returncode != 0 or len(result.stdout) > 262_144:
             return None

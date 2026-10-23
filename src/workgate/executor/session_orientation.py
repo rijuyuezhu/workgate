@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 from ..config.executor import ExecutorConfig
+from ..platform.process import noninteractive_creationflags
 from ..schemas.result_models.session import GitSessionInfo, SessionStartOutput
 from .environment import collect_executor_session_environment
 from .path import display_path, resolve_default_workdir
@@ -30,6 +31,7 @@ def _git_output(
             capture_output=True,
             timeout=5,
             check=False,
+            creationflags=noninteractive_creationflags(),
         )
     except OSError, subprocess.SubprocessError:
         return None

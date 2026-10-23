@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ...config.executor import ExecutorConfig
+from ...platform.process import noninteractive_creationflags
 from ...schemas.result_models.patch import ApplyPatchOutput
 from ..path import assert_text_input_size, display_path
 from ..temp_file import write_temp_text_file
@@ -58,6 +59,7 @@ def _run_git_apply(
             capture_output=True,
             check=False,
             timeout=timeout_s,
+            creationflags=noninteractive_creationflags(),
         )
         stdout, stdout_truncated = _bounded_text(
             completed.stdout, _APPLY_PATCH_MAX_OUTPUT_BYTES

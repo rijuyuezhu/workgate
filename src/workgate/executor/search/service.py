@@ -6,6 +6,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
+from ...platform.process import noninteractive_creationflags
 from ...schemas.result_models.search import (
     GlobSearchOutput,
     GrepDisplayLine,
@@ -322,6 +323,7 @@ class LocalSearchRunner:
                 cwd=str(base),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                creationflags=noninteractive_creationflags(),
             )
         except OSError as exc:
             return GrepSearchOutput(

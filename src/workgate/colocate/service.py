@@ -12,6 +12,7 @@ from ..config.executor import EXECUTOR_SETTING_NAMES
 from ..config.settings import load_settings
 from ..executor.profile import ExecutorProfileStore
 from ..persistence import FileStateStore
+from ..platform.process import noninteractive_creationflags
 from ..platform.windows_task import WindowsUserTask
 from ..utils.private_files import atomic_write_private_text
 from ..utils.systemd import systemd_quote, systemd_user_unit_path
@@ -38,7 +39,12 @@ def _systemctl(*arguments: str) -> subprocess.CompletedProcess[str]:
 def _windows_task() -> WindowsUserTask:
     def run(command: list[str]) -> subprocess.CompletedProcess[str]:
         result = subprocess.run(
-            command, capture_output=True, text=True, check=False, timeout=20
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=20,
+            creationflags=noninteractive_creationflags(),
         )
         if result.returncode:
             raise RuntimeError(
