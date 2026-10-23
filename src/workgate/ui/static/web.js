@@ -85,6 +85,16 @@ void (async () => {
   });
   const encoder = new TextEncoder();
   let authenticated = config.authMode !== "oauth";
+  let loadGeneration = 0;
+  let loadedOnce = false;
+  const pendingReads = new Set();
+
+  function cancelPendingReads() {
+    loadGeneration += 1;
+    for (const controller of pendingReads) controller.abort();
+    pendingReads.clear();
+  }
+
   const elements = {
     appNavItems: Array.from(document.querySelectorAll(".nav-item[data-view]")),
     appViews: Array.from(document.querySelectorAll("[data-app-view]")),
@@ -678,13 +688,41 @@ void (async () => {
       const csrfToken = cookieValue(csrfCookieName);
       if (csrfToken) headers[csrfHeaderName] = csrfToken;
     }
-    const response = await fetch(`${apiPrefix}${path}`, {
-      ...options,
-      headers,
-      cache: "no-store",
-      credentials: "same-origin",
-    });
-    const payload = await responsePayload(response);
+    const read = method === "GET" || method === "HEAD";
+    const controller = read ? new AbortController() : null;
+    const generation = loadGeneration;
+    if (controller) pendingReads.add(controller);
+    let timedOut = false;
+    const deadline = controller && globalThis.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 12000);
+    let response;
+    let payload;
+    try {
+      response = await fetch(`${apiPrefix}${path}`, {
+        ...options,
+        headers,
+        signal: controller?.signal || options.signal,
+        cache: "no-store",
+        credentials: "same-origin",
+      });
+      payload = await responsePayload(response);
+    } catch (error) {
+      if (timedOut && generation === loadGeneration) throw new Error("Request timed out");
+      throw error;
+    } finally {
+      if (deadline) globalThis.clearTimeout(deadline);
+      if (controller) pendingReads.delete(controller);
+    }
+    // Writes are never aborted: their eventual outcome may be committed remotely.
+    // But a response from another login must not report success in this UI.
+    if (generation !== loadGeneration) {
+      const error = new Error(read ? "Obsolete response"
+        : "Session changed; check the remote result before retrying this action.");
+      error.obsoleteRequest = true;
+      throw error;
+    }
     if (response.status === 401) {
       const error = new Error("Authentication required");
       error.authenticationRequired = true;
@@ -944,56 +982,76 @@ void (async () => {
     setConnection("Connected", "online");
   }
 
+  function requireAuthentication() {
+    cancelPendingReads();
+    clearAuthenticatedViews();
+    elements.terminalState.textContent = "Authentication required";
+    elements.dashboardState.textContent = "Authentication required";
+    showAuthentication("Authentication required");
+  }
+
+  function clearAuthenticatedViews() {
+    dashboard.stopPolling();
+    executors.stopPolling();
+    dashboard.invalidate();
+    tasks.invalidate();
+    audit.invalidate();
+    files.invalidate();
+    terminal.reset("");
+    dashboard.reset("");
+    executors.reset("Authentication required");
+    files.reset("");
+    tasks.reset();
+    audit.reset();
+  }
+
   async function load() {
+    cancelPendingReads();
+    // Initial deep links belong to the newly constructed controllers. Only
+    // subsequent login/reload cycles may discard a previous user's selection.
+    if (loadedOnce) clearAuthenticatedViews();
+    loadedOnce = true;
+    const generation = loadGeneration;
     setConnection("Connecting", "idle");
     try {
-      render(await request("/bootstrap"));
-      await dashboard.refresh({ force: true });
+      const bootstrap = await request("/bootstrap");
+      if (generation !== loadGeneration) return;
+      render(bootstrap);
+      // Each view starts as soon as Control authentication is established.
+      // No slow/offline Executor request can delay another view.
+      const onError = (error) => {
+        if (generation === loadGeneration && error.authenticationRequired)
+          requireAuthentication();
+      };
+      const start = (refresh, onUnavailable = () => {}) => {
+        void refresh().catch((error) => {
+          if (generation !== loadGeneration) return;
+          if (error.authenticationRequired) return onError(error);
+          if (!error.obsoleteRequest) onUnavailable(error);
+        });
+      };
+      start(() => dashboard.refresh({ force: true }));
       dashboard.startPolling();
-      await executors.refresh({ force: true });
+      start(() => executors.refresh({ force: true }));
       executors.startPolling();
-      try {
-        await terminal.refresh();
-      } catch (error) {
-        if (error.authenticationRequired) throw error;
+      start(() => terminal.refresh(), (error) => {
         elements.terminalState.textContent = "Terminal list unavailable";
         terminal.showMessage(error instanceof Error ? error.message : String(error));
-      }
-      try {
-        await files.refresh();
-      } catch (error) {
-        if (error.authenticationRequired) throw error;
+      });
+      start(() => files.refresh(), (error) => {
         elements.fileState.textContent = "File list unavailable";
         files.showMessage("Files unavailable", error instanceof Error ? error.message : String(error));
-      }
-      try {
-        await tasks.refresh();
-      } catch (error) {
-        if (error.authenticationRequired) throw error;
-        elements.tasksState.textContent =
-          error instanceof Error ? error.message : "Task list unavailable";
+      });
+      start(() => tasks.refresh(), (error) => {
+        elements.tasksState.textContent = error instanceof Error ? error.message : "Task list unavailable";
         elements.todoState.textContent = "Plan unavailable";
         elements.sessionAuditState.textContent = "Session Audit unavailable";
-      }
-      await audit.refresh();
+      });
+      start(() => audit.refresh());
     } catch (error) {
-      if (error.authenticationRequired) {
-        terminal.reset("");
-        elements.terminalState.textContent = "Authentication required";
-        dashboard.stopPolling();
-        executors.stopPolling();
-        dashboard.invalidate();
-        files.invalidate();
-        tasks.invalidate();
-        audit.invalidate();
-
-        dashboard.reset("");
-        executors.reset("Authentication required");
-        elements.dashboardState.textContent = "Authentication required";
-        showAuthentication("Authentication required");
-      } else {
-        setConnection("Unavailable", "error");
-      }
+      if (generation !== loadGeneration || error.obsoleteRequest) return;
+      if (error.authenticationRequired) requireAuthentication();
+      else setConnection("Unavailable", "error");
     }
   }
 
@@ -1050,6 +1108,8 @@ void (async () => {
 
   elements.oauthLogin.addEventListener("click", () => void startOAuth());
   elements.signOut.addEventListener("click", async () => {
+    cancelPendingReads();
+    clearAuthenticatedViews();
     try {
       await request("/session/logout", { method: "POST" });
     } catch {
@@ -1122,7 +1182,6 @@ void (async () => {
     } else if (event.key !== sessionEstablishedStorageKey) {
       return;
     }
-    terminal.close();
     void load();
   });
 
@@ -1139,10 +1198,13 @@ void (async () => {
   window.setInterval(() => {
     terminal.ping();
     if (config.authMode !== "oauth" || authenticated) {
-      void tasks.refresh({ background: true }).catch((error) => {
-        if (error.authenticationRequired) void load();
-      });
-      void audit.refresh({ background: true });
+      const view = document.body.dataset.activeView;
+      if (view === "tasks" || view === "overview") {
+        void tasks.refresh({ background: true }).catch((error) => {
+          if (error.authenticationRequired) void load();
+        });
+      }
+      if (view === "audit") void audit.refresh({ background: true });
     }
   }, 30000);
 })();

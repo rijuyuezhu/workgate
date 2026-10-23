@@ -511,10 +511,11 @@ def test_control_card_switching_config_refresh_and_mobile(
     expect(page.locator("#executor-mcp-add")).to_be_enabled()
     page.route("**/api/ui/executors", unavailable)
     expect(page.locator("#executor-detail-status")).to_have_text(
-        "Unavailable", timeout=10000
+        "Stale", timeout=10000
     )
+    expect(page.locator("#executor-control-connection")).to_have_text("Stale")
     expect(page.locator("#executor-mcp-add")).to_be_disabled()
-    expect(page.locator("#executor-mcp-body")).to_contain_text("Unavailable")
+    expect(page.locator("#executor-mcp-body")).to_contain_text("stale")
     page.unroute("**/api/ui/executors", unavailable)
     expect(page.locator("#executor-detail-status")).to_have_text(
         "Available", timeout=10000
