@@ -34,6 +34,20 @@ def register_control_cli(subparsers: Any) -> argparse.ArgumentParser:
         setting_names=CONTROL_SETTING_NAMES,
     )
     parser.set_defaults(handler=run_control_from_args)
+    from .service import install_control_service, manage_control_service
+
+    actions = parser.add_subparsers(dest="control_command")
+    install = actions.add_parser(
+        "install-service",
+        help="Install and start Control as a native user service",
+    )
+    install.add_argument("--config", default=argparse.SUPPRESS, metavar="PATH")
+    install.set_defaults(handler=install_control_service)
+    for action in ("start", "stop", "restart", "status", "uninstall"):
+        operation = actions.add_parser(f"{action}-service")
+        operation.set_defaults(
+            handler=lambda _args, name=action: manage_control_service(name)
+        )
     return parser
 
 

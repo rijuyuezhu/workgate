@@ -14,7 +14,9 @@ cd workgate
 uv sync
 ```
 
-Then follow the [Quickstart](quickstart.md).
+Then follow the [Quickstart](quickstart.md). For an existing source checkout,
+see [Persistent Control service](control-service.md) to install a native
+Control-only user service without modifying its state.
 
 ## Python installation from GitHub
 
