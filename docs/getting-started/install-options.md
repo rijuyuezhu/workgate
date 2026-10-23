@@ -18,6 +18,13 @@ Then follow the [Quickstart](quickstart.md). For an existing source checkout,
 see [Persistent Control service](control-service.md) to install a native
 Control-only user service without modifying its state.
 
+For a **versioned, full-extras** runtime without changing the currently running
+services, use the repository's [source preparation scripts]
+(../../deploy/source/README.md). They resolve a specific release tag to a
+commit-addressed checkout, run locked uv installation and provision Chromium.
+They are not yet the final unattended `curl | sh` or PowerShell first-run
+installers; service setup and pairing remain explicit follow-up actions.
+
 ## Python installation from GitHub
 
 Workgate is **not published to PyPI**. Choose a tag from
