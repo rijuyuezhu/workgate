@@ -137,7 +137,10 @@ interim/developer fallback**, not the intended end-user installation path.
 Issue [#475](https://github.com/rijuyuezhu/workgate/issues/475) tracks a
 version-pinned, verified prebuilt native ARM64 wheel so ordinary Windows ARM64
 installations will not require Cargo, MSVC or an OpenSSL SDK. The temporary
-source build can take several minutes on a fresh checkout. The final
+source build can take several minutes on a fresh checkout. The preparer
+checks the actual Python build target rather than only the reported host CPU,
+and tests AES-GCM with both cryptography-first and ssl-first imports before
+activating a launcher. The final
 `workgate --version` verification must succeed using the release's isolated
 `.venv`; full native ARM64 Executor/GUI/PTY and managed upgrade acceptance
 remains part of #459.

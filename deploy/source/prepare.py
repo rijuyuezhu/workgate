@@ -370,16 +370,33 @@ def prepare(
                 f"uv did not create the expected interpreter: {python}"
             )
         if build_env is not None:
-            arch = _run(
+            # platform.machine() can report the host under x64 emulation.
+            # sysconfig identifies the actual CPython build target.
+            python_platform = _run(
                 str(python),
                 "-c",
-                "import platform; print(platform.machine())",
+                "import sysconfig; print(sysconfig.get_platform())",
                 cwd=target,
             )
-            if arch.lower() not in {"arm64", "aarch64"}:
+            if python_platform != "win-arm64":
                 raise RuntimeError(
-                    f"Windows ARM64 requires a native Python runtime, got {arch!r}"
+                    "Windows ARM64 requires a native Python runtime, "
+                    f"got {python_platform!r}"
                 )
+            # A successful source build is not enough: dynamic OpenSSL DLLs
+            # can conflict with Python's own SSL module at import time.
+            crypto = (
+                "from cryptography.hazmat.primitives.ciphers.aead import AESGCM; "
+                "AESGCM(bytes(16)).encrypt(bytes(12), b'test', None)"
+            )
+            for script in (f"{crypto}; import ssl", f"import ssl; {crypto}"):
+                try:
+                    _run(str(python), "-c", script, cwd=target)
+                except subprocess.CalledProcessError as exc:
+                    raise RuntimeError(
+                        "Windows ARM64 cryptography runtime verification failed "
+                        "(check static OpenSSL linking)"
+                    ) from exc
         _run(str(python), "-m", "playwright", "install", "chromium", cwd=target)
         version = _run(
             str(python), "-m", "workgate.main", "--version", cwd=target

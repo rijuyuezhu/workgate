@@ -29,8 +29,13 @@ def preparer(monkeypatch):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.touch()
             return ""
-        if args[1:3] == ("-c", "import platform; print(platform.machine())"):
-            return "ARM64"
+        if args[1:3] == (
+            "-c",
+            "import sysconfig; print(sysconfig.get_platform())",
+        ):
+            return "win-arm64"
+        if args[1:2] == ("-c",) and "AESGCM" in args[2]:
+            return ""
         if args[1:4] == ("-m", "playwright", "install"):
             if fail[0]:
                 raise subprocess.CalledProcessError(1, args)
@@ -461,8 +466,11 @@ def test_arm64_refuses_x64_python_emulation_before_browser_or_launcher(
     original_run = module._run
 
     def emulate_x64(*args, **kwargs):
-        if args[1:3] == ("-c", "import platform; print(platform.machine())"):
-            return "AMD64"
+        if args[1:3] == (
+            "-c",
+            "import sysconfig; print(sysconfig.get_platform())",
+        ):
+            return "win-amd64"
         return original_run(*args, **kwargs)
 
     monkeypatch.setattr(module, "_run", emulate_x64)
@@ -559,3 +567,60 @@ def test_arm64_rejects_unsupported_static_openssl_sdk(
     monkeypatch.setenv("OPENSSL_DIR", str(sdk))
     with pytest.raises(RuntimeError, match="supported OpenSSL"):
         module._arm64_static_openssl_env(host_os="nt", machine="ARM64")
+
+
+def test_arm64_static_crypto_import_order_checked_before_browser(
+    tmp_path, repo, preparer, monkeypatch
+):
+    origin, _git = repo
+    module, calls, _fail = preparer
+    monkeypatch.setattr(
+        module, "_arm64_static_openssl_env", lambda: {"OPENSSL_STATIC": "1"}
+    )
+    module.prepare(
+        tag="v5.0.0a5",
+        role="executor",
+        root=tmp_path / "managed",
+        repository=str(origin),
+    )
+    crypto_calls = [
+        (i, a[2])
+        for i, a in enumerate(calls)
+        if len(a) >= 3 and a[1] == "-c" and "AESGCM" in a[2]
+    ]
+    assert len(crypto_calls) == 2
+    assert crypto_calls[0][1].startswith("from cryptography")
+    assert crypto_calls[1][1].startswith("import ssl;")
+    browser = next(
+        i
+        for i, a in enumerate(calls)
+        if a[1:4] == ("-m", "playwright", "install")
+    )
+    assert crypto_calls[-1][0] < browser
+
+
+def test_arm64_crypto_import_failure_preserves_launcher(
+    tmp_path, repo, preparer, monkeypatch
+):
+    origin, _git = repo
+    module, calls, _fail = preparer
+    monkeypatch.setattr(
+        module, "_arm64_static_openssl_env", lambda: {"OPENSSL_STATIC": "1"}
+    )
+    original_run = module._run
+
+    def import_fails(*args, **kwargs):
+        if len(args) >= 3 and args[1] == "-c" and "AESGCM" in args[2]:
+            raise subprocess.CalledProcessError(1, args)
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(module, "_run", import_fails)
+    with pytest.raises(RuntimeError, match="cryptography runtime verification"):
+        module.prepare(
+            tag="v5.0.0a5",
+            role="executor",
+            root=tmp_path / "managed",
+            repository=str(origin),
+        )
+    assert not (tmp_path / "managed" / "bin").exists()
+    assert not any(a[1:4] == ("-m", "playwright", "install") for a in calls)
