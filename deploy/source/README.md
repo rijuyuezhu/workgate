@@ -43,9 +43,10 @@ Any existing user's config, state, or paired identity remains under the
 individual role's own existing safety rules. Before role setup the installer
 checks the current native service status and **refuses an implicit reinstall
 or upgrade** if the target role (or a conflicting Colocate service) is already
-installed, including stopped services. Preparation of a new versioned checkout
-may already have finished, but the existing service and stable CLI stay
-untouched. The caller must explicitly manage an existing deployment using
+installed, including stopped services. When a managed launcher already exists,
+its service status is checked before cloning or syncing a new checkout. Older
+launchers without status support fall back to the check using the prepared CLI.
+In either case, the existing service and stable CLI stay untouched on refusal. The caller must explicitly manage an existing deployment using
 its normal CLI. Safe no-op reinstallation, migration and rolling upgrade /
 rollback remain separate #456 acceptance work.
 

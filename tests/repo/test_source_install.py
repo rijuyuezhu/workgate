@@ -30,7 +30,9 @@ def installer(monkeypatch):
 
 @pytest.fixture
 def skip_native_status(installer, monkeypatch):
-    monkeypatch.setattr(installer, "_check_native_services", lambda *a: None)
+    monkeypatch.setattr(
+        installer, "_check_native_services", lambda *a, **kw: None
+    )
 
 
 @pytest.mark.parametrize(
@@ -574,3 +576,175 @@ def test_installer_forwards_explicit_arm64_wheel_pair(
         )
     assert passed[0]["arm64_wheel_sha256"] == "a" * 64
     assert passed[0]["arm64_wheel"].startswith("https://")
+
+
+@pytest.mark.parametrize(
+    "role,conflicting",
+    [
+        ("control", "control"),
+        ("executor", "executor"),
+        ("colocate", "colocate"),
+        ("executor", "colocate"),
+        ("control", "colocate"),
+    ],
+)
+def test_existing_service_fails_before_prepare(
+    installer, monkeypatch, tmp_path, role, conflicting
+):
+    # A validated managed launcher is sufficient to reject a conflicting
+    # service before clone/uv sync can touch the installed source runtime.
+    existing_python = tmp_path / "versions" / "old" / "bin" / "python"
+    installer._write_launcher(tmp_path, existing_python)
+    monkeypatch.setattr(
+        installer,
+        "prepare",
+        lambda **kw: pytest.fail(
+            "must not clone or sync while service installed"
+        ),
+    )
+    observed = []
+
+    def run(argv, **kw):
+        assert kw.get("capture_output") is True
+        assert argv[0] == str(
+            tmp_path
+            / "bin"
+            / ("workgate.cmd" if os.name == "nt" else "workgate")
+        )
+        assert argv[1] in {"control", "executor", "colocate"}
+        assert "-m" not in argv
+        observed.append(argv[1])
+        prefix = (
+            "State: "
+            if argv[1] == "executor"
+            else f"{argv[1].capitalize()} service: "
+        )
+        state = "inactive" if argv[1] == conflicting else "not-installed"
+        return subprocess.CompletedProcess(argv, 0, prefix + state + "\n")
+
+    monkeypatch.setattr(installer.subprocess, "run", run)
+    before = (
+        tmp_path / "bin" / ("workgate.cmd" if os.name == "nt" else "workgate")
+    ).read_bytes()
+    with pytest.raises(RuntimeError, match="already installed"):
+        installer.install(
+            role=role,
+            root=tmp_path,
+            tag="v5.0.0a6",
+            control_url="https://control.example"
+            if role == "executor"
+            else None,
+        )
+    assert conflicting in observed
+    assert (
+        tmp_path / "bin" / ("workgate.cmd" if os.name == "nt" else "workgate")
+    ).read_bytes() == before
+    assert not (tmp_path / "versions" / "old").exists()
+
+
+def test_existing_managed_launcher_allows_fresh_install_if_no_service(
+    installer, monkeypatch, tmp_path
+):
+    installer._write_launcher(
+        tmp_path, tmp_path / "versions" / "old" / "python"
+    )
+    calls = []
+
+    def run(argv, **kw):
+        calls.append((argv, kw))
+        if kw.get("capture_output"):
+            name = (
+                argv[1]
+                if argv[1] in ("control", "executor", "colocate")
+                else argv[3]
+            )
+            prefix = (
+                "State: "
+                if name == "executor"
+                else f"{name.capitalize()} service: "
+            )
+            return subprocess.CompletedProcess(
+                argv, 0, prefix + "not-installed\n"
+            )
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(installer.subprocess, "run", run)
+    monkeypatch.setattr(
+        installer, "prepare", lambda **kw: tmp_path / "versions" / "new"
+    )
+    installer.install(role="control", tag="v5.0.0a6", root=tmp_path)
+    status_calls = [argv for argv, kw in calls if kw.get("capture_output")]
+    assert len(status_calls) == 4  # before and after preparation
+    assert status_calls[0][1] == "control"
+    assert status_calls[2][1:4] == ["-m", "workgate.main", "control"]
+
+
+def test_old_managed_launcher_without_status_falls_back_to_prepared_cli(
+    installer, monkeypatch, tmp_path
+):
+    installer._write_launcher(
+        tmp_path, tmp_path / "versions" / "old" / "python"
+    )
+    prepared = []
+
+    def prepare(**kwargs):
+        prepared.append(True)
+        return tmp_path / "versions" / "new"
+
+    def run(argv, **kwargs):
+        if argv[1] == "control":
+            raise subprocess.CalledProcessError(
+                2, argv
+            )  # old CLI lacks status-service
+        if kwargs.get("capture_output"):
+            role = argv[3]
+            return subprocess.CompletedProcess(
+                argv, 0, f"{role.capitalize()} service: not-installed\n"
+            )
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(installer, "prepare", prepare)
+    monkeypatch.setattr(installer.subprocess, "run", run)
+    installer.install(role="control", tag="v5.0.0a6", root=tmp_path)
+    assert prepared == [True]
+
+
+def test_unmanaged_launcher_refused_before_clone(
+    installer, monkeypatch, tmp_path
+):
+    launcher = (
+        tmp_path / "bin" / ("workgate.cmd" if os.name == "nt" else "workgate")
+    )
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("not Workgate managed")
+    monkeypatch.setattr(
+        installer,
+        "prepare",
+        lambda **kw: pytest.fail(
+            "unmanaged launcher must reject before prepare"
+        ),
+    )
+    with pytest.raises(RuntimeError, match="unmanaged launcher"):
+        installer.install(role="control", tag="v5.0.0a6", root=tmp_path)
+
+
+def test_existing_launcher_unknown_status_fails_before_clone(
+    installer, monkeypatch, tmp_path
+):
+    installer._write_launcher(
+        tmp_path, tmp_path / "versions" / "old" / "python"
+    )
+    monkeypatch.setattr(
+        installer,
+        "prepare",
+        lambda **kw: pytest.fail(
+            "status uncertainty must reject before prepare"
+        ),
+    )
+    monkeypatch.setattr(
+        installer.subprocess,
+        "run",
+        lambda args, **kw: subprocess.CompletedProcess(args, 0, "unknown\n"),
+    )
+    with pytest.raises(RuntimeError, match="unexpected control status"):
+        installer.install(role="control", tag="v5.0.0a6", root=tmp_path)
