@@ -249,7 +249,12 @@ def manage_colocate_service(action: str) -> None:
             check=False,
             timeout=15,
         )
-        print(f"Colocate service: {result.stdout.strip() or 'not-installed'}")
+        # A unit exists, so even an empty/odd manager response must not
+        # permit first-run setup to treat this service as absent.
+        native_status = result.stdout.strip()
+        if native_status in {"", "not-installed"}:
+            native_status = "unknown"
+        print(f"Colocate service: {native_status}")
         return
     if action == "uninstall":
         unit = systemd_user_unit_path(

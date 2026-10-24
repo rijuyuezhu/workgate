@@ -530,3 +530,23 @@ def test_custom_executor_config_flows_to_status_probe(
         "--config",
         str(tmp_path / "custom.yaml"),
     ]
+
+
+@pytest.mark.parametrize("role", ["control", "colocate"])
+def test_native_service_status_with_extra_lines_fails_closed(
+    installer, tmp_path, monkeypatch, role
+):
+    prefix = role.capitalize()
+    monkeypatch.setattr(
+        installer.subprocess,
+        "run",
+        lambda argv, **kw: subprocess.CompletedProcess(
+            argv,
+            0,
+            f"{prefix} service: not-installed\nwarning: unknown service owner\n",
+        ),
+    )
+    with pytest.raises(RuntimeError, match="unexpected .* status response"):
+        installer._check_native_services(
+            tmp_path / "python", tmp_path, role, None
+        )

@@ -145,13 +145,18 @@ def _check_native_services(
             timeout=30,
             cwd=checkout,
         )
-        first_line = result.stdout.strip().splitlines()[:1]
+        lines = result.stdout.strip().splitlines()
+        first_line = lines[:1]
         prefix = (
             "State: "
             if candidate == "executor"
             else f"{candidate.capitalize()} service: "
         )
-        if not first_line or not first_line[0].startswith(prefix):
+        if (
+            not first_line
+            or not first_line[0].startswith(prefix)
+            or (candidate != "executor" and len(lines) != 1)
+        ):
             raise RuntimeError(
                 f"unexpected {candidate} status response; refusing service changes"
             )
