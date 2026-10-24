@@ -238,3 +238,25 @@ def test_manage_colocate_user_unit_lifecycle(installer):
         "--now",
         "workgate-colocate.service",
     ] in commands
+
+
+def test_status_distinguishes_absent_from_inactive_user_unit(installer, capsys):
+    _args, commands, _pair, unit = installer
+    service.manage_colocate_service("status")
+    assert capsys.readouterr().out.strip() == "Colocate service: not-installed"
+    assert [
+        "systemctl",
+        "--user",
+        "is-active",
+        "workgate-colocate.service",
+    ] not in commands
+    unit.parent.mkdir(parents=True)
+    unit.write_text("# Managed by workgate colocate install-service\n")
+    service.manage_colocate_service("status")
+    assert capsys.readouterr().out.strip() == "Colocate service: not-installed"
+    assert [
+        "systemctl",
+        "--user",
+        "is-active",
+        "workgate-colocate.service",
+    ] in commands

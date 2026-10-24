@@ -235,6 +235,13 @@ def manage_colocate_service(action: str) -> None:
             "Colocate service requires Linux systemd or Windows Task Scheduler"
         )
     if action == "status":
+        unit = systemd_user_unit_path(
+            _systemctl("show", "--property=UnitPath", "--value").stdout,
+            _SERVICE_NAME,
+        )
+        if not unit.exists() and not unit.is_symlink():
+            print("Colocate service: not-installed")
+            return
         result = subprocess.run(
             ["systemctl", "--user", "is-active", _SERVICE_NAME],
             capture_output=True,

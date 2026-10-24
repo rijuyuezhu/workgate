@@ -30,8 +30,10 @@ adds Linux `curl | sh` and native Windows PowerShell download commands.
 Use them only for a release **containing the bootstrap**, with the full release
 commit SHA explicitly pinned in the URL and arguments; see the
 [source installation README](https://github.com/rijuyuezhu/workgate/blob/main/deploy/source/README.md).
-The existing `v5.0.0a5` release predates these entrypoints. Clean-machine,
-rerun, migration and rollback acceptance is still tracked under #456.
+The existing `v5.0.0a5` release predates these entrypoints. Existing managed services are not implicitly overwritten or restarted by
+the source first-run installer; an already-installed role is reported and
+requires explicit service management. Clean-machine, safe no-op rerun,
+migration and rollback acceptance is still tracked under #456.
 
 ## Python installation from GitHub
 

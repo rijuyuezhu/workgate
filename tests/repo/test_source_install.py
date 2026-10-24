@@ -28,6 +28,11 @@ def installer(monkeypatch):
     return module
 
 
+@pytest.fixture
+def skip_native_status(installer, monkeypatch):
+    monkeypatch.setattr(installer, "_check_native_services", lambda *a: None)
+
+
 @pytest.mark.parametrize(
     "role,expected",
     [
@@ -52,6 +57,7 @@ def installer(monkeypatch):
         ),
     ],
 )
+@pytest.mark.usefixtures("skip_native_status")
 def test_install_command_order_and_only_one_native_role(
     installer, tmp_path, monkeypatch, role, expected
 ):
@@ -260,6 +266,7 @@ def test_public_control_bind_without_oauth_base_url_fails_before_prepare(
         )
 
 
+@pytest.mark.usefixtures("skip_native_status")
 def test_failed_pairing_never_runs_service_or_later_commands(
     installer, tmp_path, monkeypatch
 ):
@@ -278,6 +285,7 @@ def test_failed_pairing_never_runs_service_or_later_commands(
     assert calls == [["control", "init-config"]]
 
 
+@pytest.mark.usefixtures("skip_native_status")
 def test_no_uv_run_reentry_and_no_shell_in_role_service(
     installer, tmp_path, monkeypatch
 ):
@@ -300,6 +308,7 @@ def test_no_uv_run_reentry_and_no_shell_in_role_service(
     assert "uv" not in cmd
 
 
+@pytest.mark.usefixtures("skip_native_status")
 def test_failed_first_role_setup_keeps_previous_stable_launcher(
     installer, tmp_path, monkeypatch
 ):
@@ -352,6 +361,7 @@ def test_unmanaged_launcher_blocks_service_setup_before_any_changes(
     assert launcher.read_text() == "unrelated owner"
 
 
+@pytest.mark.usefixtures("skip_native_status")
 def test_successful_role_setup_activates_stable_launcher_once(
     installer, tmp_path, monkeypatch
 ):
@@ -376,6 +386,7 @@ def test_successful_role_setup_activates_stable_launcher_once(
     ]
 
 
+@pytest.mark.usefixtures("skip_native_status")
 def test_public_bootstrap_pinned_commit_reaches_source_preparer(
     installer, tmp_path, monkeypatch
 ):
@@ -401,3 +412,121 @@ def test_public_bootstrap_pinned_commit_reaches_source_preparer(
     )
     assert received[0]["expected_commit"] == sha
     assert received[0]["activate_launcher"] is False
+
+
+@pytest.mark.parametrize(
+    "role,expected",
+    [
+        ("control", ["control", "colocate"]),
+        ("executor", ["executor", "colocate"]),
+        ("colocate", ["control", "executor", "colocate"]),
+    ],
+)
+def test_fresh_install_checks_conflicting_services_before_setup(
+    installer, tmp_path, monkeypatch, role, expected
+):
+    checkout = tmp_path / "sha"
+    monkeypatch.setattr(installer, "prepare", lambda **kw: checkout)
+    monkeypatch.setattr(installer, "_write_launcher", lambda *args: tmp_path)
+    observed = []
+
+    def run(argv, **kwargs):
+        candidate = argv[3]
+        if kwargs.get("capture_output"):
+            observed.append(candidate)
+            value = (
+                "State: not-installed\n"
+                if candidate == "executor"
+                else f"{candidate.capitalize()} service: not-installed\n"
+            )
+            return subprocess.CompletedProcess(argv, 0, value)
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(installer.subprocess, "run", run)
+    installer.install(
+        role=role,
+        root=tmp_path,
+        tag="v5.0.0a6",
+        control_url="https://control.example" if role == "executor" else None,
+    )
+    assert observed == expected
+
+
+@pytest.mark.parametrize("role", ["control", "executor", "colocate"])
+def test_installed_service_rejected_before_native_setup_or_launcher_change(
+    installer, tmp_path, monkeypatch, role
+):
+    monkeypatch.setattr(installer, "prepare", lambda **kw: tmp_path / "sha")
+    monkeypatch.setattr(
+        installer,
+        "_write_launcher",
+        lambda *args: pytest.fail("must not switch existing launcher"),
+    )
+    called = []
+
+    def run(argv, **kwargs):
+        assert kwargs.get("capture_output"), "native install must not start"
+        called.append(argv[3])
+        prefix = (
+            "State"
+            if argv[3] == "executor"
+            else f"{argv[3].capitalize()} service"
+        )
+        return subprocess.CompletedProcess(argv, 0, f"{prefix}: inactive\n")
+
+    monkeypatch.setattr(installer.subprocess, "run", run)
+    with pytest.raises(RuntimeError, match="already installed"):
+        installer.install(
+            role=role,
+            root=tmp_path,
+            tag="v5.0.0a6",
+            control_url="https://control.example"
+            if role == "executor"
+            else None,
+        )
+    assert len(called) == 1
+
+
+@pytest.mark.parametrize("output", ["", "unrecognized", "State: unknown\n"])
+def test_unexpected_executor_native_status_fails_closed(
+    installer, tmp_path, monkeypatch, output
+):
+    monkeypatch.setattr(installer, "prepare", lambda **kw: tmp_path / "sha")
+    monkeypatch.setattr(
+        installer.subprocess,
+        "run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, output),
+    )
+    with pytest.raises(RuntimeError, match="status response|already installed"):
+        installer.install(
+            role="executor",
+            root=tmp_path,
+            tag="v5.0.0a6",
+            control_url="https://control.example",
+        )
+
+
+def test_custom_executor_config_flows_to_status_probe(
+    installer, tmp_path, monkeypatch
+):
+    inspected = []
+
+    def run(argv, **kwargs):
+        inspected.append(argv[3:])
+        response = (
+            "State: not-installed\n"
+            if argv[3] == "executor"
+            else "Colocate service: not-installed\n"
+        )
+        return subprocess.CompletedProcess(argv, 0, response)
+
+    monkeypatch.setattr(installer.subprocess, "run", run)
+    installer._check_native_services(
+        tmp_path / "python", tmp_path, "executor", tmp_path / "custom.yaml"
+    )
+    assert inspected[0] == [
+        "executor",
+        "status",
+        "--config",
+        str(tmp_path / "custom.yaml"),
+    ]
