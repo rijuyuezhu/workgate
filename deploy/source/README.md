@@ -99,6 +99,45 @@ are reported clearly. No running Control is needed to fetch the installer.
 The public bootstrap still needs release publication and real clean-machine,
 upgrade and rollback acceptance before #456 can close.
 
+## Windows ARM64 native cryptography prerequisite
+
+PyCA `cryptography` no longer publishes Windows ARM64 wheels for our current
+lockfile version. On **native** Windows ARM64 (including Spark), installing
+the package from source against dynamically linked OpenSSL can succeed at
+`uv sync` but later fail at Workgate startup with `DLL load failed while
+importing _rust`: the Scoop OpenSSL DLL can conflict with Python's own
+OpenSSL runtime.
+
+The source preparer uses the native Rust/MSVC toolchain and **ARM64 static
+OpenSSL libraries**, building `cryptography` from source in a fresh
+environment rather than using a cached dynamically linked wheel. An
+already-installed, matching package is not unnecessarily reinstalled on
+subsequent preparations. An ARM64 OpenSSL 3 SDK providing
+`include/openssl/ssl.h`, `libcrypto_static.lib` and
+`libssl_static.lib` is required. Scoop's `openssl-lts` installation provides
+these under `lib/VC/arm64/MD`. The preparer recognizes Scoop's
+`~/scoop/apps/openssl-lts/current` SDK (not the executable shim), or accepts
+explicit `OPENSSL_DIR`, `OPENSSL_LIB_DIR` and `OPENSSL_INCLUDE_DIR`
+settings for nonstandard layouts. It also recognizes Scoop rustup's
+`~/scoop/persist/rustup/.cargo/bin` when Cargo is not on PATH.
+
+Native MSVC Build Tools must be installed and their ARM64 developer-shell
+environment initialized (e.g. `vcvarsall.bat arm64`) before invoking the
+source installer; this setup only affects the current shell. Missing tools
+or SDK files cause a clear preparation error rather than a silently incomplete
+runtime; previous launchers and services are not changed.
+
+No downgrade of `cryptography`, x64 emulation, DLL copying or global
+Python modifications are performed. **This source-build toolchain is an
+interim/developer fallback**, not the intended end-user installation path.
+Issue [#475](https://github.com/rijuyuezhu/workgate/issues/475) tracks a
+version-pinned, verified prebuilt native ARM64 wheel so ordinary Windows ARM64
+installations will not require Cargo, MSVC or an OpenSSL SDK. The temporary
+source build can take several minutes on a fresh checkout. The final
+`workgate --version` verification must succeed using the release's isolated
+`.venv`; full native ARM64 Executor/GUI/PTY and managed upgrade acceptance
+remains part of #459.
+
 ## Runtime preparation without role setup
 
 This prepares **only** the reproducible source runtime and a stable CLI.
