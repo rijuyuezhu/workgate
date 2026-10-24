@@ -1196,7 +1196,8 @@ void (async () => {
   setActiveView(viewFromLocation(initialUiLocation), { replaceHash: true });
   void boot();
   window.setInterval(() => {
-    terminal.ping();
+    terminal.ping(); // Keep an attached terminal alive while the tab is hidden.
+    if (document.hidden) return;
     if (config.authMode !== "oauth" || authenticated) {
       const view = document.body.dataset.activeView;
       if (view === "tasks" || view === "overview") {

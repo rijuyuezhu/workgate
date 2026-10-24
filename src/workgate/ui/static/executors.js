@@ -1269,7 +1269,7 @@ export function createExecutorsController({
   function startPolling() {
     stopPolling();
     state.timer = globalThis.setInterval(() => {
-      if (authMode !== "oauth" || isAuthenticated()) {
+      if (!document.hidden && (authMode !== "oauth" || isAuthenticated())) {
         refreshInBackground();
         if (selectedExecutor()?.online) void refreshMetrics();
       }

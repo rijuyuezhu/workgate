@@ -158,7 +158,7 @@ export function createDashboardController({
   function startDashboardPolling() {
     stopDashboardPolling();
     controllerState.timer = window.setInterval(() => {
-      if ((authMode !== "oauth" || isAuthenticated()) && dashboardExecutorOnline()
+      if (!document.hidden && (authMode !== "oauth" || isAuthenticated()) && dashboardExecutorOnline()
           && !document.getElementById("dashboard-panel")?.hidden) {
         refreshDashboardInBackground();
       }
