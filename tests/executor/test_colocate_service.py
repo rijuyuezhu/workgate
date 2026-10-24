@@ -291,6 +291,7 @@ def test_existing_colocate_unit_with_unreadable_manager_status_is_not_absent(
     ] in observed
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX systemd unit symlink")
 def test_dangling_colocate_unit_symlink_is_not_treated_as_absent(
     installer, capsys, monkeypatch
 ):
