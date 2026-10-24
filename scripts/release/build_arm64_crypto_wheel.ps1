@@ -7,7 +7,7 @@ if ($env:PROCESSOR_ARCHITECTURE -cne 'ARM64') {
 }
 foreach ($tool in @('git', 'uv', 'perl')) {
     if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-        throw "Missing $tool: ARM64 wheel CI needs Git, uv, Perl, Rust, and MSVC."
+        throw ("Missing {0}: ARM64 wheel CI needs Git, uv, Perl, Rust, and MSVC." -f $tool)
     }
 }
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
