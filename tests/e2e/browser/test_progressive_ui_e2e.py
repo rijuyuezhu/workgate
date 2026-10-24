@@ -66,6 +66,7 @@ def test_control_integrations_render_before_executor_source(
                 if (path.includes('/api/ui/integrations?')
                     && path.includes('owner=executor') && path.includes('kind=skill')) {
                   window.__slowExecutorSkillStarted = true;
+                  window.__slowExecutorSkillCalls = (window.__slowExecutorSkillCalls || 0) + 1;
                   return new Promise((resolve, reject) => {
                     window.__releaseExecutorSkill = () => original(url, options).then(resolve, reject);
                   });
@@ -95,6 +96,9 @@ def test_control_integrations_render_before_executor_source(
                 has=page.locator("h4", has_text="Executor")
             )
         ).to_contain_text("Loading")
+        page.locator('[data-executor-subtab="mcp"]').click()
+        page.locator('[data-executor-subtab="skills"]').click()
+        assert page.evaluate("window.__slowExecutorSkillCalls") == 1
         page.evaluate("""() => {
           window.__controlSkillGroup = [...document.querySelectorAll(
             '#executor-skills-body .executor-manage-group'
@@ -182,3 +186,54 @@ def test_inventory_error_keeps_stale_rows_without_allowing_writes(
         "Updated", timeout=10000
     )
     expect(page.locator("#executor-rename-open")).to_be_enabled()
+
+
+def test_retry_failed_control_skill_without_reloading_fresh_mcp(
+    browser_harness: BrowserHarness,
+) -> None:
+    harness = browser_harness
+    harness.login()
+    page = harness.context.new_page()
+    counts = {"skill": 0, "mcp": 0}
+
+    def transient_failure(route):
+        url = route.request.url
+        if "owner=control" not in url:
+            route.continue_()
+            return
+        if "kind=skill" in url:
+            counts["skill"] += 1
+            if counts["skill"] == 1:
+                route.abort()
+                return
+        elif "kind=mcp" in url:
+            counts["mcp"] += 1
+        route.continue_()
+
+    page.route("**/api/ui/integrations?*", transient_failure)
+    try:
+        page.goto(
+            f"{harness.base_url}/ui#executors", wait_until="domcontentloaded"
+        )
+        expect(page.locator("#connection-state")).to_have_text("Connected")
+        expect(
+            page.locator("#executor-list .executor-control-group .executor-row")
+        ).to_be_visible()
+        page.locator(
+            "#executor-list .executor-control-group .executor-row"
+        ).click()
+        page.locator('[data-executor-subtab="skills"]').click()
+        control = page.locator(
+            "#executor-skills-body .executor-manage-group"
+        ).filter(has=page.locator("h4", has_text="Control"))
+        expect(control).to_contain_text("Failed", timeout=10000)
+        assert counts["skill"] == 1
+        assert counts["mcp"] == 1
+
+        page.locator('[data-executor-subtab="overview"]').click()
+        page.locator('[data-executor-subtab="skills"]').click()
+        expect(control).not_to_contain_text("Failed", timeout=10000)
+        assert counts["skill"] == 2
+        assert counts["mcp"] == 1
+    finally:
+        page.close()
