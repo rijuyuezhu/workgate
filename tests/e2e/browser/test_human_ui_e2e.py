@@ -1012,5 +1012,8 @@ def test_audit_scope_revocation_clears_stale_browser_data(
             "PROTECTED_AUDIT_PAYLOAD"
         )
         expect(page.locator("#task-list .task-entry")).to_have_count(0)
+        expect(
+            page.locator("#dashboard-task-list .dashboard-task-row")
+        ).to_have_count(0)
     finally:
         page.close()

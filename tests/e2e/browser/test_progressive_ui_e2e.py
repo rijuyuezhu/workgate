@@ -322,3 +322,67 @@ def test_inventory_poll_preserves_unchanged_card_dom(
         expect(row).to_be_focused()
     finally:
         page.close()
+
+
+def test_idle_task_shortcuts_preserve_focus_and_logout_clears_them(
+    browser_harness: BrowserHarness,
+) -> None:
+    """Unchanged task polls should not replace controls or outlive the login."""
+    h = browser_harness
+    h.login()
+    created = h.api(
+        "POST",
+        "/tools/task",
+        body={
+            "action": "create",
+            "label": "dashboard-idle-focus",
+        },
+    )
+    assert created["status"] == 200
+    task_id = created["payload"]["structuredContent"]["result"]["task_id"]
+    page = h.context.new_page()
+    try:
+        page.add_init_script("""(() => {
+          const interval = window.setInterval.bind(window);
+          window.setInterval = (callback, delay, ...args) =>
+            interval(callback, delay === 30000 ? 450 : delay, ...args);
+          const fetch = window.fetch.bind(window);
+          window.__taskReads = 0;
+          window.fetch = (url, options) => {
+            if (String(url).includes('/api/ui/tasks?')) window.__taskReads += 1;
+            return fetch(url, options);
+          };
+        })()""")
+        page.goto(f"{h.base_url}/ui#overview", wait_until="domcontentloaded")
+        expect(page.locator("#connection-state")).to_have_text("Connected")
+        row = page.locator(
+            f'#dashboard-task-list .dashboard-task-row[data-task-id="{task_id}"]'
+        )
+        expect(row).to_be_visible()
+        row.focus()
+        expect(row).to_be_focused()
+        page.evaluate("""() => {
+          window.__taskRow = document.activeElement;
+          window.__oldTaskReads = window.__taskReads;
+          window.__shortcutChanges = 0;
+          new MutationObserver(records => {
+            for (const record of records)
+              window.__shortcutChanges += record.addedNodes.length + record.removedNodes.length;
+          }).observe(document.getElementById('dashboard-task-list'), { childList: true });
+        }""")
+        page.wait_for_function(
+            "() => window.__taskReads >= window.__oldTaskReads + 3",
+            timeout=12_000,
+        )
+        page.wait_for_timeout(150)
+        assert page.evaluate("window.__shortcutChanges") == 0
+        assert row.evaluate("element => element === window.__taskRow")
+        expect(row).to_be_focused()
+
+        page.locator("#sign-out").click()
+        expect(page.locator("#auth-panel")).to_be_visible()
+        expect(
+            page.locator("#dashboard-task-list .dashboard-task-row")
+        ).to_have_count(0)
+    finally:
+        page.close()
