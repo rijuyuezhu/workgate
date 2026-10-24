@@ -238,3 +238,65 @@ def test_manage_colocate_user_unit_lifecycle(installer):
         "--now",
         "workgate-colocate.service",
     ] in commands
+
+
+def test_status_distinguishes_absent_from_inactive_user_unit(installer, capsys):
+    _args, commands, _pair, unit = installer
+    service.manage_colocate_service("status")
+    assert capsys.readouterr().out.strip() == "Colocate service: not-installed"
+    assert [
+        "systemctl",
+        "--user",
+        "is-active",
+        "workgate-colocate.service",
+    ] not in commands
+    unit.parent.mkdir(parents=True)
+    unit.write_text("# Managed by workgate colocate install-service\n")
+    service.manage_colocate_service("status")
+    assert capsys.readouterr().out.strip() == "Colocate service: unknown"
+    assert [
+        "systemctl",
+        "--user",
+        "is-active",
+        "workgate-colocate.service",
+    ] in commands
+
+
+@pytest.mark.parametrize(
+    "manager_output", ["", "  \n", "unknown\n", "not-installed\n"]
+)
+def test_existing_colocate_unit_with_unreadable_manager_status_is_not_absent(
+    installer, capsys, monkeypatch, manager_output
+):
+    _args, _commands, _pair, unit = installer
+    unit.parent.mkdir(parents=True, exist_ok=True)
+    unit.write_text("# Managed by workgate colocate install-service\n")
+    observed = []
+    old_run = service.subprocess.run
+
+    def run(command, **kwargs):
+        if command[-2:] == ["is-active", "workgate-colocate.service"]:
+            observed.append(command)
+            return subprocess.CompletedProcess(command, 3, manager_output, "")
+        return old_run(command, **kwargs)
+
+    monkeypatch.setattr(service.subprocess, "run", run)
+    service.manage_colocate_service("status")
+    assert capsys.readouterr().out.strip() == "Colocate service: unknown"
+    assert [
+        "systemctl",
+        "--user",
+        "is-active",
+        "workgate-colocate.service",
+    ] in observed
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX systemd unit symlink")
+def test_dangling_colocate_unit_symlink_is_not_treated_as_absent(
+    installer, capsys, monkeypatch
+):
+    _args, _commands, _pair, unit = installer
+    unit.parent.mkdir(parents=True, exist_ok=True)
+    unit.symlink_to(unit.parent / "missing-unit-target")
+    service.manage_colocate_service("status")
+    assert capsys.readouterr().out.strip() != "Colocate service: not-installed"

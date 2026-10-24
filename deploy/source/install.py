@@ -120,6 +120,54 @@ def role_commands(
     return [setup]
 
 
+def _check_native_services(
+    executable: Path,
+    checkout: Path,
+    role: str,
+    executor_config: Path | None,
+) -> None:
+    """Never implicitly replace an already-installed native user service."""
+    roles = {
+        "control": ("control", "colocate"),
+        "executor": ("executor", "colocate"),
+        "colocate": ("control", "executor", "colocate"),
+    }[role]
+    for candidate in roles:
+        subcommand = "status" if candidate == "executor" else "status-service"
+        argv = [str(executable), "-m", "workgate.main", candidate, subcommand]
+        if candidate == "executor" and executor_config is not None:
+            argv.extend(("--config", str(executor_config)))
+        result = subprocess.run(
+            argv,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=checkout,
+        )
+        lines = result.stdout.strip().splitlines()
+        first_line = lines[:1]
+        prefix = (
+            "State: "
+            if candidate == "executor"
+            else f"{candidate.capitalize()} service: "
+        )
+        if (
+            not first_line
+            or not first_line[0].startswith(prefix)
+            or (candidate != "executor" and len(lines) != 1)
+        ):
+            raise RuntimeError(
+                f"unexpected {candidate} status response; refusing service changes"
+            )
+        if first_line[0] != prefix + "not-installed":
+            raise RuntimeError(
+                f"{candidate} service is already installed; "
+                "automatic reinstall/upgrade is not yet safe. "
+                "Use the existing role service commands explicitly."
+            )
+
+
 def install(
     *,
     role: str,
@@ -160,6 +208,7 @@ def install(
     # Do not complete pairing or install a service if its stable command
     # would be blocked by an unrelated existing launcher.
     _check_launcher(root.expanduser().absolute())
+    _check_native_services(executable, checkout, role, executor_config)
     for command in commands:
         subprocess.run(
             [str(executable), "-m", "workgate.main", *command],

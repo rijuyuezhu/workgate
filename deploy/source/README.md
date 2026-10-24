@@ -40,9 +40,14 @@ new release is prepared and verified first, but the stable user CLI switches
 stable command remains unchanged. The native service launchers point directly
 at the verified source interpreter rather than invoking `uv run` again.
 Any existing user's config, state, or paired identity remains under the
-individual role's own existing safety rules. This first-run helper does not
-yet perform full migration, rolling update/rollback, or no-op reinstallation
-of an already installed Colocate service.
+individual role's own existing safety rules. Before role setup the installer
+checks the current native service status and **refuses an implicit reinstall
+or upgrade** if the target role (or a conflicting Colocate service) is already
+installed, including stopped services. Preparation of a new versioned checkout
+may already have finished, but the existing service and stable CLI stay
+untouched. The caller must explicitly manage an existing deployment using
+its normal CLI. Safe no-op reinstallation, migration and rolling upgrade /
+rollback remain separate #456 acceptance work.
 
 ## Public GitHub bootstrap, pinned to a release commit
 
