@@ -5,6 +5,7 @@ param(
     [string]$Role,
     [Parameter(Mandatory = $true)]
     [string]$Tag,
+    [string]$ExpectedCommit,
     [string]$InstallRoot,
     [string]$ControlUrl,
     [string]$Name,
@@ -25,6 +26,7 @@ $arguments = @(
     (Join-Path $PSScriptRoot 'install.py'),
     '--role', $Role, '--tag', $Tag
 )
+if ($ExpectedCommit) { $arguments += @('--expected-commit', $ExpectedCommit) }
 if ($InstallRoot) { $arguments += @('--install-root', $InstallRoot) }
 if ($ControlUrl) { $arguments += @('--control-url', $ControlUrl) }
 if ($Name) { $arguments += @('--name', $Name) }
