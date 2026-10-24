@@ -31,7 +31,7 @@ def _mock_setup(tmp_path, monkeypatch, *, ready=True, paired=True):
     parsed = args(tmp_path)
     events = []
 
-    def init(**_kwargs):
+    def init(_path):
         events.append("initialize")
 
     class Settings:
@@ -66,7 +66,7 @@ def _mock_setup(tmp_path, monkeypatch, *, ready=True, paired=True):
         "_reject_existing_services",
         lambda _args: events.append("check-services"),
     )
-    monkeypatch.setattr(first_run, "initialize_control_config", init)
+    monkeypatch.setattr(first_run, "_initialize_control", init)
     monkeypatch.setattr(first_run, "load_settings", lambda *a, **k: Settings())
     monkeypatch.setattr(
         first_run.socket,
@@ -195,14 +195,10 @@ def test_colocate_service_conflict_stops_before_config_creation(
 def test_linux_control_unit_conflict_even_when_not_running(
     tmp_path, monkeypatch
 ):
-    from workgate.control import service as control_service
-
-    existing = tmp_path / "workgate-control.service"
-    existing.write_text("# already installed")
-    monkeypatch.setattr(first_run.sys, "platform", "linux")
-    monkeypatch.setattr(control_service, "_unit", lambda: existing)
     from workgate.colocate import service as colocate_service
 
+    monkeypatch.setattr(first_run.sys, "platform", "linux")
+    monkeypatch.setattr(first_run, "_control_service_installed", lambda: True)
     monkeypatch.setattr(
         colocate_service,
         "_systemctl",
@@ -215,19 +211,13 @@ def test_linux_control_unit_conflict_even_when_not_running(
 
 
 def test_local_url_persisted_to_same_executor_config(tmp_path, monkeypatch):
-    captured = []
-
-    class Parser:
-        def parse_args(self, values):
-            captured.append(values)
-            return argparse.Namespace(
-                handler=lambda a: captured.append("connect-invoked")
-            )
-
-    monkeypatch.setattr("workgate.main._build_parser", lambda: Parser())
+    commands = []
+    monkeypatch.setattr(
+        first_run, "_run_cli", lambda *args, **k: commands.append(args)
+    )
     first_run._connect(args(tmp_path), "http://127.0.0.1:8765")
-    assert captured == [
-        [
+    assert commands == [
+        (
             "executor",
             "connect",
             "http://127.0.0.1:8765",
@@ -235,8 +225,7 @@ def test_local_url_persisted_to_same_executor_config(tmp_path, monkeypatch):
             str(tmp_path / "executor.yaml"),
             "--name",
             "Colocated workstation",
-        ],
-        "connect-invoked",
+        ),
     ]
 
 
@@ -268,18 +257,13 @@ def test_windows_native_control_service_conflict_is_fail_closed(
     tmp_path, monkeypatch
 ):
     from workgate.colocate import service as colocate_service
-    from workgate.control import service as control_service
 
     monkeypatch.setattr(first_run.sys, "platform", "win32")
-    monkeypatch.setattr(
-        control_service,
-        "_task",
-        lambda: argparse.Namespace(status=lambda: {"state": "Stopped"}),
-    )
+    monkeypatch.setattr(first_run, "_control_service_installed", lambda: True)
     monkeypatch.setattr(
         colocate_service,
         "_windows_task",
-        lambda: (_ for _ in ()).throw(AssertionError("should short-circuit")),
+        lambda: argparse.Namespace(status=lambda: None),
     )
     with pytest.raises(RuntimeError, match="already installed"):
         first_run._reject_existing_services(args(tmp_path))
@@ -288,13 +272,10 @@ def test_windows_native_control_service_conflict_is_fail_closed(
 @pytest.mark.skipif(os.name == "nt", reason="Linux systemd unit paths")
 def test_linux_stopped_executor_service_conflict(tmp_path, monkeypatch):
     from workgate.colocate import service as colocate_service
-    from workgate.control import service as control_service
     from workgate.executor import service as executor_service
 
     monkeypatch.setattr(first_run.sys, "platform", "linux")
-    monkeypatch.setattr(
-        control_service, "_unit", lambda: tmp_path / "missing-control.service"
-    )
+    monkeypatch.setattr(first_run, "_control_service_installed", lambda: False)
     monkeypatch.setattr(
         colocate_service,
         "_systemctl",
@@ -374,13 +355,16 @@ def test_cleanup_kills_stalled_temporary_control():
 
 def test_windows_existing_colocate_task_conflict(tmp_path, monkeypatch):
     from workgate.colocate import service as colocate_service
-    from workgate.control import service as control_service
 
     monkeypatch.setattr(first_run.sys, "platform", "win32")
     monkeypatch.setattr(
-        control_service,
-        "_task",
-        lambda: argparse.Namespace(status=lambda: None),
+        first_run,
+        "_control_service_installed",
+        lambda: (_ for _ in ()).throw(
+            AssertionError(
+                "no Control subprocess needed when Colocate is installed"
+            )
+        ),
     )
     monkeypatch.setattr(
         colocate_service,
@@ -396,15 +380,10 @@ def test_linux_clean_native_service_preflight_allows_setup(
     tmp_path, monkeypatch
 ):
     from workgate.colocate import service as colocate_service
-    from workgate.control import service as control_service
     from workgate.executor import service as executor_service
 
     monkeypatch.setattr(first_run.sys, "platform", "linux")
-    monkeypatch.setattr(
-        control_service,
-        "_unit",
-        lambda: tmp_path / "missing-control.service",
-    )
+    monkeypatch.setattr(first_run, "_control_service_installed", lambda: False)
     monkeypatch.setattr(
         colocate_service,
         "_systemctl",
@@ -424,3 +403,75 @@ def test_linux_clean_native_service_preflight_allows_setup(
         f"state_dir: {tmp_path / 'executor-state'}\n"
     )
     first_run._reject_existing_services(parsed)
+
+
+def test_control_status_uses_public_cli_and_fails_closed(monkeypatch):
+    responses = [
+        "Control service: not-installed\n",
+        "Control service: inactive\n",
+        "unexpected status",
+    ]
+    observed = []
+
+    def run(*argv, quiet=False):
+        observed.append((argv, quiet))
+        return responses.pop(0)
+
+    monkeypatch.setattr(first_run, "_run_cli", run)
+    assert first_run._control_service_installed() is False
+    assert first_run._control_service_installed() is True
+    with pytest.raises(RuntimeError, match="unexpected Control service status"):
+        first_run._control_service_installed()
+    assert observed == [
+        (("control", "status-service"), True),
+        (("control", "status-service"), True),
+        (("control", "status-service"), True),
+    ]
+
+
+def test_public_cli_propagates_failure_without_service_install(monkeypatch):
+    def reject(*args, **kwargs):
+        raise subprocess.CalledProcessError(1, args)
+
+    monkeypatch.setattr(first_run.subprocess, "run", reject)
+    with pytest.raises(subprocess.CalledProcessError):
+        first_run._initialize_control(Path("control.yaml"))
+    with pytest.raises(subprocess.CalledProcessError):
+        first_run._connect(
+            argparse.Namespace(name="node", executor_config=None),
+            "http://127.0.0.1:8765",
+        )
+
+
+def test_control_initialization_runs_public_subprocess(monkeypatch, tmp_path):
+    commands = []
+
+    def fake(*args, **kwargs):
+        commands.append((args, kwargs))
+        return subprocess.CompletedProcess(args, 0, "")
+
+    monkeypatch.setattr(first_run.subprocess, "run", fake)
+    path = tmp_path / "private" / "control.yaml"
+    first_run._initialize_control(path)
+    assert commands[0][0][0] == [
+        first_run.sys.executable,
+        "-m",
+        "workgate.main",
+        "control",
+        "init-config",
+        "--config",
+        str(path),
+    ]
+    assert commands[0][1]["check"] is True
+    assert commands[0][1]["capture_output"] is True
+
+
+def test_failed_quiet_control_cli_preserves_actionable_stderr(monkeypatch):
+    def reject(*a, **kw):
+        raise subprocess.CalledProcessError(
+            1, a, stderr="private config must be 0600"
+        )
+
+    monkeypatch.setattr(first_run.subprocess, "run", reject)
+    with pytest.raises(RuntimeError, match="private config must be 0600"):
+        first_run._initialize_control(Path("config.yaml"))

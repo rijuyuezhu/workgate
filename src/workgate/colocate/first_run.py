@@ -12,7 +12,6 @@ from urllib.request import ProxyHandler, build_opener
 from ..app_paths import app_paths
 from ..config.control import CONTROL_SETTING_NAMES
 from ..config.settings import load_settings
-from ..control.first_run import initialize_control_config
 from ..platform.process import noninteractive_creationflags
 
 _READY_TIMEOUT_S = 45
@@ -64,16 +63,46 @@ def _stop(process: subprocess.Popen[bytes]) -> None:
         process.wait(timeout=5)
 
 
-def _connect(args: argparse.Namespace, url: str) -> None:
-    from ..main import _build_parser
+def _run_cli(*arguments: str, quiet: bool = False) -> str:
+    """Cross process boundaries through the public CLI, not Control internals."""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "workgate.main", *arguments],
+            check=True,
+            text=True,
+            capture_output=quiet,
+        )
+    except subprocess.CalledProcessError as exc:
+        if quiet and exc.stderr:
+            raise RuntimeError(exc.stderr.strip()) from exc
+        raise
+    return result.stdout if quiet else ""
 
+
+def _initialize_control(path: Path) -> None:
+    _run_cli("control", "init-config", "--config", str(path), quiet=True)
+    print(
+        f"Control configuration ready: {path} (approval PIN stored in private YAML)",
+        flush=True,
+    )
+
+
+def _control_service_installed() -> bool:
+    status = _run_cli("control", "status-service", quiet=True).strip()
+    if status == "Control service: not-installed":
+        return False
+    if not status.startswith("Control service: "):
+        raise RuntimeError(f"unexpected Control service status: {status!r}")
+    return True
+
+
+def _connect(args: argparse.Namespace, url: str) -> None:
     arguments = ["executor", "connect", url]
     if args.executor_config:
         arguments.extend(["--config", args.executor_config])
     if args.name:
         arguments.extend(["--name", args.name])
-    parsed = _build_parser().parse_args(arguments)
-    parsed.handler(parsed)
+    _run_cli(*arguments)
 
 
 def _reject_existing_services(args: argparse.Namespace) -> None:
@@ -82,29 +111,22 @@ def _reject_existing_services(args: argparse.Namespace) -> None:
         EXECUTOR_SETTING_NAMES,
         resolve_executor_config,
     )
-    from ..control import service as control_service
     from ..executor.service import ExecutorServiceManager
     from . import service as colocate_service
 
     if sys.platform == "win32":
-        installed = (
-            control_service._task().status() is not None
-            or colocate_service._windows_task().status() is not None
-        )
+        installed = colocate_service._windows_task().status() is not None
     elif sys.platform == "linux":
-        control = control_service._unit()
         colocate = colocate_service.systemd_user_unit_path(
             colocate_service._systemctl(
                 "show", "--property=UnitPath", "--value"
             ).stdout,
             colocate_service._SERVICE_NAME,
         )
-        installed = any(
-            path.exists() or path.is_symlink() for path in (control, colocate)
-        )
+        installed = colocate.exists() or colocate.is_symlink()
     else:
         raise RuntimeError("Colocate setup requires Linux or Windows services")
-    if installed:
+    if installed or _control_service_installed():
         raise RuntimeError(
             "Control or Colocate native service already installed; "
             "uninstall it explicitly before setup"
@@ -143,7 +165,7 @@ def setup_colocate(args: argparse.Namespace) -> None:
         .expanduser()
         .absolute()
     )
-    initialize_control_config(path=control_file)
+    _initialize_control(control_file)
     settings = load_settings(control_file, setting_names=CONTROL_SETTING_NAMES)
     if not settings.ui_enabled:
         raise RuntimeError(
@@ -177,7 +199,7 @@ def setup_colocate(args: argparse.Namespace) -> None:
     try:
         _wait_ready(url, process)
         print(
-            f"Temporary Control: {settings.resolved_base_url.rstrip('/')}{settings.ui_path}",
+            f"Temporary Control: {url}{settings.ui_path}",
             flush=True,
         )
         print(
