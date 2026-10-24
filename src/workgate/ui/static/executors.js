@@ -106,6 +106,7 @@ export function createExecutorsController({
       state.skillSourceId = "";
       state.skillSources = null;
       state.managementGeneration += 1;
+      state.managementPending = false;
       state.managementId = "";
       state.management = null;
       notice(elements.executorActionStatus, "");
@@ -1165,6 +1166,7 @@ export function createExecutorsController({
       state.skillSourceId = "";
       state.skillSources = null;
       state.managementGeneration += 1;
+      state.managementPending = false;
       state.managementId = "";
       state.management = null;
       renderManagement();
@@ -1187,6 +1189,7 @@ export function createExecutorsController({
         state.metricOnline = showMetrics;
         // Executor connectivity invalidates its own data, not Control's.
         state.managementGeneration += 1;
+        state.managementPending = false;
         if (state.management) {
           state.management.executorMcp = showMetrics ? null : {error: "Offline"};
           state.management.skills = showMetrics ? null : {error: "Offline"};
@@ -1234,6 +1237,7 @@ export function createExecutorsController({
       }
       state.controlAvailable = false;
       state.managementGeneration += 1;
+      state.managementPending = false;
       state.managementId = "";
       state.management = null;
       renderManagement();
