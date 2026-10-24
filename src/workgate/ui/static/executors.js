@@ -36,6 +36,7 @@ export function createExecutorsController({
     management: null,
     managementId: "",
     managementGeneration: 0,
+    managementPending: false,
     editor: null,
     oauthSessions: new Map(),
     oauthTimer: null,
@@ -105,6 +106,7 @@ export function createExecutorsController({
       state.skillSourceId = "";
       state.skillSources = null;
       state.managementGeneration += 1;
+      state.managementPending = false;
       state.managementId = "";
       state.management = null;
       notice(elements.executorActionStatus, "");
@@ -218,11 +220,8 @@ export function createExecutorsController({
     else executorConfigView.clear();
     if (tab === "overview") void refreshMetrics();
     if (tab === "mcp" || tab === "skills") {
-      // An Executor state transition can invalidate just its own sources while
-      // Control's cached sources remain valid.
-      const missing = !state.management || (!isControlSelected() &&
-        (!state.management.executorMcp || !state.management.skills));
-      void loadManagement(missing, missing);
+      // Retry only unavailable/stale sources; keep fresh Control data.
+      void loadManagement();
     }
   }
 
@@ -370,19 +369,23 @@ export function createExecutorsController({
 
   async function loadManagement(force = false, executorOnly = false) {
     const executorId = state.selectedId;
-    if (state.managementId === executorId && !force) return;
-    const generation = ++state.managementGeneration;
     const sameSelection = state.managementId === executorId;
-    state.managementId = executorId;
     const allSources = isControlSelected()
       ? [["control", "mcp", "control"], ["control", "skill", "controlSkills"]]
       : [["control", "mcp", "control"], ["executor", "mcp", "executorMcp"],
          ["executor", "skill", "skills"], ["control", "skill", "controlSkills"]];
-    // Connectivity changes affect only this Executor; do not refetch any
-    // already-fresh Control source just because another source is still loading.
-    const sources = executorOnly && sameSelection && state.management
-      ? allSources.filter(([owner, , field]) => owner === "executor"
-          || !state.management[field] || state.management[field].error || state.management[field]._stale)
+    const missing = (field) => !state.management?.[field]
+      || state.management[field].error || state.management[field]._stale;
+    if (sameSelection && !force && (state.managementPending
+      || !allSources.some(([, , field]) => missing(field)))) return;
+    const generation = ++state.managementGeneration;
+    state.managementId = executorId;
+    state.managementPending = true;
+    // Connectivity changes affect only this Executor; do not refetch already
+    // fresh Control sources. Manual tab return retries only failed sources.
+    const sources = sameSelection && state.management
+      ? allSources.filter(([owner, , field]) =>
+          (force && (!executorOnly || owner === "executor")) || missing(field))
       : allSources;
     // Stale values are read-only and scoped to this selected Executor.
     if (!sameSelection) state.management = null;
@@ -414,6 +417,7 @@ export function createExecutorsController({
         state.management[field] = result;
       renderManagement();
     }));
+    if (generation === state.managementGeneration) state.managementPending = false;
   }
 
   function renderManagement() {
@@ -1162,6 +1166,7 @@ export function createExecutorsController({
       state.skillSourceId = "";
       state.skillSources = null;
       state.managementGeneration += 1;
+      state.managementPending = false;
       state.managementId = "";
       state.management = null;
       renderManagement();
@@ -1184,6 +1189,7 @@ export function createExecutorsController({
         state.metricOnline = showMetrics;
         // Executor connectivity invalidates its own data, not Control's.
         state.managementGeneration += 1;
+        state.managementPending = false;
         if (state.management) {
           state.management.executorMcp = showMetrics ? null : {error: "Offline"};
           state.management.skills = showMetrics ? null : {error: "Offline"};
@@ -1231,6 +1237,7 @@ export function createExecutorsController({
       }
       state.controlAvailable = false;
       state.managementGeneration += 1;
+      state.managementPending = false;
       state.managementId = "";
       state.management = null;
       renderManagement();
@@ -1341,6 +1348,7 @@ export function createExecutorsController({
     state.managementGeneration += 1;
     state.managementId = "";
     state.management = null;
+    state.managementPending = false;
     state.editor = null;
     // Discard pending OAuth links when the WebUI session resets.
     state.oauthSessions.clear();
