@@ -832,3 +832,175 @@ def test_hidden_tab_does_not_poll_and_resumes(browser_harness: BrowserHarness):
             requests.clear()
     finally:
         page.close()
+
+
+def test_audit_scope_revocation_clears_stale_browser_data(
+    browser_harness: BrowserHarness,
+) -> None:
+    """A 403 must scrub cached protected global and session Audit details."""
+    import time
+
+    h = browser_harness
+    h.login()
+    h.wait_executor_online()
+    created = h.api("POST", "/tools/task", body={"action": "create"})
+    assert created["status"] == 200
+    task_id = created["payload"]["structuredContent"]["result"]["task_id"]
+    session = h.api(
+        "POST",
+        "/tools/session_start",
+        body={"workdir": ".", "task_id": task_id},
+    )
+    assert session["status"] == 200
+    session_id = session["payload"]["structuredContent"]["session_id"]
+
+    page = h.context.new_page()
+    page.add_init_script("""(() => {
+      const original = window.setInterval.bind(window);
+      window.setInterval = (callback, delay, ...args) =>
+        original(callback, delay === 30000 ? 500 : delay, ...args);
+    })()""")
+    entry = {
+        "id": "call:permission-sensitive",
+        "tool": "read_file",
+        "operation": "files",
+        "event": "call",
+        "ts": time.time(),
+        "status": "completed",
+        "session": session_id,
+        "input": {"path": "restricted.txt"},
+        "output": {"secret": "PROTECTED_AUDIT_PAYLOAD"},
+    }
+    denied = {"list": False, "detail": False, "status": 403}
+
+    def deny(route):
+        route.fulfill(
+            status=denied["status"],
+            json={
+                "detail": (
+                    "Temporary Audit outage"
+                    if denied["status"] == 503
+                    else "Audit permission revoked"
+                )
+            },
+        )
+
+    def audit_list(route):
+        if denied["list"]:
+            deny(route)
+        else:
+            route.fulfill(
+                status=200,
+                json={
+                    "ok": True,
+                    "data": {
+                        "entries": [entry],
+                        "entry": entry,
+                        "total_matched": 1,
+                    },
+                },
+            )
+
+    def audit_detail(route):
+        if denied["detail"]:
+            deny(route)
+        else:
+            route.fulfill(
+                status=200, json={"ok": True, "data": {"entry": entry}}
+            )
+
+    page.route("**/api/ui/audit?*", audit_list)
+    page.route("**/api/ui/audit/detail?*", audit_detail)
+
+    def assert_revocation(
+        list_selector: str,
+        detail_selector: str,
+        state_selector: str,
+        refresh_selector: str,
+    ) -> None:
+        records = page.locator(f"{list_selector} .audit-entry")
+        details = page.locator(detail_selector)
+        expect(records).to_have_count(1)
+        expect(details).to_contain_text("PROTECTED_AUDIT_PAYLOAD")
+
+        # Background 403 must revoke even though transient failures retain stale data.
+        denied["list"] = True
+        expect(page.locator(state_selector)).to_contain_text(
+            "Audit permission revoked",
+            timeout=8_000,
+        )
+        expect(records).to_have_count(0)
+        expect(details).not_to_contain_text("PROTECTED_AUDIT_PAYLOAD")
+        denied["list"] = False
+
+        page.locator(refresh_selector).click()
+        expect(records).to_have_count(1)
+        expect(details).to_contain_text("PROTECTED_AUDIT_PAYLOAD")
+
+        # Detail-only scope loss must also scrub the previously displayed list.
+        denied["detail"] = True
+        records.first.click()
+        expect(records).to_have_count(0)
+        expect(details).not_to_contain_text("PROTECTED_AUDIT_PAYLOAD")
+        denied["detail"] = False
+
+    try:
+        page.goto(f"{h.base_url}/ui#audit", wait_until="domcontentloaded")
+        expect(page.locator("#connection-state")).to_have_text("Connected")
+        expect(page.locator("#audit-detail-body")).to_contain_text(
+            "PROTECTED_AUDIT_PAYLOAD"
+        )
+        denied["status"] = 503
+        denied["list"] = True
+        expect(page.locator("#audit-state")).to_contain_text(
+            "Temporary Audit outage",
+            timeout=8_000,
+        )
+        expect(page.locator("#audit-list .audit-entry")).to_have_count(1)
+        expect(page.locator("#audit-detail-body")).to_contain_text(
+            "PROTECTED_AUDIT_PAYLOAD"
+        )
+        denied["list"] = False
+        denied["status"] = 403
+        page.locator("#audit-refresh").click()
+        expect(page.locator("#audit-state")).to_contain_text("records loaded")
+        assert_revocation(
+            "#audit-list",
+            "#audit-detail-body",
+            "#audit-state",
+            "#audit-refresh",
+        )
+
+        page.goto(f"{h.base_url}/ui#tasks", wait_until="domcontentloaded")
+        expect(page.locator("#connection-state")).to_have_text("Connected")
+        page.locator(
+            f'#task-list .task-entry[data-task-id="{task_id}"]'
+        ).click()
+        page.locator("#task-tab-sessions").click()
+        page.locator(
+            f'#session-list .session-entry[data-session-id="{session_id}"]'
+        ).click()
+        assert_revocation(
+            "#session-audit-list",
+            "#session-audit-detail-body",
+            "#session-audit-state",
+            "#session-audit-refresh",
+        )
+
+        # Global Audit is a genuinely polled view. Its background 401 must
+        # discard the entire authenticated UI, not only its own stale Audit.
+        page.goto(f"{h.base_url}/ui#audit", wait_until="domcontentloaded")
+        expect(page.locator("#audit-detail-body")).to_contain_text(
+            "PROTECTED_AUDIT_PAYLOAD"
+        )
+        expect(page.locator("#task-list .task-entry")).to_have_count(1)
+        denied["status"] = 401
+        denied["list"] = True
+        expect(page.locator("#auth-panel")).to_be_visible(timeout=8_000)
+        expect(page.locator("#audit-list .audit-entry")).to_have_count(0)
+        expect(page.locator("#audit-detail-body")).not_to_contain_text(
+            "PROTECTED_AUDIT_PAYLOAD"
+        )
+        expect(page.locator("#task-list .task-entry")).to_have_count(0)
+    finally:
+        page.close()

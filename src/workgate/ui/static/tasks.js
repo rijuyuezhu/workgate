@@ -1242,6 +1242,10 @@ export function createTasksController({
         requestedSession !== controllerState.sessionId ||
         entryId !== controllerState.sessionAuditSelectedId
       ) return null;
+      if (error.status === 403) {
+        resetSessionAuditWorkspace("Audit access denied");
+        return null;
+      }
       elements.sessionAuditDetailMeta.textContent = "Details unavailable";
       renderAuditDetailMessage(
         elements.sessionAuditDetailBody,
@@ -1274,7 +1278,9 @@ export function createTasksController({
         generation !== controllerState.sessionAuditGeneration ||
         requestedSession !== controllerState.sessionId
       ) return null;
-      if (!background) {
+      if (error.status === 403) {
+        resetSessionAuditWorkspace("Audit access denied");
+      } else if (!background) {
         controllerState.sessionAuditEntries = [];
         controllerState.sessionAuditSelectedId = "";
         renderSessionAuditList();

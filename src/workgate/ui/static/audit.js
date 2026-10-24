@@ -160,6 +160,11 @@ export function createAuditController({
         generation !== controllerState.auditDetailGeneration ||
         entryId !== controllerState.auditSelectedId
       ) return null;
+      if (error.status === 403) {
+        resetAuditWorkspace(); // Revoked permissions must not leave protected details cached.
+        elements.auditState.textContent = "Audit access denied";
+        return null;
+      }
       elements.auditDetailMeta.textContent = "Details unavailable";
       renderAuditDetailMessage(
         elements.auditDetailBody,
@@ -209,7 +214,9 @@ export function createAuditController({
       return payload;
     } catch (error) {
       if (generation !== controllerState.auditGeneration) return null;
-      if (!background) {
+      if (error.status === 403) {
+        resetAuditWorkspace(); // Clear stale Audit even for background refreshes.
+      } else if (!background) {
         controllerState.auditEntries = [];
         controllerState.auditSelectedId = "";
         renderAuditList();
