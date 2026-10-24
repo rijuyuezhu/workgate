@@ -127,6 +127,7 @@ def prepare(
     root: Path,
     repository: str = REPOSITORY,
     activate_launcher: bool = True,
+    expected_commit: str | None = None,
 ) -> Path:
     if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:[abrc][0-9]+)?", tag):
         raise ValueError(
@@ -134,6 +135,12 @@ def prepare(
         )
     if role not in {"control", "executor", "colocate"}:
         raise ValueError("choose one of control, executor, colocate")
+    if expected_commit is not None and not re.fullmatch(
+        r"[0-9a-f]{40}", expected_commit
+    ):
+        raise ValueError(
+            "--expected-commit must be a full lowercase 40-digit SHA"
+        )
     for executable in ("git", "uv"):
         if not shutil.which(executable):
             raise RuntimeError(
@@ -172,6 +179,10 @@ def prepare(
         if tagged != sha:
             raise RuntimeError(
                 "checkout HEAD does not match the requested release tag"
+            )
+        if expected_commit is not None and sha != expected_commit:
+            raise RuntimeError(
+                f"release tag resolves to {sha}, not pinned commit {expected_commit}"
             )
         if (
             not (temporary / "uv.lock").is_file()
@@ -276,9 +287,17 @@ def main() -> None:
         help="Explicit GitHub release tag, e.g. v5.0.0a5",
     )
     parser.add_argument("--install-root", type=Path, default=_default_root())
+    parser.add_argument(
+        "--expected-commit", help="Full pinned release commit SHA"
+    )
     args = parser.parse_args()
     try:
-        prepare(tag=args.tag, role=args.role, root=args.install_root)
+        prepare(
+            tag=args.tag,
+            role=args.role,
+            root=args.install_root,
+            expected_commit=args.expected_commit,
+        )
     except (
         OSError,
         subprocess.SubprocessError,

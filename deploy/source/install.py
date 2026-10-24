@@ -132,6 +132,7 @@ def install(
     host: str | None = None,
     port: int | None = None,
     base_url: str | None = None,
+    expected_commit: str | None = None,
 ) -> Path:
     if any(key.startswith("WORKGATE_") for key in os.environ):
         raise RuntimeError(
@@ -148,7 +149,13 @@ def install(
         port=port,
         base_url=base_url,
     )
-    checkout = prepare(tag=tag, role=role, root=root, activate_launcher=False)
+    checkout = prepare(
+        tag=tag,
+        role=role,
+        root=root,
+        activate_launcher=False,
+        expected_commit=expected_commit,
+    )
     executable = _python(checkout)
     # Do not complete pairing or install a service if its stable command
     # would be blocked by an unrelated existing launcher.
@@ -177,6 +184,9 @@ def main() -> None:
     )
     parser.add_argument("--install-root", type=Path, default=_default_root())
     parser.add_argument(
+        "--expected-commit", help="Full pinned release commit SHA"
+    )
+    parser.add_argument(
         "--control-url", help="Executor-only: Control URL for approval"
     )
     parser.add_argument("--name", help="Executor/Colocate name")
@@ -200,6 +210,7 @@ def main() -> None:
             host=args.host,
             port=args.port,
             base_url=args.base_url,
+            expected_commit=args.expected_commit,
         )
     except (
         subprocess.SubprocessError,

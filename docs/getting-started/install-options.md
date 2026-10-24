@@ -25,9 +25,13 @@ commit-addressed checkout, run locked uv installation and provision Chromium.
 The same directory now includes a local-checkout
 [`install.sh` / `install.ps1`](https://github.com/rijuyuezhu/workgate/tree/main/deploy/source)
 for versioned preparation **and** interactive role setup/pairing. Choose an
-actual release tag containing these commands. These are not yet trusted
-external `curl | sh` / PowerShell downloadable one-liners; published bootstrap
-integrity verification remains part of #456.
+actual release tag containing these commands. The [commit-pinned GitHub bootstrap](https://github.com/rijuyuezhu/workgate/tree/main/deploy/source)
+adds Linux `curl | sh` and native Windows PowerShell download commands.
+Use them only for a release **containing the bootstrap**, with the full release
+commit SHA explicitly pinned in the URL and arguments; see the
+[source installation README](https://github.com/rijuyuezhu/workgate/blob/main/deploy/source/README.md).
+The existing `v5.0.0a5` release predates these entrypoints. Clean-machine,
+rerun, migration and rollback acceptance is still tracked under #456.
 
 ## Python installation from GitHub
 

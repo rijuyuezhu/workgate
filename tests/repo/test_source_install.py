@@ -82,6 +82,7 @@ def test_install_command_order_and_only_one_native_role(
             "role": role,
             "root": tmp_path,
             "activate_launcher": False,
+            "expected_commit": None,
         }
     ]
     assert [args[3:] for args, _kw in calls] == expected
@@ -373,3 +374,30 @@ def test_successful_role_setup_activates_stable_launcher_once(
         "setup",
         ("switch", tmp_path, installer._python(checkout)),
     ]
+
+
+def test_public_bootstrap_pinned_commit_reaches_source_preparer(
+    installer, tmp_path, monkeypatch
+):
+    sha = "a" * 40
+    received = []
+    monkeypatch.setattr(
+        installer,
+        "prepare",
+        lambda **kw: (received.append(kw), tmp_path / "versions" / sha)[1],
+    )
+    monkeypatch.setattr(installer, "_check_launcher", lambda root: None)
+    monkeypatch.setattr(
+        installer,
+        "_write_launcher",
+        lambda root, python: root / "bin" / "workgate",
+    )
+    monkeypatch.setattr(installer.subprocess, "run", lambda *a, **k: None)
+    installer.install(
+        role="control",
+        tag="v5.0.0a6",
+        root=tmp_path,
+        expected_commit=sha,
+    )
+    assert received[0]["expected_commit"] == sha
+    assert received[0]["activate_launcher"] is False

@@ -264,3 +264,49 @@ def test_mismatched_cli_version_cannot_replace_launcher(
             repository=str(origin),
         )
     assert not (tmp_path / "bin").exists()
+
+
+def test_preparer_rejects_retargeted_release_before_sync(
+    tmp_path, repo, preparer
+):
+    origin, _git = repo
+    module, calls, _fail = preparer
+    with pytest.raises(RuntimeError, match="not pinned commit"):
+        module.prepare(
+            tag="v5.0.0a5",
+            role="control",
+            root=tmp_path / "install",
+            repository=str(origin),
+            expected_commit="b" * 40,
+        )
+    assert not (tmp_path / "install" / "bin").exists()
+    assert not any(call[:2] == ("uv", "sync") for call in calls)
+
+
+def test_preparer_accepts_expected_release_commit(tmp_path, repo, preparer):
+    origin, git = repo
+    module, _calls, _fail = preparer
+    sha = git("rev-parse", "HEAD")
+    assert (
+        module.prepare(
+            tag="v5.0.0a5",
+            role="executor",
+            root=tmp_path / "install",
+            repository=str(origin),
+            expected_commit=sha,
+        ).name
+        == sha
+    )
+
+
+@pytest.mark.parametrize("sha", ["a" * 39, "A" * 40, "not-a-sha", "a" * 41])
+def test_preparer_rejects_invalid_sha_before_git(tmp_path, preparer, sha):
+    module, calls, _fail = preparer
+    with pytest.raises(ValueError, match="expected-commit"):
+        module.prepare(
+            tag="v5.0.0a5",
+            role="control",
+            root=tmp_path,
+            expected_commit=sha,
+        )
+    assert calls == []

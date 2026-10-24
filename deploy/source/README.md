@@ -44,10 +44,55 @@ individual role's own existing safety rules. This first-run helper does not
 yet perform full migration, rolling update/rollback, or no-op reinstallation
 of an already installed Colocate service.
 
-The **public downloadable** signed/pinned bootstrap and short external
-`curl | sh` / PowerShell download entrypoints are still a later #456
-deliverable: these checked-out scripts alone do **not** establish a trusted
-remote download endpoint.
+## Public GitHub bootstrap, pinned to a release commit
+
+After a **new release contains these bootstrap files**, obtain the full
+40-character release commit SHA from the official GitHub release's Git tag.
+Use the same SHA in both the raw GitHub URL and the bootstrap arguments.
+Replace `FULL_SHA` and `vRELEASE` together; the older `v5.0.0a5`
+release **does not contain this bootstrap**. Never replace `FULL_SHA` with
+`main`, `latest` or a floating branch.
+
+Linux (choose exactly one role):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/FULL_SHA/deploy/source/bootstrap.sh | sh -s -- vRELEASE FULL_SHA --role control
+curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/FULL_SHA/deploy/source/bootstrap.sh | sh -s -- vRELEASE FULL_SHA --role executor --control-url https://control.example.com --name workstation
+curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/FULL_SHA/deploy/source/bootstrap.sh | sh -s -- vRELEASE FULL_SHA --role colocate --name workstation
+```
+
+Native Windows PowerShell (download first, then execute with explicit role):
+
+```powershell
+$sha = 'FULL_SHA'
+$tag = 'vRELEASE'
+$bootstrap = Join-Path $env:TEMP ("workgate-bootstrap-" + [guid]::NewGuid().ToString('N') + ".ps1")
+try {
+    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/rijuyuezhu/workgate/$sha/deploy/source/bootstrap.ps1" -OutFile $bootstrap
+    & $bootstrap -Role executor -Tag $tag -Commit $sha -ControlUrl 'https://control.example.com' -Name 'workstation'
+} finally {
+    Remove-Item -LiteralPath $bootstrap -ErrorAction SilentlyContinue
+}
+```
+
+Select `-Role control` or `-Role colocate` instead of `executor` when
+appropriate, omitting the Executor-only `-ControlUrl`. Both bootstraps use
+the official GitHub repository and a **full, explicitly provided commit**;
+they reject tag retargeting before executing checked-out scripts. The source
+installer clones the release once more and checks the same SHA before
+synchronizing dependencies or touching the managed launcher. The temporary
+bootstrap checkout is removed after installation or failure.
+
+**Trust boundary:** the first script is downloaded over HTTPS from a
+commit-addressed GitHub raw URL and the clone content is checked against the
+commit that the operator pinned. This is *not* a cryptographic publisher
+signature or an independent audit of the release contents. Obtain the
+tag/commit SHA from a trusted channel and inspect the pinned bootstrap before
+executing it. Git and uv must already be installed on the host; absent tools
+are reported clearly. No running Control is needed to fetch the installer.
+
+The public bootstrap still needs release publication and real clean-machine,
+upgrade and rollback acceptance before #456 can close.
 
 ## Runtime preparation without role setup
 
