@@ -190,15 +190,22 @@ export function createExecutorsController({
       }
       const selected = entry.key === state.selectedId;
       button.classList.toggle("executor-row-selected", selected);
-      button.setAttribute("aria-pressed", String(selected));
-      button.title = entry.name;
-      button.querySelector(".executor-band-mark").textContent = entry.name.slice(0, 1).toUpperCase();
-      button.querySelector(".executor-band-name").textContent = entry.name;
-      button.querySelector(".executor-band-meta").textContent = entry.label;
+      const pressed = String(selected);
+      if (button.getAttribute("aria-pressed") !== pressed)
+        button.setAttribute("aria-pressed", pressed);
+      if (button.title !== entry.name) button.title = entry.name;
+      const mark = button.querySelector(".executor-band-mark");
+      const initial = entry.name.slice(0, 1).toUpperCase();
+      if (mark.textContent !== initial) mark.textContent = initial;
+      const name = button.querySelector(".executor-band-name");
+      if (name.textContent !== entry.name) name.textContent = entry.name;
+      const meta = button.querySelector(".executor-band-meta");
+      if (meta.textContent !== entry.label) meta.textContent = entry.label;
       const status = button.querySelector(".executor-band-state");
-      status.textContent = entry.status;
-      status.dataset.status = entry.status === "available" ? "online"
+      if (status.textContent !== entry.status) status.textContent = entry.status;
+      const statusKind = entry.status === "available" ? "online"
         : entry.status === "unavailable" ? "offline" : entry.status;
+      if (status.dataset.status !== statusKind) status.dataset.status = statusKind;
       const group = entry.key === CONTROL_SELECTION ? controlGroup : peerRows;
       const position = entry.key === CONTROL_SELECTION ? 0 : peerPosition++;
       if (group.children[position] !== button)
