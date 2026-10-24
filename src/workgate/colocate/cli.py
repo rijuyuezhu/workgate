@@ -18,6 +18,21 @@ def register_colocate_cli(subparsers: Any) -> argparse.ArgumentParser:
     parser.add_argument("--executor-config", metavar="PATH")
     parser.set_defaults(handler=run_colocate)
     actions = parser.add_subparsers(dest="colocate_command")
+    from .first_run import setup_colocate
+
+    setup = actions.add_parser(
+        "setup",
+        help="Initialize, locally pair and install Colocate user service",
+    )
+    setup.add_argument(
+        "--control-config", metavar="PATH", default=argparse.SUPPRESS
+    )
+    setup.add_argument(
+        "--executor-config", metavar="PATH", default=argparse.SUPPRESS
+    )
+    setup.add_argument("--name", default=None)
+    setup.set_defaults(handler=setup_colocate)
+
     install = actions.add_parser(
         "install-service", help="Install and start a native user service"
     )

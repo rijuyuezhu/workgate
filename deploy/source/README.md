@@ -66,6 +66,33 @@ pairing and service installation; avoid temporary environment overrides.
 This is the Executor-only step: Control and colocated roles require their own
 initialization and service checks.
 
+## Colocate: first-time same-host pairing
+
+On a fresh host with no standalone Control or Executor service, run after
+preparing the source runtime:
+
+~~~sh
+~/.local/opt/workgate/bin/workgate colocate setup --name workstation
+~~~
+
+Windows PowerShell:
+
+~~~powershell
+& "$env:LOCALAPPDATA\Workgate\source\bin\workgate.cmd" colocate setup --name workstation
+~~~
+
+The command creates/validates the private Control OAuth config and starts a
+**temporary** loopback Control. Use its WebUI with the admin PIN from the
+private YAML to approve local Executor pairing. When approved, setup stops
+the temporary Control and installs a **single** native Colocate service.
+
+A rejected pairing or failed startup does not install a service. The temporary
+Control process is stopped even on error. Setup refuses an already occupied
+Control port or any previously installed standalone Control/Executor/Colocate
+service (including stopped ones); it never stops unrelated user services.
+When running over SSH, forward the target localhost port to open the WebUI.
+Custom YAMLs are selected with --control-config and --executor-config.
+
 This is **not yet** the final external `curl | sh` or `irm` install endpoint.
 The next stage must securely publish and validate those entrypoints, initialize
 Control configuration/approval, handle Executor and Colocate pairing, and
