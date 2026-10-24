@@ -1,0 +1,41 @@
+name: Native ARM64 cryptography wheel (experimental)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/arm64-crypto-wheel.yml
+      - scripts/release/build_arm64_crypto_wheel.ps1
+      - scripts/release/download_arm64_crypto_sources.py
+      - scripts/release/verify_arm64_crypto_wheel.py
+      - scripts/release/smoke_arm64_crypto_wheel.py
+      - uv.lock
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-verify:
+    runs-on: windows-11-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+          architecture: arm64
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: aarch64-pc-windows-msvc
+      - name: Build and verify pinned native ARM64 static wheel
+        shell: pwsh
+        run: ./scripts/release/build_arm64_crypto_wheel.ps1
+      - name: Keep wheel + provenance for review only
+        uses: actions/upload-artifact@v7
+        with:
+          name: cryptography-50.0.2-openssl-3.5.9-arm64-review-only
+          path: ${{ runner.temp }}/workgate-crypto-wheel/wheel/
+          retention-days: 7
+          if-no-files-found: error
