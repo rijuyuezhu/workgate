@@ -63,9 +63,13 @@ def _arm64_static_openssl_env(
             "libraries (e.g. Scoop openssl-lts), Rust and MSVC; "
             "set OPENSSL_DIR to the OpenSSL installation"
         )
-    root = Path(openssl).expanduser()
+    root = Path(openssl).expanduser().resolve()
     native_libs = root / "lib/VC/arm64/MD"
-    library = Path(os.environ.get("OPENSSL_LIB_DIR", str(native_libs)))
+    library = (
+        Path(os.environ.get("OPENSSL_LIB_DIR", str(native_libs)))
+        .expanduser()
+        .resolve()
+    )
     # Scoop publishes OPENSSL_LIB_DIR=.../lib, while ARM64 static .lib
     # files are under the VC/arm64/MD subdirectory of that same SDK.
     if not all(
@@ -76,7 +80,11 @@ def _arm64_static_openssl_env(
         for name in ("libssl_static.lib", "libcrypto_static.lib")
     ):
         library = native_libs
-    headers = Path(os.environ.get("OPENSSL_INCLUDE_DIR", str(root / "include")))
+    headers = (
+        Path(os.environ.get("OPENSSL_INCLUDE_DIR", str(root / "include")))
+        .expanduser()
+        .resolve()
+    )
     required = (
         library / "libssl_static.lib",
         library / "libcrypto_static.lib",

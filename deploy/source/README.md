@@ -121,7 +121,8 @@ ARM64 OpenSSL SDK instead; the preparer validates its header version before
 compilation. The preparer recognizes Scoop's
 `~/scoop/apps/openssl-lts/current` SDK (not the executable shim), or accepts
 explicit `OPENSSL_DIR`, `OPENSSL_LIB_DIR` and `OPENSSL_INCLUDE_DIR`
-settings for nonstandard layouts. It also recognizes Scoop rustup's
+settings for nonstandard layouts. Relative SDK paths are resolved before
+running `uv sync`. It also recognizes Scoop rustup's
 `~/scoop/persist/rustup/.cargo/bin` when Cargo is not on PATH. The
 Scoop path alone is not evidence that the SDK is currently supported.
 

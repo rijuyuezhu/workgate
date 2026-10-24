@@ -369,6 +369,33 @@ def test_arm64_scoop_generic_openssl_lib_dir_uses_native_static_libs(
     assert result["OPENSSL_LIB_DIR"] == str(native)
 
 
+def test_arm64_relative_sdk_paths_are_absolute_for_uv_cwd(
+    tmp_path, preparer, monkeypatch
+):
+    module, _calls, _fail = preparer
+    sdk = tmp_path / "sdk"
+    library = sdk / "lib/VC/arm64/MD"
+    library.mkdir(parents=True)
+    for name in ("libssl_static.lib", "libcrypto_static.lib"):
+        (library / name).touch()
+    headers = sdk / "include/openssl"
+    headers.mkdir(parents=True)
+    (headers / "ssl.h").touch()
+    (headers / "opensslv.h").write_text(
+        "#define OPENSSL_VERSION_MAJOR 3\n#define OPENSSL_VERSION_MINOR 5\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENSSL_DIR", "sdk")
+    monkeypatch.setenv("OPENSSL_LIB_DIR", "sdk/lib/VC/arm64/MD")
+    monkeypatch.setenv("OPENSSL_INCLUDE_DIR", "sdk/include")
+    monkeypatch.setattr(module.shutil, "which", lambda _: "/mock/tool")
+    env = module._arm64_static_openssl_env(host_os="nt", machine="ARM64")
+    assert env is not None
+    assert env["OPENSSL_DIR"] == str(sdk)
+    assert env["OPENSSL_LIB_DIR"] == str(library)
+    assert env["OPENSSL_INCLUDE_DIR"] == str(sdk / "include")
+
+
 def test_static_build_not_enabled_on_other_platforms(preparer):
     module, _calls, _fail = preparer
     assert (
@@ -506,7 +533,7 @@ def test_arm64_scoop_openssl_and_cargo_discovery(
     (rust / "cargo.exe").write_bytes(b"test")
     for name in ("OPENSSL_DIR", "OPENSSL_LIB_DIR", "OPENSSL_INCLUDE_DIR"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(module.Path, "home", classmethod(lambda cls: home))
     monkeypatch.setattr(
         module.shutil,
         "which",
