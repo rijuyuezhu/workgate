@@ -30,9 +30,10 @@ adds Linux `curl | sh` and native Windows PowerShell download commands.
 Use them only for a release **containing the bootstrap**, with the full release
 commit SHA explicitly pinned in the URL and arguments; see the
 [source installation README](https://github.com/rijuyuezhu/workgate/blob/main/deploy/source/README.md).
-The existing `v5.0.0a5` release predates these entrypoints. Existing managed services are not implicitly overwritten or restarted by
-the source first-run installer; an already-installed role is reported and
-requires explicit service management. Clean-machine, safe no-op rerun,
+The `v5.0.0a5` release predates these entrypoints; `v5.0.0a6` will
+include them only after publication. Existing managed services are not
+implicitly overwritten or restarted by the source first-run installer;
+an already-installed role is reported and requires explicit service management. Clean-machine, safe no-op rerun,
 migration and rollback acceptance is still tracked under #456.
 
 ## Python installation from GitHub
@@ -40,19 +41,19 @@ migration and rollback acceptance is still tracked under #456.
 Workgate is **not published to PyPI**. Choose a tag from
 [GitHub Releases](https://github.com/rijuyuezhu/workgate/releases) and install
 from that Git revision, not from `pip install workgate` or `uvx workgate`.
-The examples below pin `v5.0.0a5` (**prerelease**); choose a non-prerelease
-release tag for a stable deployment.
+The examples below pin `v5.0.0a6` (**prerelease; available only after
+publication**); choose a non-prerelease release tag for a stable deployment.
 
 Run without a persistent installation (requires Python 3.14):
 
 ```bash
-uvx --python 3.14 --from 'git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a5' workgate --help
+uvx --python 3.14 --from 'git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a6' workgate --help
 ```
 
 Or install the CLI in an isolated environment:
 
 ```bash
-pipx install 'git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a5' --python python3.14
+pipx install 'git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a6' --python python3.14
 workgate --help
 ```
 
@@ -70,8 +71,8 @@ For source or Python-package executors, install the optional GUI bindings:
 
 ```bash
 uv sync --extra gui  # source checkout
-pipx install 'workgate[gui] @ git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a5' --python python3.14
-python3.14 -m pip install 'workgate[gui] @ git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a5'  # existing environment
+pipx install 'workgate[gui] @ git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a6' --python python3.14
+python3.14 -m pip install 'workgate[gui] @ git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a6'  # existing environment
 ```
 
 Release self-contained executables already bundle the corresponding Python GUI bindings.
