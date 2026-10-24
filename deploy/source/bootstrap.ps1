@@ -14,7 +14,9 @@ param(
     [string]$ExecutorConfig,
     [string]$HostAddress,
     [int]$Port,
-    [string]$BaseUrl
+    [string]$BaseUrl,
+    [string]$Arm64Wheel,
+    [string]$Arm64WheelSha256
 )
 $ErrorActionPreference = 'Stop'
 if ($Tag -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+([abrc][0-9]+)?$') {
@@ -55,7 +57,8 @@ try {
     $forward = @{ Role = $Role; Tag = $Tag; ExpectedCommit = $Commit }
     foreach ($key in @(
         'InstallRoot', 'ControlUrl', 'Name', 'ControlConfig',
-        'ExecutorConfig', 'HostAddress', 'Port', 'BaseUrl'
+        'ExecutorConfig', 'HostAddress', 'Port', 'BaseUrl',
+        'Arm64Wheel', 'Arm64WheelSha256'
     )) {
         if ($PSBoundParameters.ContainsKey($key)) {
             $forward[$key] = $PSBoundParameters[$key]

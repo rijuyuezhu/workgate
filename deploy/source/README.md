@@ -146,6 +146,45 @@ activating a launcher. The final
 `.venv`; full native ARM64 Executor/GUI/PTY and managed upgrade acceptance
 remains part of #459.
 
+## Windows ARM64 reviewed Wheel (explicit opt-in; no asset published yet)
+
+Once a **trusted immutable** prebuilt cryptography 50.0.2 Windows ARM64
+Wheel is published with its independently checked SHA256, the same source
+installer can take two explicit additional options (example parameters,
+**not** a currently published Workgate asset):
+
+```powershell
+& .\deploy\source\install.ps1 -Role executor -Tag vRELEASE `
+  -ControlUrl https://control.example.com -Name workstation `
+  -Arm64Wheel 'https://trusted.example/cryptography-50.0.2-cp314-abi3-win_arm64.whl' `
+  -Arm64WheelSha256 'FULL_LOWERCASE_64_DIGIT_SHA256'
+```
+
+The options also work with `prepare.ps1` and the commit-pinned
+`bootstrap.ps1`; a **local Wheel file path** plus its independently verified
+SHA256 is supported for offline staging. Both options are mandatory together.
+Only native Windows ARM64 accepts them. Network URLs must use HTTPS with an
+explicit versioned Wheel name; redirects to HTTP, wrong SHA256, wrong ABI,
+non-ARM64 PE modules, or dynamic OpenSSL DLL imports fail before installation.
+Obtain the expected hash from a trusted release channel, not from an
+unverified download alongside the Wheel. These options never select an
+unpinned “latest” artifact.
+
+For this explicit path, uv synchronizes the other locked GUI+S3 dependencies
+using `--no-install-package cryptography`, then installs the already-verified
+Wheel using `uv pip install --no-deps --only-binary :all:`. This order is
+intentional: ordinary `uv sync --locked` cannot install the custom Wheel from
+the registry-locked `cryptography` entry, and another sync can remove it. The
+preparer repeats verification and two-step installation on each preparation,
+then tests ARM64 Python, both `ssl` import orders, AES-GCM and cryptography's
+own linked OpenSSL 3.5.9 before updating the CLI or starting role setup.
+Without these options the existing developer-only native static source build
+remains unchanged. No public Wheel URL or checksum is supplied by default;
+this is **not** automatic end-user deployment until #475 publishes a trusted
+asset and pins it in the released installer. Native service reinstallation,
+upgrade and rollback remain controlled separately by #456/#459; do not use
+source preparation to replace an existing running service.
+
 ## Runtime preparation without role setup
 
 This prepares **only** the reproducible source runtime and a stable CLI.

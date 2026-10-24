@@ -651,3 +651,189 @@ def test_arm64_crypto_import_failure_preserves_launcher(
         )
     assert not (tmp_path / "managed" / "bin").exists()
     assert not any(a[1:4] == ("-m", "playwright", "install") for a in calls)
+
+
+def test_arm64_wheel_input_requires_explicit_pinned_pair(tmp_path, preparer):
+    module, calls, _fail = preparer
+    for source, sha in (
+        ("wheel.whl", None),
+        (None, "a" * 64),
+        ("wheel.whl", "bad"),
+    ):
+        with pytest.raises(ValueError, match="ARM64 wheel"):
+            module.prepare(
+                tag="v5.0.0a5",
+                role="executor",
+                root=tmp_path,
+                arm64_wheel=source,
+                arm64_wheel_sha256=sha,
+            )
+    assert calls == []
+
+
+def test_arm64_wheel_rejects_untrusted_source_and_hash(tmp_path, preparer):
+    import hashlib
+
+    module, _calls, _fail = preparer
+    actual = tmp_path / module._ARM64_CRYPTO_WHEEL
+    actual.write_bytes(b"not a wheel")
+    directory = tmp_path / "other"
+    directory.mkdir()
+    with pytest.raises(RuntimeError, match="SHA256 mismatch"):
+        module._stage_arm64_wheel(str(actual), "a" * 64, directory)
+
+    for url in (
+        "http://example.com/" + module._ARM64_CRYPTO_WHEEL,
+        "https://user:pass@example.com/" + module._ARM64_CRYPTO_WHEEL,
+        "https://example.com/" + module._ARM64_CRYPTO_WHEEL + "?latest=1",
+    ):
+        with pytest.raises(ValueError, match="pinned HTTPS"):
+            module._stage_arm64_wheel(
+                url, hashlib.sha256(b"x").hexdigest(), tmp_path
+            )
+
+
+def test_arm64_wheel_sync_after_hash_and_reinstall_on_repeat(
+    tmp_path, repo, preparer, monkeypatch
+):
+    origin, _git = repo
+    module, calls, _fail = preparer
+    monkeypatch.setattr(module, "_native_arm64", lambda: True)
+    monkeypatch.setattr(
+        module,
+        "_arm64_static_openssl_env",
+        lambda: pytest.fail("unexpected developer-only Cargo SDK fallback"),
+    )
+    wheel = tmp_path / module._ARM64_CRYPTO_WHEEL
+    wheel.write_bytes(b"signed-test-wheel")
+    sha = "a" * 64
+    checks = []
+
+    def verify(source, digest, directory):
+        checks.append((source, digest))
+        staged = directory / module._ARM64_CRYPTO_WHEEL
+        staged.write_bytes(wheel.read_bytes())
+        return staged
+
+    monkeypatch.setattr(module, "_stage_arm64_wheel", verify)
+    original_run = module._run
+
+    def run(*args, **kwargs):
+        if args[:2] == ("uv", "pip"):
+            calls.append(args)
+            assert "--no-deps" in args and "--only-binary" in args
+            assert "--no-install-package" in next(
+                call for call in calls if call[:2] == ("uv", "sync")
+            )
+            return ""
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(module, "_run", run)
+    root = tmp_path / "managed"
+    for _ in range(2):
+        module.prepare(
+            tag="v5.0.0a5",
+            role="executor",
+            root=root,
+            repository=str(origin),
+            arm64_wheel=str(wheel),
+            arm64_wheel_sha256=sha,
+        )
+    assert len(checks) == 2
+    assert len([a for a in calls if a[:2] == ("uv", "sync")]) == 2
+    assert len([a for a in calls if a[:2] == ("uv", "pip")]) == 2
+    assert (
+        len(
+            [a for a in calls if len(a) > 2 and a[1:3] == ("-c", "import ssl;")]
+        )
+        == 0
+    )
+    assert (
+        len(
+            [
+                a
+                for a in calls
+                if len(a) > 2 and a[1] == "-c" and "Binding()" in a[2]
+            ]
+        )
+        == 4
+    )
+
+
+def test_arm64_wheel_failed_verification_keeps_previous_launcher(
+    tmp_path, repo, preparer, monkeypatch
+):
+    origin, _git = repo
+    module, calls, _fail = preparer
+    root = tmp_path / "managed"
+    module.prepare(
+        tag="v5.0.0a5", role="executor", root=root, repository=str(origin)
+    )
+    launcher = (
+        root / "bin" / ("workgate.cmd" if os.name == "nt" else "workgate")
+    )
+    before = launcher.read_bytes()
+    monkeypatch.setattr(module, "_native_arm64", lambda: True)
+
+    def reject(*args):
+        raise RuntimeError("ARM64 wheel SHA256 mismatch")
+
+    monkeypatch.setattr(module, "_stage_arm64_wheel", reject)
+    start = len(calls)
+    with pytest.raises(RuntimeError, match="SHA256 mismatch"):
+        module.prepare(
+            tag="v5.0.0a5",
+            role="executor",
+            root=root,
+            repository=str(origin),
+            arm64_wheel="bad.whl",
+            arm64_wheel_sha256="a" * 64,
+        )
+    assert launcher.read_bytes() == before
+    assert not any(a[:2] == ("uv", "sync") for a in calls[start:])
+
+
+def test_arm64_wheel_https_download_requires_hash_and_https_redirect(
+    tmp_path, preparer, monkeypatch
+):
+    import hashlib
+    import io
+
+    module, _calls, _fail = preparer
+    data = b"verified-test-wheel"
+    expected = hashlib.sha256(data).hexdigest()
+    source = "https://trusted.example/" + module._ARM64_CRYPTO_WHEEL
+    inspected = []
+
+    class Response(io.BytesIO):
+        destination_url = source
+
+        def geturl(self):
+            return self.destination_url
+
+    monkeypatch.setattr(
+        module.urllib.request, "urlopen", lambda url, timeout: Response(data)
+    )
+    monkeypatch.setattr(
+        module.runpy,
+        "run_path",
+        lambda path: {
+            "verify_wheel": lambda wheel: inspected.append(wheel.read_bytes())
+        },
+    )
+    wheel = module._stage_arm64_wheel(source, expected, tmp_path)
+    assert wheel.read_bytes() == data
+    assert inspected == [data]
+
+    class UnsafeRedirect(Response):
+        destination_url = (
+            "http://untrusted.example/" + module._ARM64_CRYPTO_WHEEL
+        )
+
+    monkeypatch.setattr(
+        module.urllib.request,
+        "urlopen",
+        lambda url, timeout: UnsafeRedirect(data),
+    )
+    with pytest.raises(RuntimeError, match="outside HTTPS"):
+        module._stage_arm64_wheel(source, expected, tmp_path)

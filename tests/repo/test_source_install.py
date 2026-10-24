@@ -89,6 +89,8 @@ def test_install_command_order_and_only_one_native_role(
             "root": tmp_path,
             "activate_launcher": False,
             "expected_commit": None,
+            "arm64_wheel": None,
+            "arm64_wheel_sha256": None,
         }
     ]
     assert [args[3:] for args, _kw in calls] == expected
@@ -550,3 +552,25 @@ def test_native_service_status_with_extra_lines_fails_closed(
         installer._check_native_services(
             tmp_path / "python", tmp_path, role, None
         )
+
+
+def test_installer_forwards_explicit_arm64_wheel_pair(
+    installer, tmp_path, monkeypatch
+):
+    passed = []
+
+    def fake_prepare(**kwargs):
+        passed.append(kwargs)
+        raise RuntimeError("preparation stopped before role setup")
+
+    monkeypatch.setattr(installer, "prepare", fake_prepare)
+    with pytest.raises(RuntimeError, match="preparation stopped"):
+        installer.install(
+            role="control",
+            tag="v5.0.0a6",
+            root=tmp_path,
+            arm64_wheel="https://example.com/cryptography-50.0.2-cp314-abi3-win_arm64.whl",
+            arm64_wheel_sha256="a" * 64,
+        )
+    assert passed[0]["arm64_wheel_sha256"] == "a" * 64
+    assert passed[0]["arm64_wheel"].startswith("https://")
