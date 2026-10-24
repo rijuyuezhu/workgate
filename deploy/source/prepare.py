@@ -1,15 +1,19 @@
 """Prepare one immutable, full-featured Workgate source runtime (stdlib only)."""
 
 import argparse
+import hashlib
 import os
 import platform
 import re
+import runpy
 import shlex
 import shutil
 import stat
 import subprocess
 import tempfile
 import tomllib
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 REPOSITORY = "https://github.com/rijuyuezhu/workgate.git"
@@ -143,6 +147,61 @@ def _arm64_static_openssl_env(
     return env
 
 
+def _native_arm64() -> bool:
+    return os.name == "nt" and platform.machine().lower() in {
+        "arm64",
+        "aarch64",
+    }
+
+
+_ARM64_CRYPTO_WHEEL = "cryptography-50.0.2-cp314-abi3-win_arm64.whl"
+
+
+def _stage_arm64_wheel(source: str, sha256: str, directory: Path) -> Path:
+    """Accept only an explicitly pinned ARM64 wheel, never a floating index."""
+    if not re.fullmatch(r"[0-9a-f]{64}", sha256):
+        raise ValueError("ARM64 wheel SHA256 must be 64 lowercase hex digits")
+    destination = directory / _ARM64_CRYPTO_WHEEL
+    if "://" in source:
+        parsed = urllib.parse.urlsplit(source)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or Path(parsed.path).name != _ARM64_CRYPTO_WHEEL
+        ):
+            raise ValueError(
+                "ARM64 wheel URL must be explicit pinned HTTPS Wheel"
+            )
+        with urllib.request.urlopen(source, timeout=60) as response:
+            if urllib.parse.urlsplit(response.geturl()).scheme != "https":
+                raise RuntimeError("ARM64 wheel redirected outside HTTPS")
+            with destination.open("wb") as output:
+                shutil.copyfileobj(response, output)
+    else:
+        path = Path(source).expanduser().resolve()
+        if path.name != _ARM64_CRYPTO_WHEEL or not path.is_file():
+            raise ValueError(
+                "ARM64 wheel must be a local cryptography 50.0.2 win_arm64 wheel"
+            )
+        shutil.copyfile(path, destination)
+    if hashlib.sha256(destination.read_bytes()).hexdigest() != sha256:
+        raise RuntimeError(
+            "ARM64 wheel SHA256 mismatch; refusing dependency installation"
+        )
+    verify = runpy.run_path(
+        str(
+            Path(__file__).resolve().parents[2]
+            / "scripts/release/verify_arm64_crypto_wheel.py"
+        )
+    )["verify_wheel"]
+    verify(destination)
+    return destination
+
+
 def _default_root() -> Path:
     if os.name == "nt":
         return (
@@ -244,6 +303,8 @@ def prepare(
     repository: str = REPOSITORY,
     activate_launcher: bool = True,
     expected_commit: str | None = None,
+    arm64_wheel: str | None = None,
+    arm64_wheel_sha256: str | None = None,
 ) -> Path:
     if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:[abrc][0-9]+)?", tag):
         raise ValueError(
@@ -257,6 +318,18 @@ def prepare(
         raise ValueError(
             "--expected-commit must be a full lowercase 40-digit SHA"
         )
+    if bool(arm64_wheel) != bool(arm64_wheel_sha256):
+        raise ValueError(
+            "ARM64 wheel source and SHA256 must be provided together"
+        )
+    if arm64_wheel and not _native_arm64():
+        raise ValueError(
+            "ARM64 wheel is supported only on native Windows ARM64"
+        )
+    if arm64_wheel_sha256 and not re.fullmatch(
+        r"[0-9a-f]{64}", arm64_wheel_sha256
+    ):
+        raise ValueError("ARM64 wheel SHA256 must be 64 lowercase hex digits")
     for executable in ("git", "uv"):
         if not shutil.which(executable):
             raise RuntimeError(
@@ -349,7 +422,8 @@ def prepare(
             temporary.rename(target)
         # A failed sync leaves the previous user-facing launcher and any active
         # service unchanged. Re-running retries the same immutable checkout.
-        build_env = _arm64_static_openssl_env()
+        # An explicit SHA-pinned wheel bypasses the developer-only SDK build.
+        build_env = None if arm64_wheel else _arm64_static_openssl_env()
         sync_args = [
             "uv",
             "sync",
@@ -371,13 +445,50 @@ def prepare(
                     "cryptography",
                 )
             )
-        _run(*sync_args, cwd=target, env=build_env)
+        if arm64_wheel:
+            assert arm64_wheel_sha256 is not None  # validated as a pair above
+            # uv's registry-locked cryptography cannot consume an external wheel
+            # directly. Each sync intentionally omits it; install the checked
+            # wheel *afterwards*, including on repeated preparation.
+            sync_args.extend(("--no-install-package", "cryptography"))
+            with tempfile.TemporaryDirectory(
+                prefix=".wheel-", dir=versions
+            ) as scratch:
+                wheel = _stage_arm64_wheel(
+                    arm64_wheel, arm64_wheel_sha256, Path(scratch)
+                )
+                _run(*sync_args, cwd=target)
+                python = _python(target)
+                platform_tag = _run(
+                    str(python),
+                    "-c",
+                    "import sysconfig; print(sysconfig.get_platform())",
+                    cwd=target,
+                )
+                if platform_tag != "win-arm64":
+                    raise RuntimeError(
+                        f"ARM64 wheel requires native win-arm64 Python, not {platform_tag!r}"
+                    )
+                _run(
+                    "uv",
+                    "pip",
+                    "install",
+                    "--python",
+                    str(python),
+                    "--no-deps",
+                    "--only-binary",
+                    ":all:",
+                    str(wheel),
+                    cwd=target,
+                )
+        else:
+            _run(*sync_args, cwd=target, env=build_env)
         python = _python(target)
         if not python.is_file():
             raise RuntimeError(
                 f"uv did not create the expected interpreter: {python}"
             )
-        if build_env is not None:
+        if build_env is not None or arm64_wheel:
             # platform.machine() can report the host under x64 emulation.
             # sysconfig identifies the actual CPython build target.
             python_platform = _run(
@@ -397,6 +508,12 @@ def prepare(
                 "from cryptography.hazmat.primitives.ciphers.aead import AESGCM; "
                 "AESGCM(bytes(16)).encrypt(bytes(12), b'test', None)"
             )
+            if arm64_wheel:
+                crypto += (
+                    "; import cryptography; from cryptography.hazmat.bindings.openssl.binding import Binding"
+                    "; assert cryptography.__version__ == '50.0.2'"
+                    "; assert Binding().ffi.string(Binding().lib.OpenSSL_version(0)).decode().startswith('OpenSSL 3.5.9 ')"
+                )
             for script in (f"{crypto}; import ssl", f"import ssl; {crypto}"):
                 try:
                     _run(str(python), "-c", script, cwd=target)
@@ -442,6 +559,14 @@ def main() -> None:
     )
     parser.add_argument("--install-root", type=Path, default=_default_root())
     parser.add_argument(
+        "--arm64-wheel",
+        help="Explicit HTTPS URL or local pinned cryptography ARM64 wheel",
+    )
+    parser.add_argument(
+        "--arm64-wheel-sha256",
+        help="Expected lowercase SHA256 from a trusted source",
+    )
+    parser.add_argument(
         "--expected-commit", help="Full pinned release commit SHA"
     )
     args = parser.parse_args()
@@ -451,6 +576,8 @@ def main() -> None:
             role=args.role,
             root=args.install_root,
             expected_commit=args.expected_commit,
+            arm64_wheel=args.arm64_wheel,
+            arm64_wheel_sha256=args.arm64_wheel_sha256,
         )
     except (
         OSError,

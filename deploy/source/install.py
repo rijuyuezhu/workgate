@@ -181,6 +181,8 @@ def install(
     port: int | None = None,
     base_url: str | None = None,
     expected_commit: str | None = None,
+    arm64_wheel: str | None = None,
+    arm64_wheel_sha256: str | None = None,
 ) -> Path:
     if any(key.startswith("WORKGATE_") for key in os.environ):
         raise RuntimeError(
@@ -203,6 +205,8 @@ def install(
         root=root,
         activate_launcher=False,
         expected_commit=expected_commit,
+        arm64_wheel=arm64_wheel,
+        arm64_wheel_sha256=arm64_wheel_sha256,
     )
     executable = _python(checkout)
     # Do not complete pairing or install a service if its stable command
@@ -230,6 +234,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--tag", required=True, help="Explicit released Workgate Git tag"
+    )
+    parser.add_argument(
+        "--arm64-wheel", help="Explicit pinned ARM64 Wheel URL or file"
+    )
+    parser.add_argument(
+        "--arm64-wheel-sha256", help="SHA256 of approved ARM64 Wheel"
     )
     parser.add_argument("--install-root", type=Path, default=_default_root())
     parser.add_argument(
@@ -260,6 +270,8 @@ def main() -> None:
             port=args.port,
             base_url=args.base_url,
             expected_commit=args.expected_commit,
+            arm64_wheel=args.arm64_wheel,
+            arm64_wheel_sha256=args.arm64_wheel_sha256,
         )
     except (
         subprocess.SubprocessError,

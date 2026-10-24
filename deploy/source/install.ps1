@@ -13,7 +13,9 @@ param(
     [string]$ExecutorConfig,
     [string]$HostAddress,
     [int]$Port,
-    [string]$BaseUrl
+    [string]$BaseUrl,
+    [string]$Arm64Wheel,
+    [string]$Arm64WheelSha256
 )
 $ErrorActionPreference = 'Stop'
 foreach ($tool in @('git', 'uv')) {
@@ -35,6 +37,8 @@ if ($ExecutorConfig) { $arguments += @('--executor-config', $ExecutorConfig) }
 if ($HostAddress) { $arguments += @('--host', $HostAddress) }
 if ($PSBoundParameters.ContainsKey('Port')) { $arguments += @('--port', [string]$Port) }
 if ($BaseUrl) { $arguments += @('--base-url', $BaseUrl) }
+if ($Arm64Wheel) { $arguments += @('--arm64-wheel', $Arm64Wheel) }
+if ($Arm64WheelSha256) { $arguments += @('--arm64-wheel-sha256', $Arm64WheelSha256) }
 & uv @arguments
 if ($LASTEXITCODE -ne 0) {
     throw "Workgate $Role installation failed (exit $LASTEXITCODE)"
