@@ -5,6 +5,7 @@ to avoid silently losing GUI/S3 extras when starting a service.
 """
 
 import argparse
+import contextlib
 import os
 import subprocess
 from pathlib import Path
@@ -125,6 +126,8 @@ def _check_native_services(
     checkout: Path,
     role: str,
     executor_config: Path | None,
+    *,
+    launcher: bool = False,
 ) -> None:
     """Never implicitly replace an already-installed native user service."""
     roles = {
@@ -134,7 +137,10 @@ def _check_native_services(
     }[role]
     for candidate in roles:
         subcommand = "status" if candidate == "executor" else "status-service"
-        argv = [str(executable), "-m", "workgate.main", candidate, subcommand]
+        argv = [str(executable)]
+        if not launcher:
+            argv.extend(("-m", "workgate.main"))
+        argv.extend((candidate, subcommand))
         if candidate == "executor" and executor_config is not None:
             argv.extend(("--config", str(executor_config)))
         result = subprocess.run(
@@ -199,6 +205,17 @@ def install(
         port=port,
         base_url=base_url,
     )
+    root = root.expanduser().absolute()
+    _check_launcher(root)
+    existing_launcher = (
+        root / "bin" / ("workgate.cmd" if os.name == "nt" else "workgate")
+    )
+    if existing_launcher.is_file():
+        # Older releases may lack status-service; recheck with prepared CLI.
+        with contextlib.suppress(OSError, subprocess.CalledProcessError):
+            _check_native_services(
+                existing_launcher, root, role, executor_config, launcher=True
+            )
     checkout = prepare(
         tag=tag,
         role=role,
@@ -211,7 +228,7 @@ def install(
     executable = _python(checkout)
     # Do not complete pairing or install a service if its stable command
     # would be blocked by an unrelated existing launcher.
-    _check_launcher(root.expanduser().absolute())
+    _check_launcher(root)
     _check_native_services(executable, checkout, role, executor_config)
     for command in commands:
         subprocess.run(
