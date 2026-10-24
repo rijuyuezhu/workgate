@@ -149,10 +149,11 @@ def _arm64_static_openssl_env(
 
 
 def _native_arm64() -> bool:
-    return os.name == "nt" and platform.machine().lower() in {
-        "arm64",
-        "aarch64",
-    }
+    # Emulated x86/x64 processes on Windows ARM64 report their own ISA.
+    return os.name == "nt" and (
+        platform.machine().lower() in {"arm64", "aarch64"}
+        or os.environ.get("PROCESSOR_ARCHITEW6432", "").lower() == "arm64"
+    )
 
 
 _ARM64_CRYPTO_WHEEL = "cryptography-50.0.2-cp314-abi3-win_arm64.whl"

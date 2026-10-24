@@ -906,6 +906,33 @@ def test_arm64_release_metadata_supplies_hash_without_user_input(
             module._release_arm64_wheel(tag)
 
 
+def test_windows_arm64_emulated_shell_uses_native_wheel(monkeypatch, preparer):
+    from types import SimpleNamespace
+
+    module, _calls, _fail = preparer
+    monkeypatch.setattr(module.platform, "machine", lambda: "x86")
+    monkeypatch.setattr(
+        module,
+        "os",
+        SimpleNamespace(name="nt", environ={"PROCESSOR_ARCHITEW6432": "ARM64"}),
+    )
+    assert module._native_arm64()
+    monkeypatch.setattr(
+        module,
+        "os",
+        SimpleNamespace(name="nt", environ={}),
+    )
+    assert not module._native_arm64()
+    monkeypatch.setattr(
+        module,
+        "os",
+        SimpleNamespace(
+            name="posix", environ={"PROCESSOR_ARCHITEW6432": "ARM64"}
+        ),
+    )
+    assert not module._native_arm64()
+
+
 def test_native_arm64_automatically_installs_release_wheel_without_checksum(
     repo, preparer, tmp_path, monkeypatch
 ):
