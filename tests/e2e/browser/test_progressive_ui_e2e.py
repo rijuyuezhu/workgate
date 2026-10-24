@@ -237,3 +237,88 @@ def test_retry_failed_control_skill_without_reloading_fresh_mcp(
         assert counts["mcp"] == 1
     finally:
         page.close()
+
+
+def test_inventory_poll_preserves_unchanged_card_dom(
+    browser_harness: BrowserHarness,
+) -> None:
+    harness = browser_harness
+    harness.login()
+    harness.wait_executor_online()
+    page = harness.context.new_page()
+    try:
+        # Accelerate the existing inventory timer, not the actual HTTP handler.
+        page.add_init_script(
+            """(() => {
+              const originalInterval = window.setInterval.bind(window);
+              window.setInterval = (callback, delay, ...args) =>
+                originalInterval(callback, delay === 4000 ? 350 : delay, ...args);
+              const originalFetch = window.fetch.bind(window);
+              window.__executorReads = 0;
+              window.fetch = (url, options) => {
+                const response = originalFetch(url, options);
+                if (new URL(url, location.href).pathname !== '/api/ui/executors')
+                  return response;
+                return response.then(value => {
+                  window.__executorReads += 1;
+                  return value;
+                });
+              };
+            })();"""
+        )
+        page.goto(
+            f"{harness.base_url}/ui#executors", wait_until="domcontentloaded"
+        )
+        expect(page.locator("#executor-state")).to_contain_text("Updated")
+        row = page.locator(
+            f'#executor-list .executor-row[data-selection="{harness.executor_id}"]'
+        )
+        expect(row).to_contain_text("online")
+        row.focus()
+        expect(row).to_be_focused()
+        page.evaluate(
+            """() => {
+              window.__row = document.activeElement;
+              window.__changes = 0;
+              window.__attributes = 0;
+              window.__rowObserver = new MutationObserver(entries => {
+                for (const item of entries) {
+                  window.__changes += item.addedNodes.length + item.removedNodes.length;
+                  if (item.type === 'attributes') window.__attributes += 1;
+                }
+              });
+              window.__rowObserver.observe(
+                document.getElementById('executor-list'),
+                { childList: true, attributes: true, subtree: true }
+              );
+              window.__readsBefore = window.__executorReads;
+            }"""
+        )
+        page.wait_for_function(
+            "() => window.__executorReads >= window.__readsBefore + 3",
+            timeout=8000,
+        )
+        page.wait_for_timeout(150)
+        assert page.evaluate("window.__changes") == 0
+        assert page.evaluate("window.__attributes") == 0
+        assert row.evaluate("(el) => el === window.__row")
+        expect(row).to_be_focused()
+
+        def rename_in_inventory(route):
+            response = route.fetch()
+            data = response.json()
+            for executor in data["data"]["executors"]:
+                if executor["executor_id"] == harness.executor_id:
+                    executor["name"] = "renamed-in-poll"
+                    executor["draining"] = True
+            route.fulfill(response=response, json=data)
+
+        page.route("**/api/ui/executors", rename_in_inventory)
+        expect(row).to_contain_text("renamed-in-poll", timeout=8000)
+        expect(row.locator(".executor-band-state")).to_have_attribute(
+            "data-status", "draining"
+        )
+        assert row.evaluate("(el) => el === window.__row")
+        expect(row).to_be_focused()
+    finally:
+        page.close()
