@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import platform
 import re
 import shlex
 import shutil
@@ -15,16 +16,131 @@ REPOSITORY = "https://github.com/rijuyuezhu/workgate.git"
 _LAUNCHER_MARKER = "Managed by Workgate source preparation"
 
 
-def _run(*args: str, cwd: Path | None = None, timeout: int = 600) -> str:
+def _run(
+    *args: str,
+    cwd: Path | None = None,
+    timeout: int = 600,
+    env: dict[str, str] | None = None,
+) -> str:
     result = subprocess.run(
         list(args),
         cwd=cwd,
+        env=env,
         capture_output=True,
         text=True,
         check=True,
         timeout=timeout,
     )
     return result.stdout.strip()
+
+
+def _arm64_static_openssl_env(
+    *, host_os: str | None = None, machine: str | None = None
+) -> dict[str, str] | None:
+    """Native win_arm64 cryptography requires a static OpenSSL source build.
+
+    Its newer releases lack win_arm64 wheels. Dynamic OpenSSL builds can
+    conflict with the different OpenSSL runtime bundled with uv CPython.
+    """
+    if (host_os or os.name) != "nt" or (
+        machine or platform.machine()
+    ).lower() not in {"arm64", "aarch64"}:
+        return None
+
+    openssl = os.environ.get("OPENSSL_DIR")
+    if openssl is None:
+        # Scoop uses a shim on PATH, not the OpenSSL SDK's real bin directory.
+        scoop = Path.home() / "scoop/apps/openssl-lts/current"
+        if (scoop / "include/openssl/ssl.h").is_file():
+            openssl = str(scoop)
+        else:
+            executable = shutil.which("openssl")
+            if executable:
+                openssl = str(Path(executable).resolve().parent.parent)
+    if not openssl:
+        raise RuntimeError(
+            "Windows ARM64 requires an OpenSSL 3 ARM64 SDK with static "
+            "libraries (e.g. Scoop openssl-lts), Rust and MSVC; "
+            "set OPENSSL_DIR to the OpenSSL installation"
+        )
+    root = Path(openssl).expanduser().resolve()
+    native_libs = root / "lib/VC/arm64/MD"
+    library = (
+        Path(os.environ.get("OPENSSL_LIB_DIR", str(native_libs)))
+        .expanduser()
+        .resolve()
+    )
+    # Scoop publishes OPENSSL_LIB_DIR=.../lib, while ARM64 static .lib
+    # files are under the VC/arm64/MD subdirectory of that same SDK.
+    if not all(
+        (library / name).is_file()
+        for name in ("libssl_static.lib", "libcrypto_static.lib")
+    ) and all(
+        (native_libs / name).is_file()
+        for name in ("libssl_static.lib", "libcrypto_static.lib")
+    ):
+        library = native_libs
+    headers = (
+        Path(os.environ.get("OPENSSL_INCLUDE_DIR", str(root / "include")))
+        .expanduser()
+        .resolve()
+    )
+    required = (
+        library / "libssl_static.lib",
+        library / "libcrypto_static.lib",
+        headers / "openssl/ssl.h",
+    )
+    if not all(path.is_file() for path in required):
+        raise RuntimeError(
+            "Windows ARM64 needs ARM64 OpenSSL static libraries and headers; "
+            f"missing: {', '.join(str(p) for p in required if not p.is_file())}. "
+            "Configure OPENSSL_DIR / OPENSSL_LIB_DIR / OPENSSL_INCLUDE_DIR"
+        )
+    version_header = headers / "openssl/opensslv.h"
+    if not version_header.is_file():
+        raise RuntimeError(
+            "Windows ARM64 cannot verify the OpenSSL SDK version: "
+            f"missing {version_header}"
+        )
+    version_source = version_header.read_text(encoding="utf-8")
+    major = re.search(
+        r"^#\s*define\s+OPENSSL_VERSION_MAJOR\s+(\d+)\b", version_source, re.M
+    )
+    minor = re.search(
+        r"^#\s*define\s+OPENSSL_VERSION_MINOR\s+(\d+)\b", version_source, re.M
+    )
+    if not major or not minor or (int(major[1]), int(minor[1])) < (3, 5):
+        raise RuntimeError(
+            "Windows ARM64 static cryptography requires a supported OpenSSL "
+            "SDK (at least 3.5, preferably OpenSSL 3.5 LTS); "
+            "OpenSSL 3.0 reached end of security support in September 2026"
+        )
+    env = {
+        **os.environ,
+        "OPENSSL_DIR": str(root),
+        "OPENSSL_LIB_DIR": str(library),
+        "OPENSSL_INCLUDE_DIR": str(headers),
+        "OPENSSL_STATIC": "1",
+        "OPENSSL_LIBS": "libssl_static:libcrypto_static",
+    }
+    if shutil.which("cargo") is None:
+        # Scoop rustup puts Cargo in its persistent home, not always on PATH.
+        rustup = Path.home() / "scoop/persist/rustup"
+        cargo_dir = rustup / ".cargo/bin"
+        if not (cargo_dir / "cargo.exe").is_file():
+            raise RuntimeError(
+                "Windows ARM64 needs native Rust/Cargo; install rustup "
+                "and select the aarch64-pc-windows-msvc toolchain"
+            )
+        env["CARGO_HOME"] = str(rustup / ".cargo")
+        env["RUSTUP_HOME"] = str(rustup / ".rustup")
+        env["PATH"] = str(cargo_dir) + os.pathsep + env.get("PATH", "")
+    if shutil.which("link") is None:
+        raise RuntimeError(
+            "Windows ARM64 needs an initialized native MSVC build shell; "
+            "run vcvarsall.bat arm64 before the installer"
+        )
+    return env
 
 
 def _default_root() -> Path:
@@ -233,7 +349,8 @@ def prepare(
             temporary.rename(target)
         # A failed sync leaves the previous user-facing launcher and any active
         # service unchanged. Re-running retries the same immutable checkout.
-        _run(
+        build_env = _arm64_static_openssl_env()
+        sync_args = [
             "uv",
             "sync",
             "--locked",
@@ -244,13 +361,50 @@ def prepare(
             "s3",
             "--python",
             "3.14",
-            cwd=target,
-        )
+        ]
+        if build_env is not None:
+            # Do not reuse a cached dynamically linked ARM64 source wheel.
+            sync_args.extend(
+                (
+                    "--no-cache",
+                    "--no-binary-package",
+                    "cryptography",
+                )
+            )
+        _run(*sync_args, cwd=target, env=build_env)
         python = _python(target)
         if not python.is_file():
             raise RuntimeError(
                 f"uv did not create the expected interpreter: {python}"
             )
+        if build_env is not None:
+            # platform.machine() can report the host under x64 emulation.
+            # sysconfig identifies the actual CPython build target.
+            python_platform = _run(
+                str(python),
+                "-c",
+                "import sysconfig; print(sysconfig.get_platform())",
+                cwd=target,
+            )
+            if python_platform != "win-arm64":
+                raise RuntimeError(
+                    "Windows ARM64 requires a native Python runtime, "
+                    f"got {python_platform!r}"
+                )
+            # A successful source build is not enough: dynamic OpenSSL DLLs
+            # can conflict with Python's own SSL module at import time.
+            crypto = (
+                "from cryptography.hazmat.primitives.ciphers.aead import AESGCM; "
+                "AESGCM(bytes(16)).encrypt(bytes(12), b'test', None)"
+            )
+            for script in (f"{crypto}; import ssl", f"import ssl; {crypto}"):
+                try:
+                    _run(str(python), "-c", script, cwd=target)
+                except subprocess.CalledProcessError as exc:
+                    raise RuntimeError(
+                        "Windows ARM64 cryptography runtime verification failed "
+                        "(check static OpenSSL linking)"
+                    ) from exc
         _run(str(python), "-m", "playwright", "install", "chromium", cwd=target)
         version = _run(
             str(python), "-m", "workgate.main", "--version", cwd=target
