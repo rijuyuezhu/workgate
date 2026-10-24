@@ -235,3 +235,60 @@ def test_windows_bootstrap_wrong_sha_never_executes_source(
     )
     assert result.returncode != 0
     assert not capture.exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shell bootstrap")
+def test_annotated_release_tag_resolves_to_pinned_commit(
+    pinned_release, tmp_path
+):
+    script, sha = pinned_release
+    origin = tmp_path / "origin"
+    subprocess.run(
+        ["git", "-C", str(origin), "tag", "-fa", "v5.0.0a6", "-m", "annotated"],
+        check=True,
+    )
+    capture = tmp_path / "annotated.txt"
+    result = subprocess.run(
+        ["sh", str(script), "v5.0.0a6", sha, "--role", "colocate"],
+        env=os.environ | {"WORKGATE_BOOTSTRAP_TEST_OUTPUT": str(capture)},
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert capture.read_text().splitlines()[-2:] == ["--role", "colocate"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shell bootstrap")
+def test_public_bootstrap_refuses_symlinked_release_installer(
+    pinned_release, tmp_path
+):
+    script, _sha = pinned_release
+    origin = tmp_path / "origin"
+    installer = origin / "deploy/source/install.sh"
+    installer.unlink()
+    installer.symlink_to("install.ps1")
+    subprocess.run(["git", "-C", str(origin), "add", "."], check=True)
+    subprocess.run(
+        ["git", "-C", str(origin), "commit", "-qm", "symlink"], check=True
+    )
+    subprocess.run(
+        ["git", "-C", str(origin), "tag", "-f", "v5.0.0a6"], check=True
+    )
+    sha = subprocess.check_output(
+        ["git", "-C", str(origin), "rev-parse", "HEAD"],
+        text=True,
+    ).strip()
+    capture = tmp_path / "capture.txt"
+    result = subprocess.run(
+        ["sh", str(script), "v5.0.0a6", sha, "--role", "control"],
+        env=os.environ | {"WORKGATE_BOOTSTRAP_TEST_OUTPUT": str(capture)},
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode != 0
+    assert "regular source installer" in result.stderr
+    assert not capture.exists()
