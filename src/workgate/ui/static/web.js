@@ -724,6 +724,9 @@ void (async () => {
       throw error;
     }
     if (response.status === 401) {
+      // A background read may be the first to notice expiry; clear every
+      // protected view now, not only when its caller handles this error.
+      requireAuthentication();
       const error = new Error("Authentication required");
       error.authenticationRequired = true;
       error.status = response.status;

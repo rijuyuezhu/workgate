@@ -1274,7 +1274,9 @@ export function createTasksController({
         generation !== controllerState.sessionAuditGeneration ||
         requestedSession !== controllerState.sessionId
       ) return null;
-      if (!background) {
+      if (error.status === 403) {
+        resetSessionAuditWorkspace("Audit access denied");
+      } else if (!background) {
         controllerState.sessionAuditEntries = [];
         controllerState.sessionAuditSelectedId = "";
         renderSessionAuditList();

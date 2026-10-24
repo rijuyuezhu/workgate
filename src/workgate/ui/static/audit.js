@@ -209,7 +209,9 @@ export function createAuditController({
       return payload;
     } catch (error) {
       if (generation !== controllerState.auditGeneration) return null;
-      if (!background) {
+      if (error.status === 403) {
+        resetAuditWorkspace(); // Clear stale Audit even for background refreshes.
+      } else if (!background) {
         controllerState.auditEntries = [];
         controllerState.auditSelectedId = "";
         renderAuditList();
