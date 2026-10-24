@@ -123,3 +123,20 @@ def test_release_matrix_rejects_missing_windows_binary(tmp_path):
     )
     assert completed.returncode != 0
     assert "matrix mismatch" in completed.stderr
+
+
+def test_release_includes_native_arm64_wheel_in_existing_asset_bundle():
+    workflow = (
+        Path(__file__).parents[2] / ".github/workflows/release.yml"
+    ).read_text()
+    producer = workflow.split("\n  build-arm64-cryptography:\n", 1)[1].split(
+        "\n  github-release:\n", 1
+    )[0]
+    publisher = workflow.split("\n  github-release:\n", 1)[1]
+    assert "runs-on: windows-11-arm" in producer
+    assert "./scripts/release/build_arm64_crypto_wheel.ps1" in producer
+    assert "name: arm64-cryptography" in producer
+    assert "      - build-arm64-cryptography" in publisher
+    assert "name: arm64-cryptography" in publisher
+    assert "sha256sum > SHA256SUMS.txt" in publisher
+    assert "files: dist/*" in publisher

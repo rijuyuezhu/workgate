@@ -20,9 +20,14 @@ The test environment installs using wheel-only resolution with OpenSSL SDK
 variables removed, so source compilation is forbidden. The verifier rejects
 extra bundled native DLLs as well as dynamically imported OpenSSL.
 
-The CI artifact includes a wheel and a JSON SHA256/source-provenance report
-for short-lived human review. **It is not trusted or installed by
-`deploy/source/prepare.py`**, and must not be used as a public release until
-a separate review has validated provenance, reproducible builds, security
-updates, immutable publication and pinned integrity verification at install
-time. Never publish a wheel built against OpenSSL 3.0.22 from an EOL host.
+The standalone ARM64 workflow retains short-lived review artifacts. The
+regular WorkGate Release workflow reuses the same build script and includes the
+wheel, its provenance and checksum in the normal GitHub Release assets.
+
+Normal native Windows ARM64 installation looks up the chosen tag's Wheel and
+its GitHub-recorded SHA256 automatically using the Release API. The installed
+file must match the reported SHA256 and pass native PE/static OpenSSL checks;
+no user-provided checksum is needed. This trusts the existing GitHub Release
+publisher permissions, not an independent cryptographic publisher signature.
+No extra publication service or immutability gate is used. Never build against
+EOL OpenSSL 3.0.x.
