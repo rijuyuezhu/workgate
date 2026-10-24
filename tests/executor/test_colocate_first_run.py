@@ -475,3 +475,17 @@ def test_failed_quiet_control_cli_preserves_actionable_stderr(monkeypatch):
     monkeypatch.setattr(first_run.subprocess, "run", reject)
     with pytest.raises(RuntimeError, match="private config must be 0600"):
         first_run._initialize_control(Path("config.yaml"))
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [["temporary_control"], ["temporary_control", "one.yaml", "extra.yaml"]],
+)
+def test_temporary_control_rejects_missing_or_extra_config_arguments(
+    monkeypatch, arguments
+):
+    from workgate.colocate import temporary_control
+
+    monkeypatch.setattr(temporary_control.sys, "argv", arguments)
+    with pytest.raises(SystemExit, match="requires one config path"):
+        temporary_control.main()
