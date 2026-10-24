@@ -777,3 +777,58 @@ def test_remote_executor_terminal_real_chromium(tmp_path):
             failed = False
         finally:
             harness.stop(failed=failed)
+
+
+def test_hidden_tab_does_not_poll_and_resumes(browser_harness: BrowserHarness):
+    """A background tab must not keep reading Executor/Tasks/Audit data."""
+    h = browser_harness
+    h.login()
+    h.wait_executor_online()
+    page = h.context.new_page()
+    # Accelerate the *existing* timers only in this test tab. Mocking
+    # document.hidden rather than hiding Chromium avoids timer throttling
+    # masking a missing visibility guard.
+    page.add_init_script("""(() => {
+      const original = window.setInterval.bind(window);
+      window.setInterval = (callback, delay, ...args) =>
+        original(callback, [4000, 5000, 30000].includes(delay) ? 250 : delay, ...args);
+    })()""")
+    requests = []
+    page.on(
+        "request",
+        lambda request: requests.append(request.url.split("?")[0]),
+    )
+
+    try:
+        for view, scoped_api in [
+            ("overview", "/api/ui/tasks"),
+            ("audit", "/api/ui/audit"),
+        ]:
+            page.goto(f"{h.base_url}/ui#{view}", wait_until="domcontentloaded")
+            expect(page.locator("#connection-state")).to_have_text("Connected")
+            page.wait_for_timeout(1600)
+            assert any("/api/ui/executors" in path for path in requests)
+            assert any(scoped_api in path for path in requests)
+
+            page.evaluate(
+                "Object.defineProperty(document, 'hidden', "
+                "{configurable: true, get: () => true})"
+            )
+            requests.clear()
+            page.wait_for_timeout(1200)
+            assert not any(
+                "/api/ui/executors" in path or scoped_api in path
+                for path in requests
+            ), requests
+
+            page.evaluate(
+                "Object.defineProperty(document, 'hidden', "
+                "{configurable: true, get: () => false})"
+            )
+            requests.clear()
+            page.wait_for_timeout(1050)
+            assert any("/api/ui/executors" in path for path in requests)
+            assert any(scoped_api in path for path in requests)
+            requests.clear()
+    finally:
+        page.close()
