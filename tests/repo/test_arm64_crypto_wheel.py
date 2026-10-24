@@ -127,3 +127,15 @@ def test_source_download_checksum_mismatch_removes_file(tmp_path, monkeypatch):
             tmp_path,
         )
     assert not (tmp_path / "archive.tar.gz").exists()
+
+
+def test_bundled_openssl_dll_is_rejected_even_without_pe_import(
+    verifier, tmp_path
+):
+    wheel = fake_wheel(tmp_path)
+    with zipfile.ZipFile(wheel, "a") as archive:
+        archive.writestr(
+            "cryptography/hazmat/bindings/libcrypto-3-arm64.dll", b"unexpected"
+        )
+    with pytest.raises(ValueError, match="unexpected bundled native binary"):
+        verifier.verify_wheel(wheel)

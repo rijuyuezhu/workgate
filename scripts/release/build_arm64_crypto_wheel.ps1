@@ -87,8 +87,11 @@ if ($wheel.Count -ne 1) { throw 'Expected exactly one cryptography wheel' }
 $metadata = Join-Path $output 'provenance.json'
 & $python (Join-Path $root 'scripts/release/verify_arm64_crypto_wheel.py') $wheel[0].FullName --openssl-version 3.5.9 --openssl-source-sha256 603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a --cryptography-source-sha256 7b46165bb56eb4704e2eaaf86f3c940d19154535d9b0ca7d6d590b04060e00d5 --provenance $metadata
 if ($LASTEXITCODE -ne 0) { throw 'Native wheel verification failed' }
-uv pip install --python $python $wheel[0].FullName
-if ($LASTEXITCODE -ne 0) { throw 'Fresh native wheel installation failed' }
+# Consumer smoke: only wheels are permitted, with no OpenSSL SDK environment.
+# Installing this artifact must not require Cargo/MSVC/OpenSSL on the target.
+Remove-Item Env:OPENSSL_DIR, Env:OPENSSL_STATIC, Env:OPENSSL_NO_VENDOR -ErrorAction SilentlyContinue
+uv pip install --only-binary :all: --python $python $wheel[0].FullName
+if ($LASTEXITCODE -ne 0) { throw 'Fresh binary-only ARM64 wheel installation failed' }
 & $python (Join-Path $root 'scripts/release/smoke_arm64_crypto_wheel.py')
 if ($LASTEXITCODE -ne 0) { throw 'Native cryptography smoke failed' }
 Write-Output "Validated ARM64 wheel + provenance at $output (CI only; NOT published)."

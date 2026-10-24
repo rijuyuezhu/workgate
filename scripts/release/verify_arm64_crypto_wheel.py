@@ -63,6 +63,15 @@ def verify_wheel(path: Path, version: str = "50.0.2") -> dict[str, object]:
         ]
         if len(rust) != 1 or not rust[0].startswith("cryptography/"):
             raise ValueError("expected exactly one cryptography Rust extension")
+        native_files = [
+            name
+            for name in archive.namelist()
+            if name.lower().endswith((".pyd", ".dll", ".exe"))
+        ]
+        if native_files != rust:
+            raise ValueError(
+                "unexpected bundled native binary alongside Rust extension"
+            )
         metadata = [
             name
             for name in archive.namelist()

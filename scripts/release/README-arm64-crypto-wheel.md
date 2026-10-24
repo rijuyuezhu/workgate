@@ -16,6 +16,10 @@ machine and all ordinary/delay import tables; a clean native environment runs
 cryptography **before** Python `ssl`, exercises AES-GCM and checks the
 cryptography-linked OpenSSL runtime is exactly 3.5.9.
 
+The test environment installs using wheel-only resolution with OpenSSL SDK
+variables removed, so source compilation is forbidden. The verifier rejects
+extra bundled native DLLs as well as dynamically imported OpenSSL.
+
 The CI artifact includes a wheel and a JSON SHA256/source-provenance report
 for short-lived human review. **It is not trusted or installed by
 `deploy/source/prepare.py`**, and must not be used as a public release until
