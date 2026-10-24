@@ -889,17 +889,23 @@ def test_audit_scope_revocation_clears_stale_browser_data(
         if denied["list"]:
             deny(route)
         else:
-            route.fulfill(
-                status=200,
-                json={
-                    "ok": True,
-                    "data": {
-                        "entries": [entry],
-                        "entry": entry,
-                        "total_matched": 1,
-                    },
-                },
-            )
+            # Mirror the real backend: list access is separate from detail
+            # permission, and a selected entry is redacted if detail is denied.
+            data = {
+                "entries": [
+                    {
+                        key: value
+                        for key, value in entry.items()
+                        if key not in {"input", "output"}
+                    }
+                ],
+                "total_matched": 1,
+            }
+            if denied["detail"]:
+                data["entry_error"] = "Audit detail scope denied"
+            else:
+                data["entry"] = entry
+            route.fulfill(status=200, json={"ok": True, "data": data})
 
     def audit_detail(route):
         if denied["detail"]:
