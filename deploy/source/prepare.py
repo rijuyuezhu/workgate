@@ -2,6 +2,7 @@
 
 import argparse
 import hashlib
+import json
 import os
 import platform
 import re
@@ -200,6 +201,46 @@ def _stage_arm64_wheel(source: str, sha256: str, directory: Path) -> Path:
     )["verify_wheel"]
     verify(destination)
     return destination
+
+
+def _release_arm64_wheel(tag: str) -> tuple[str, str]:
+    """Resolve the exact versioned GitHub release asset and GitHub SHA256."""
+    endpoint = (
+        f"https://api.github.com/repos/rijuyuezhu/workgate/releases/tags/{tag}"
+    )
+    request = urllib.request.Request(
+        endpoint,
+        headers={"Accept": "application/vnd.github+json"},
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        release = json.load(response)
+    if release.get("tag_name") != tag:
+        raise RuntimeError("GitHub release tag mismatch")
+    assets = [
+        item
+        for item in release.get("assets", [])
+        if item.get("name") == _ARM64_CRYPTO_WHEEL
+    ]
+    if len(assets) != 1:
+        raise RuntimeError(
+            f"GitHub Release {tag} has no unique native ARM64 cryptography Wheel"
+        )
+    asset = assets[0]
+    source = asset.get("browser_download_url")
+    expected = (
+        f"https://github.com/rijuyuezhu/workgate/releases/download/"
+        f"{tag}/{_ARM64_CRYPTO_WHEEL}"
+    )
+    digest = asset.get("digest")
+    if (
+        source != expected
+        or not isinstance(digest, str)
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest)
+    ):
+        raise RuntimeError(
+            "GitHub Release ARM64 Wheel URL or SHA256 is invalid"
+        )
+    return source, digest.removeprefix("sha256:")
 
 
 def _default_root() -> Path:
@@ -422,7 +463,10 @@ def prepare(
             temporary.rename(target)
         # A failed sync leaves the previous user-facing launcher and any active
         # service unchanged. Re-running retries the same immutable checkout.
-        # An explicit SHA-pinned wheel bypasses the developer-only SDK build.
+        # Native ARM64 resolves its Wheel and SHA256 from this exact GitHub
+        # Release; ordinary users never need to provide a checksum.
+        if _native_arm64() and repository == REPOSITORY and not arm64_wheel:
+            arm64_wheel, arm64_wheel_sha256 = _release_arm64_wheel(tag)
         build_env = None if arm64_wheel else _arm64_static_openssl_env()
         sync_args = [
             "uv",

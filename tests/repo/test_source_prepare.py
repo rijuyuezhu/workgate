@@ -837,3 +837,161 @@ def test_arm64_wheel_https_download_requires_hash_and_https_redirect(
     )
     with pytest.raises(RuntimeError, match="outside HTTPS"):
         module._stage_arm64_wheel(source, expected, tmp_path)
+
+
+def test_arm64_release_metadata_supplies_hash_without_user_input(
+    preparer, monkeypatch
+):
+    import io
+    import json
+
+    module, _calls, _fail = preparer
+    tag = "v5.0.0a6"
+    wheel = module._ARM64_CRYPTO_WHEEL
+    url = f"https://github.com/rijuyuezhu/workgate/releases/download/{tag}/{wheel}"
+    expected = {
+        "tag_name": tag,
+        "assets": [
+            {
+                "name": wheel,
+                "browser_download_url": url,
+                "digest": "sha256:" + "a" * 64,
+            }
+        ],
+    }
+    requested = []
+
+    def respond(request, timeout):
+        requested.append((request.full_url, timeout))
+        return io.BytesIO(json.dumps(expected).encode())
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", respond)
+    assert module._release_arm64_wheel(tag) == (url, "a" * 64)
+    assert requested == [
+        (
+            f"https://api.github.com/repos/rijuyuezhu/workgate/releases/tags/{tag}",
+            30,
+        )
+    ]
+
+    bad = [
+        {**expected, "tag_name": "v5.0.0a5"},
+        {**expected, "assets": []},
+        {**expected, "assets": [expected["assets"][0]] * 2},
+        {
+            **expected,
+            "assets": [{**expected["assets"][0], "digest": "sha256:invalid"}],
+        },
+        {
+            **expected,
+            "assets": [
+                {
+                    **expected["assets"][0],
+                    "browser_download_url": "https://attacker.example/a.whl",
+                }
+            ],
+        },
+    ]
+    for invalid in bad:
+        monkeypatch.setattr(
+            module.urllib.request,
+            "urlopen",
+            lambda request, timeout, response=invalid: io.BytesIO(
+                json.dumps(response).encode()
+            ),
+        )
+        with pytest.raises(
+            RuntimeError, match="tag mismatch|no unique|URL or SHA256"
+        ):
+            module._release_arm64_wheel(tag)
+
+
+def test_native_arm64_automatically_installs_release_wheel_without_checksum(
+    repo, preparer, tmp_path, monkeypatch
+):
+    origin, _git = repo
+    module, calls, _fail = preparer
+    monkeypatch.setattr(module, "REPOSITORY", str(origin))
+    monkeypatch.setattr(module, "_native_arm64", lambda: True)
+    monkeypatch.setattr(
+        module,
+        "_arm64_static_openssl_env",
+        lambda: pytest.fail("ARM64 default must not require source compiler"),
+    )
+    resolved = []
+    url = (
+        "https://github.com/rijuyuezhu/workgate/releases/download/"
+        "v5.0.0a5/" + module._ARM64_CRYPTO_WHEEL
+    )
+
+    def resolve(tag):
+        resolved.append(tag)
+        return url, "a" * 64
+
+    monkeypatch.setattr(module, "_release_arm64_wheel", resolve)
+    staged = []
+
+    def stage(source, sha256, directory):
+        staged.append((source, sha256))
+        wheel = directory / module._ARM64_CRYPTO_WHEEL
+        wheel.write_bytes(b"checked Wheel")
+        return wheel
+
+    monkeypatch.setattr(module, "_stage_arm64_wheel", stage)
+    orig = module._run
+
+    def run(*args, **kwargs):
+        if args[:2] == ("uv", "pip"):
+            calls.append(args)
+            return ""
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(module, "_run", run)
+    for _ in range(2):
+        module.prepare(
+            tag="v5.0.0a5",
+            role="executor",
+            root=tmp_path / "managed",
+            repository=str(origin),
+        )
+    assert resolved == ["v5.0.0a5"] * 2
+    assert staged == [(url, "a" * 64)] * 2
+    assert len([a for a in calls if a[:2] == ("uv", "pip")]) == 2
+    assert all(
+        "--no-install-package" in a for a in calls if a[:2] == ("uv", "sync")
+    )
+
+
+def test_missing_release_wheel_fails_before_uv_sync_and_keeps_launcher(
+    repo, preparer, tmp_path, monkeypatch
+):
+    origin, _git = repo
+    module, calls, _fail = preparer
+    root = tmp_path / "managed"
+    module.prepare(
+        tag="v5.0.0a5",
+        role="executor",
+        root=root,
+        repository=str(origin),
+    )
+    launcher = (
+        root / "bin" / ("workgate.cmd" if os.name == "nt" else "workgate")
+    )
+    before = launcher.read_bytes()
+    monkeypatch.setattr(module, "REPOSITORY", str(origin))
+    monkeypatch.setattr(module, "_native_arm64", lambda: True)
+
+    def reject(tag):
+        raise RuntimeError("GitHub Release lacks native ARM64 Wheel")
+
+    monkeypatch.setattr(module, "_release_arm64_wheel", reject)
+    call_count = len(calls)
+    with pytest.raises(RuntimeError, match="lacks native ARM64 Wheel"):
+        module.prepare(
+            tag="v5.0.0a5",
+            role="executor",
+            root=root,
+            repository=str(origin),
+        )
+    assert launcher.read_bytes() == before
+    assert not any(a[:2] == ("uv", "sync") for a in calls[call_count:])

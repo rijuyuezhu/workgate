@@ -226,6 +226,31 @@ jobs:
           path: |
             release/workgate-${{ matrix.artifact }}.*
           if-no-files-found: error
+  build-arm64-cryptography:
+    name: Build native ARM64 cryptography wheel
+    runs-on: windows-11-arm
+    needs: validate-release
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+          architecture: arm64
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: aarch64-pc-windows-msvc
+      - name: Build and verify pinned native wheel
+        shell: pwsh
+        run: ./scripts/release/build_arm64_crypto_wheel.ps1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: arm64-cryptography
+          path: ${{ runner.temp }}/workgate-crypto-wheel/wheel/*
+          if-no-files-found: error
+
   github-release:
     name: Publish GitHub release
     runs-on: ubuntu-latest
@@ -236,6 +261,7 @@ jobs:
       - validate-release
       - build-python-package
       - build-binary
+      - build-arm64-cryptography
     steps:
       - uses: actions/checkout@v6
       - name: Download Python package artifacts
@@ -250,6 +276,12 @@ jobs:
           pattern: binary-*
           path: dist
           merge-multiple: true
+
+      - name: Download verified native ARM64 cryptography wheel
+        uses: actions/download-artifact@v8
+        with:
+          name: arm64-cryptography
+          path: dist
 
       - name: Create combined checksums
         run: |
@@ -276,6 +308,9 @@ jobs:
           \`\`\`bash
           ./workgate control --mode mcp
           \`\`\`
+
+          A native Windows ARM64 cryptography wheel and its provenance are included.
+          The wheel checksum is included in SHA256SUMS.txt.
 
           Universal Python package artifacts, executable archives, and SHA256 checksums are attached below.
 
