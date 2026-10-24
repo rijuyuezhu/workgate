@@ -60,7 +60,30 @@ def _remove_temporary_checkout(path: Path) -> None:
     shutil.rmtree(path, onexc=retry_readonly)
 
 
+def _check_launcher(root: Path) -> None:
+    """Fail before role setup if the stable command belongs to another tool."""
+    launcher = (
+        root / "bin" / ("workgate.cmd" if os.name == "nt" else "workgate")
+    )
+    marker = ("rem " if os.name == "nt" else "# ") + _LAUNCHER_MARKER
+    header = "@echo off" if os.name == "nt" else "#!/bin/sh"
+    if launcher.is_symlink() or (
+        launcher.exists()
+        and (
+            not launcher.is_file()
+            or launcher.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()[:2]
+            != [header, marker]
+        )
+    ):
+        raise RuntimeError(
+            f"refusing to replace an unmanaged launcher: {launcher}"
+        )
+
+
 def _write_launcher(root: Path, python: Path) -> Path:
+    _check_launcher(root)
     directory = root / "bin"
     directory.mkdir(parents=True, exist_ok=True)
     if os.name == "nt":
@@ -77,17 +100,6 @@ def _write_launcher(root: Path, python: Path) -> Path:
         content = (
             f"#!/bin/sh\n# {_LAUNCHER_MARKER}\n"
             f'exec {shlex.quote(str(python))} -m workgate.main "$@"\n'
-        )
-    marker = ("rem " if os.name == "nt" else "# ") + _LAUNCHER_MARKER
-    if launcher.is_symlink() or (
-        launcher.exists()
-        and launcher.read_text(encoding="utf-8", errors="replace").splitlines()[
-            :2
-        ]
-        != content.splitlines()[:1] + [marker]
-    ):
-        raise RuntimeError(
-            f"refusing to replace an unmanaged launcher: {launcher}"
         )
     with tempfile.NamedTemporaryFile(
         mode="w",
@@ -109,7 +121,12 @@ def _write_launcher(root: Path, python: Path) -> Path:
 
 
 def prepare(
-    *, tag: str, role: str, root: Path, repository: str = REPOSITORY
+    *,
+    tag: str,
+    role: str,
+    root: Path,
+    repository: str = REPOSITORY,
+    activate_launcher: bool = True,
 ) -> Path:
     if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:[abrc][0-9]+)?", tag):
         raise ValueError(
@@ -229,10 +246,11 @@ def prepare(
         )
         if version != f"workgate {tag[1:]}":
             raise RuntimeError(f"installed CLI version does not match {tag}")
-        launcher = _write_launcher(root, python)
         print(f"Prepared Workgate {version} ({tag}, {sha}) for {role}")
         print(f"Versioned checkout: {target}")
-        print(f"Stable CLI: {launcher}")
+        if activate_launcher:
+            launcher = _write_launcher(root, python)
+            print(f"Stable CLI: {launcher}")
         print(
             "No Control/Executor service, configuration or pairing identity was changed."
         )

@@ -22,8 +22,12 @@ For a **versioned, full-extras** runtime without changing the currently running
 services, use the repository's [source preparation scripts]
 (https://github.com/rijuyuezhu/workgate/tree/main/deploy/source). They resolve a specific release tag to a
 commit-addressed checkout, run locked uv installation and provision Chromium.
-They are not yet the final unattended `curl | sh` or PowerShell first-run
-installers; service setup and pairing remain explicit follow-up actions.
+The same directory now includes a local-checkout
+[`install.sh` / `install.ps1`](https://github.com/rijuyuezhu/workgate/tree/main/deploy/source)
+for versioned preparation **and** interactive role setup/pairing. Choose an
+actual release tag containing these commands. These are not yet trusted
+external `curl | sh` / PowerShell downloadable one-liners; published bootstrap
+integrity verification remains part of #456.
 
 ## Python installation from GitHub
 

@@ -1,4 +1,55 @@
-# Versioned source runtime preparation (stage 2 of #456)
+# Versioned source runtime and role setup (#456)
+
+## Local one-command install (requires an existing Git checkout)
+
+Once a release contains the source-role commands, specify its **actual
+published tag** and choose exactly one role. The examples below use
+`vRELEASE` as a placeholder; **do not use an older tag that lacks `setup`**.
+Git and uv are required; source installation never requests administrator
+rights by default.
+
+Linux:
+
+```sh
+sh deploy/source/install.sh --role control --tag vRELEASE
+sh deploy/source/install.sh --role executor --tag vRELEASE --control-url https://control.example.com --name workstation
+sh deploy/source/install.sh --role colocate --tag vRELEASE --name workstation
+```
+
+Windows PowerShell (choose one):
+
+```powershell
+& .\deploy\source\install.ps1 -Role control -Tag vRELEASE
+& .\deploy\source\install.ps1 -Role executor -Tag vRELEASE -ControlUrl https://control.example.com -Name workstation
+& .\deploy\source\install.ps1 -Role colocate -Tag vRELEASE -Name workstation
+```
+
+The installer composes the pinned full-extras source preparation below with
+the role's existing setup command. Control creates a durable private config,
+then installs/starts its native user service. Executor waits for Control owner
+approval before installing its native service. Colocate runs a temporary
+loopback Control for approval and then installs **one** native Colocate
+service. It does not install separate persistent Control or Executor services.
+No pairing PIN is read from installer arguments or echoed to the terminal.
+Additional options include `--install-root`, `--control-config`,
+`--executor-config` and Control-only `--host`, `--port`, `--base-url`.
+
+All role options are checked before touching the versioned runtime. The
+new release is prepared and verified first, but the stable user CLI switches
+**only after the role setup completes successfully**; on failure the previous
+stable command remains unchanged. The native service launchers point directly
+at the verified source interpreter rather than invoking `uv run` again.
+Any existing user's config, state, or paired identity remains under the
+individual role's own existing safety rules. This first-run helper does not
+yet perform full migration, rolling update/rollback, or no-op reinstallation
+of an already installed Colocate service.
+
+The **public downloadable** signed/pinned bootstrap and short external
+`curl | sh` / PowerShell download entrypoints are still a later #456
+deliverable: these checked-out scripts alone do **not** establish a trusted
+remote download endpoint.
+
+## Runtime preparation without role setup
 
 This prepares **only** the reproducible source runtime and a stable CLI.
 It does not configure roles, pair executors, install/start services or switch
