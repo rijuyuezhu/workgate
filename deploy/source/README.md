@@ -112,14 +112,18 @@ The source preparer uses the native Rust/MSVC toolchain and **ARM64 static
 OpenSSL libraries**, building `cryptography` from source in a fresh
 environment rather than using a cached dynamically linked wheel. An
 already-installed, matching package is not unnecessarily reinstalled on
-subsequent preparations. An ARM64 OpenSSL 3 SDK providing
+subsequent preparations. A supported **OpenSSL 3.5 LTS or newer** ARM64 SDK providing
 `include/openssl/ssl.h`, `libcrypto_static.lib` and
 `libssl_static.lib` is required. Scoop's `openssl-lts` installation provides
-these under `lib/VC/arm64/MD`. The preparer recognizes Scoop's
+these under `lib/VC/arm64/MD`, but Scoop's current OpenSSL 3.0 package
+is **end-of-life and rejected** for release builds. Supply a maintained
+ARM64 OpenSSL SDK instead; the preparer validates its header version before
+compilation. The preparer recognizes Scoop's
 `~/scoop/apps/openssl-lts/current` SDK (not the executable shim), or accepts
 explicit `OPENSSL_DIR`, `OPENSSL_LIB_DIR` and `OPENSSL_INCLUDE_DIR`
 settings for nonstandard layouts. It also recognizes Scoop rustup's
-`~/scoop/persist/rustup/.cargo/bin` when Cargo is not on PATH.
+`~/scoop/persist/rustup/.cargo/bin` when Cargo is not on PATH. The
+Scoop path alone is not evidence that the SDK is currently supported.
 
 Native MSVC Build Tools must be installed and their ARM64 developer-shell
 environment initialized (e.g. `vcvarsall.bat arm64`) before invoking the

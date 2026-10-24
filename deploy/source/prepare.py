@@ -88,6 +88,25 @@ def _arm64_static_openssl_env(
             f"missing: {', '.join(str(p) for p in required if not p.is_file())}. "
             "Configure OPENSSL_DIR / OPENSSL_LIB_DIR / OPENSSL_INCLUDE_DIR"
         )
+    version_header = headers / "openssl/opensslv.h"
+    if not version_header.is_file():
+        raise RuntimeError(
+            "Windows ARM64 cannot verify the OpenSSL SDK version: "
+            f"missing {version_header}"
+        )
+    version_source = version_header.read_text(encoding="utf-8")
+    major = re.search(
+        r"^#\s*define\s+OPENSSL_VERSION_MAJOR\s+(\d+)\b", version_source, re.M
+    )
+    minor = re.search(
+        r"^#\s*define\s+OPENSSL_VERSION_MINOR\s+(\d+)\b", version_source, re.M
+    )
+    if not major or not minor or (int(major[1]), int(minor[1])) < (3, 5):
+        raise RuntimeError(
+            "Windows ARM64 static cryptography requires a supported OpenSSL "
+            "SDK (at least 3.5, preferably OpenSSL 3.5 LTS); "
+            "OpenSSL 3.0 reached end of security support in September 2026"
+        )
     env = {
         **os.environ,
         "OPENSSL_DIR": str(root),

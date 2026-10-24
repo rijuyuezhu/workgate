@@ -326,6 +326,9 @@ def test_arm64_openssl_static_environment_isolated(
     headers = ssl / "include" / "openssl"
     headers.mkdir(parents=True)
     (headers / "ssl.h").write_text("// mock header")
+    (headers / "opensslv.h").write_text(
+        "# define OPENSSL_VERSION_MAJOR 3\n# define OPENSSL_VERSION_MINOR 5\n"
+    )
     monkeypatch.setenv("OPENSSL_DIR", str(ssl))
     monkeypatch.setattr(module.shutil, "which", lambda _: "/mock/cargo")
     result = module._arm64_static_openssl_env(host_os="nt", machine="ARM64")
@@ -349,6 +352,9 @@ def test_arm64_scoop_generic_openssl_lib_dir_uses_native_static_libs(
     header = ssl / "include" / "openssl"
     header.mkdir(parents=True)
     (header / "ssl.h").write_bytes(b"test")
+    (header / "opensslv.h").write_text(
+        "# define OPENSSL_VERSION_MAJOR 3\n# define OPENSSL_VERSION_MINOR 5\n"
+    )
     monkeypatch.setenv("OPENSSL_DIR", str(ssl))
     monkeypatch.setenv("OPENSSL_LIB_DIR", str(ssl / "lib"))
     monkeypatch.setenv("OPENSSL_INCLUDE_DIR", str(ssl / "include"))
@@ -387,6 +393,9 @@ def test_arm64_source_build_requires_cargo(tmp_path, preparer, monkeypatch):
     headers = tmp_path / "include" / "openssl"
     headers.mkdir(parents=True)
     (headers / "ssl.h").write_bytes(b"")
+    (headers / "opensslv.h").write_text(
+        "# define OPENSSL_VERSION_MAJOR 3\n# define OPENSSL_VERSION_MINOR 5\n"
+    )
     monkeypatch.setenv("OPENSSL_DIR", str(tmp_path))
     monkeypatch.setattr(module.shutil, "which", lambda _: None)
     with pytest.raises(RuntimeError, match="Cargo"):
@@ -481,6 +490,9 @@ def test_arm64_scoop_openssl_and_cargo_discovery(
     headers = sdk / "include/openssl"
     headers.mkdir(parents=True)
     (headers / "ssl.h").write_bytes(b"test")
+    (headers / "opensslv.h").write_text(
+        "# define OPENSSL_VERSION_MAJOR 3\n# define OPENSSL_VERSION_MINOR 5\n"
+    )
     rust = home / "scoop/persist/rustup/.cargo/bin"
     rust.mkdir(parents=True)
     (rust / "cargo.exe").write_bytes(b"test")
@@ -514,6 +526,9 @@ def test_arm64_missing_msvc_fails_before_uv_sync(
     headers = sdk / "include/openssl"
     headers.mkdir(parents=True)
     (headers / "ssl.h").touch()
+    (headers / "opensslv.h").write_text(
+        "# define OPENSSL_VERSION_MAJOR 3\n# define OPENSSL_VERSION_MINOR 5\n"
+    )
     monkeypatch.setenv("OPENSSL_DIR", str(sdk))
     monkeypatch.setattr(
         module.shutil,
@@ -521,4 +536,26 @@ def test_arm64_missing_msvc_fails_before_uv_sync(
         lambda name: "/fake/cargo" if name == "cargo" else None,
     )
     with pytest.raises(RuntimeError, match="MSVC build shell"):
+        module._arm64_static_openssl_env(host_os="nt", machine="ARM64")
+
+
+@pytest.mark.parametrize("major,minor", [(3, 0), (3, 4), (0, 0)])
+def test_arm64_rejects_unsupported_static_openssl_sdk(
+    tmp_path, preparer, monkeypatch, major, minor
+):
+    module, _calls, _fail = preparer
+    sdk = tmp_path / "openssl"
+    lib = sdk / "lib/VC/arm64/MD"
+    lib.mkdir(parents=True)
+    for name in ("libssl_static.lib", "libcrypto_static.lib"):
+        (lib / name).write_bytes(b"mock")
+    inc = sdk / "include/openssl"
+    inc.mkdir(parents=True)
+    (inc / "ssl.h").write_bytes(b"mock")
+    (inc / "opensslv.h").write_text(
+        f"# define OPENSSL_VERSION_MAJOR {major}\n"
+        f"# define OPENSSL_VERSION_MINOR {minor}\n"
+    )
+    monkeypatch.setenv("OPENSSL_DIR", str(sdk))
+    with pytest.raises(RuntimeError, match="supported OpenSSL"):
         module._arm64_static_openssl_env(host_os="nt", machine="ARM64")
