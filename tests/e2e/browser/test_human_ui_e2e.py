@@ -937,10 +937,14 @@ def test_audit_scope_revocation_clears_stale_browser_data(
         expect(records).to_have_count(1)
         expect(details).to_contain_text("PROTECTED_AUDIT_PAYLOAD")
 
-        # Detail-only scope loss must also scrub the previously displayed list.
+        # Detail scope denial must preserve the Audit-readable list, while
+        # replacing the old protected detail with an error message.
         denied["detail"] = True
         records.first.click()
-        expect(records).to_have_count(0)
+        expect(records).to_have_count(1)
+        expect(
+            page.locator(detail_selector.replace("-body", "-meta"))
+        ).to_have_text("Details unavailable")
         expect(details).not_to_contain_text("PROTECTED_AUDIT_PAYLOAD")
         denied["detail"] = False
 

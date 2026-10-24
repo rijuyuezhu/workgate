@@ -160,11 +160,6 @@ export function createAuditController({
         generation !== controllerState.auditDetailGeneration ||
         entryId !== controllerState.auditSelectedId
       ) return null;
-      if (error.status === 403) {
-        resetAuditWorkspace(); // Revoked permissions must not leave protected details cached.
-        elements.auditState.textContent = "Audit access denied";
-        return null;
-      }
       elements.auditDetailMeta.textContent = "Details unavailable";
       renderAuditDetailMessage(
         elements.auditDetailBody,
