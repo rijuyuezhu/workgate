@@ -1185,3 +1185,115 @@ def test_logs_are_bounded_by_line_count_and_read_window(tmp_path: Path) -> None:
     assert output.splitlines() == ["line-1097", "line-1098", "line-1099"]
     with pytest.raises(ValueError, match="between 1 and 1000"):
         manager.logs(lines=1_001)
+
+
+@pytest.mark.parametrize(
+    "native_command,expected_current",
+    [
+        ("exact", True),
+        ("wrong-python", False),
+        ("wrong-launcher", False),
+        ("extra-argument", False),
+        ("extra-execstart", False),
+        ("missing", False),
+    ],
+)
+def test_systemd_status_checks_effective_execstart_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    native_command,
+    expected_current,
+) -> None:
+    manager, _profile = _paired_manager(tmp_path, system="Linux")
+    manager._write_service_config()
+    command = manager._runtime_command()
+    manager._write_launcher(command)
+    unit = manager._write_systemd_unit(command)
+    manager._write_metadata("systemd", command, service_file=unit)
+    monkeypatch.setattr(
+        service.shutil, "which", lambda _name: "/usr/bin/systemctl"
+    )
+
+    args = list(command)
+    if native_command == "wrong-python":
+        args[0] = "/other/python"
+    elif native_command == "wrong-launcher":
+        args[1] = "/other/launcher.py"
+    elif native_command == "extra-argument":
+        args.append("--unexpected")
+
+    serialized = (
+        f"{{ path={args[0]} ; argv[]={' '.join(args)} ; ignore_errors=no ; "
+        "start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }"
+    )
+    if native_command == "missing":
+        serialized = ""
+    elif native_command == "extra-execstart":
+        serialized += (
+            " { path=/bin/false ; argv[]=/bin/false ; ignore_errors=no ; }"
+        )
+
+    def fake_run(arguments, **_kwargs):
+        if arguments[:3] == ["systemctl", "--user", "show"]:
+            return _completed(
+                arguments,
+                stdout=(
+                    "LoadState=loaded\n"
+                    "ActiveState=active\n"
+                    "SubState=running\n"
+                    f"FragmentPath={unit}\n"
+                    + (f"ExecStart={serialized}\n" if serialized else "")
+                ),
+            )
+        return _completed(arguments)
+
+    monkeypatch.setattr(manager, "_run", fake_run)
+    status = manager.status()
+    assert status.state == ExecutorServiceState.RUNNING
+    assert status.installed is True
+    assert status.runtime_current is expected_current
+
+
+@pytest.mark.parametrize(
+    "native_load,fragment",
+    [
+        ("not-found", "same"),
+        ("loaded", "missing"),
+        ("loaded", "other"),
+    ],
+)
+def test_systemd_status_requires_correct_loaded_fragment_for_current_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_load, fragment
+) -> None:
+    manager, _profile = _paired_manager(tmp_path, system="Linux")
+    manager._write_service_config()
+    cmd = manager._runtime_command()
+    manager._write_launcher(cmd)
+    unit = manager._write_systemd_unit(cmd)
+    manager._write_metadata("systemd", cmd, service_file=unit)
+    monkeypatch.setattr(
+        service.shutil, "which", lambda _name: "/usr/bin/systemctl"
+    )
+    path = {
+        "same": str(unit),
+        "missing": "",
+        "other": str(tmp_path / "other" / "workgate-executor.service"),
+    }[fragment]
+
+    def fake_run(arguments, **_kwargs):
+        if arguments[:3] == ["systemctl", "--user", "show"]:
+            return _completed(
+                arguments,
+                stdout=(
+                    f"LoadState={native_load}\n"
+                    "ActiveState=active\n"
+                    "SubState=running\n"
+                    f"FragmentPath={path}\n"
+                    f"ExecStart={{ path={cmd[0]} ; argv[]={' '.join(cmd)} ; "
+                    "ignore_errors=no ; start_time=[n/a] ; }}\n"
+                ),
+            )
+        return _completed(arguments)
+
+    monkeypatch.setattr(manager, "_run", fake_run)
+    assert not manager.status().runtime_current

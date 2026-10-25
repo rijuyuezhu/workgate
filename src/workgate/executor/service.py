@@ -695,6 +695,7 @@ class ExecutorServiceManager:
                 "--property=ActiveState",
                 "--property=SubState",
                 "--property=FragmentPath",
+                "--property=ExecStart",
             ],
             check=False,
         )
@@ -881,6 +882,19 @@ class ExecutorServiceManager:
                 "`workgate executor install-service` first"
             )
 
+    def _systemd_command_current(self, native: dict[str, str]) -> bool:
+        """Verify the effective systemd command, not only local metadata."""
+        command = self._runtime_command()
+        # systemctl show serializes ExecStart as a readable argv[] sequence.
+        expected = (
+            f"{{ path={command[0]} ; argv[]={' '.join(command)} ; "
+            "ignore_errors=no ; "
+        )
+        effective = native.get("ExecStart", "")
+        return (
+            effective.startswith(expected) and effective.count("{ path=") == 1
+        )
+
     def _systemd_status(self, service_file: Path) -> ExecutorServiceStatus:
         definition_present = service_file.exists()
         if shutil.which("systemctl") is None:
@@ -901,7 +915,7 @@ class ExecutorServiceManager:
                 detail="systemctl is unavailable",
                 service_file=str(service_file),
                 log_path=str(self.log_path),
-                runtime_current=self._runtime_current(),
+                runtime_current=False,
             )
 
         try:
@@ -915,9 +929,7 @@ class ExecutorServiceManager:
                 detail=str(exc),
                 service_file=str(service_file),
                 log_path=str(self.log_path),
-                runtime_current=(
-                    self._runtime_current() if definition_present else False
-                ),
+                runtime_current=False,
             )
 
         load_state = native.get("LoadState", "")
@@ -989,9 +1001,11 @@ class ExecutorServiceManager:
             service_file=str(service_file),
             log_path=str(self.log_path),
             runtime_current=(
-                self._runtime_current()
-                if definition_present and not fragment_mismatch
-                else False
+                definition_present
+                and load_state == "loaded"
+                and fragment_path == service_file.absolute()
+                and self._runtime_current()
+                and self._systemd_command_current(native)
             ),
         )
 
