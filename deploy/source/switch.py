@@ -1,4 +1,4 @@
-"""Explicitly switch one staged Linux Control source service; no uv sync."""
+"""Explicit staged Linux Control/Colocate source cutover; no uv sync."""
 
 import argparse
 import os
@@ -16,8 +16,6 @@ from prepare import (
     _write_launcher,
 )
 
-_SERVICE = "workgate-control.service"
-_MARKER = "# Managed by workgate control install-service"
 _TAG = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+(?:[abrc][0-9]+)?")
 _COMMIT = re.compile(r"[0-9a-f]{40}")
 
@@ -107,12 +105,12 @@ def _staged_python(root: Path, tag: str) -> Path:
     )
 
 
-def _native() -> dict[str, str]:
+def _native(role: str) -> dict[str, str]:
     output = _run(
         "systemctl",
         "--user",
         "show",
-        _SERVICE,
+        f"workgate-{role}.service",
         "--property=LoadState",
         "--property=ActiveState",
         "--property=FragmentPath",
@@ -123,17 +121,26 @@ def _native() -> dict[str, str]:
     )
 
 
-def _matches(
-    native: dict[str, str], unit: Path, python: Path, config: Path
-) -> bool:
-    command = [
-        str(python),
-        "-m",
-        "workgate.main",
-        "control",
-        "--config",
-        str(config),
-    ]
+def _command(
+    python: Path, role: str, control_config: Path, executor_config: Path | None
+) -> list[str]:
+    command = [str(python), "-m", "workgate.main", role]
+    if role == "control":
+        command.extend(["--config", str(control_config)])
+    else:
+        assert executor_config is not None
+        command.extend(
+            [
+                "--control-config",
+                str(control_config),
+                "--executor-config",
+                str(executor_config),
+            ]
+        )
+    return command
+
+
+def _matches(native: dict[str, str], unit: Path, command: list[str]) -> bool:
     expected = f"{{ path={command[0]} ; argv[]={' '.join(command)} ; ignore_errors=no ; "
     actual = native.get("ExecStart", "")
     return (
@@ -145,23 +152,29 @@ def _matches(
     )
 
 
-def _install(python: Path, config: Path) -> None:
-    _run(
-        str(python),
-        "-m",
-        "workgate.main",
-        "control",
-        "install-service",
-        "--config",
-        str(config),
-        cwd=python.parents[2],
-    )
+def _install(
+    python: Path, role: str, control_config: Path, executor_config: Path | None
+) -> None:
+    command = _command(python, role, control_config, executor_config)
+    command.insert(4, "install-service")
+    _run(*command, cwd=python.parents[2])
 
 
-def switch(*, root: Path, tag: str, control_config: Path) -> None:
+def switch(
+    *,
+    root: Path,
+    tag: str,
+    control_config: Path,
+    role: str = "control",
+    executor_config: Path | None = None,
+) -> None:
     if sys.platform != "linux":
         raise RuntimeError(
             "this explicit service cutover currently supports Linux only"
+        )
+    if role not in {"control", "colocate"}:
+        raise ValueError(
+            "explicit Linux cutover currently supports Control and Colocate"
         )
     if not _TAG.fullmatch(tag):
         raise ValueError("select an explicit released version tag")
@@ -173,68 +186,90 @@ def switch(*, root: Path, tag: str, control_config: Path) -> None:
     config = control_config.expanduser().absolute()
     if not config.is_file():
         raise RuntimeError(f"missing durable Control config: {config}")
+    paired_config = (
+        executor_config.expanduser().absolute() if executor_config else None
+    )
+    if role == "colocate" and (
+        paired_config is None or not paired_config.is_file()
+    ):
+        raise RuntimeError(
+            "Colocate cutover requires an existing durable Executor config"
+        )
+    if role == "control" and paired_config is not None:
+        raise ValueError("Executor config applies only to Colocate cutover")
+
     old_python = _old_python(root)
     new_python = _staged_python(root, tag)
+    old_command = _command(old_python, role, config, paired_config)
+    new_command = _command(new_python, role, config, paired_config)
 
-    native = _native()
+    native = _native(role)
     fragment = native.get("FragmentPath", "")
     unit = Path(fragment) if fragment else None
+    marker = f"# Managed by workgate {role} install-service"
     if (
         unit is None
         or not unit.is_file()
         or unit.is_symlink()
         or unit.parent.name != "user"
         or unit.parent.parent.name != "systemd"
-        or not unit.read_text(encoding="utf-8").startswith(_MARKER)
-        or not _matches(native, unit, old_python, config)
+        or not unit.read_text(encoding="utf-8").startswith(marker)
+        or not _matches(native, unit, old_command)
     ):
         raise RuntimeError(
-            "existing Control service binding is not the managed version"
+            f"existing {role} service binding is not the managed version"
         )
 
     if old_python == new_python:
-        print(f"Control is already running {tag}; no service restart")
+        print(
+            f"{role.capitalize()} is already running {tag}; no service restart"
+        )
         return
 
     try:
-        _install(new_python, config)
-        if not _matches(_native(), unit, new_python, config):
+        _install(new_python, role, config, paired_config)
+        if not _matches(_native(role), unit, new_command):
             raise RuntimeError(
-                "new Control native service did not start with the staged runtime"
+                f"new {role} native service did not start with the staged runtime"
             )
         _write_launcher(root, new_python)
     except Exception as exc:
         try:
-            _install(old_python, config)
-            if not _matches(_native(), unit, old_python, config):
+            _install(old_python, role, config, paired_config)
+            if not _matches(_native(role), unit, old_command):
                 raise RuntimeError(
-                    "old Control runtime is not active after recovery"
+                    f"old {role} runtime is not active after recovery"
                 )
             _write_launcher(root, old_python)
         except Exception as recovery:
             raise RuntimeError(
-                f"Control cutover failed: {exc}; recovery also failed: {recovery}"
+                f"{role.capitalize()} cutover failed: {exc}; recovery also failed: {recovery}"
             ) from recovery
         raise RuntimeError(
-            f"Control cutover failed, previous service restored: {exc}"
+            f"{role.capitalize()} cutover failed, previous service restored: {exc}"
         ) from exc
     print(
-        f"Control service switched to {tag}; previous runtime retained for rollback"
+        f"{role.capitalize()} service switched to {tag}; previous runtime retained for rollback"
     )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--role", choices=["control"], required=True)
+    parser.add_argument(
+        "--role", choices=["control", "colocate"], required=True
+    )
     parser.add_argument("--tag", required=True)
     parser.add_argument("--install-root", type=Path, default=_default_root())
     parser.add_argument("--control-config", type=Path, required=True)
+    parser.add_argument("--executor-config", type=Path)
     args = parser.parse_args()
     try:
         switch(
             root=args.install_root,
             tag=args.tag,
             control_config=args.control_config,
+            role=args.role,
+            executor_config=args.executor_config,
         )
     except (
         OSError,

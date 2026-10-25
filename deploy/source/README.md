@@ -73,10 +73,10 @@ automatic service upgrade or rollback. Use the role's native service commands
 for an explicitly coordinated cutover; do not rerun `uv sync` against a
 checkout currently used by an active service.
 
-## Explicit staged Linux Control cutover (initial role)
+## Explicit staged Linux Control / Colocate cutover
 
 Once a newer version has been prepared with `--no-activate-launcher`, switch
-a **managed Linux Control-only** service explicitly, without another `uv sync`:
+a **managed Linux Control or Colocate** service explicitly, without another `uv sync`:
 
 ```sh
 sh deploy/source/prepare.sh --role control --tag vRELEASE --no-activate-launcher
@@ -85,19 +85,32 @@ sh deploy/source/switch.sh --role control --tag vRELEASE \
   --control-config "$HOME/.config/workgate/config.yaml"
 ```
 
+Or, for a previously paired Colocate (which starts both Control and Executor
+in the **same** native service):
+
+```sh
+sh deploy/source/prepare.sh --role colocate --tag vRELEASE --no-activate-launcher
+sh deploy/source/switch.sh --role colocate --tag vRELEASE \
+  --install-root "$HOME/.local/opt/workgate" \
+  --control-config "$HOME/.config/workgate/config.yaml" \
+  --executor-config "$HOME/.config/workgate/executor/config.yaml"
+```
+
+
 Supply the actual published tag and your existing install/config paths. The
-switch requires an already-running, correctly bound managed Control service
+switch requires an already-running, correctly bound managed service
 and a prepared checkout from the official repository. It reuses the native
-`control install-service` and leaves the config and prior checkout in place.
+`control/colocate install-service` and leaves both YAML configs, pairing state
+and prior checkout in place.
 If native activation fails, it attempts to restore the previous service and
 stable CLI, reporting an error if recovery also fails. To roll back explicitly,
 run the same `switch.sh` command using the previously prepared release tag.
 A same-release switch is a no-op, not a restart.
 
-This first cutover path is **Linux Control-only** and checks the native
-systemd active state, not HTTP/WebUI health. Verify the application after
-switching. Executor, Colocate, Windows and full cross-platform rollback
-acceptance remain under #456. Existing user-owned installations are not
+The current cutover path is **Linux Control/Colocate only** and checks the
+native systemd active state, not HTTP/WebUI or Executor connection health.
+Verify the application after switching. Standalone Executor, Windows and
+full cross-platform rollback acceptance remain under #456. Existing user-owned installations are not
 adopted automatically.
 
 ## Public GitHub bootstrap, pinned to a release commit
