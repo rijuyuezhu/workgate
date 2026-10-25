@@ -33,6 +33,8 @@ service. It does not install separate persistent Control or Executor services.
 No pairing PIN is read from installer arguments or echoed to the terminal.
 Additional options include `--install-root`, `--control-config`,
 `--executor-config` and Control-only `--host`, `--port`, `--base-url`.
+Relative YAML paths (and `~`) are resolved from the invoking shell before
+running role setup inside the versioned checkout.
 
 All role options are checked before touching the versioned runtime. The
 new release is prepared and verified first, but the stable user CLI switches

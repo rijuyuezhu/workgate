@@ -748,3 +748,77 @@ def test_existing_launcher_unknown_status_fails_before_clone(
     )
     with pytest.raises(RuntimeError, match="unexpected control status"):
         installer.install(role="control", tag="v5.0.0a6", root=tmp_path)
+
+
+@pytest.mark.usefixtures("skip_native_status")
+@pytest.mark.parametrize("role", ["control", "executor", "colocate"])
+def test_relative_config_paths_are_resolved_before_versioned_role_setup(
+    installer, tmp_path, monkeypatch, role
+):
+    # Public/bootstrap installers launch the role CLI from the release checkout.
+    # Relative YAML paths must remain relative to the invoking user's directory.
+    monkeypatch.chdir(tmp_path)
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    control_file = config_dir / "control.yaml"
+    executor_file = config_dir / "executor.yaml"
+    control_file.write_text("mode: http\n")
+    executor_file.write_text("max_jobs: 8\n")
+    checkout = tmp_path / "managed" / "versions" / "sha"
+    monkeypatch.setattr(installer, "prepare", lambda **kwargs: checkout)
+    calls = []
+
+    def invoke(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(installer.subprocess, "run", invoke)
+    installer.install(
+        role=role,
+        tag="v5.0.0a6",
+        root=tmp_path / "managed",
+        control_url="https://control.example" if role == "executor" else None,
+        control_config=Path("config/control.yaml")
+        if role != "executor"
+        else None,
+        executor_config=Path("config/executor.yaml")
+        if role != "control"
+        else None,
+    )
+    assert calls
+    for argv, kwargs in calls:
+        assert kwargs["cwd"] == checkout
+        assert "config/control.yaml" not in argv
+        assert "config/executor.yaml" not in argv
+        if "--control-config" in argv:
+            assert argv[argv.index("--control-config") + 1] == str(control_file)
+        if "--executor-config" in argv:
+            assert argv[argv.index("--executor-config") + 1] == str(
+                executor_file
+            )
+        if "--config" in argv:
+            expected = executor_file if role == "executor" else control_file
+            assert argv[argv.index("--config") + 1] == str(expected)
+
+
+@pytest.mark.usefixtures("skip_native_status")
+def test_tilde_control_config_uses_caller_home_not_checkout(
+    installer, tmp_path, monkeypatch
+):
+    checkout = tmp_path / "versions" / "sha"
+    monkeypatch.setattr(installer, "prepare", lambda **kwargs: checkout)
+    calls = []
+
+    def invoke(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(installer.subprocess, "run", invoke)
+    installer.install(
+        role="control",
+        tag="v5.0.0a6",
+        root=tmp_path,
+        control_config=Path("~/wg-test-control.yaml"),
+    )
+    expected = str(Path.home() / "wg-test-control.yaml")
+    assert any(expected in argv for argv in calls)

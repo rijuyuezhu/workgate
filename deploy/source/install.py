@@ -195,6 +195,11 @@ def install(
             "Workgate source install requires durable YAML, not WORKGATE_* "
             "environment overrides"
         )
+    # Role CLI subprocesses run inside the pinned checkout, not the caller cwd.
+    if control_config is not None:
+        control_config = control_config.expanduser().absolute()
+    if executor_config is not None:
+        executor_config = executor_config.expanduser().absolute()
     commands = role_commands(
         role=role,
         control_url=control_url,
