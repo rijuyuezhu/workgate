@@ -87,12 +87,20 @@ void (async () => {
   let authenticated = config.authMode !== "oauth";
   let loadGeneration = 0;
   let loadedOnce = false;
-  const pendingReads = new Set();
+  const pendingReads = new Map();
 
   function cancelPendingReads() {
     loadGeneration += 1;
-    for (const controller of pendingReads) controller.abort();
+    for (const controller of pendingReads.keys()) controller.abort();
     pendingReads.clear();
+  }
+
+  function cancelAuditReads() {
+    for (const [controller, path] of pendingReads) {
+      if (!path.startsWith("/audit?") && !path.startsWith("/audit/detail?")) continue;
+      controller.abort();
+      pendingReads.delete(controller);
+    }
   }
 
   const elements = {
@@ -542,6 +550,11 @@ void (async () => {
 
   function setActiveView(value, { syncHash = true, replaceHash = false } = {}) {
     const view = normalizeView(value);
+    const previousView = document.body.dataset.activeView;
+    if (previousView === "audit" && view !== "audit") {
+      cancelAuditReads();
+      audit.invalidate();
+    }
     const definition = viewDefinitions[view];
     document.body.dataset.activeView = view;
     elements.pageTitle.textContent = definition.title;
@@ -568,6 +581,8 @@ void (async () => {
     if (view === "executors" && (config.authMode !== "oauth" || authenticated)) {
       executors.activate();
     }
+    if (view === "audit" && previousView !== "audit" && loadedOnce && authenticated)
+      void audit.refresh();
 
     if (syncHash && location.hash !== `#${view}`) {
       const url = `${location.pathname}${location.search}#${view}`;
@@ -691,7 +706,7 @@ void (async () => {
     const read = method === "GET" || method === "HEAD";
     const controller = read ? new AbortController() : null;
     const generation = loadGeneration;
-    if (controller) pendingReads.add(controller);
+    if (controller) pendingReads.set(controller, path);
     let timedOut = false;
     const deadline = controller && globalThis.setTimeout(() => {
       timedOut = true;

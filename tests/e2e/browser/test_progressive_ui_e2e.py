@@ -386,3 +386,49 @@ def test_idle_task_shortcuts_preserve_focus_and_logout_clears_them(
         ).to_have_count(0)
     finally:
         page.close()
+
+
+def test_navigation_aborts_obsolete_audit_read_without_blocking_other_views(
+    browser_harness: BrowserHarness,
+) -> None:
+    """A hung Audit request should not survive leaving and revisiting Audit."""
+    h = browser_harness
+    h.login()
+    page = h.context.new_page()
+    try:
+        page.add_init_script("""(() => {
+          const original = window.fetch.bind(window);
+          window.__auditReads = 0;
+          window.__auditAborts = 0;
+          window.fetch = (url, options = {}) => {
+            if (!String(url).includes('/api/ui/audit?')) return original(url, options);
+            window.__auditReads++;
+            if (window.__auditReads !== 1) return original(url, options);
+            return new Promise((resolve, reject) => {
+              const abort = () => {
+                window.__auditAborts++;
+                reject(new DOMException('navigation aborted', 'AbortError'));
+              };
+              options.signal?.addEventListener('abort', abort, { once: true });
+              window.__releaseAudit = () => {
+                options.signal?.removeEventListener('abort', abort);
+                original(url, options).then(resolve, reject);
+              };
+            });
+          };
+        })()""")
+        page.goto(f"{h.base_url}/ui#audit", wait_until="domcontentloaded")
+        expect(page.locator("#connection-state")).to_have_text("Connected")
+        page.wait_for_function("() => window.__auditReads >= 1")
+        page.locator('.nav-item[data-view="files"]').click()
+        expect(page.locator("#file-executor")).not_to_have_value("")
+        # The old Audit read has no remaining UI consumer once another view is open.
+        page.wait_for_function("() => window.__auditAborts >= 1", timeout=5_000)
+        page.locator('.nav-item[data-view="audit"]').click()
+        expect(page.locator("#audit-state")).to_contain_text(
+            "records loaded",
+            timeout=10_000,
+        )
+        assert page.evaluate("window.__auditReads") >= 2
+    finally:
+        page.close()
