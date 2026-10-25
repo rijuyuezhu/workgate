@@ -25,10 +25,8 @@ if ($Tag -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+([abrc][0-9]+)?$') {
 if ($Commit -cnotmatch '^[0-9a-f]{40}$') {
     throw "A full lowercase pinned commit SHA is required"
 }
-foreach ($tool in @('git', 'uv')) {
-    if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-        throw "$tool is required before Workgate bootstrap"
-    }
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    throw "git is required before Workgate bootstrap"
 }
 
 $scratch = Join-Path ([System.IO.Path]::GetTempPath()) (
@@ -53,6 +51,31 @@ try {
     if ((Get-Item -LiteralPath $installer).Attributes -band
         [System.IO.FileAttributes]::ReparsePoint) {
         throw "Refusing a reparse-point source installer"
+    }
+    if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+        $uvBin = if ($env:UV_INSTALL_DIR) {
+            $env:UV_INSTALL_DIR
+        } else {
+            Join-Path $HOME '.local\bin'
+        }
+        if (-not (Test-Path -LiteralPath (Join-Path $uvBin 'uv.exe') -PathType Leaf)) {
+            $uvInstaller = Join-Path $scratch 'uv-install.ps1'
+            Invoke-WebRequest -UseBasicParsing -Uri 'https://astral.sh/uv/install.ps1' -OutFile $uvInstaller
+            $oldInstallDir = $env:UV_INSTALL_DIR
+            $oldModifyPath = $env:UV_NO_MODIFY_PATH
+            try {
+                $env:UV_INSTALL_DIR = $uvBin
+                $env:UV_NO_MODIFY_PATH = '1'
+                & $uvInstaller
+            } finally {
+                $env:UV_INSTALL_DIR = $oldInstallDir
+                $env:UV_NO_MODIFY_PATH = $oldModifyPath
+            }
+        }
+        $env:PATH = "$uvBin;$env:PATH"
+        if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+            throw "uv installer did not provide an executable in $uvBin"
+        }
     }
     $forward = @{ Role = $Role; Tag = $Tag; ExpectedCommit = $Commit }
     foreach ($key in @(

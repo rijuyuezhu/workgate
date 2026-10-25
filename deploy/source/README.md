@@ -5,8 +5,9 @@
 Once a release contains the source-role commands, specify its **actual
 published tag** and choose exactly one role. The examples below use
 `vRELEASE` as a placeholder; **do not use an older tag that lacks `setup`**.
-Git and uv are required; source installation never requests administrator
-rights by default.
+Git is required. The public bootstraps install missing uv with Astral's
+official user-local installer; local checkout scripts still require uv on PATH.
+Source installation never requests administrator rights by default.
 
 Linux:
 
@@ -96,8 +97,12 @@ commit-addressed GitHub raw URL and the clone content is checked against the
 commit that the operator pinned. This is *not* a cryptographic publisher
 signature or an independent audit of the release contents. Obtain the
 tag/commit SHA from a trusted channel and inspect the pinned bootstrap before
-executing it. Git and uv must already be installed on the host; absent tools
-are reported clearly. No running Control is needed to fetch the installer.
+executing it. Git must already be installed; the public bootstrap provisions
+uv under the user's executable directory if missing, without modifying shell
+profiles.
+The official uv installer is fetched over HTTPS from Astral, independently
+of the pinned WorkGate source; an absent Git/curl or failed installer is
+reported. No running Control is needed to fetch the installer.
 
 The public bootstrap still needs release publication and real clean-machine,
 upgrade and rollback acceptance before #456 can close.

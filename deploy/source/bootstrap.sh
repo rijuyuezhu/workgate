@@ -25,15 +25,11 @@ if ! command -v git >/dev/null 2>&1; then
     echo "git is required before Workgate bootstrap" >&2
     exit 1
 fi
-if ! command -v uv >/dev/null 2>&1; then
-    echo "uv is required: https://docs.astral.sh/uv/getting-started/installation/" >&2
-    exit 1
-fi
-
 export GIT_TERMINAL_PROMPT=0
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/workgate-bootstrap.XXXXXXXX")
 trap 'rm -rf -- "$scratch"' EXIT
 trap 'exit 1' HUP INT TERM
+
 checkout="$scratch/release"
 git clone --depth 1 --single-branch --branch "$tag" -- \
     https://github.com/rijuyuezhu/workgate.git "$checkout" >&2
@@ -47,6 +43,24 @@ installer="$checkout/deploy/source/install.sh"
 if [ ! -f "$installer" ] || [ -L "$installer" ]; then
     echo "pinned release does not contain a regular source installer" >&2
     exit 1
+fi
+# uv is the sole bootstrap dependency we can install without admin rights.
+if ! command -v uv >/dev/null 2>&1; then
+    uv_bin=${UV_INSTALL_DIR:-${XDG_BIN_HOME:-"$HOME/.local/bin"}}
+    if [ ! -x "$uv_bin/uv" ]; then
+        if ! command -v curl >/dev/null 2>&1; then
+            echo "curl is required to install uv: https://docs.astral.sh/uv/" >&2
+            exit 1
+        fi
+        curl -fsSL https://astral.sh/uv/install.sh -o "$scratch/uv-install.sh"
+        UV_INSTALL_DIR="$uv_bin" UV_NO_MODIFY_PATH=1 sh "$scratch/uv-install.sh"
+    fi
+    PATH="$uv_bin:$PATH"
+    export PATH
+    if ! command -v uv >/dev/null 2>&1; then
+        echo "uv installer did not provide an executable in $uv_bin" >&2
+        exit 1
+    fi
 fi
 # curl | sh consumes stdin. Reattach a TTY for interactive pairing if present.
 if ( : </dev/tty ) 2>/dev/null; then
