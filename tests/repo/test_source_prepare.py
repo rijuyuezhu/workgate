@@ -112,7 +112,10 @@ def test_pinned_full_extras_idempotent(tmp_path, repo, preparer):
     assert len(list((root / "versions").iterdir())) == 1
 
 
-def test_failure_does_not_switch_launcher(tmp_path, repo, preparer):
+@pytest.mark.parametrize("activate_launcher", [True, False])
+def test_failure_does_not_switch_launcher(
+    tmp_path, repo, preparer, activate_launcher
+):
     origin, git = repo
     module, _calls, fail = preparer
     root = tmp_path / "install"
@@ -132,7 +135,11 @@ def test_failure_does_not_switch_launcher(tmp_path, repo, preparer):
     fail[0] = True
     with pytest.raises(subprocess.CalledProcessError):
         module.prepare(
-            tag="v5.0.0a6", role="control", root=root, repository=str(origin)
+            tag="v5.0.0a6",
+            role="control",
+            root=root,
+            repository=str(origin),
+            activate_launcher=activate_launcher,
         )
     assert launcher.read_bytes() == before
     assert first.exists()
@@ -1022,3 +1029,100 @@ def test_missing_release_wheel_fails_before_uv_sync_and_keeps_launcher(
         )
     assert launcher.read_bytes() == before
     assert not any(a[:2] == ("uv", "sync") for a in calls[call_count:])
+
+
+def test_staged_prepare_preserves_launcher_and_paired_user_files(
+    tmp_path, repo, preparer
+):
+    origin, git = repo
+    module, calls, _fail = preparer
+    root = tmp_path / "install"
+    first = module.prepare(
+        tag="v5.0.0a5", role="control", root=root, repository=str(origin)
+    )
+    launcher = (
+        root / "bin" / ("workgate.cmd" if os.name == "nt" else "workgate")
+    )
+    before = launcher.read_bytes()
+    # A real prepared source release, followed by a different pinned Git tag.
+    (origin / "pyproject.toml").write_text(
+        "[project]\nname='workgate'\nversion='5.0.0a6'\n"
+    )
+    git("add", ".")
+    git("commit", "-qm", "next")
+    git("tag", "v5.0.0a6")
+    previous_run = module._run
+
+    def next_release_version(*args, **kwargs):
+        if args[1:3] == ("-m", "workgate.main"):
+            return "workgate 5.0.0a6"
+        return previous_run(*args, **kwargs)
+
+    module._run = next_release_version
+    # Model a user-owned config/pairing identity that version changes cannot edit.
+    state = root / "user-pairing.json"
+    state.write_text('{"identity":"unchanged"}')
+    stage = module.prepare(
+        tag="v5.0.0a6",
+        role="control",
+        root=root,
+        repository=str(origin),
+        activate_launcher=False,
+    )
+    assert stage.name == git("rev-parse", "HEAD")
+    assert stage != first and module._python(stage).exists()
+    assert launcher.read_bytes() == before
+    assert state.read_text() == '{"identity":"unchanged"}'
+    assert any(call[1:4] == ("-m", "playwright", "install") for call in calls)
+    # Re-staging the same release must not switch the active CLI either.
+    assert (
+        module.prepare(
+            tag="v5.0.0a6",
+            role="control",
+            root=root,
+            repository=str(origin),
+            activate_launcher=False,
+        )
+        == stage
+    )
+    assert launcher.read_bytes() == before
+
+
+def test_preparer_cli_forwards_no_activate_launcher(
+    monkeypatch, preparer, tmp_path
+):
+    module, _calls, _fail = preparer
+    passed = []
+    monkeypatch.setattr(
+        module, "prepare", lambda **kwargs: passed.append(kwargs)
+    )
+    for flag in (False, True):
+        args = [
+            "prepare.py",
+            "--role",
+            "executor",
+            "--tag",
+            "v5.0.0a5",
+            "--install-root",
+            str(tmp_path),
+        ]
+        if flag:
+            args.append("--no-activate-launcher")
+        monkeypatch.setattr(sys, "argv", args)
+        module.main()
+        assert passed[-1]["activate_launcher"] is not flag
+
+
+def test_first_stage_does_not_create_stable_launcher(tmp_path, repo, preparer):
+    origin, _git = repo
+    module, _calls, _fail = preparer
+    root = tmp_path / "install"
+    module.prepare(
+        tag="v5.0.0a5",
+        role="colocate",
+        root=root,
+        repository=str(origin),
+        activate_launcher=False,
+    )
+    assert not (root / "bin" / "workgate").exists()
+    assert not (root / "bin" / "workgate.cmd").exists()

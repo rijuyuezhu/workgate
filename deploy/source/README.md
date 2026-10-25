@@ -53,6 +53,26 @@ In either case, the existing service and stable CLI stay untouched on refusal. T
 its normal CLI. Safe no-op reinstallation, migration and rolling upgrade /
 rollback remain separate #456 acceptance work.
 
+## Stage a release without switching the running installation
+
+For a planned upgrade or rollback, first prepare the requested released tag
+and verify its full-extras runtime **without activating the stable CLI**:
+
+```sh
+sh deploy/source/prepare.sh --role control --tag vRELEASE --no-activate-launcher
+```
+
+```powershell
+& .\deploy\source\prepare.ps1 -Role control -Tag vRELEASE -NoActivateLauncher
+```
+
+Select the actual role and published tag. The new checkout is reported under
+`versions/<commit>`, but the existing `bin/workgate` launcher, service and
+pairing state remain unchanged. This stages a version **only**: it is not an
+automatic service upgrade or rollback. Use the role's native service commands
+for an explicitly coordinated cutover; do not rerun `uv sync` against a
+checkout currently used by an active service.
+
 ## Public GitHub bootstrap, pinned to a release commit
 
 After a **new release contains these bootstrap files**, obtain the full

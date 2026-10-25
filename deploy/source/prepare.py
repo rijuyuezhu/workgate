@@ -604,6 +604,11 @@ def main() -> None:
     )
     parser.add_argument("--install-root", type=Path, default=_default_root())
     parser.add_argument(
+        "--no-activate-launcher",
+        action="store_true",
+        help="Stage and verify the release without switching the stable workgate command",
+    )
+    parser.add_argument(
         "--arm64-wheel",
         help="Explicit HTTPS URL or local pinned cryptography ARM64 wheel",
     )
@@ -620,6 +625,7 @@ def main() -> None:
             tag=args.tag,
             role=args.role,
             root=args.install_root,
+            activate_launcher=not args.no_activate_launcher,
             expected_commit=args.expected_commit,
             arm64_wheel=args.arm64_wheel,
             arm64_wheel_sha256=args.arm64_wheel_sha256,
