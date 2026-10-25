@@ -51,6 +51,8 @@ def installer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             "--value",
         ]:
             stdout = f'"{unit_dir}" /etc/systemd/user\n'
+        elif "--property=LoadState" in command:
+            stdout = "not-found\n"
         return subprocess.CompletedProcess(command, 0, stdout, "")
 
     monkeypatch.setattr(service.subprocess, "run", fake_run)
@@ -98,13 +100,21 @@ def test_install_service_creates_unit_and_is_idempotent(installer, monkeypatch):
     assert commands == [
         ["systemctl", "--user", "show-environment"],
         ["systemctl", "--user", "show", "--property=UnitPath", "--value"],
+        [
+            "systemctl",
+            "--user",
+            "show",
+            "workgate-colocate.service",
+            "--property=LoadState",
+            "--value",
+        ],
         ["systemctl", "--user", "daemon-reload"],
         ["systemctl", "--user", "enable", "workgate-colocate.service"],
         ["systemctl", "--user", "restart", "workgate-colocate.service"],
     ]
 
     service.install_colocate_service(args)
-    assert len(commands) == 10
+    assert len(commands) == 11
     assert unit.read_text() == content
 
 
@@ -300,3 +310,62 @@ def test_dangling_colocate_unit_symlink_is_not_treated_as_absent(
     unit.symlink_to(unit.parent / "missing-unit-target")
     service.manage_colocate_service("status")
     assert capsys.readouterr().out.strip() != "Colocate service: not-installed"
+
+
+@pytest.mark.parametrize(
+    "load_state,expected",
+    [
+        ("not-found", "not-installed"),
+        ("loaded", "unknown"),
+        ("masked", "unknown"),
+        ("", "unknown"),
+    ],
+)
+def test_missing_colocate_user_unit_checks_native_load_state(
+    installer, monkeypatch, capsys, load_state, expected
+):
+    args, commands, pair, unit = installer
+    original = service.subprocess.run
+
+    def run(command, **kwargs):
+        if "--property=LoadState" in command:
+            commands.append(command)
+            return subprocess.CompletedProcess(
+                command, 0, load_state + "\n", ""
+            )
+        return original(command, **kwargs)
+
+    monkeypatch.setattr(service.subprocess, "run", run)
+    service.manage_colocate_service("status")
+    assert capsys.readouterr().out.strip() == f"Colocate service: {expected}"
+    assert any("--property=LoadState" in item for item in commands)
+    pair()
+    if load_state != "not-found":
+        with pytest.raises(RuntimeError, match="loaded Colocate unit"):
+            service.install_colocate_service(args)
+        assert not unit.exists()
+    else:
+        service.install_colocate_service(args)
+        assert unit.is_file()
+
+
+def test_colocate_native_load_state_error_refuses_install_and_status(
+    installer, monkeypatch
+):
+    args, _commands, pair, unit = installer
+    pair()
+    original = service.subprocess.run
+
+    def run(command, **kwargs):
+        if "--property=LoadState" in command:
+            return subprocess.CompletedProcess(
+                command, 1, "", "cannot query unit"
+            )
+        return original(command, **kwargs)
+
+    monkeypatch.setattr(service.subprocess, "run", run)
+    with pytest.raises(RuntimeError, match="cannot query unit"):
+        service.manage_colocate_service("status")
+    with pytest.raises(RuntimeError, match="cannot query unit"):
+        service.install_colocate_service(args)
+    assert not unit.exists()

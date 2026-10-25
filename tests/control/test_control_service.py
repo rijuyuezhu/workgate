@@ -31,11 +31,14 @@ def manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     def fake_run(command: list[str], **_kwargs):
         commands.append(command)
-        result = (
-            f'"{unit.parent}" /etc/systemd/user\n'
-            if command[-1:] == ["--value"]
-            else ""
-        )
+        if command[-1:] == ["--value"]:
+            result = (
+                "not-found\n"
+                if "--property=LoadState" in command
+                else f'"{unit.parent}" /etc/systemd/user\n'
+            )
+        else:
+            result = ""
         return subprocess.CompletedProcess(command, 0, result, "")
 
     monkeypatch.setattr(service.subprocess, "run", fake_run)
@@ -249,3 +252,60 @@ def test_windows_uninstall_without_owned_task_preserves_existing_files(
     assert called == []
     assert launcher.read_text() == "do not delete an unowned file"
     assert log.read_text() == "retain log"
+
+
+@pytest.mark.parametrize(
+    "load_state,expected",
+    [
+        ("not-found", "not-installed"),
+        ("loaded", "unknown"),
+        ("masked", "unknown"),
+        ("", "unknown"),
+    ],
+)
+def test_missing_control_user_unit_checks_native_load_state(
+    manager, monkeypatch, capsys, load_state, expected
+):
+    args, unit, commands = manager
+    original = service.subprocess.run
+
+    def run(command, **kwargs):
+        if "--property=LoadState" in command:
+            commands.append(command)
+            return subprocess.CompletedProcess(
+                command, 0, load_state + "\n", ""
+            )
+        return original(command, **kwargs)
+
+    monkeypatch.setattr(service.subprocess, "run", run)
+    service.manage_control_service("status")
+    assert capsys.readouterr().out.strip() == f"Control service: {expected}"
+    assert any("--property=LoadState" in item for item in commands)
+    if load_state != "not-found":
+        with pytest.raises(RuntimeError, match="loaded Control unit"):
+            service.install_control_service(args)
+        assert not unit.exists()
+    else:
+        service.install_control_service(args)
+        assert unit.is_file()
+
+
+def test_control_native_load_state_error_refuses_install_and_status(
+    manager, monkeypatch
+):
+    args, unit, _commands = manager
+    original = service.subprocess.run
+
+    def run(command, **kwargs):
+        if "--property=LoadState" in command:
+            return subprocess.CompletedProcess(
+                command, 1, "", "cannot query unit"
+            )
+        return original(command, **kwargs)
+
+    monkeypatch.setattr(service.subprocess, "run", run)
+    with pytest.raises(RuntimeError, match="cannot query unit"):
+        service.manage_control_service("status")
+    with pytest.raises(RuntimeError, match="cannot query unit"):
+        service.install_control_service(args)
+    assert not unit.exists()
