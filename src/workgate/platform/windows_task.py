@@ -85,8 +85,16 @@ class WindowsUserTask:
                 "$task.Principal.LogonType.ToString() -ne 'Interactive') { "
                 "throw 'scheduled task has unsafe privileges or login mode' }",
                 "$info = Get-ScheduledTaskInfo -InputObject $task",
+                "$action = $null",
+                "if (@($task.Actions).Count -eq 1) {",
+                "  $native = $task.Actions[0]",
+                "  $action = @{execute=[string]$native.Execute; "
+                "arguments=[string]$native.Arguments; "
+                "working_directory=[string]$native.WorkingDirectory}",
+                "}",
                 "[Console]::Out.Write((@{state=$task.State.ToString(); "
-                "last_result=[int64]$info.LastTaskResult} | ConvertTo-Json -Compress))",
+                "last_result=[int64]$info.LastTaskResult; action=$action} "
+                "| ConvertTo-Json -Compress))",
             ]
         )
         result = self._powershell(script)
