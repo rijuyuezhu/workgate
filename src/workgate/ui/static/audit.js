@@ -231,6 +231,8 @@ export function createAuditController({
     controllerState.auditGeneration += 1;
     controllerState.auditDetailGeneration += 1;
     controllerState.auditRefreshing = false;
+    controllerState.auditLoading = false;
+    setAuditControls();
   }
 
   function bind() {
