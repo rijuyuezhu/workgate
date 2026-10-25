@@ -853,3 +853,95 @@ def test_windows_task_cancels_only_its_upgrade_timer(monkeypatch):
     assert "unexpected scheduled task triggers" in scripts[1]
     assert "PT1M" in scripts[1] and "PT5M" in scripts[1]
     assert "Unregister-ScheduledTask" not in scripts[1]
+
+
+def test_windows_task_status_exposes_owned_native_action(monkeypatch):
+    monkeypatch.setattr(
+        "workgate.platform.windows_task.shutil.which",
+        lambda _: "powershell.exe",
+    )
+    scripts = []
+    native = {
+        "state": "Running",
+        "last_result": 0,
+        "action": {
+            "execute": r"C:\Tools\Python\pythonw.exe",
+            "arguments": r'"C:\Data dir\launcher.py"',
+            "working_directory": r"C:\Data dir",
+        },
+    }
+
+    def run(argv):
+        scripts.append(argv[-1])
+        return subprocess.CompletedProcess(argv, 0, json.dumps(native), "")
+
+    task = WindowsUserTask(
+        "Workgate Executor",
+        description="Managed by Workgate: executor",
+        run=run,
+    )
+    assert task.status() == native
+    assert "@($task.Actions).Count -eq 1" in scripts[-1]
+    assert "$native.Execute" in scripts[-1]
+    assert "$native.Arguments" in scripts[-1]
+    assert "$native.WorkingDirectory" in scripts[-1]
+    assert "scheduled task belongs to another account" in scripts[-1]
+
+
+@pytest.mark.parametrize("field", ["execute", "arguments", "working_directory"])
+def test_windows_executor_native_action_mismatch_marks_runtime_stale(
+    tmp_path, monkeypatch, field
+):
+    manager, _ = _paired_manager(tmp_path, system="Windows")
+    pythonw = manager.executable.with_name("pythonw.exe")
+    pythonw.parent.mkdir(parents=True, exist_ok=True)
+    pythonw.touch()
+    command = manager._runtime_command()
+    manager._write_service_config()
+    manager._write_launcher()
+    manager._write_metadata("scheduled-task", command)
+    native = {
+        "state": "Running",
+        "last_result": 0,
+        "action": {
+            "execute": command[0],
+            "arguments": subprocess.list2cmdline(command[1:]),
+            "working_directory": str(manager.service_dir.resolve()),
+        },
+    }
+    monkeypatch.setattr(
+        manager, "_windows_task", lambda: SimpleNamespace(status=lambda: native)
+    )
+    assert manager._runtime_current()
+    assert manager.status().runtime_current is True
+    native["action"][field] += "-tampered"
+    after = manager.status()
+    assert after.state.value == "running"
+    assert after.runtime_current is False
+
+
+def test_windows_executor_missing_or_multiple_native_actions_mark_runtime_stale(
+    tmp_path, monkeypatch
+):
+    manager, _ = _paired_manager(tmp_path, system="Windows")
+    pythonw = manager.executable.with_name("pythonw.exe")
+    pythonw.parent.mkdir(parents=True, exist_ok=True)
+    pythonw.touch()
+    manager._write_service_config()
+    manager._write_launcher()
+    manager._write_metadata("scheduled-task", manager._runtime_command())
+    assert manager._runtime_current()
+
+    class Task:
+        def __init__(self, response):
+            self.response = response
+
+        def status(self):
+            return self.response
+
+    for bad in (None, {}, {"execute": ""}):
+        native = {"state": "Running", "last_result": 0, "action": bad}
+        monkeypatch.setattr(
+            manager, "_windows_task", lambda value=native: Task(value)
+        )
+        assert manager.status().runtime_current is False

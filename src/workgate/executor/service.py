@@ -7,6 +7,7 @@ pairing or executor credentials.
 
 import hashlib
 import json
+import ntpath
 import os
 import platform
 import plistlib
@@ -1087,6 +1088,28 @@ class ExecutorServiceManager:
             ),
         )
 
+    def _windows_action_current(self, native: dict[str, Any]) -> bool:
+        """Check the owned Task Scheduler action, not just saved metadata."""
+        action = native.get("action")
+        metadata = self._read_metadata()
+        command = metadata.get("command") if metadata else None
+        if (
+            not isinstance(action, dict)
+            or not isinstance(command, list)
+            or not command
+            or not all(isinstance(value, str) for value in command)
+        ):
+            return False
+        return (
+            isinstance(action.get("execute"), str)
+            and ntpath.normcase(action["execute"])
+            == ntpath.normcase(command[0])
+            and action.get("arguments") == subprocess.list2cmdline(command[1:])
+            and isinstance(action.get("working_directory"), str)
+            and ntpath.normcase(action["working_directory"])
+            == ntpath.normcase(str(self.service_dir.resolve()))
+        )
+
     def _windows_status(self) -> ExecutorServiceStatus:
         task = self._windows_task()
         metadata = self.metadata_path.is_file()
@@ -1138,7 +1161,11 @@ class ExecutorServiceManager:
             detail=f"task={name}; last result={code}"
             + ("; service metadata missing" if not metadata else ""),
             log_path=str(self.log_path),
-            runtime_current=(self._runtime_current() if metadata else False),
+            runtime_current=(
+                self._runtime_current() and self._windows_action_current(native)
+                if metadata
+                else False
+            ),
         )
 
     def status(self) -> ExecutorServiceStatus:
