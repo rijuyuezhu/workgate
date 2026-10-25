@@ -63,6 +63,12 @@ def _unit() -> Path:
     )
 
 
+def _load_state() -> str:
+    return _systemctl(
+        "show", _SERVICE, "--property=LoadState", "--value"
+    ).stdout.strip()
+
+
 def _owned_unit() -> Path:
     path = _unit()
     if path.is_symlink() or (
@@ -156,6 +162,10 @@ def install_control_service(args: argparse.Namespace) -> None:
     if sys.platform != "linux" or not shutil.which("systemctl"):
         raise RuntimeError("Control service requires Linux systemd --user")
     unit = _owned_unit()
+    if not unit.exists() and _load_state() != "not-found":
+        raise RuntimeError(
+            "refusing to replace a loaded Control unit from another path"
+        )
     content = "\n".join(
         [
             _HEADER,
@@ -231,8 +241,13 @@ def manage_control_service(action: str) -> None:
     if sys.platform != "linux" or not shutil.which("systemctl"):
         raise RuntimeError("Control service requires Linux systemd --user")
     if action == "status":
-        if not _owned_unit().is_file():
-            print("Control service: not-installed")
+        unit = _owned_unit()
+        if not unit.is_file():
+            # A unit may still be loaded from another systemd search path.
+            state = (
+                "not-installed" if _load_state() == "not-found" else "unknown"
+            )
+            print(f"Control service: {state}")
             return
         result = subprocess.run(
             ["systemctl", "--user", "is-active", _SERVICE],

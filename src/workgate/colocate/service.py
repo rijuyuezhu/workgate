@@ -59,6 +59,12 @@ def _windows_task() -> WindowsUserTask:
     )
 
 
+def _load_state() -> str:
+    return _systemctl(
+        "show", _SERVICE_NAME, "--property=LoadState", "--value"
+    ).stdout.strip()
+
+
 def _windows_service_dir() -> Path:
     return app_paths().state_dir / "colocate" / "service"
 
@@ -174,6 +180,10 @@ def install_colocate_service(args: argparse.Namespace) -> None:
         unit.exists() and not unit.read_text().startswith(_MANAGED_HEADER)
     ):
         raise RuntimeError(f"refusing to overwrite unmanaged service: {unit}")
+    if not unit.exists() and _load_state() != "not-found":
+        raise RuntimeError(
+            "refusing to replace a loaded Colocate unit from another path"
+        )
     content = "\n".join(
         [
             _MANAGED_HEADER,
@@ -240,7 +250,12 @@ def manage_colocate_service(action: str) -> None:
             _SERVICE_NAME,
         )
         if not unit.exists() and not unit.is_symlink():
-            print("Colocate service: not-installed")
+            # Don't mistake a loaded unit from another search path for absence.
+            load = _load_state()
+            print(
+                "Colocate service: "
+                + ("not-installed" if load == "not-found" else "unknown")
+            )
             return
         result = subprocess.run(
             ["systemctl", "--user", "is-active", _SERVICE_NAME],
