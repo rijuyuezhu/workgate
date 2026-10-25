@@ -19,6 +19,7 @@ def switcher(monkeypatch):
     spec = importlib.util.spec_from_file_location(
         "wg_source_switch", location / "switch.py"
     )
+    assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     for key in tuple(os.environ):
