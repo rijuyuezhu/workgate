@@ -6,6 +6,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Tag,
     [string]$InstallRoot,
+    [switch]$NoActivateLauncher,
     [string]$Arm64Wheel,
     [string]$Arm64WheelSha256
 )
@@ -18,6 +19,7 @@ foreach ($tool in @('git', 'uv')) {
 $arguments = @('run', '--no-project', '--python', '3.14', 'python',
     (Join-Path $PSScriptRoot 'prepare.py'), '--role', $Role, '--tag', $Tag)
 if ($InstallRoot) { $arguments += @('--install-root', $InstallRoot) }
+if ($NoActivateLauncher) { $arguments += '--no-activate-launcher' }
 if ($Arm64Wheel) { $arguments += @('--arm64-wheel', $Arm64Wheel) }
 if ($Arm64WheelSha256) { $arguments += @('--arm64-wheel-sha256', $Arm64WheelSha256) }
 & uv @arguments
