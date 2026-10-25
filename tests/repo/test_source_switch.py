@@ -544,7 +544,9 @@ def test_colocate_rejects_missing_config_and_unsupported_roles(
     colocate, switcher
 ):
     root, control, executor, _checkouts, state = colocate
-    with pytest.raises(ValueError, match="Control and Colocate"):
+    with pytest.raises(
+        ValueError, match="does not apply to standalone Executor"
+    ):
         switcher.switch(
             root=root,
             tag="v5.0.0a6",
@@ -553,3 +555,375 @@ def test_colocate_rejects_missing_config_and_unsupported_roles(
             executor_config=executor,
         )
     assert state["calls"] == []
+
+
+@pytest.fixture
+def executor_switch(staged, switcher, monkeypatch, tmp_path):
+    root, _control, checkouts, _state = staged
+    config = tmp_path / "durable executor.yaml"
+    config.write_text("state_dir: /paired/executor/state\n")
+    state_dir = tmp_path / "app-state"
+    service_dir = state_dir / "executor" / "service"
+    service_dir.mkdir(parents=True)
+    (service_dir / "launcher.py").write_text(
+        "# Existing managed source launcher\n"
+    )
+    profile = state_dir / "executor" / "profile.json"
+    profile.write_bytes(b'{"executor_id":"kept","credential":"keep-secret"}')
+    unit = tmp_path / "systemd" / "user" / "workgate-executor.service"
+    unit.write_text("[Unit]\nDescription=Workgate executor\n")
+    state = {
+        "active": checkouts["v5.0.0a5"],
+        "unit": unit,
+        "service_dir": service_dir,
+        "profile": profile,
+        "error_new": False,
+        "error_old": False,
+        "tamper_profile": False,
+        "calls": [],
+    }
+    original_run = switcher._run
+    original_native = switcher._native
+    original_executor_status = switcher._executor_status
+    state["original_run"] = original_run
+    state["original_native"] = original_native
+    state["original_executor_status"] = original_executor_status
+
+    def run(*args: str, cwd: Path | None = None) -> str:
+        executable = args[0] if args else ""
+        if len(args) > 4 and args[1:5] == (
+            "-m",
+            "workgate.main",
+            "executor",
+            "install-service",
+        ):
+            python = Path(executable)
+            state["calls"].append(python)
+            state["active"] = python
+            if state["tamper_profile"] and python == checkouts["v5.0.0a6"]:
+                profile.write_bytes(b"tampered")
+            if python == checkouts["v5.0.0a6"] and state["error_new"]:
+                raise RuntimeError("simulated failed Executor install")
+            if python == checkouts["v5.0.0a5"] and state["error_old"]:
+                raise RuntimeError("simulated failed Executor recovery")
+            return ""
+        if args[1:4] == ("-m", "workgate.main", "--version"):
+            return "workgate " + (
+                "5.0.0a6"
+                if executable == str(checkouts["v5.0.0a6"])
+                else "5.0.0a5"
+            )
+        return original_run(*args, cwd=cwd)
+
+    def status(python, yaml):
+        assert yaml == config
+        return {
+            "State": "running",
+            "Backend": "systemd",
+            "Service": str(unit),
+            "Log": str(service_dir / "executor.log"),
+            "Runtime owner": "source",
+            "Runtime": "current" if python == state["active"] else "stale",
+        }
+
+    def native(role):
+        assert role == "executor"
+        python = state["active"]
+        command = [str(python), str((service_dir / "launcher.py").resolve())]
+        return {
+            "LoadState": "loaded",
+            "ActiveState": "active",
+            "FragmentPath": str(unit),
+            "ExecStart": (
+                f"{{ path={python} ; argv[]={' '.join(command)} ; "
+                "ignore_errors=no ; pid=1 ; }}"
+            ),
+        }
+
+    monkeypatch.setattr(switcher, "_run", run)
+    monkeypatch.setattr(switcher, "_native", native)
+    monkeypatch.setattr(switcher, "_executor_status", status)
+    return root, config, checkouts, state
+
+
+def test_executor_switch_and_explicit_rollback_preserve_paired_identity(
+    executor_switch, switcher
+):
+    root, config, checkouts, state = executor_switch
+    identity = state["profile"].read_bytes()
+    switcher.switch(
+        root=root, tag="v5.0.0a6", role="executor", executor_config=config
+    )
+    assert state["calls"] == [checkouts["v5.0.0a6"]]
+    assert switcher._old_python(root) == checkouts["v5.0.0a6"]
+    assert state["profile"].read_bytes() == identity
+    switcher.switch(
+        root=root, tag="v5.0.0a6", role="executor", executor_config=config
+    )
+    assert len(state["calls"]) == 1
+    switcher.switch(
+        root=root, tag="v5.0.0a5", role="executor", executor_config=config
+    )
+    assert state["calls"][-1] == checkouts["v5.0.0a5"]
+    assert switcher._old_python(root) == checkouts["v5.0.0a5"]
+    assert state["profile"].read_bytes() == identity
+
+
+def test_executor_native_activation_failure_restores_old_and_keeps_identity(
+    executor_switch, switcher
+):
+    root, config, checkouts, state = executor_switch
+    state["error_new"] = True
+    before = state["profile"].read_bytes()
+    with pytest.raises(RuntimeError, match="previous service restored"):
+        switcher.switch(
+            root=root, tag="v5.0.0a6", role="executor", executor_config=config
+        )
+    assert state["calls"] == [checkouts["v5.0.0a6"], checkouts["v5.0.0a5"]]
+    assert switcher._old_python(root) == checkouts["v5.0.0a5"]
+    assert state["profile"].read_bytes() == before
+
+
+def test_executor_failing_recovery_reports_error(executor_switch, switcher):
+    root, config, checkouts, state = executor_switch
+    state["error_new"] = state["error_old"] = True
+    with pytest.raises(RuntimeError, match="recovery also failed"):
+        switcher.switch(
+            root=root, tag="v5.0.0a6", role="executor", executor_config=config
+        )
+    assert state["calls"] == [checkouts["v5.0.0a6"], checkouts["v5.0.0a5"]]
+    assert switcher._old_python(root) == checkouts["v5.0.0a5"]
+
+
+def test_executor_detects_pairing_identity_mutation_and_never_claims_recovery(
+    executor_switch, switcher
+):
+    root, config, checkouts, state = executor_switch
+    state["tamper_profile"] = True
+    with pytest.raises(RuntimeError, match="recovery also failed"):
+        switcher.switch(
+            root=root, tag="v5.0.0a6", role="executor", executor_config=config
+        )
+    assert switcher._old_python(root) == checkouts["v5.0.0a5"]
+
+
+@pytest.mark.parametrize(
+    "case", ["wrong-unit", "wrong-python", "stale-metadata", "wrong-profile"]
+)
+def test_executor_rejects_untrusted_running_native_binding(
+    executor_switch, switcher, monkeypatch, case
+):
+    root, config, checkouts, state = executor_switch
+    if case == "wrong-unit":
+        native = switcher._native
+
+        def wrong_unit(role):
+            result = native(role)
+            result["FragmentPath"] = "/foreign/service"
+            return result
+
+        monkeypatch.setattr(switcher, "_native", wrong_unit)
+    elif case == "wrong-python":
+        native = switcher._native
+
+        def wrong_command(role):
+            result = native(role)
+            result["ExecStart"] = result["ExecStart"].replace(
+                "argv[]=", "argv[]=/foreign/python "
+            )
+            return result
+
+        monkeypatch.setattr(switcher, "_native", wrong_command)
+    elif case == "stale-metadata":
+        status = switcher._executor_status
+
+        def stale_metadata(python, cfg):
+            result = status(python, cfg)
+            if python == checkouts["v5.0.0a5"]:
+                result["Runtime"] = "stale"
+            return result
+
+        monkeypatch.setattr(switcher, "_executor_status", stale_metadata)
+    else:
+        state["profile"].unlink()
+    with pytest.raises(RuntimeError):
+        switcher.switch(
+            root=root, tag="v5.0.0a6", role="executor", executor_config=config
+        )
+    assert state["calls"] == []
+    assert switcher._old_python(root) == checkouts["v5.0.0a5"]
+
+
+def test_executor_requires_existing_yaml_and_rejects_control_config(
+    executor_switch, switcher
+):
+    root, config, _checkouts, state = executor_switch
+    with pytest.raises(RuntimeError, match="durable Executor YAML"):
+        switcher.switch(root=root, tag="v5.0.0a6", role="executor")
+    with pytest.raises(ValueError, match="Control config"):
+        switcher.switch(
+            root=root,
+            tag="v5.0.0a6",
+            role="executor",
+            control_config=config,
+            executor_config=config,
+        )
+    assert state["calls"] == []
+
+
+@pytest.mark.parametrize(
+    "drift", ["different-log", "different-unit", "not-running"]
+)
+def test_executor_new_cli_cannot_change_persistent_identity_namespace(
+    executor_switch, switcher, monkeypatch, drift
+):
+    root, config, checkouts, state = executor_switch
+    existing = switcher._executor_status
+
+    def new_status(python, yaml):
+        result = existing(python, yaml)
+        if python == checkouts["v5.0.0a6"]:
+            if drift == "different-log":
+                result["Log"] = "/another/state/executor/service/executor.log"
+            elif drift == "different-unit":
+                result["Service"] = (
+                    "/another/systemd/user/workgate-executor.service"
+                )
+            else:
+                result["State"] = "stopped"
+        return result
+
+    monkeypatch.setattr(switcher, "_executor_status", new_status)
+    with pytest.raises(
+        RuntimeError, match="different service or state directory"
+    ):
+        switcher.switch(
+            root=root, tag="v5.0.0a6", role="executor", executor_config=config
+        )
+    assert not state["calls"]
+
+
+def test_executor_new_native_binding_mismatch_rolls_back(
+    executor_switch, switcher, monkeypatch
+):
+    root, config, checkouts, state = executor_switch
+    old = switcher._native
+
+    def mismatched(role):
+        result = old(role)
+        if state["active"] == checkouts["v5.0.0a6"]:
+            result["ExecStart"] = result["ExecStart"].replace(
+                "argv[]=", "argv[]=/unmanaged/python "
+            )
+        return result
+
+    monkeypatch.setattr(switcher, "_native", mismatched)
+    with pytest.raises(RuntimeError, match="previous service restored"):
+        switcher.switch(
+            root=root, tag="v5.0.0a6", role="executor", executor_config=config
+        )
+    assert state["calls"] == [checkouts["v5.0.0a6"], checkouts["v5.0.0a5"]]
+    assert switcher._old_python(root) == checkouts["v5.0.0a5"]
+
+
+def test_executor_full_subprocess_cutover_and_failure_recovery(
+    executor_switch, switcher, monkeypatch, tmp_path
+):
+    """Git checkout + real CLI/systemd subprocess path; no pairing actions."""
+    root, config, checkouts, state = executor_switch
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    active = tmp_path / "native-executor-python.txt"
+    actions = tmp_path / "actions.txt"
+    active.write_text(str(checkouts["v5.0.0a5"]))
+    monkeypatch.setenv("WG_SIM_ACTIVE", str(active))
+    monkeypatch.setenv("WG_SIM_ACTIONS", str(actions))
+    monkeypatch.setenv("WG_SIM_UNIT", str(state["unit"]))
+    monkeypatch.setenv("WG_SIM_LOG", str(state["service_dir"] / "executor.log"))
+    monkeypatch.setenv(
+        "WG_SIM_LAUNCHER", str(state["service_dir"] / "launcher.py")
+    )
+    monkeypatch.setenv("PATH", str(fake_bin) + os.pathsep + os.environ["PATH"])
+    systemctl = fake_bin / "systemctl"
+    systemctl.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os\n"
+        "from pathlib import Path\n"
+        "exe = Path(os.environ['WG_SIM_ACTIVE']).read_text()\n"
+        "launch = os.environ['WG_SIM_LAUNCHER']\n"
+        "print('LoadState=loaded')\n"
+        "print('ActiveState=active')\n"
+        "print('FragmentPath=' + os.environ['WG_SIM_UNIT'])\n"
+        "print(f'ExecStart={{ path={exe} ; argv[]={exe} {launch} ; ignore_errors=no ; pid=1 ; }}')\n"
+    )
+    systemctl.chmod(0o700)
+    for tag, executable in checkouts.items():
+        executable.write_text(
+            "#!/bin/sh\n"
+            'if [ "$3" = "--version" ]; then\n'
+            f'  echo "workgate {tag[1:]}"\n'
+            "  exit 0\n"
+            "fi\n"
+            'if [ "$3" = "executor" ] && [ "$4" = "status-service" ]; then\n'
+            '  echo "State: running"\n'
+            '  echo "Backend: systemd"\n'
+            '  echo "Service: $WG_SIM_UNIT"\n'
+            '  echo "Log: $WG_SIM_LOG"\n'
+            '  echo "Runtime owner: source"\n'
+            '  if [ "$(cat "$WG_SIM_ACTIVE")" = "$0" ]; then echo "Runtime: current"; else echo "Runtime: stale"; fi\n'
+            "  exit 0\n"
+            "fi\n"
+            'if [ "$3" = "executor" ] && [ "$4" = "install-service" ]; then\n'
+            '  echo "install:$0" >> "$WG_SIM_ACTIONS"\n'
+            '  printf "%s" "$0" > "$WG_SIM_ACTIVE"\n'
+            '  if [ "$WG_SIM_FAIL_NEW" = "$0" ]; then exit 27; fi\n'
+            "  exit 0\n"
+            "fi\n"
+            'echo "unexpected Executor action" >&2\n'
+            "exit 73\n"
+        )
+        executable.chmod(0o700)
+    monkeypatch.setattr(switcher, "_run", state["original_run"])
+
+    def native_executor(role):
+        output = switcher._run(
+            "systemctl",
+            "--user",
+            "show",
+            f"workgate-{role}.service",
+            "--property=LoadState",
+            "--property=ActiveState",
+            "--property=FragmentPath",
+            "--property=ExecStart",
+        )
+        return dict(
+            line.split("=", 1) for line in output.splitlines() if "=" in line
+        )
+
+    monkeypatch.setattr(switcher, "_native", native_executor)
+    monkeypatch.setattr(
+        switcher, "_executor_status", state["original_executor_status"]
+    )
+
+    identity_before = state["profile"].read_bytes()
+    switcher.switch(
+        root=root, tag="v5.0.0a6", role="executor", executor_config=config
+    )
+    assert active.read_text() == str(checkouts["v5.0.0a6"])
+    assert state["profile"].read_bytes() == identity_before
+    assert switcher._old_python(root) == checkouts["v5.0.0a6"]
+
+    switcher.switch(
+        root=root, tag="v5.0.0a5", role="executor", executor_config=config
+    )
+    assert active.read_text() == str(checkouts["v5.0.0a5"])
+
+    monkeypatch.setenv("WG_SIM_FAIL_NEW", str(checkouts["v5.0.0a6"]))
+    with pytest.raises(RuntimeError, match="previous service restored"):
+        switcher.switch(
+            root=root, tag="v5.0.0a6", role="executor", executor_config=config
+        )
+    assert active.read_text() == str(checkouts["v5.0.0a5"])
+    assert state["profile"].read_bytes() == identity_before
+    assert switcher._old_python(root) == checkouts["v5.0.0a5"]
+    assert "connect" not in actions.read_text()

@@ -1,4 +1,4 @@
-"""Explicit staged Linux Control/Colocate source cutover; no uv sync."""
+"""Explicit staged Linux Control/Colocate/Executor source cutover; no uv sync."""
 
 import argparse
 import os
@@ -160,11 +160,147 @@ def _install(
     _run(*command, cwd=python.parents[2])
 
 
+def _executor_status(python: Path, config: Path) -> dict[str, str]:
+    output = _run(
+        str(python),
+        "-m",
+        "workgate.main",
+        "executor",
+        "status-service",
+        "--config",
+        str(config),
+        cwd=python.parents[2],
+    )
+    result: dict[str, str] = {}
+    for line in output.splitlines():
+        key, sep, value = line.partition(": ")
+        if sep and key in {
+            "State",
+            "Backend",
+            "Service",
+            "Log",
+            "Runtime owner",
+            "Runtime",
+        }:
+            if key in result:
+                raise RuntimeError("ambiguous native Executor service status")
+            result[key] = value
+    return result
+
+
+def _executor_binding(
+    python: Path, config: Path, *, current: bool
+) -> tuple[Path, Path]:
+    status = _executor_status(python, config)
+    if (
+        status.get("State") != "running"
+        or status.get("Backend") != "systemd"
+        or status.get("Runtime owner") != "source"
+        or (current and status.get("Runtime") != "current")
+    ):
+        raise RuntimeError(
+            "Executor native service is not a running managed source runtime"
+        )
+    service = Path(status.get("Service", ""))
+    log = Path(status.get("Log", ""))
+    directory = log.parent
+    if (
+        not service.is_absolute()
+        or service.name != "workgate-executor.service"
+        or not service.is_file()
+        or directory.name != "service"
+        or directory.parent.name != "executor"
+        or log.name != "executor.log"
+    ):
+        raise RuntimeError("unexpected Executor native service or state paths")
+    profile = directory.parent / "profile.json"
+    if not profile.is_file():
+        raise RuntimeError("Executor pairing identity is missing")
+    launcher = directory / "launcher.py"
+    if not launcher.is_file():
+        raise RuntimeError("managed Executor launcher is missing")
+    expected = [str(python), str(launcher.resolve())]
+    if not _matches(_native("executor"), service, expected):
+        raise RuntimeError(
+            "Executor loaded native command does not match the managed Python"
+        )
+    return service, profile
+
+
+def _switch_executor(
+    root: Path, old: Path, new: Path, tag: str, config: Path
+) -> None:
+    unit, profile = _executor_binding(old, config, current=True)
+    # Check that the new CLI resolves the same persistent service and state.
+    prospective = _executor_status(new, config)
+    if (
+        prospective.get("State") != "running"
+        or prospective.get("Service") != str(unit)
+        or prospective.get("Log")
+        != str(profile.parent / "service" / "executor.log")
+        or prospective.get("Backend") != "systemd"
+        or prospective.get("Runtime owner") != "source"
+    ):
+        raise RuntimeError(
+            "staged Executor resolves a different service or state directory"
+        )
+    identity = profile.read_bytes()
+    if old == new:
+        print(f"Executor is already running {tag}; no service restart")
+        return
+
+    def install(python: Path) -> None:
+        _run(
+            str(python),
+            "-m",
+            "workgate.main",
+            "executor",
+            "install-service",
+            "--config",
+            str(config),
+            cwd=python.parents[2],
+        )
+
+    try:
+        install(new)
+        if _executor_binding(new, config, current=True) != (unit, profile):
+            raise RuntimeError(
+                "new Executor bound to another service or identity directory"
+            )
+        if profile.read_bytes() != identity:
+            raise RuntimeError(
+                "Executor pairing identity changed during cutover"
+            )
+        _write_launcher(root, new)
+    except Exception as exc:
+        try:
+            install(old)
+            if _executor_binding(old, config, current=True) != (unit, profile):
+                raise RuntimeError(
+                    "old Executor bound to another service or identity directory"
+                )
+            if profile.read_bytes() != identity:
+                raise RuntimeError(
+                    "Executor pairing identity changed; recovery cannot confirm it"
+                )
+            _write_launcher(root, old)
+        except Exception as recovery:
+            raise RuntimeError(
+                f"Executor cutover failed: {exc}; recovery also failed: {recovery}"
+            ) from recovery
+        raise RuntimeError(
+            f"Executor cutover failed, previous service restored: {exc}"
+        ) from exc
+    print(
+        f"Executor service switched to {tag}; previous runtime retained for rollback"
+    )
+
+
 def switch(
     *,
     root: Path,
     tag: str,
-    control_config: Path,
+    control_config: Path | None = None,
     role: str = "control",
     executor_config: Path | None = None,
 ) -> None:
@@ -172,9 +308,9 @@ def switch(
         raise RuntimeError(
             "this explicit service cutover currently supports Linux only"
         )
-    if role not in {"control", "colocate"}:
+    if role not in {"control", "colocate", "executor"}:
         raise ValueError(
-            "explicit Linux cutover currently supports Control and Colocate"
+            "explicit Linux cutover supports Control, Colocate and Executor"
         )
     if not _TAG.fullmatch(tag):
         raise ValueError("select an explicit released version tag")
@@ -183,12 +319,25 @@ def switch(
             "save Workgate settings in YAML, not environment overrides"
         )
     root = root.expanduser().absolute()
-    config = control_config.expanduser().absolute()
-    if not config.is_file():
-        raise RuntimeError(f"missing durable Control config: {config}")
+    config = control_config.expanduser().absolute() if control_config else None
     paired_config = (
         executor_config.expanduser().absolute() if executor_config else None
     )
+    if role == "executor":
+        if config is not None:
+            raise ValueError(
+                "Control config does not apply to standalone Executor"
+            )
+        if paired_config is None or not paired_config.is_file():
+            raise RuntimeError(
+                "Executor cutover requires durable Executor YAML config"
+            )
+        old_python = _old_python(root)
+        new_python = _staged_python(root, tag)
+        _switch_executor(root, old_python, new_python, tag, paired_config)
+        return
+    if config is None or not config.is_file():
+        raise RuntimeError(f"missing durable Control config: {config}")
     if role == "colocate" and (
         paired_config is None or not paired_config.is_file()
     ):
@@ -256,11 +405,11 @@ def switch(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--role", choices=["control", "colocate"], required=True
+        "--role", choices=["control", "colocate", "executor"], required=True
     )
     parser.add_argument("--tag", required=True)
     parser.add_argument("--install-root", type=Path, default=_default_root())
-    parser.add_argument("--control-config", type=Path, required=True)
+    parser.add_argument("--control-config", type=Path)
     parser.add_argument("--executor-config", type=Path)
     args = parser.parse_args()
     try:
