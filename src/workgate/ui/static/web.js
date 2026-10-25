@@ -1005,6 +1005,7 @@ void (async () => {
     executors.reset("Authentication required");
     files.reset("");
     tasks.reset();
+    dashboard.renderTasks([]); // Task shortcuts belong to the prior login.
     audit.reset();
   }
 
