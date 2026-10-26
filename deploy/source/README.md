@@ -120,7 +120,9 @@ configs, pairing state, and prior checkout in place.
 If native activation fails, it attempts to restore the previous service and
 stable CLI, reporting an error if recovery also fails. To roll back explicitly,
 run the same `switch.sh` command using the previously prepared release tag.
-A same-release switch is a no-op, not a restart.
+A same-release switch is a no-op, not a restart. The target must support
+that role's native service installer; `v5.0.0a5` lacks `control install-service`
+and cannot be used as a managed Control rollback target.
 
 This cutover supports **Linux Control, Colocate, and standalone Executor**.
 It checks native systemd active state, not HTTP/WebUI health or Executor
