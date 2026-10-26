@@ -151,11 +151,17 @@ After verifying the new task, it switches the stable command. Failure triggers
 an attempt to stop and restore the old task and command; an unchanged release
 is a no-op. Use the previous prepared tag for explicit rollback.
 
-Only Control and Colocate are supported by this Windows command. Standalone
-Executor, live connection health, and complete real-published-release
-acceptance remain under #456. No `uv sync` or dependency changes occur
-during cutover; do not run this against unmanaged or older source tasks whose
-native action binding cannot be verified.
+For a **standalone paired Executor** (not Colocate), use
+`-Role executor -ExecutorConfig "C:\path\to\executor.yaml"` and omit
+`-ControlConfig`. This path verifies the existing owned Task Scheduler action,
+source runtime metadata, stable state directory and pairing profile, then uses
+only `executor stop` and `executor install-service`. It never
+runs pairing or setup, and requires the old profile to remain unchanged.
+
+Windows Control, Colocate and Executor are supported. Live connection health
+and complete real-published-release acceptance remain under #456. No `uv sync`
+or dependency changes occur during cutover; do not run this against unmanaged
+or older source tasks whose native action binding cannot be verified.
 
 ## Public GitHub bootstrap, pinned to a release commit
 

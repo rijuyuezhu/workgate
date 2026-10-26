@@ -1,12 +1,11 @@
-# Explicit Windows Control/Colocate switch to an already prepared source tag.
+# Explicit Windows role switch to an already prepared source tag.
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('control', 'colocate')]
+    [ValidateSet('control', 'colocate', 'executor')]
     [string]$Role,
     [Parameter(Mandatory = $true)]
     [string]$Tag,
     [string]$InstallRoot,
-    [Parameter(Mandatory = $true)]
     [string]$ControlConfig,
     [string]$ExecutorConfig
 )
@@ -16,7 +15,8 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 }
 $arguments = @('run', '--no-project', '--python', '3.14', 'python',
     (Join-Path $PSScriptRoot 'switch_windows.py'), '--role', $Role,
-    '--tag', $Tag, '--control-config', $ControlConfig)
+    '--tag', $Tag)
+if ($ControlConfig) { $arguments += @('--control-config', $ControlConfig) }
 if ($InstallRoot) { $arguments += @('--install-root', $InstallRoot) }
 if ($ExecutorConfig) { $arguments += @('--executor-config', $ExecutorConfig) }
 & uv @arguments

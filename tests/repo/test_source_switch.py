@@ -864,7 +864,7 @@ def test_executor_full_subprocess_cutover_and_failure_recovery(
             f'  echo "workgate {tag[1:]}"\n'
             "  exit 0\n"
             "fi\n"
-            'if [ "$3" = "executor" ] && [ "$4" = "status-service" ]; then\n'
+            'if [ "$3" = "executor" ] && [ "$4" = "status" ]; then\n'
             '  echo "State: running"\n'
             '  echo "Backend: systemd"\n'
             '  echo "Service: $WG_SIM_UNIT"\n'
