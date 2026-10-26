@@ -162,8 +162,41 @@ runs pairing or setup, and requires the old profile to remain unchanged.
 
 Windows Control, Colocate and Executor are supported. Live connection health
 and complete real-published-release acceptance remain under #456. No `uv sync`
-or dependency changes occur during cutover; do not run this against unmanaged
-or older source tasks whose native action binding cannot be verified.
+or dependency changes occur during cutover; do not run the normal switch
+against unmanaged or older source tasks whose native action binding cannot
+be verified.
+
+### First adoption of a paired, unversioned Windows Executor
+
+An existing standalone Executor installed from an older, **unversioned**
+source virtualenv may still have a valid, owned Task Scheduler service and
+pairing profile. The ordinary switch intentionally rejects it. Once the
+**target release containing this adoption option** is published, prepare it
+without activating the command, then explicitly adopt the old service:
+
+```powershell
+& .\deploy\source\prepare.ps1 -Role executor -Tag vRELEASE -NoActivateLauncher
+& .\deploy\source\switch.ps1 -Role executor -Tag vRELEASE `
+    -ExecutorConfig 'C:\path\to\existing\executor\service\config.json' `
+    -AdoptLegacyExecutor
+```
+
+The existing generated `config.json` is also valid YAML. Use the **actual
+existing** config path, not a fresh config. The script discovers the previous
+Python from the owner-validated, running `Workgate Executor` task; validates
+its action, native service status and paired profile; then reuses the normal
+Executor cutover and rollback without calling setup/pairing. On a failed
+switch it attempts to restore the old Executor using its original Python and
+leaves no newly created stable command. The old virtualenv is retained for
+separately approved manual rollback after a successful adoption.
+
+This is a **one-time opt-in** operation. It refuses an existing managed
+`workgate.cmd`, stopped/unowned/unrecognized tasks, missing identities and
+mismatched runtime state. The option does not apply to Control or Colocate.
+The activation checks that Task Scheduler is Running, **not** that the
+Executor is connected to Control. Independently verify online health and
+command execution after adoption. Do not use this procedure on a live
+machine without a planned maintenance window and rollback approval.
 
 ## Public GitHub bootstrap, pinned to a release commit
 

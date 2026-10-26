@@ -231,6 +231,43 @@ def _executor_binding(python: Path, config: Path, *, current: bool) -> Path:
     return profile
 
 
+def _legacy_executor_python(root: Path, staged: Path) -> Path:
+    """Discover the old source interpreter from our owned running task only."""
+    _check_launcher(root)
+    if (root / "bin/workgate.cmd").exists():
+        raise RuntimeError(
+            "initial Executor adoption requires no existing managed source launcher"
+        )
+    native = _native(staged, "executor")
+    action = native.get("action")
+    if native.get("state", "").lower() != "running" or not isinstance(
+        action, dict
+    ):
+        raise RuntimeError(
+            "initial Executor adoption requires a running owned task"
+        )
+    windowless = Path(str(action.get("execute", "")))
+    if (
+        not windowless.is_absolute()
+        or windowless.name.lower() != "pythonw.exe"
+        or windowless.parent.name.lower() != "scripts"
+    ):
+        raise RuntimeError(
+            "existing Executor task is not an external source Python installation"
+        )
+    previous = windowless.with_name("python.exe")
+    if (
+        not windowless.is_file()
+        or not previous.is_file()
+        or previous == staged
+        or root in previous.parents
+    ):
+        raise RuntimeError(
+            "existing Executor task is not an external source Python installation"
+        )
+    return previous
+
+
 def _executor_install(python: Path, config: Path) -> None:
     subprocess.run(
         [
@@ -249,7 +286,13 @@ def _executor_install(python: Path, config: Path) -> None:
 
 
 def _switch_executor(
-    root: Path, old: Path, new: Path, tag: str, config: Path
+    root: Path,
+    old: Path,
+    new: Path,
+    tag: str,
+    config: Path,
+    *,
+    adopt_legacy: bool = False,
 ) -> None:
     profile = _executor_binding(old, config, current=True)
     original_identity = profile.read_bytes()
@@ -289,7 +332,11 @@ def _switch_executor(
                 raise RuntimeError(
                     "Executor identity changed; recovery unconfirmed"
                 )
-            _write_launcher(root, old)
+            if adopt_legacy:
+                # There was no managed launcher before this one-time adoption.
+                (root / "bin/workgate.cmd").unlink(missing_ok=True)
+            else:
+                _write_launcher(root, old)
         except Exception as recovery:
             raise RuntimeError(
                 f"Executor switch failed: {exc}; recovery also failed: {recovery}"
@@ -308,6 +355,7 @@ def switch(
     control_config: Path | None = None,
     executor_config: Path | None = None,
     service_dir: Path | None = None,
+    adopt_legacy_executor: bool = False,
 ) -> None:
     if sys.platform != "win32":
         raise RuntimeError("Windows Task Scheduler is required")
@@ -318,6 +366,10 @@ def switch(
     if role not in _TASKS:
         raise ValueError(
             "Windows switch supports Control, Colocate and Executor"
+        )
+    if adopt_legacy_executor and role != "executor":
+        raise ValueError(
+            "initial adoption is supported only for standalone Executor"
         )
     from switch import _TAG
 
@@ -350,13 +402,24 @@ def switch(
             "expected unchanged durable YAML config for this role"
         )
 
-    old = _old_python(root)
+    # Normal managed cutover keeps its original preflight order and behavior.
+    old = None if adopt_legacy_executor else _old_python(root)
     new = _staged_python(root, tag)
     if not new.with_name("pythonw.exe").is_file():
         raise RuntimeError("prepared Windows runtime is missing pythonw.exe")
+    if adopt_legacy_executor:
+        old = _legacy_executor_python(root, new)
+    assert old is not None
     if role == "executor":
         assert executor_config is not None
-        _switch_executor(root, old, new, tag, executor_config)
+        _switch_executor(
+            root,
+            old,
+            new,
+            tag,
+            executor_config,
+            adopt_legacy=adopt_legacy_executor,
+        )
         return
     assert control_config is not None
 
@@ -440,6 +503,11 @@ def main() -> None:
     parser.add_argument("--install-root", type=Path, default=_default_root())
     parser.add_argument("--control-config", type=Path)
     parser.add_argument("--executor-config", type=Path)
+    parser.add_argument(
+        "--adopt-legacy-executor",
+        action="store_true",
+        help="Explicit first cutover of a previously paired non-versioned Windows Executor",
+    )
     args = parser.parse_args()
     try:
         switch(
@@ -448,6 +516,7 @@ def main() -> None:
             role=args.role,
             control_config=args.control_config,
             executor_config=args.executor_config,
+            adopt_legacy_executor=args.adopt_legacy_executor,
         )
     except (
         OSError,

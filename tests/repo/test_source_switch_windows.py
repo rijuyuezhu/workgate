@@ -716,3 +716,177 @@ def test_executor_status_and_install_use_actual_cli_verbs(
             str(state["executor"]),
         ],
     ]
+
+
+@pytest.fixture
+def legacy_executor_switch(executor_switch, switcher, tmp_path, monkeypatch):
+    """Legacy unversioned source task, without a managed stable CLI."""
+    state = executor_switch
+    old = tmp_path / "unversioned" / ".venv-native" / "Scripts" / "python.exe"
+    old.parent.mkdir(parents=True)
+    old.touch()
+    old.with_name("pythonw.exe").touch()
+    state["old"] = old
+    state["active"] = old
+    state["stable"] = None
+    state["native"]["action"]["execute"] = str(old.with_name("pythonw.exe"))
+    monkeypatch.setattr(
+        switcher,
+        "_old_python",
+        lambda _: pytest.fail(
+            "initial adoption must not require a versioned CLI"
+        ),
+    )
+    return state
+
+
+def test_windows_legacy_executor_initial_adoption_retains_pairing(
+    legacy_executor_switch, switcher
+):
+    state = legacy_executor_switch
+    assert not (state["root"] / "bin/workgate.cmd").exists()
+    original_config = state["executor"].read_bytes()
+    switcher.switch(
+        root=state["root"],
+        tag="v5.0.0a6",
+        role="executor",
+        executor_config=state["executor"],
+        adopt_legacy_executor=True,
+    )
+    assert state["executor_install_calls"] == [state["new"]]
+    assert state["stable"] == state["new"]
+    assert state["active"] == state["new"]
+    assert state["profile"].read_bytes() == state["identity_before"]
+    assert state["executor"].read_bytes() == original_config
+
+
+@pytest.mark.parametrize(
+    "failure", ["install", "native-not-running", "identity-changed"]
+)
+def test_windows_legacy_executor_adoption_restores_old_task(
+    legacy_executor_switch, switcher, failure
+):
+    state = legacy_executor_switch
+    if failure == "install":
+        state["error_new"] = True
+    elif failure == "native-not-running":
+        state["bad_state"] = True
+    else:
+        state["modify_identity"] = True
+
+    with pytest.raises(
+        RuntimeError, match="previous task restored|recovery also failed"
+    ):
+        switcher.switch(
+            root=state["root"],
+            tag="v5.0.0a6",
+            role="executor",
+            executor_config=state["executor"],
+            adopt_legacy_executor=True,
+        )
+    assert state["executor_install_calls"] == [state["new"], state["old"]]
+    assert state["active"] == state["old"]
+    assert state["stable"] is None
+    assert not (state["root"] / "bin/workgate.cmd").exists()
+    if failure != "identity-changed":
+        assert state["profile"].read_bytes() == state["identity_before"]
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "existing-managed-launcher",
+        "unmanaged-launcher",
+        "not-running",
+        "foreign-executable",
+        "missing-python",
+        "missing-profile",
+        "wrong-config",
+    ],
+)
+def test_windows_legacy_executor_adoption_rejects_unsafe_preconditions(
+    legacy_executor_switch, switcher, monkeypatch, invalid
+):
+    state = legacy_executor_switch
+    if invalid == "existing-managed-launcher":
+        launcher = state["root"] / "bin/workgate.cmd"
+        launcher.parent.mkdir(parents=True)
+        launcher.write_text(
+            "@echo off\r\nrem Managed by Workgate source preparation\r\n"
+            "echo managed\r\n"
+        )
+    elif invalid == "unmanaged-launcher":
+        launcher = state["root"] / "bin/workgate.cmd"
+        launcher.parent.mkdir(parents=True)
+        launcher.write_text("@echo off\r\necho foreign\r\n")
+    elif invalid == "not-running":
+        state["native"]["state"] = "Ready"
+    elif invalid == "foreign-executable":
+        state["native"]["action"]["execute"] = str(
+            state["old"].with_name("foreign.exe")
+        )
+    elif invalid == "missing-python":
+        state["old"].unlink()
+    elif invalid == "missing-profile":
+        state["profile"].unlink()
+    elif invalid == "wrong-config":
+        original = switcher._executor_status
+
+        def wrong_status(python, config):
+            data = original(python, config)
+            if python == state["new"]:
+                data["Log"] = str(state["directory"] / "moved.log")
+            return data
+
+        monkeypatch.setattr(switcher, "_executor_status", wrong_status)
+
+    with pytest.raises(RuntimeError):
+        switcher.switch(
+            root=state["root"],
+            tag="v5.0.0a6",
+            role="executor",
+            executor_config=state["executor"],
+            adopt_legacy_executor=True,
+        )
+    assert state["executor_install_calls"] == []
+    assert state["active"] == state["old"]
+
+
+def test_windows_legacy_adoption_rejects_other_role(native_switch, switcher):
+    state = native_switch
+    with pytest.raises(ValueError, match="only for standalone Executor"):
+        switcher.switch(
+            root=state["root"],
+            tag="v5.0.0a6",
+            role="control",
+            control_config=state["config"],
+            adopt_legacy_executor=True,
+        )
+    assert state["calls"] == []
+
+
+def test_windows_legacy_executor_failed_stable_command_restores_old(
+    legacy_executor_switch, switcher, monkeypatch
+):
+    state = legacy_executor_switch
+    launcher = state["root"] / "bin/workgate.cmd"
+
+    def fail_after_writing(root, python):
+        assert python == state["new"]
+        launcher.parent.mkdir(parents=True)
+        launcher.write_text("incomplete new stable command")
+        raise OSError("cannot install stable command")
+
+    monkeypatch.setattr(switcher, "_write_launcher", fail_after_writing)
+    with pytest.raises(RuntimeError, match="previous task restored"):
+        switcher.switch(
+            root=state["root"],
+            tag="v5.0.0a6",
+            role="executor",
+            executor_config=state["executor"],
+            adopt_legacy_executor=True,
+        )
+    assert state["executor_install_calls"] == [state["new"], state["old"]]
+    assert state["active"] == state["old"]
+    assert state["profile"].read_bytes() == state["identity_before"]
+    assert not launcher.exists()
