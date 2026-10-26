@@ -20,16 +20,18 @@ def test_noninteractive_flag_is_windows_only():
 
 def test_git_orientation_passes_windows_no_console_flag(monkeypatch, tmp_path):
     import workgate.executor.session_orientation as orientation
+    import workgate.platform.process as process
 
     calls = []
 
     def fake_run(*args, **kwargs):
         calls.append(kwargs)
-        return SimpleNamespace(returncode=0, stdout="/test/project\n")
+        kwargs["stdout"].write(b"/test/project\n")
+        return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr(orientation.subprocess, "run", fake_run)
+    monkeypatch.setattr(process.subprocess, "run", fake_run)
     monkeypatch.setattr(
-        orientation, "noninteractive_creationflags", lambda: 0x08000000
+        process, "noninteractive_creationflags", lambda: 0x08000000
     )
     config = resolve_executor_config(
         Settings(default_workdir=tmp_path, state_dir=tmp_path / "state")
@@ -37,26 +39,32 @@ def test_git_orientation_passes_windows_no_console_flag(monkeypatch, tmp_path):
     assert orientation._git_output(config, ["rev-parse"], Path(tmp_path))
     assert calls[0]["creationflags"] == 0x08000000
     assert calls[0]["stdin"] is subprocess.DEVNULL
-    assert calls[0]["capture_output"] is True
+    assert calls[0]["stderr"] is subprocess.DEVNULL
+    assert calls[0]["stdout"].closed
+    assert calls[0]["timeout"] == 5
 
 
 def test_environment_probe_passes_no_console_flag(monkeypatch):
     import workgate.executor.environment as environment
+    import workgate.platform.process as process
 
     calls = []
 
     def fake_run(*args, **kwargs):
         calls.append(kwargs)
-        return SimpleNamespace(returncode=0, stdout="git 2.0", stderr="")
+        kwargs["stdout"].write(b"git 2.0")
+        return SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr(environment.subprocess, "run", fake_run)
+    monkeypatch.setattr(process.subprocess, "run", fake_run)
     monkeypatch.setattr(
-        environment, "noninteractive_creationflags", lambda: 0x08000000
+        process, "noninteractive_creationflags", lambda: 0x08000000
     )
     probe = environment._CommandProbe("git", ("git",), "configured")
     assert environment._probe_command(probe).available
     assert calls[0]["creationflags"] == 0x08000000
     assert calls[0]["stdin"] is subprocess.DEVNULL
+    assert calls[0]["stderr"] is subprocess.STDOUT
+    assert calls[0]["timeout"] == environment._PROBE_TIMEOUT_S
 
 
 def test_apply_patch_uses_no_console_flag(monkeypatch, tmp_path):
@@ -76,6 +84,25 @@ def test_apply_patch_uses_no_console_flag(monkeypatch, tmp_path):
     assert result["ok"] is True
     assert calls[0]["creationflags"] == 0x08000000
     assert calls[0]["stdin"] is subprocess.DEVNULL
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="native Windows only")
+def test_bounded_capture_does_not_wait_for_inherited_pipe_on_timeout():
+    """A grandchild holding stdout open must not hang the timed-out helper."""
+    import time
+
+    from workgate.platform.process import run_bounded_capture
+
+    script = (
+        "import subprocess,sys,time;"
+        "subprocess.Popen([sys.executable,'-c','import time;time.sleep(4)'],"
+        " stdout=sys.stdout,stderr=sys.stderr);"
+        "time.sleep(10)"
+    )
+    started = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        run_bounded_capture([sys.executable, "-c", script], timeout=0.5)
+    assert time.monotonic() - started < 3.5
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="native Windows only")

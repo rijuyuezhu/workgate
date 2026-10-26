@@ -17,7 +17,7 @@ from pathlib import Path
 from .. import __version__
 from ..config.executor import ExecutorConfig
 from ..platform.posix.tmux import resolve_tmux
-from ..platform.process import noninteractive_creationflags
+from ..platform.process import run_bounded_capture
 from ..platform.terminal import supports_raw_terminal_host
 from ..schemas.result_models.session import (
     SessionCapabilitiesEnvironment,
@@ -96,16 +96,10 @@ def _probe_command(spec: _CommandProbe) -> SessionToolProbe:
             source=spec.source,
         )
     try:
-        result = subprocess.run(  # noqa: S603
+        returncode, output = run_bounded_capture(
             list(_version_command(spec.command, spec.name)),
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
             timeout=_PROBE_TIMEOUT_S,
-            creationflags=noninteractive_creationflags(),
+            include_stderr=True,
         )
     except subprocess.TimeoutExpired:
         return SessionToolProbe(
@@ -119,10 +113,9 @@ def _probe_command(spec: _CommandProbe) -> SessionToolProbe:
             status="error",
             source=spec.source,
         )
-    output = f"{result.stdout[:2048]}\n{result.stderr[:2048]}"
     return SessionToolProbe(
-        available=result.returncode == 0,
-        status="available" if result.returncode == 0 else "error",
+        available=returncode == 0,
+        status="available" if returncode == 0 else "error",
         version=_extract_version(output),
         source=spec.source,
     )

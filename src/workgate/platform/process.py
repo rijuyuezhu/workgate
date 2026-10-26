@@ -5,6 +5,9 @@ Job Objects before receiving permission to execute.
 """
 
 import asyncio
+import subprocess
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from .host import HostOS, host_os
@@ -13,6 +16,34 @@ from .host import HostOS, host_os
 def noninteractive_creationflags(*, system: str | None = None) -> int:
     """Suppress visible Windows consoles for captured, non-interactive tools."""
     return 0x08000000 if host_os(system) is HostOS.WINDOWS else 0
+
+
+def run_bounded_capture(
+    command: list[str],
+    *,
+    timeout: float,
+    cwd: Path | None = None,
+    include_stderr: bool = False,
+) -> tuple[int, str]:
+    """Capture bounded helper output without Windows' timeout-unsafe pipe readers.
+
+    On Windows, subprocess.run(capture_output=True) can wait indefinitely in
+    communicate() after a timeout when a descendant retains a pipe handle.
+    A temporary file avoids pipe EOF dependencies without a new process manager.
+    """
+    with tempfile.TemporaryFile() as output:
+        result = subprocess.run(
+            command,
+            cwd=cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=output,
+            stderr=subprocess.STDOUT if include_stderr else subprocess.DEVNULL,
+            timeout=timeout,
+            check=False,
+            creationflags=noninteractive_creationflags(),
+        )
+        output.seek(0)
+        return result.returncode, output.read(65536).decode("utf-8", "replace")
 
 
 def new_process_group_kwargs(*, system: str | None = None) -> dict[str, Any]:
