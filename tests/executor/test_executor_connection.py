@@ -107,7 +107,7 @@ class _ScriptedReconnectClient(_BaseFakeClient):
 
 
 async def _exercise_reconnect(
-    poll_outcomes: tuple[ExecutorControlError | None, ...],
+    poll_outcomes: tuple[Exception | None, ...],
 ) -> tuple[_ScriptedReconnectClient, list[float]]:
     retry_sleeps: list[float] = []
 
@@ -377,9 +377,76 @@ async def test_non_authoritative_resource_inventory_retries_before_hello() -> (
 
 
 @pytest.mark.asyncio
-async def test_unexpected_local_reconnect_failure_requires_owner_action() -> (
+async def test_transient_local_hello_timeout_retries_before_connecting() -> (
     None
 ):
+    connected = asyncio.Event()
+    retry_sleeps: list[float] = []
+    factory_calls = 0
+
+    class Client(_BaseFakeClient):
+        async def hello(
+            self, message: ExecutorHelloRequest
+        ) -> ExecutorHelloResponse:
+            connected.set()
+            return _policy()
+
+        async def heartbeat(self) -> None:
+            return None
+
+        async def poll(self, *, timeout_s: float) -> ExecutorCommand | None:
+            await asyncio.Event().wait()
+            return None
+
+        async def submit_result(self, result: ExecutorResult) -> None:
+            raise AssertionError("no result expected")
+
+    def hello_factory() -> ExecutorHelloRequest:
+        nonlocal factory_calls
+        factory_calls += 1
+        if factory_calls == 1:
+            raise TimeoutError("temporary inventory I/O timeout")
+        return _hello()
+
+    async def yielding_sleep(delay: float) -> None:
+        retry_sleeps.append(delay)
+        await asyncio.sleep(0)
+
+    connection = ExecutorConnection(
+        Client(),
+        hello_factory=hello_factory,
+        execute=lambda command: None,
+        max_concurrent_commands=1,
+        sleep=yielding_sleep,
+        random_value=lambda: 0.5,
+    )
+    connection.start()
+    try:
+        await asyncio.wait_for(connected.wait(), timeout=0.5)
+        assert factory_calls == 2
+        assert retry_sleeps == [0.5]
+        assert connection.owner_action_error is None
+    finally:
+        await connection.aclose()
+
+
+@pytest.mark.asyncio
+async def test_transient_local_poll_disconnect_retries_with_bounded_backoff() -> (
+    None
+):
+    client, retry_sleeps = await _exercise_reconnect(
+        (ConnectionResetError("temporary local socket loss"), TimeoutError())
+    )
+    assert client.hello_calls == 3
+    assert client.poll_calls == 3
+    assert retry_sleeps == [0.5, 1.0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_type", [RuntimeError, PermissionError])
+async def test_unexpected_local_reconnect_failure_requires_owner_action(
+    error_type: type[Exception],
+) -> None:
     class FakeClient(_BaseFakeClient):
         async def hello(
             self, message: ExecutorHelloRequest
@@ -398,7 +465,7 @@ async def test_unexpected_local_reconnect_failure_requires_owner_action() -> (
             raise AssertionError("result must not submit")
 
     async def hello_factory() -> ExecutorHelloRequest:
-        raise RuntimeError("corrupt durable job inventory")
+        raise error_type("corrupt durable job inventory")
 
     connection = ExecutorConnection(
         FakeClient(),
@@ -412,7 +479,9 @@ async def test_unexpected_local_reconnect_failure_requires_owner_action() -> (
             connection.wait_owner_action(), timeout=0.5
         )
         assert "executor connection failed locally" in str(error)
-        assert "RuntimeError: corrupt durable job inventory" in str(error)
+        assert f"{error_type.__name__}: corrupt durable job inventory" in str(
+            error
+        )
     finally:
         await connection.aclose()
 
