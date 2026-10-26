@@ -444,13 +444,11 @@ def test_windows_paths_case_insensitive(native_switch, switcher):
     os.name != "nt", reason="requires native Windows .cmd path rules"
 )
 def test_native_windows_parses_prepared_managed_cmd(tmp_path, switcher):
-    from prepare import _write_launcher
-
     root = tmp_path / "root with spaces"
     python = root / "versions" / ("a" * 40) / ".venv" / "Scripts" / "python.exe"
     python.parent.mkdir(parents=True)
     python.touch()
-    _write_launcher(root, python)
+    switcher._write_launcher(root, python)
     assert switcher._old_python(root) == python
     (root / "bin/workgate.cmd").write_text(
         "@echo off\r\nrem unrelated\r\nexit\r\n"
