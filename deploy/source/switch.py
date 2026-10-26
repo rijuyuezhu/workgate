@@ -375,6 +375,16 @@ def switch(
         )
         return
 
+    if (
+        role == "control"
+        and not (
+            new_python.parents[2] / "src/workgate/control/service.py"
+        ).is_file()
+    ):
+        raise RuntimeError(
+            "staged Control release lacks native service installation support"
+        )
+
     try:
         _install(new_python, role, config, paired_config)
         if not _matches(_native(role), unit, new_command):

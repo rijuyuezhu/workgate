@@ -45,6 +45,9 @@ def staged(tmp_path, switcher, monkeypatch):
     git("config", "user.email", "test@invalid.example")
     git("config", "user.name", "Test")
     (origin / ".gitignore").write_text(".venv/\n")
+    service = origin / "src/workgate/control/service.py"
+    service.parent.mkdir(parents=True)
+    service.write_text("# Test release with native Control service support\n")
     checkout = {}
     for version in ("v5.0.0a5", "v5.0.0a6"):
         (origin / "uv.lock").write_text("version = 1\n")
@@ -154,6 +157,57 @@ def test_switch_uses_only_prepared_version_and_preserves_config(
     switcher.switch(root=root, tag="v5.0.0a5", control_config=config)
     assert state["calls"][-1] == checkouts["v5.0.0a5"]
     assert switcher._old_python(root) == checkouts["v5.0.0a5"]
+
+
+def test_control_rejects_older_tag_without_native_service_before_restart(
+    staged, switcher, monkeypatch
+):
+    root, config, _, state = staged
+    origin = Path(switcher.REPOSITORY)
+    (origin / "src/workgate/control/service.py").unlink()
+    (origin / "pyproject.toml").write_text(
+        "[project]\nname='workgate'\nversion='5.0.0a4'\n"
+    )
+    subprocess.run(["git", "add", "-A"], cwd=origin, check=True)
+    subprocess.run(["git", "commit", "-qm", "legacy"], cwd=origin, check=True)
+    subprocess.run(["git", "tag", "v5.0.0a4"], cwd=origin, check=True)
+    sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=origin, text=True
+    ).strip()
+    checkout = root / "versions" / sha
+    subprocess.run(
+        [
+            "git",
+            "clone",
+            "-q",
+            "--branch",
+            "v5.0.0a4",
+            str(origin),
+            str(checkout),
+        ],
+        check=True,
+    )
+    python = switcher._python(checkout)
+    python.parent.mkdir(parents=True)
+    python.touch()
+    original_run = switcher._run
+
+    def run(*args, cwd=None):
+        if args[0] == str(python) and args[1:4] == (
+            "-m",
+            "workgate.main",
+            "--version",
+        ):
+            return "workgate 5.0.0a4"
+        return original_run(*args, cwd=cwd)
+
+    monkeypatch.setattr(switcher, "_run", run)
+    before = (root / "bin/workgate").read_bytes()
+
+    with pytest.raises(RuntimeError, match="lacks native service"):
+        switcher.switch(root=root, tag="v5.0.0a4", control_config=config)
+    assert state["calls"] == []
+    assert (root / "bin/workgate").read_bytes() == before
 
 
 @pytest.mark.parametrize(
