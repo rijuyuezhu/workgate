@@ -281,6 +281,13 @@ class ExecutorConnection:
             except ExecutorResourceInventoryUnavailable:
                 await self._sleep(self._retry_delay(attempt))
                 attempt += 1
+            except ConnectionError, TimeoutError, InterruptedError:
+                # A transient local I/O failure must not leave a managed
+                # executor alive but permanently disconnected.
+                if delivery_progress.is_set():
+                    attempt = 0
+                await self._sleep(self._retry_delay(attempt))
+                attempt += 1
             except ExecutorControlError as exc:
                 reconnectable = (
                     exc.retryable
