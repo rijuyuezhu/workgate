@@ -73,7 +73,7 @@ automatic service upgrade or rollback. Use the role's native service commands
 for an explicitly coordinated cutover; do not rerun `uv sync` against a
 checkout currently used by an active service.
 
-## Explicit staged Linux Control / Colocate cutover
+## Explicit staged Linux Control / Colocate / Executor cutover
 
 Once a newer version has been prepared with `--no-activate-launcher`, switch
 a **managed Linux Control or Colocate** service explicitly, without another `uv sync`:
@@ -97,21 +97,36 @@ sh deploy/source/switch.sh --role colocate --tag vRELEASE \
 ```
 
 
+For an existing **standalone, paired Linux Executor**, using its current durable
+Executor YAML and retained identity (no new pairing):
+
+```sh
+sh deploy/source/prepare.sh --role executor --tag vRELEASE --no-activate-launcher
+sh deploy/source/switch.sh --role executor --tag vRELEASE \
+  --install-root "$HOME/.local/opt/workgate" \
+  --executor-config "$HOME/.config/workgate/executor/config.yaml"
+```
+
+Executor cutover checks the old active native systemd service, generated
+launcher, saved source runtime status, and unchanged profile credentials and
+state directory. It uses only `executor install-service` to replace the native
+service, not `setup` or `connect`. Failed activation triggers an attempt to
+restore the previous version; it reports an error if paired identity changes.
+
 Supply the actual published tag and your existing install/config paths. The
 switch requires an already-running, correctly bound managed service
-and a prepared checkout from the official repository. It reuses the native
-`control/colocate install-service` and leaves both YAML configs, pairing state
-and prior checkout in place.
+and a prepared checkout from the official repository. It reuses the native role's `install-service` and leaves the durable YAML
+configs, pairing state, and prior checkout in place.
 If native activation fails, it attempts to restore the previous service and
 stable CLI, reporting an error if recovery also fails. To roll back explicitly,
 run the same `switch.sh` command using the previously prepared release tag.
 A same-release switch is a no-op, not a restart.
 
-The current cutover path is **Linux Control/Colocate only** and checks the
-native systemd active state, not HTTP/WebUI or Executor connection health.
-Verify the application after switching. Standalone Executor, Windows and
-full cross-platform rollback acceptance remain under #456. Existing user-owned installations are not
-adopted automatically.
+This cutover supports **Linux Control, Colocate, and standalone Executor**.
+It checks native systemd active state, not HTTP/WebUI health or Executor
+connectivity. Verify the application after switching. Windows and full
+real-release rollback acceptance remain under #456. Existing unmanaged
+installations are not adopted automatically.
 
 ## Public GitHub bootstrap, pinned to a release commit
 
