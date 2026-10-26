@@ -3,7 +3,9 @@
 from typing import Any
 
 from ...config.executor import ExecutorConfig
+from ...jobs.persistence import TERMINAL_STATUSES
 from ...jobs.state import CONFIRMED_TERMINAL_STATUSES
+from ...platform.host import HostOS, host_os
 from ...protocol.executor import JobInventorySummary
 from ...schemas.result_models.jobs import (
     JobListOutput,
@@ -113,6 +115,16 @@ class ExecutorJobService:
             row.status not in CONFIRMED_TERMINAL_STATUSES for row in jobs
         ):
             return jobs, shell_ids
+        # Windows ConPTY shells are process-owned: after service restart no
+        # old shell can survive. Do not lock every historical session merely
+        # to recheck already terminal (including lost) jobs during first hello.
+        if host_os() is HostOS.WINDOWS and all(
+            row.status in TERMINAL_STATUSES for row in jobs
+        ):
+            from ...platform.windows_conpty import conpty_registry
+
+            if not conpty_registry().active():
+                return jobs, shell_ids
         if not await self.reconcile():
             raise ExecutorResourceInventoryUnavailable(
                 "background job inventory is currently non-authoritative"
