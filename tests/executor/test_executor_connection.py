@@ -1035,3 +1035,138 @@ async def test_blocked_runtime_policy_quiesces_without_requesting_restart() -> (
         assert connection.restart_requested is False
     finally:
         await connection.aclose()
+
+
+@pytest.mark.asyncio
+async def test_connection_status_callback_tracks_retry_and_recovery() -> None:
+    observed: list[tuple[str, str | None]] = []
+    reached_poll = asyncio.Event()
+
+    class Client(_BaseFakeClient):
+        hello_calls = 0
+
+        async def hello(
+            self, message: ExecutorHelloRequest
+        ) -> ExecutorHelloResponse:
+            self.hello_calls += 1
+            if self.hello_calls == 1:
+                raise ConnectionResetError("transient")
+            return _policy()
+
+        async def heartbeat(self) -> None:
+            return None
+
+        async def poll(self, *, timeout_s: float) -> ExecutorCommand | None:
+            reached_poll.set()
+            await asyncio.Event().wait()
+            return None
+
+        async def submit_result(self, result: ExecutorResult) -> None:
+            raise AssertionError("no result expected")
+
+    async def yielding_sleep(delay: float) -> None:
+        if delay == 1.0:
+            await asyncio.Event().wait()
+        await asyncio.sleep(0)
+
+    client = Client()
+    connection = ExecutorConnection(
+        client,
+        hello_factory=_hello,
+        execute=lambda command: None,
+        max_concurrent_commands=1,
+        sleep=yielding_sleep,
+        random_value=lambda: 0.5,
+        status_callback=lambda phase, reason: observed.append((phase, reason)),
+    )
+    connection.start()
+    try:
+        await asyncio.wait_for(reached_poll.wait(), timeout=0.5)
+        assert observed[:3] == [
+            ("reconnecting", None),
+            ("reconnecting", "ConnectionResetError"),
+            ("connected", None),
+        ]
+    finally:
+        await connection.aclose()
+    assert observed[-1] == ("connected", None)
+
+
+@pytest.mark.asyncio
+async def test_connection_status_preserves_revoked_credential_action() -> None:
+    observed: list[tuple[str, str | None]] = []
+
+    class Client(_BaseFakeClient):
+        async def hello(
+            self, message: ExecutorHelloRequest
+        ) -> ExecutorHelloResponse:
+            raise _protocol_error(
+                ProtocolErrorCode.EXECUTOR_REVOKED, status=403
+            )
+
+        async def heartbeat(self) -> None:
+            raise AssertionError("revoked executor must not heartbeat")
+
+        async def poll(self, *, timeout_s: float) -> ExecutorCommand | None:
+            raise AssertionError("revoked executor must not poll")
+
+        async def submit_result(self, result: ExecutorResult) -> None:
+            raise AssertionError("no result expected")
+
+    connection = ExecutorConnection(
+        Client(),
+        hello_factory=_hello,
+        execute=lambda command: None,
+        max_concurrent_commands=1,
+        status_callback=lambda phase, reason: observed.append((phase, reason)),
+    )
+    connection.start()
+    try:
+        await asyncio.wait_for(connection.wait_owner_action(), timeout=0.5)
+    finally:
+        await connection.aclose()
+    assert observed == [
+        ("reconnecting", None),
+        ("action-required", "executor_revoked"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_status_callback_failure_cannot_disable_executor_connection() -> (
+    None
+):
+    reached_poll = asyncio.Event()
+
+    class Client(_BaseFakeClient):
+        async def hello(
+            self, message: ExecutorHelloRequest
+        ) -> ExecutorHelloResponse:
+            return _policy()
+
+        async def heartbeat(self) -> None:
+            return None
+
+        async def poll(self, *, timeout_s: float) -> ExecutorCommand | None:
+            reached_poll.set()
+            await asyncio.Event().wait()
+            return None
+
+        async def submit_result(self, result: ExecutorResult) -> None:
+            raise AssertionError("no result expected")
+
+    def bad_diagnostic(_phase: str, _reason: str | None) -> None:
+        raise RuntimeError("status writer unexpectedly failed")
+
+    connection = ExecutorConnection(
+        Client(),
+        hello_factory=_hello,
+        execute=lambda command: None,
+        max_concurrent_commands=1,
+        status_callback=bad_diagnostic,
+    )
+    connection.start()
+    try:
+        await asyncio.wait_for(reached_poll.wait(), timeout=0.5)
+        assert connection.owner_action_error is None
+    finally:
+        await connection.aclose()

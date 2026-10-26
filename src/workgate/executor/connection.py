@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import random
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from enum import StrEnum
 from typing import Any, Protocol
 
@@ -19,6 +20,7 @@ from ..protocol.executor import (
     OperationError,
 )
 from ..utils.serialization import to_jsonable
+from .connection_status import ConnectionPhase
 from .control_client import ExecutorControlClient, ExecutorControlError
 from .errors import (
     ExecutorOperationFailure,
@@ -64,6 +66,7 @@ type HelloFactory = Callable[
     [], ExecutorHelloRequest | Awaitable[ExecutorHelloRequest]
 ]
 type Sleep = Callable[[float], Awaitable[None]]
+type ConnectionStatusCallback = Callable[[ConnectionPhase, str | None], None]
 
 
 class RuntimePolicyAction(StrEnum):
@@ -166,6 +169,7 @@ class ExecutorConnection:
         runtime_policy_handler: RuntimePolicyHandler | None = None,
         sleep: Sleep = asyncio.sleep,
         random_value: Callable[[], float] = random.random,
+        status_callback: ConnectionStatusCallback | None = None,
     ) -> None:
         if max_concurrent_commands < 1:
             raise ValueError("max_concurrent_commands must be at least one")
@@ -176,6 +180,7 @@ class ExecutorConnection:
         self._runtime_policy_handler = runtime_policy_handler
         self._sleep = sleep
         self._random_value = random_value
+        self._status_callback = status_callback
         self._stop = asyncio.Event()
         self._owner_action = asyncio.Event()
         self._first_hello = asyncio.Event()
@@ -197,6 +202,7 @@ class ExecutorConnection:
         execute: CommandExecutor,
         max_concurrent_commands: int,
         runtime_policy_handler: RuntimePolicyHandler | None = None,
+        status_callback: ConnectionStatusCallback | None = None,
     ) -> ExecutorConnection:
         """Construct the normal production connection without extra abstractions."""
         return cls(
@@ -205,6 +211,7 @@ class ExecutorConnection:
             execute=execute,
             max_concurrent_commands=max_concurrent_commands,
             runtime_policy_handler=runtime_policy_handler,
+            status_callback=status_callback,
         )
 
     @property
@@ -222,6 +229,7 @@ class ExecutorConnection:
     def start(self) -> None:
         if self._main_task is not None:
             raise RuntimeError("executor connection is already running")
+        self._report_status("reconnecting")
         self._main_task = asyncio.create_task(
             self.run_forever(), name="workgate-executor-connection"
         )
@@ -272,16 +280,22 @@ class ExecutorConnection:
                         self._owner_action.set()
                         break
                     if action is RuntimePolicyAction.BLOCK:
+                        self._report_status(
+                            "action-required", "RuntimePolicyBlock"
+                        )
                         await self._stop.wait()
                         break
+                self._report_status("connected")
                 self._first_hello.set()
                 await self._run_connected(
                     policy, delivery_progress=delivery_progress
                 )
-            except ExecutorResourceInventoryUnavailable:
+            except ExecutorResourceInventoryUnavailable as exc:
+                self._report_status("reconnecting", type(exc).__name__)
                 await self._sleep(self._retry_delay(attempt))
                 attempt += 1
-            except ConnectionError, TimeoutError, InterruptedError:
+            except (ConnectionError, TimeoutError, InterruptedError) as exc:
+                self._report_status("reconnecting", type(exc).__name__)
                 # A transient local I/O failure must not leave a managed
                 # executor alive but permanently disconnected.
                 if delivery_progress.is_set():
@@ -296,6 +310,7 @@ class ExecutorConnection:
                 if exc.requires_owner_action or not reconnectable:
                     self._require_owner_action(exc)
                     break
+                self._report_status("reconnecting", type(exc).__name__)
                 # A duplicate-poll 409 is request-level non-retryable but can be a
                 # transient reconnect overlap while control's previous poll unwinds.
                 if delivery_progress.is_set():
@@ -363,11 +378,14 @@ class ExecutorConnection:
                 return
             try:
                 await self._client.heartbeat()
+                if self._owner_action_error is None:
+                    self._report_status("connected")
                 attempt = 0
             except ExecutorControlError as exc:
                 if not exc.retryable:
                     self._require_owner_action(exc)
                     return
+                self._report_status("reconnecting", type(exc).__name__)
                 await self._sleep(self._retry_delay(attempt))
                 attempt += 1
 
@@ -544,6 +562,7 @@ class ExecutorConnection:
         self._owner_action_error = ExecutorOwnerActionRequired(
             f"executor connection requires owner action: {code}"
         )
+        self._report_status("action-required", code)
         self._owner_action.set()
 
     def _require_local_owner_action(self, exc: Exception) -> None:
@@ -554,7 +573,18 @@ class ExecutorConnection:
             "executor connection failed locally: "
             f"{type(exc).__name__}: {message[:500]}"
         )
+        self._report_status("action-required", type(exc).__name__)
         self._owner_action.set()
+
+    def _report_status(
+        self, phase: ConnectionPhase, error_class: str | None = None
+    ) -> None:
+        callback = self._status_callback
+        if callback is None:
+            return
+        # Diagnostic persistence must never prevent Control reconnection.
+        with suppress(Exception):
+            callback(phase, error_class)
 
     def _retry_delay(self, attempt: int) -> float:
         return executor_retry_delay(attempt, self._random_value())
