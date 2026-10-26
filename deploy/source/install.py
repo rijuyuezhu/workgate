@@ -6,8 +6,12 @@ to avoid silently losing GUI/S3 extras when starting a service.
 
 import argparse
 import contextlib
+import hashlib
+import json
 import os
 import subprocess
+import sys
+import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -174,6 +178,164 @@ def _check_native_services(
             )
 
 
+def _install_fingerprint(role: str, tag: str, options: dict) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            {"role": role, "tag": tag, "options": options},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _check_install_receipt(root: Path) -> None:
+    path = root / "install.json"
+    if path.is_symlink():
+        raise RuntimeError("refusing to replace a symlinked install receipt")
+    if not path.exists():
+        return
+    try:
+        existing = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(
+            "refusing to replace unknown install receipt"
+        ) from exc
+    if (
+        not isinstance(existing, dict)
+        or set(existing) != {"role", "tag", "fingerprint"}
+        or not isinstance(existing["role"], str)
+        or not isinstance(existing["tag"], str)
+        or not isinstance(existing["fingerprint"], str)
+    ):
+        raise RuntimeError("refusing to replace unknown install receipt")
+
+
+def _record_install(root: Path, role: str, tag: str, fingerprint: str) -> None:
+    """One small receipt for safe exact-argument reruns, not a config registry."""
+    path = root / "install.json"
+    _check_install_receipt(root)
+    payload = json.dumps(
+        {"role": role, "tag": tag, "fingerprint": fingerprint},
+        sort_keys=True,
+    )
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=root,
+        prefix=".install-",
+        delete=False,
+    ) as output:
+        scratch = Path(output.name)
+        output.write(payload + "\n")
+    try:
+        os.chmod(scratch, 0o600)
+        os.replace(scratch, path)
+    finally:
+        scratch.unlink(missing_ok=True)
+
+
+def _same_install(
+    root: Path,
+    role: str,
+    tag: str,
+    fingerprint: str,
+    expected_commit: str | None,
+    executor_config: Path | None,
+) -> Path | None:
+    """Only a verified, still-running pinned native service may be a no-op."""
+    receipt = root / "install.json"
+    if not receipt.is_file() or receipt.is_symlink():
+        return None
+    try:
+        record = json.loads(receipt.read_text(encoding="utf-8"))
+    except OSError, ValueError:
+        return None
+    if record != {"role": role, "tag": tag, "fingerprint": fingerprint}:
+        return None
+
+    if sys.platform == "win32":
+        from switch_windows import _native, _old_python, _same_path
+
+        python = _old_python(root)
+    elif sys.platform == "linux":
+        from switch import _native, _old_python
+
+        python = _old_python(root)
+    else:
+        return None
+    from switch import _staged_python
+
+    if python != _staged_python(root, tag):
+        return None
+    checkout = python.parents[2]
+    if expected_commit is not None and checkout.name != expected_commit:
+        raise RuntimeError(
+            "existing source release does not match pinned commit"
+        )
+
+    if sys.platform == "win32":
+        native = _native(python, role)
+        action = native.get("action")
+        if native.get("state", "").lower() != "running" or not isinstance(
+            action, dict
+        ):
+            return None
+        directory = Path(str(action.get("working_directory", "")))
+        launcher = directory / "launcher.py"
+        if (
+            directory.name != "service"
+            or directory.parent.name != role
+            or not launcher.is_file()
+            or not _same_path(
+                str(action.get("execute", "")),
+                str(python.with_name("pythonw.exe")),
+            )
+            or action.get("arguments")
+            != subprocess.list2cmdline([str(launcher)])
+        ):
+            return None
+    else:
+        native = _native(role)
+        fragment = Path(native.get("FragmentPath", ""))
+        expected = f"{{ path={python} ; argv[]={python} "
+        if (
+            native.get("LoadState") != "loaded"
+            or native.get("ActiveState") != "active"
+            or not fragment.is_file()
+            or fragment.is_symlink()
+            or fragment.name != f"workgate-{role}.service"
+            or fragment.parent.name != "user"
+            or fragment.parent.parent.name != "systemd"
+            or not native.get("ExecStart", "").startswith(expected)
+            or native.get("ExecStart", "").count("{ path=") != 1
+            or (
+                role in {"control", "colocate"}
+                and not fragment.read_text(encoding="utf-8").startswith(
+                    f"# Managed by workgate {role} install-service"
+                )
+            )
+        ):
+            return None
+
+    if role == "executor":
+        command = [str(python), "-m", "workgate.main", "executor", "status"]
+        if executor_config is not None:
+            command.extend(["--config", str(executor_config)])
+        status = subprocess.run(
+            command,
+            cwd=checkout,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if "State: running" not in status.stdout.splitlines() or (
+            "Runtime: current" not in status.stdout.splitlines()
+        ):
+            return None
+    return checkout
+
+
 def install(
     *,
     role: str,
@@ -211,7 +373,33 @@ def install(
         base_url=base_url,
     )
     root = root.expanduser().absolute()
+    options = {
+        "control_url": control_url,
+        "name": name,
+        "control_config": str(control_config) if control_config else None,
+        "executor_config": str(executor_config) if executor_config else None,
+        "host": host,
+        "port": port,
+        "base_url": base_url,
+        "arm64_wheel": arm64_wheel,
+        "arm64_wheel_sha256": arm64_wheel_sha256,
+    }
+    fingerprint = _install_fingerprint(role, tag, options)
     _check_launcher(root)
+    _check_install_receipt(root)
+    receipt = root / "install.json"
+    if receipt.is_file():
+        installed_role = json.loads(receipt.read_text(encoding="utf-8"))["role"]
+        if installed_role != role:
+            raise RuntimeError(
+                "install root already belongs to another role; use a separate root"
+            )
+    existing = _same_install(
+        root, role, tag, fingerprint, expected_commit, executor_config
+    )
+    if existing is not None:
+        print(f"Workgate {role} already installed at {existing}; no restart")
+        return existing
     existing_launcher = (
         root / "bin" / ("workgate.cmd" if os.name == "nt" else "workgate")
     )
@@ -241,7 +429,8 @@ def install(
             check=True,
             cwd=checkout,
         )
-    launcher = _write_launcher(root.expanduser().absolute(), executable)
+    launcher = _write_launcher(root, executable)
+    _record_install(root, role, tag, fingerprint)
     print(
         f"Workgate {role} initialized using verified source checkout: {checkout}"
     )

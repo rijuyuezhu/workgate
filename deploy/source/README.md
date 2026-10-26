@@ -49,9 +49,21 @@ or upgrade** if the target role (or a conflicting Colocate service) is already
 installed, including stopped services. When a managed launcher already exists,
 its service status is checked before cloning or syncing a new checkout. Older
 launchers without status support fall back to the check using the prepared CLI.
-In either case, the existing service and stable CLI stay untouched on refusal. The caller must explicitly manage an existing deployment using
-its normal CLI. Safe no-op reinstallation, migration and rolling upgrade /
-rollback remain separate #456 acceptance work.
+New installs also write a small private `install.json` receipt in the
+managed installation root (only role, release tag and a hash of install flags).
+Repeating the **identical** install command is a no-op without `uv sync`,
+pairing or service restart when the pinned checkout, stable command and native
+running service still agree. Changes to role, tag or installation arguments,
+stale/stopped services, missing/malformed receipts and pre-existing installs
+from earlier releases are **not** silently accepted as a no-op. In those
+cases the existing native-service refusal stays intact; use an explicit
+staged upgrade/cutover when appropriate. The receipt contains no credentials
+and is never sufficient on its own to claim a healthy native service.
+No-op behavior does not claim that the Executor is currently connected.
+
+The existing service and stable CLI stay untouched on refusal. Use the
+existing role service commands for explicit changes; new-version migration,
+rolling upgrade and rollback remain separate #456 acceptance work.
 
 ## Stage a release without switching the running installation
 
