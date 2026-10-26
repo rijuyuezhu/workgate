@@ -85,7 +85,6 @@ class ExecutorServiceStatus:
     service_file: str | None = None
     log_path: str | None = None
     runtime_current: bool = False
-    connection_detail: str | None = None
     runtime_ownership: ExecutorRuntimeOwnership = (
         ExecutorRuntimeOwnership.UNKNOWN
     )
@@ -94,6 +93,7 @@ class ExecutorServiceStatus:
     )
     runtime_update_target_version: str | None = None
     runtime_update_detail: str | None = None
+    connection_detail: str | None = None
 
 
 class UnsupportedExecutorServiceError(RuntimeError):
