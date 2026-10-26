@@ -190,6 +190,8 @@ def _print_service_status(status: ExecutorServiceStatus) -> None:
         print(f"Service: {status.service_file}")
     if status.log_path:
         print(f"Log: {status.log_path}")
+    if status.running:
+        print(f"Connection: {status.connection_detail or 'unknown'}")
     print(f"Runtime owner: {status.runtime_ownership.value}")
     if status.state != ExecutorServiceState.NOT_INSTALLED:
         print(

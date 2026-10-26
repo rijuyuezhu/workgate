@@ -85,6 +85,7 @@ class ExecutorServiceStatus:
     service_file: str | None = None
     log_path: str | None = None
     runtime_current: bool = False
+    connection_detail: str | None = None
     runtime_ownership: ExecutorRuntimeOwnership = (
         ExecutorRuntimeOwnership.UNKNOWN
     )
@@ -772,6 +773,7 @@ class ExecutorServiceManager:
             self.launcher_path,
             self.metadata_path,
             self.state_store.layout.executor_runtime_path,
+            self.state_store.layout.executor_dir / "connection.json",
             self.log_path,
         ):
             path.unlink(missing_ok=True)
@@ -1190,11 +1192,19 @@ class ExecutorServiceManager:
             status = self._launchd_status(self.launchd_plist_path)
         else:
             status = self._windows_status()
+        from .connection_status import ExecutorConnectionStatusStore
+
+        connection_detail = (
+            ExecutorConnectionStatusStore(self.state_store).describe()
+            if status.running
+            else None
+        )
         runtime = ExecutorRuntimeStateStore(self.state_store).load()
         if runtime is None:
-            return status
+            return replace(status, connection_detail=connection_detail)
         return replace(
             status,
+            connection_detail=connection_detail,
             runtime_ownership=runtime.ownership,
             runtime_update_status=runtime.update_status,
             runtime_update_target_version=runtime.update_target_version,

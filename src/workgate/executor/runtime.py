@@ -249,12 +249,17 @@ class ExecutorRuntime:
                     executor_run_lock(self.services.state_store)
                 )
                 client = ExecutorControlClient(profile)
+                from .connection_status import ExecutorConnectionStatusStore
+
                 connection = ExecutorConnection.from_client(
                     client,
                     hello_factory=self._build_reconnect_hello,
                     execute=self._execute_protocol_command,
                     max_concurrent_commands=self.config.max_concurrent_commands,
                     runtime_policy_handler=self._handle_runtime_policy,
+                    status_callback=ExecutorConnectionStatusStore(
+                        self.services.state_store
+                    ).record,
                 )
                 connection.start()
         except BaseException:
