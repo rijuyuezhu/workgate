@@ -128,6 +128,35 @@ connectivity. Verify the application after switching. Windows and full
 real-release rollback acceptance remain under #456. Existing unmanaged
 installations are not adopted automatically.
 
+## Explicit staged Windows Control / Colocate cutover
+
+On Windows x64 or native ARM64, prepare a published source release **without
+activating it**, then explicitly switch an existing owned Task Scheduler service:
+
+```powershell
+.\deploy\source\prepare.ps1 -Role control -Tag vRELEASE -NoActivateLauncher
+.\deploy\source\switch.ps1 -Role control -Tag vRELEASE -ControlConfig "C:\path\to\control.yaml"
+```
+
+For a paired Colocate, use `-Role colocate` and also pass
+`-ExecutorConfig "C:\path\to\executor.yaml"` to `switch.ps1`. Both
+config paths must already exist and match the existing service launcher.
+Replace the example paths with your durable YAML files.
+
+The switch checks the previously managed `workgate.cmd`, the staged pinned
+release, the Task Scheduler task's owner, action and running state, and the
+actual `pythonw.exe`/launcher binding. It stops the old native task **before**
+installing and starting the new one, avoiding Windows' IgnoreNew behavior.
+After verifying the new task, it switches the stable command. Failure triggers
+an attempt to stop and restore the old task and command; an unchanged release
+is a no-op. Use the previous prepared tag for explicit rollback.
+
+Only Control and Colocate are supported by this Windows command. Standalone
+Executor, live connection health, and complete real-published-release
+acceptance remain under #456. No `uv sync` or dependency changes occur
+during cutover; do not run this against unmanaged or older source tasks whose
+native action binding cannot be verified.
+
 ## Public GitHub bootstrap, pinned to a release commit
 
 After a **new release contains these bootstrap files**, obtain the full
