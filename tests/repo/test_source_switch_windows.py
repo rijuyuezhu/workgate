@@ -1,0 +1,457 @@
+"""Windows staged source task cutover, with no live Task Scheduler mutations."""
+
+import importlib.util
+import os
+import subprocess
+from pathlib import Path
+
+import pytest
+
+
+@pytest.fixture
+def switcher(monkeypatch):
+    source = Path(__file__).resolve().parents[2] / "deploy" / "source"
+    monkeypatch.syspath_prepend(str(source))
+    spec = importlib.util.spec_from_file_location(
+        "wg_source_switch_windows", source / "switch_windows.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(module.sys, "platform", "win32")
+    for key in tuple(os.environ):
+        if key.startswith("WORKGATE_"):
+            monkeypatch.delenv(key)
+    return module
+
+
+@pytest.fixture
+def native_switch(tmp_path, switcher, monkeypatch):
+    root = tmp_path / "managed"
+    config = tmp_path / "control config.yaml"
+    config.write_text("mode: http\n")
+    executor = tmp_path / "executor config.yaml"
+    executor.write_text("state_dir: stable\n")
+
+    old = root / "versions" / ("a" * 40) / ".venv/Scripts/python.exe"
+    new = root / "versions" / ("b" * 40) / ".venv/Scripts/python.exe"
+    for executable in (old, new):
+        executable.parent.mkdir(parents=True)
+        executable.touch()
+        executable.with_name("pythonw.exe").touch()
+    state = {
+        "active": old,
+        "calls": [],
+        "stops": [],
+        "error_new": False,
+        "error_old": False,
+        "fail_stop": False,
+    }
+    state["role"] = "control"
+    state["config"] = config
+    state["executor"] = executor
+    state["root"] = root
+    state["old"] = old
+    state["new"] = new
+    service_dir = tmp_path / "control" / "service"
+    service_dir.mkdir(parents=True)
+    launcher = service_dir / "launcher.py"
+    state["directory"] = service_dir
+
+    def content():
+        if state["role"] == "control":
+            return f"main(['control', '--config', {str(config)!r}])\n"
+        return (
+            "main("
+            + repr(
+                [
+                    "colocate",
+                    "--control-config",
+                    str(config),
+                    "--executor-config",
+                    str(executor),
+                ]
+            )
+            + ")\n"
+        )
+
+    launcher.write_text(content())
+    state["content"] = content
+    native = {
+        "state": "Running",
+        "action": {
+            "execute": str(old.with_name("pythonw.exe")),
+            "arguments": subprocess.list2cmdline([str(launcher)]),
+            "working_directory": str(service_dir),
+        },
+    }
+    state["native"] = native
+    state["stable"] = old
+
+    def native_query(python, role):
+        assert role == state["role"]
+        return native
+
+    def install(python, role, control, extra):
+        assert role == state["role"]
+        assert control == config
+        assert extra == (executor if role == "colocate" else None)
+        state["calls"].append(python)
+        native["action"]["execute"] = str(python.with_name("pythonw.exe"))
+        native["state"] = "Running"
+        launcher.write_text(content())
+        state["active"] = python
+        if python == new and state["error_new"]:
+            raise RuntimeError("simulated failed new task")
+        if python == old and state["error_old"]:
+            raise RuntimeError("simulated failed recovery")
+
+    def stable_writer(directory, python):
+        assert directory == root
+        state["stable"] = python
+
+    def stop(python, role):
+        assert role == state["role"]
+        state["stops"].append(python)
+        if not state["fail_stop"]:
+            native["state"] = "Ready"
+
+    state["native_query_impl"] = switcher._native
+    state["stop_impl"] = switcher._stop
+    state["install_impl"] = switcher._install
+    monkeypatch.setattr(switcher, "_stop", stop)
+    monkeypatch.setattr(switcher, "_old_python", lambda _: state["stable"])
+    monkeypatch.setattr(
+        switcher,
+        "_staged_python",
+        lambda _root, tag: new if tag == "v5.0.0a6" else old,
+    )
+    monkeypatch.setattr(switcher, "_native", native_query)
+    monkeypatch.setattr(switcher, "_install", install)
+    monkeypatch.setattr(switcher, "_write_launcher", stable_writer)
+    return state
+
+
+@pytest.mark.parametrize("role", ["control", "colocate"])
+def test_windows_switch_noop_rollback_and_existing_configs(
+    native_switch, switcher, role
+):
+    state = native_switch
+    state["role"] = role
+    if role == "colocate":
+        relocated = state["directory"].parent.parent / "colocate" / "service"
+        relocated.mkdir(parents=True)
+        (relocated / "launcher.py").write_text(state["content"]())
+        state["directory"] = relocated
+        state["native"]["action"]["working_directory"] = str(relocated)
+        state["native"]["action"]["arguments"] = subprocess.list2cmdline(
+            [str(relocated / "launcher.py")]
+        )
+    kwargs = {
+        "root": state["root"],
+        "role": role,
+        "control_config": state["config"],
+        "service_dir": state["directory"],
+        "executor_config": state["executor"] if role == "colocate" else None,
+    }
+    before = (state["config"].read_bytes(), state["executor"].read_bytes())
+    switcher.switch(tag="v5.0.0a6", **kwargs)
+    assert state["stable"] == state["new"]
+    assert state["calls"] == [state["new"]]
+    switcher.switch(tag="v5.0.0a6", **kwargs)
+    assert state["calls"] == [state["new"]]
+    switcher.switch(tag="v5.0.0a5", **kwargs)
+    assert state["calls"][-1] == state["old"]
+    assert state["stable"] == state["old"]
+    assert before == (
+        state["config"].read_bytes(),
+        state["executor"].read_bytes(),
+    )
+
+
+def test_windows_failed_install_restores_old_task_and_stable_command(
+    native_switch, switcher
+):
+    state = native_switch
+    state["error_new"] = True
+    with pytest.raises(RuntimeError, match="previous task restored"):
+        switcher.switch(
+            root=state["root"],
+            tag="v5.0.0a6",
+            role="control",
+            control_config=state["config"],
+            service_dir=state["directory"],
+        )
+    assert state["calls"] == [state["new"], state["old"]]
+    assert state["stable"] == state["old"]
+    assert state["active"] == state["old"]
+
+
+def test_windows_failed_recovery_reports_both(native_switch, switcher):
+    state = native_switch
+    state["error_new"] = state["error_old"] = True
+    with pytest.raises(RuntimeError, match="recovery also failed"):
+        switcher.switch(
+            root=state["root"],
+            tag="v5.0.0a6",
+            role="control",
+            control_config=state["config"],
+            service_dir=state["directory"],
+        )
+    assert state["stable"] == state["old"]
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "missing-task",
+        "not-running",
+        "wrong-interpreter",
+        "wrong-launcher",
+        "wrong-working-directory",
+        "wrong-config",
+        "multiple-actions",
+    ],
+)
+def test_windows_refuses_unexpected_owned_task_action(
+    native_switch, switcher, monkeypatch, tamper
+):
+    state = native_switch
+    action = state["native"]["action"]
+    if tamper == "missing-task":
+        monkeypatch.setattr(switcher, "_native", lambda _python, _role: {})
+    elif tamper == "not-running":
+        state["native"]["state"] = "Ready"
+    elif tamper == "wrong-interpreter":
+        action["execute"] = "C:\\other\\pythonw.exe"
+    elif tamper == "wrong-launcher":
+        action["arguments"] = "other.py"
+    elif tamper == "wrong-working-directory":
+        action["working_directory"] = "C:\\other"
+    elif tamper == "wrong-config":
+        (state["directory"] / "launcher.py").write_text(
+            "main(['control', '--config', 'other.yaml'])"
+        )
+    else:
+        state["native"]["action"] = None
+    with pytest.raises(RuntimeError, match="expected one|bound to"):
+        switcher.switch(
+            root=state["root"],
+            tag="v5.0.0a6",
+            role="control",
+            control_config=state["config"],
+            service_dir=state["directory"],
+        )
+    assert state["calls"] == []
+    assert state["stable"] == state["old"]
+
+
+def test_windows_staged_version_requires_pythonw(native_switch, switcher):
+    state = native_switch
+    state["new"].with_name("pythonw.exe").unlink()
+    with pytest.raises(RuntimeError, match="pythonw.exe"):
+        switcher.switch(
+            root=state["root"],
+            tag="v5.0.0a6",
+            role="control",
+            control_config=state["config"],
+            service_dir=state["directory"],
+        )
+    assert state["calls"] == []
+
+
+def test_windows_excludes_standalone_executor_and_wrong_config(
+    native_switch, switcher
+):
+    state = native_switch
+    with pytest.raises(ValueError, match="Control and Colocate"):
+        switcher.switch(
+            root=state["root"],
+            tag="v5.0.0a6",
+            role="executor",
+            control_config=state["config"],
+            service_dir=state["directory"],
+        )
+    with pytest.raises(RuntimeError, match="durable YAML"):
+        switcher.switch(
+            root=state["root"],
+            tag="v5.0.0a6",
+            role="control",
+            control_config=state["config"],
+            executor_config=state["executor"],
+            service_dir=state["directory"],
+        )
+
+
+def test_windows_only(native_switch, switcher, monkeypatch):
+    state = native_switch
+    monkeypatch.setattr(switcher.sys, "platform", "linux")
+    with pytest.raises(RuntimeError, match="Windows Task Scheduler"):
+        switcher.switch(
+            root=state["root"],
+            tag="v5.0.0a6",
+            role="control",
+            control_config=state["config"],
+            service_dir=state["directory"],
+        )
+
+
+def test_windows_stops_old_task_before_install_and_stops_new_on_recovery(
+    native_switch, switcher, monkeypatch
+):
+    state = native_switch
+    state["error_new"] = True
+    seen = []
+
+    def stop(python, role):
+        seen.append(("stop", python))
+        state["native"]["state"] = "Ready"
+
+    old_install = switcher._install
+
+    def install(python, role, control, executor):
+        seen.append(("install", python))
+        old_install(python, role, control, executor)
+
+    monkeypatch.setattr(switcher, "_stop", stop)
+    monkeypatch.setattr(switcher, "_install", install)
+    with pytest.raises(RuntimeError, match="previous task restored"):
+        switcher.switch(
+            root=state["root"],
+            tag="v5.0.0a6",
+            role="control",
+            control_config=state["config"],
+            service_dir=state["directory"],
+        )
+    assert seen == [
+        ("stop", state["old"]),
+        ("install", state["new"]),
+        ("stop", state["old"]),
+        ("install", state["old"]),
+    ]
+
+
+def test_windows_refuses_to_install_if_task_wont_stop(native_switch, switcher):
+    state = native_switch
+    state["fail_stop"] = True
+    with pytest.raises(RuntimeError, match="recovery also failed"):
+        switcher.switch(
+            root=state["root"],
+            tag="v5.0.0a6",
+            role="control",
+            control_config=state["config"],
+            service_dir=state["directory"],
+        )
+    assert state["calls"] == []
+    assert state["stable"] == state["old"]
+
+
+@pytest.mark.parametrize(
+    "case", ["not-running", "wrong-python", "wrong-config"]
+)
+def test_windows_new_native_task_must_activate_or_rollback(
+    native_switch, switcher, monkeypatch, case
+):
+    state = native_switch
+    original_install = switcher._install
+
+    def install(python, role, config, executor):
+        original_install(python, role, config, executor)
+        if python == state["new"]:
+            if case == "not-running":
+                state["native"]["state"] = "Ready"
+            elif case == "wrong-python":
+                state["native"]["action"]["execute"] = (
+                    "C:\\unexpected\\pythonw.exe"
+                )
+            else:
+                (state["directory"] / "launcher.py").write_text(
+                    "main(['control', '--config', 'wrong.yaml'])"
+                )
+
+    monkeypatch.setattr(switcher, "_install", install)
+    with pytest.raises(RuntimeError, match="previous task restored"):
+        switcher.switch(
+            root=state["root"],
+            tag="v5.0.0a6",
+            role="control",
+            control_config=state["config"],
+            service_dir=state["directory"],
+        )
+    assert state["calls"] == [state["new"], state["old"]]
+    assert state["stable"] == state["old"]
+
+
+def test_windows_queries_existing_owned_task_through_runtime_helper(
+    native_switch, switcher, monkeypatch
+):
+    state = native_switch
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            '{"state":"Running","action":{"execute":"pythonw.exe","arguments":"launcher.py","working_directory":"C:\\\\tmp"}}',
+            "",
+        )
+
+    monkeypatch.setattr(switcher.subprocess, "run", run)
+    native = state["native_query_impl"](state["old"], "control")
+    assert native["state"] == "Running"
+    assert len(calls) == 1
+    argv, kwargs = calls[0]
+    assert argv[0] == str(state["old"])
+    assert argv[1] == "-c"
+    assert "WindowsUserTask" in argv[2]
+    assert "Workgate Control" in argv[2]
+    assert "Managed by Workgate: control" in argv[2]
+    assert kwargs["check"] is True
+
+
+def test_windows_uses_existing_cli_for_stop_and_install(
+    native_switch, switcher, monkeypatch
+):
+    state = native_switch
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(switcher.subprocess, "run", run)
+    state["stop_impl"](state["old"], "control")
+    state["install_impl"](state["new"], "control", state["config"], None)
+    assert calls[0][0][1:] == ["-m", "workgate.main", "control", "stop-service"]
+    assert calls[1][0][1:5] == [
+        "-m",
+        "workgate.main",
+        "control",
+        "install-service",
+    ]
+    assert calls[1][0][-2:] == ["--config", str(state["config"])]
+
+
+def test_windows_paths_case_insensitive(native_switch, switcher):
+    assert switcher._same_path(
+        r"C:\Users\Somebody\Apps\PYTHONW.EXE",
+        r"c:/users/somebody/apps/pythonw.exe",
+    )
+
+
+@pytest.mark.skipif(
+    os.name != "nt", reason="requires native Windows .cmd path rules"
+)
+def test_native_windows_parses_prepared_managed_cmd(tmp_path, switcher):
+    root = tmp_path / "root with spaces"
+    python = root / "versions" / ("a" * 40) / ".venv" / "Scripts" / "python.exe"
+    python.parent.mkdir(parents=True)
+    python.touch()
+    switcher._write_launcher(root, python)
+    assert switcher._old_python(root) == python
+    (root / "bin/workgate.cmd").write_text(
+        "@echo off\r\nrem unrelated\r\nexit\r\n"
+    )
+    with pytest.raises(RuntimeError, match="unmanaged launcher"):
+        switcher._old_python(root)
