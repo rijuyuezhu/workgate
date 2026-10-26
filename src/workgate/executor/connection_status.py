@@ -28,9 +28,13 @@ class ExecutorConnectionStatusStore:
     ) -> None:
         now = time.time()
         with self.state_store.transaction(self.path):
-            old = self.state_store.read_json(
-                self.path, max_bytes=_STATUS_MAX_BYTES
-            )
+            try:
+                old = self.state_store.read_json(
+                    self.path, max_bytes=_STATUS_MAX_BYTES
+                )
+            except ValueError:
+                # A damaged diagnostic must not prevent future status reports.
+                old = None
             last_success = (
                 old.get("last_success_at") if isinstance(old, dict) else None
             )

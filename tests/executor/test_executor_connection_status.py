@@ -66,6 +66,8 @@ def test_connection_status_does_not_trust_missing_corrupt_or_future_snapshots(
     store.record("connected")
     store.path.write_text("{bad json", encoding="utf-8")
     assert store.describe() == "unknown (runtime report unavailable)"
+    store.record("reconnecting", "TimeoutError")
+    assert store.describe() == "reconnecting (TimeoutError)"
     store.path.write_text(
         json.dumps({"phase": "connected", "updated_at": clock[0] + 500}),
         encoding="utf-8",
