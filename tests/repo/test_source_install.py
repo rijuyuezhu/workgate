@@ -1008,7 +1008,12 @@ def test_symlinked_install_receipt_rejected_before_prepare(
 ):
     target = tmp_path / "not-ours.json"
     target.write_text("do not touch")
-    (tmp_path / "install.json").symlink_to(target)
+    try:
+        (tmp_path / "install.json").symlink_to(target)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows account lacks symlink creation privilege")
+        raise
     monkeypatch.setattr(
         installer,
         "prepare",
