@@ -73,9 +73,7 @@ class _BaseFakeClient:
 
 
 class _ScriptedReconnectClient(_BaseFakeClient):
-    def __init__(
-        self, poll_outcomes: tuple[ExecutorControlError | None, ...]
-    ) -> None:
+    def __init__(self, poll_outcomes: tuple[Exception | None, ...]) -> None:
         self._poll_outcomes = poll_outcomes
         self.recovered = asyncio.Event()
         self.hello_calls = 0
