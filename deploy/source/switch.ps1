@@ -7,7 +7,8 @@ param(
     [string]$Tag,
     [string]$InstallRoot,
     [string]$ControlConfig,
-    [string]$ExecutorConfig
+    [string]$ExecutorConfig,
+    [switch]$AdoptLegacyExecutor
 )
 $ErrorActionPreference = 'Stop'
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
@@ -19,5 +20,6 @@ $arguments = @('run', '--no-project', '--python', '3.14', 'python',
 if ($ControlConfig) { $arguments += @('--control-config', $ControlConfig) }
 if ($InstallRoot) { $arguments += @('--install-root', $InstallRoot) }
 if ($ExecutorConfig) { $arguments += @('--executor-config', $ExecutorConfig) }
+if ($AdoptLegacyExecutor) { $arguments += '--adopt-legacy-executor' }
 & uv @arguments
 if ($LASTEXITCODE -ne 0) { throw "Workgate source switch failed (exit $LASTEXITCODE)" }
