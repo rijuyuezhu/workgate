@@ -890,3 +890,39 @@ def test_windows_legacy_executor_failed_stable_command_restores_old(
     assert state["active"] == state["old"]
     assert state["profile"].read_bytes() == state["identity_before"]
     assert not launcher.exists()
+
+
+@pytest.mark.parametrize("fail_install", [False, True])
+def test_windows_legacy_executor_uses_staged_native_action_query(
+    legacy_executor_switch, switcher, monkeypatch, fail_install
+):
+    state = legacy_executor_switch
+    original_native = switcher._native
+
+    def missing_legacy_action(python, role):
+        if python == state["old"]:
+            return {"state": state["native"]["state"], "action": None}
+        return original_native(python, role)
+
+    monkeypatch.setattr(switcher, "_native", missing_legacy_action)
+    state["error_new"] = fail_install
+    if fail_install:
+        with pytest.raises(RuntimeError, match="previous task restored"):
+            switcher.switch(
+                root=state["root"],
+                tag="v5.0.0a6",
+                role="executor",
+                executor_config=state["executor"],
+                adopt_legacy_executor=True,
+            )
+        assert state["active"] == state["old"]
+    else:
+        switcher.switch(
+            root=state["root"],
+            tag="v5.0.0a6",
+            role="executor",
+            executor_config=state["executor"],
+            adopt_legacy_executor=True,
+        )
+        assert state["active"] == state["new"]
+    assert state["profile"].read_bytes() == state["identity_before"]

@@ -190,7 +190,13 @@ def _executor_status(python: Path, config: Path) -> dict[str, str]:
     return status
 
 
-def _executor_binding(python: Path, config: Path, *, current: bool) -> Path:
+def _executor_binding(
+    python: Path,
+    config: Path,
+    *,
+    current: bool,
+    native_python: Path | None = None,
+) -> Path:
     status = _executor_status(python, config)
     if (
         status.get("State") != "running"
@@ -212,7 +218,9 @@ def _executor_binding(python: Path, config: Path, *, current: bool) -> Path:
     launcher = directory / "launcher.py"
     if not profile.is_file() or not launcher.is_file():
         raise RuntimeError("Executor pairing profile or launcher is missing")
-    native = _native(python, "executor")
+    # Pre-versioned CLIs may not expose native task action details. Use the
+    # staged, owner-checking implementation for one-time adoption preflight.
+    native = _native(native_python or python, "executor")
     action = native.get("action")
     if native.get("state", "").lower() != "running" or not isinstance(
         action, dict
@@ -294,7 +302,12 @@ def _switch_executor(
     *,
     adopt_legacy: bool = False,
 ) -> None:
-    profile = _executor_binding(old, config, current=True)
+    profile = _executor_binding(
+        old,
+        config,
+        current=True,
+        native_python=new if adopt_legacy else None,
+    )
     original_identity = profile.read_bytes()
     initial_status = _executor_status(old, config)
     candidate_status = _executor_status(new, config)
@@ -324,7 +337,15 @@ def _switch_executor(
             _stop(old, "executor")
             _ensure_stopped(old, "executor")
             _executor_install(old, config)
-            if _executor_binding(old, config, current=True) != profile:
+            if (
+                _executor_binding(
+                    old,
+                    config,
+                    current=True,
+                    native_python=new if adopt_legacy else None,
+                )
+                != profile
+            ):
                 raise RuntimeError(
                     "old Executor restored a different identity location"
                 )
