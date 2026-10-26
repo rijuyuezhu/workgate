@@ -166,7 +166,7 @@ def _executor_status(python: Path, config: Path) -> dict[str, str]:
         "-m",
         "workgate.main",
         "executor",
-        "status-service",
+        "status",
         "--config",
         str(config),
         cwd=python.parents[2],

@@ -1,4 +1,4 @@
-"""Explicit Windows Control/Colocate switch between prepared source releases."""
+"""Explicit Windows role switch between already prepared source releases."""
 
 import argparse
 import json
@@ -15,6 +15,7 @@ from switch import _staged_python
 _TASKS = {
     "control": ("Workgate Control", "Managed by Workgate: control"),
     "colocate": ("Workgate Colocate", "Managed by Workgate: colocate"),
+    "executor": ("Workgate Executor", "Managed by Workgate: executor"),
 }
 _LAUNCHER = re.compile(r'^"%~dp0([^"]+)" -m workgate\.main %\*$')
 
@@ -137,7 +138,13 @@ def _install(
 
 def _stop(python: Path, role: str) -> None:
     subprocess.run(
-        [str(python), "-m", "workgate.main", role, "stop-service"],
+        [
+            str(python),
+            "-m",
+            "workgate.main",
+            role,
+            "stop" if role == "executor" else "stop-service",
+        ],
         check=True,
         cwd=python.parents[2],
         timeout=60,
@@ -150,12 +157,155 @@ def _ensure_stopped(python: Path, role: str) -> None:
         raise RuntimeError("previous Windows task has not stopped")
 
 
+def _executor_status(python: Path, config: Path) -> dict[str, str]:
+    result = subprocess.run(
+        [
+            str(python),
+            "-m",
+            "workgate.main",
+            "executor",
+            "status",
+            "--config",
+            str(config),
+        ],
+        cwd=python.parents[2],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=45,
+    )
+    status: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        key, sep, value = line.partition(": ")
+        if sep and key in {
+            "State",
+            "Backend",
+            "Log",
+            "Runtime owner",
+            "Runtime",
+        }:
+            if key in status:
+                raise RuntimeError("ambiguous Executor status output")
+            status[key] = value
+    return status
+
+
+def _executor_binding(python: Path, config: Path, *, current: bool) -> Path:
+    status = _executor_status(python, config)
+    if (
+        status.get("State") != "running"
+        or status.get("Backend") != "scheduled-task"
+        or status.get("Runtime owner") != "source"
+        or (current and status.get("Runtime") != "current")
+    ):
+        raise RuntimeError("Executor is not an active managed source service")
+    log = Path(status.get("Log", ""))
+    directory = log.parent
+    if (
+        not log.is_absolute()
+        or log.name != "executor.log"
+        or directory.name != "service"
+        or directory.parent.name != "executor"
+    ):
+        raise RuntimeError("unexpected managed Executor state directory")
+    profile = directory.parent / "profile.json"
+    launcher = directory / "launcher.py"
+    if not profile.is_file() or not launcher.is_file():
+        raise RuntimeError("Executor pairing profile or launcher is missing")
+    native = _native(python, "executor")
+    action = native.get("action")
+    if native.get("state", "").lower() != "running" or not isinstance(
+        action, dict
+    ):
+        raise RuntimeError("Executor has no single owned scheduled task action")
+    if not (
+        _same_path(
+            str(action.get("execute", "")), str(python.with_name("pythonw.exe"))
+        )
+        and action.get("arguments") == subprocess.list2cmdline([str(launcher)])
+        and _same_path(str(action.get("working_directory", "")), str(directory))
+    ):
+        raise RuntimeError(
+            "Executor native action does not match source Python"
+        )
+    return profile
+
+
+def _executor_install(python: Path, config: Path) -> None:
+    subprocess.run(
+        [
+            str(python),
+            "-m",
+            "workgate.main",
+            "executor",
+            "install-service",
+            "--config",
+            str(config),
+        ],
+        check=True,
+        cwd=python.parents[2],
+        timeout=120,
+    )
+
+
+def _switch_executor(
+    root: Path, old: Path, new: Path, tag: str, config: Path
+) -> None:
+    profile = _executor_binding(old, config, current=True)
+    original_identity = profile.read_bytes()
+    initial_status = _executor_status(old, config)
+    candidate_status = _executor_status(new, config)
+    if (
+        candidate_status.get("State") != "running"
+        or candidate_status.get("Backend") != "scheduled-task"
+        or candidate_status.get("Runtime owner") != "source"
+        or candidate_status.get("Log") != initial_status.get("Log")
+    ):
+        raise RuntimeError(
+            "staged Executor resolves a different state or service owner"
+        )
+    if old == new:
+        print(f"Executor is already running {tag}; no restart")
+        return
+    try:
+        _stop(old, "executor")
+        _ensure_stopped(old, "executor")
+        _executor_install(new, config)
+        if _executor_binding(new, config, current=True) != profile:
+            raise RuntimeError("new Executor moved its pairing identity")
+        if profile.read_bytes() != original_identity:
+            raise RuntimeError("new Executor changed its pairing identity")
+        _write_launcher(root, new)
+    except Exception as exc:
+        try:
+            _stop(old, "executor")
+            _ensure_stopped(old, "executor")
+            _executor_install(old, config)
+            if _executor_binding(old, config, current=True) != profile:
+                raise RuntimeError(
+                    "old Executor restored a different identity location"
+                )
+            if profile.read_bytes() != original_identity:
+                raise RuntimeError(
+                    "Executor identity changed; recovery unconfirmed"
+                )
+            _write_launcher(root, old)
+        except Exception as recovery:
+            raise RuntimeError(
+                f"Executor switch failed: {exc}; recovery also failed: {recovery}"
+            ) from recovery
+        raise RuntimeError(
+            f"Executor switch failed, previous task restored: {exc}"
+        ) from exc
+    print(f"Executor switched to {tag}; previous release retained for rollback")
+
+
 def switch(
     *,
     root: Path,
     tag: str,
     role: str,
-    control_config: Path,
+    control_config: Path | None = None,
     executor_config: Path | None = None,
     service_dir: Path | None = None,
 ) -> None:
@@ -167,19 +317,29 @@ def switch(
         )
     if role not in _TASKS:
         raise ValueError(
-            "Windows switch currently supports Control and Colocate"
+            "Windows switch supports Control, Colocate and Executor"
         )
     from switch import _TAG
 
     if not _TAG.fullmatch(tag):
         raise ValueError("select an explicit released version tag")
     root = root.expanduser().absolute()
-    control_config = control_config.expanduser().absolute()
+    control_config = (
+        control_config.expanduser().absolute() if control_config else None
+    )
     executor_config = (
         executor_config.expanduser().absolute() if executor_config else None
     )
-    if (
-        not control_config.is_file()
+    if role == "executor":
+        if control_config is not None:
+            raise ValueError(
+                "Control config does not apply to standalone Executor"
+            )
+        if executor_config is None or not executor_config.is_file():
+            raise RuntimeError("Executor switch requires durable Executor YAML")
+    elif (
+        control_config is None
+        or not control_config.is_file()
         or (
             role == "colocate"
             and (executor_config is None or not executor_config.is_file())
@@ -194,6 +354,11 @@ def switch(
     new = _staged_python(root, tag)
     if not new.with_name("pythonw.exe").is_file():
         raise RuntimeError("prepared Windows runtime is missing pythonw.exe")
+    if role == "executor":
+        assert executor_config is not None
+        _switch_executor(root, old, new, tag, executor_config)
+        return
+    assert control_config is not None
 
     # The directory is derived from the already installed native action; never
     # infer it from the new release or relocate saved pairing credentials.
@@ -273,7 +438,7 @@ def main() -> None:
     parser.add_argument("--role", required=True, choices=list(_TASKS))
     parser.add_argument("--tag", required=True)
     parser.add_argument("--install-root", type=Path, default=_default_root())
-    parser.add_argument("--control-config", required=True, type=Path)
+    parser.add_argument("--control-config", type=Path)
     parser.add_argument("--executor-config", type=Path)
     args = parser.parse_args()
     try:

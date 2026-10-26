@@ -264,7 +264,9 @@ def test_windows_excludes_standalone_executor_and_wrong_config(
     native_switch, switcher
 ):
     state = native_switch
-    with pytest.raises(ValueError, match="Control and Colocate"):
+    with pytest.raises(
+        ValueError, match="does not apply to standalone Executor"
+    ):
         switcher.switch(
             root=state["root"],
             tag="v5.0.0a6",
@@ -455,3 +457,262 @@ def test_native_windows_parses_prepared_managed_cmd(tmp_path, switcher):
     )
     with pytest.raises(RuntimeError, match="unmanaged launcher"):
         switcher._old_python(root)
+
+
+@pytest.fixture
+def executor_switch(native_switch, switcher, monkeypatch, tmp_path):
+    state = native_switch
+    state["role"] = "executor"
+    directory = tmp_path / "state" / "executor" / "service"
+    directory.mkdir(parents=True)
+    profile = directory.parent / "profile.json"
+    profile.write_bytes(b'{"executor_id":"unchanged","token":"secret"}')
+    (directory / "launcher.py").write_text("managed Executor runtime")
+    state["directory"] = directory
+    state["profile"] = profile
+    state["native"]["action"]["working_directory"] = str(directory)
+    state["native"]["action"]["arguments"] = subprocess.list2cmdline(
+        [str(directory / "launcher.py")]
+    )
+    state["identity_before"] = profile.read_bytes()
+    state["executor_install_calls"] = []
+    state["stop_calls"] = []
+    state["modify_identity"] = False
+    state["bad_state"] = False
+
+    def status(python, config):
+        assert config == state["executor"]
+        return {
+            "State": "running",
+            "Backend": "scheduled-task",
+            "Log": str(directory / "executor.log"),
+            "Runtime owner": "source",
+            "Runtime": "current" if python == state["active"] else "stale",
+        }
+
+    def install(python, config):
+        assert config == state["executor"]
+        state["executor_install_calls"].append(python)
+        state["native"]["state"] = "Running"
+        state["native"]["action"]["execute"] = str(
+            python.with_name("pythonw.exe")
+        )
+        state["active"] = python
+        if state["modify_identity"] and python == state["new"]:
+            profile.write_bytes(b"changed identity")
+        if state["bad_state"] and python == state["new"]:
+            state["native"]["state"] = "Ready"
+        if state["error_new"] and python == state["new"]:
+            raise RuntimeError("new Executor failed")
+        if state["error_old"] and python == state["old"]:
+            raise RuntimeError("old Executor failed")
+
+    def stop(python, role):
+        assert role == "executor"
+        state["stop_calls"].append(python)
+        state["native"]["state"] = "Ready"
+
+    state["executor_status_impl"] = switcher._executor_status
+    state["executor_install_impl"] = switcher._executor_install
+    monkeypatch.setattr(switcher, "_executor_status", status)
+    monkeypatch.setattr(switcher, "_executor_install", install)
+    monkeypatch.setattr(switcher, "_stop", stop)
+    return state
+
+
+def test_windows_executor_switch_noop_rollback_preserves_identity(
+    executor_switch, switcher
+):
+    state = executor_switch
+    args = dict(
+        root=state["root"], role="executor", executor_config=state["executor"]
+    )
+    switcher.switch(tag="v5.0.0a6", **args)
+    assert state["executor_install_calls"] == [state["new"]]
+    assert state["stable"] == state["new"]
+    assert state["profile"].read_bytes() == state["identity_before"]
+    switcher.switch(tag="v5.0.0a6", **args)
+    assert state["executor_install_calls"] == [state["new"]]
+    switcher.switch(tag="v5.0.0a5", **args)
+    assert state["executor_install_calls"] == [state["new"], state["old"]]
+    assert state["stable"] == state["old"]
+    assert state["profile"].read_bytes() == state["identity_before"]
+
+
+@pytest.mark.parametrize(
+    "failure", ["install", "native-not-running", "identity-changed"]
+)
+def test_windows_executor_failure_restores_old_task(
+    executor_switch, switcher, failure
+):
+    state = executor_switch
+    if failure == "install":
+        state["error_new"] = True
+    elif failure == "native-not-running":
+        state["bad_state"] = True
+    else:
+        state["modify_identity"] = True
+    with pytest.raises(
+        RuntimeError, match="previous task restored|recovery also failed"
+    ):
+        switcher.switch(
+            root=state["root"],
+            tag="v5.0.0a6",
+            role="executor",
+            executor_config=state["executor"],
+        )
+    assert state["executor_install_calls"] == [state["new"], state["old"]]
+    assert state["stable"] == state["old"]
+    if failure != "identity-changed":
+        assert state["profile"].read_bytes() == state["identity_before"]
+
+
+@pytest.mark.parametrize(
+    "mismatch", ["missing-profile", "foreign-action", "stale", "other-log"]
+)
+def test_windows_executor_refuses_unmanaged_state(
+    executor_switch, switcher, monkeypatch, mismatch
+):
+    state = executor_switch
+    if mismatch == "missing-profile":
+        state["profile"].unlink()
+    elif mismatch == "foreign-action":
+        state["native"]["action"]["execute"] = "X:/foreign/pythonw.exe"
+    elif mismatch == "stale":
+        orig = switcher._executor_status
+
+        def stale_status(python, config):
+            result = orig(python, config)
+            result["Runtime"] = "stale"
+            return result
+
+        monkeypatch.setattr(switcher, "_executor_status", stale_status)
+    else:
+        orig = switcher._executor_status
+
+        def moved_status(python, config):
+            result = orig(python, config)
+            if python == state["new"]:
+                result["Log"] = str(state["directory"] / "moved.log")
+            return result
+
+        monkeypatch.setattr(switcher, "_executor_status", moved_status)
+    with pytest.raises(RuntimeError):
+        switcher.switch(
+            root=state["root"],
+            tag="v5.0.0a6",
+            role="executor",
+            executor_config=state["executor"],
+        )
+    assert state["executor_install_calls"] == []
+    assert state["stable"] == state["old"]
+
+
+def test_windows_executor_failed_rollback_reports_failure(
+    executor_switch, switcher
+):
+    state = executor_switch
+    state["error_new"] = state["error_old"] = True
+    with pytest.raises(RuntimeError, match="recovery also failed"):
+        switcher.switch(
+            root=state["root"],
+            tag="v5.0.0a6",
+            role="executor",
+            executor_config=state["executor"],
+        )
+    assert state["stable"] == state["old"]
+
+
+def test_windows_executor_does_not_allow_control_yaml(
+    executor_switch, switcher
+):
+    state = executor_switch
+    with pytest.raises(ValueError, match="Control config"):
+        switcher.switch(
+            root=state["root"],
+            tag="v5.0.0a6",
+            role="executor",
+            executor_config=state["executor"],
+            control_config=state["config"],
+        )
+    assert state["executor_install_calls"] == []
+
+
+def test_executor_actual_cli_lifecycle_names():
+    """Catch mismatches that fake source CLIs cannot detect."""
+    import sys
+
+    for action in ("status", "stop", "install-service"):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "workgate.main",
+                "executor",
+                action,
+                "--help",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=20,
+        )
+        assert f"executor {action}" in result.stdout
+
+
+def test_executor_native_stop_uses_actual_cli(
+    executor_switch, switcher, monkeypatch
+):
+    state = executor_switch
+    commands = []
+
+    def run(args, **kwargs):
+        commands.append(args)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(switcher.subprocess, "run", run)
+    state["stop_impl"](state["old"], "executor")
+    assert commands == [
+        [str(state["old"]), "-m", "workgate.main", "executor", "stop"]
+    ]
+
+
+def test_executor_status_and_install_use_actual_cli_verbs(
+    executor_switch, switcher, monkeypatch
+):
+    state = executor_switch
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        stdout = (
+            "State: running\nBackend: scheduled-task\n"
+            "Runtime owner: source\nRuntime: current\n"
+            f"Log: {state['directory'] / 'executor.log'}\n"
+        )
+        return subprocess.CompletedProcess(args, 0, stdout, "")
+
+    monkeypatch.setattr(switcher.subprocess, "run", run)
+    status = state["executor_status_impl"](state["old"], state["executor"])
+    state["executor_install_impl"](state["new"], state["executor"])
+    assert status["State"] == "running"
+    assert calls == [
+        [
+            str(state["old"]),
+            "-m",
+            "workgate.main",
+            "executor",
+            "status",
+            "--config",
+            str(state["executor"]),
+        ],
+        [
+            str(state["new"]),
+            "-m",
+            "workgate.main",
+            "executor",
+            "install-service",
+            "--config",
+            str(state["executor"]),
+        ],
+    ]
