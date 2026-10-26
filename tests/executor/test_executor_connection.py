@@ -1129,3 +1129,44 @@ async def test_connection_status_preserves_revoked_credential_action() -> None:
         ("reconnecting", None),
         ("action-required", "executor_revoked"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_status_callback_failure_cannot_disable_executor_connection() -> (
+    None
+):
+    reached_poll = asyncio.Event()
+
+    class Client(_BaseFakeClient):
+        async def hello(
+            self, message: ExecutorHelloRequest
+        ) -> ExecutorHelloResponse:
+            return _policy()
+
+        async def heartbeat(self) -> None:
+            return None
+
+        async def poll(self, *, timeout_s: float) -> ExecutorCommand | None:
+            reached_poll.set()
+            await asyncio.Event().wait()
+            return None
+
+        async def submit_result(self, result: ExecutorResult) -> None:
+            raise AssertionError("no result expected")
+
+    def bad_diagnostic(_phase: str, _reason: str | None) -> None:
+        raise RuntimeError("status writer unexpectedly failed")
+
+    connection = ExecutorConnection(
+        Client(),
+        hello_factory=_hello,
+        execute=lambda command: None,
+        max_concurrent_commands=1,
+        status_callback=bad_diagnostic,
+    )
+    connection.start()
+    try:
+        await asyncio.wait_for(reached_poll.wait(), timeout=0.5)
+        assert connection.owner_action_error is None
+    finally:
+        await connection.aclose()

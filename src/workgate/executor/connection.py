@@ -378,7 +378,8 @@ class ExecutorConnection:
                 return
             try:
                 await self._client.heartbeat()
-                self._report_status("connected")
+                if self._owner_action_error is None:
+                    self._report_status("connected")
                 attempt = 0
             except ExecutorControlError as exc:
                 if not exc.retryable:
@@ -582,7 +583,7 @@ class ExecutorConnection:
         if callback is None:
             return
         # Diagnostic persistence must never prevent Control reconnection.
-        with suppress(OSError, ValueError):
+        with suppress(Exception):
             callback(phase, error_class)
 
     def _retry_delay(self, attempt: int) -> float:
