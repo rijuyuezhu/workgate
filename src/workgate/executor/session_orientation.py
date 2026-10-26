@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 
 from ..config.executor import ExecutorConfig
-from ..platform.process import noninteractive_creationflags
+from ..platform.process import run_bounded_capture
 from ..schemas.result_models.session import GitSessionInfo, SessionStartOutput
 from .environment import collect_executor_session_environment
 from .path import display_path, resolve_default_workdir
@@ -23,21 +23,14 @@ def _git_output(
 ) -> str | None:
     """Run a bounded git orientation command through executor configuration."""
     try:
-        result = subprocess.run(
-            [config.git_bin, *args],
-            cwd=cwd,
-            stdin=subprocess.DEVNULL,
-            text=True,
-            capture_output=True,
-            timeout=5,
-            check=False,
-            creationflags=noninteractive_creationflags(),
+        returncode, output = run_bounded_capture(
+            [config.git_bin, *args], cwd=cwd, timeout=5
         )
     except OSError, subprocess.SubprocessError:
         return None
-    if result.returncode != 0:
+    if returncode != 0:
         return None
-    return result.stdout.strip()
+    return output.strip()
 
 
 def _git_info(config: ExecutorConfig, cwd: Path) -> GitSessionInfo:

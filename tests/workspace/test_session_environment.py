@@ -2,7 +2,6 @@ import json
 import subprocess
 import threading
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -60,15 +59,15 @@ def test_probe_command_reports_missing_timeout_error_and_version(monkeypatch):
     def timeout(*_args, **_kwargs):
         raise subprocess.TimeoutExpired(["tool"], 1)
 
-    monkeypatch.setattr(env_ops.subprocess, "run", timeout)
+    monkeypatch.setattr(env_ops, "run_bounded_capture", timeout)
     timed = env_ops._probe_command(
         env_ops._CommandProbe("git", ("git",), "configured")
     )
     assert timed.available is False and timed.status == "timeout"
 
     monkeypatch.setattr(
-        env_ops.subprocess,
-        "run",
+        env_ops,
+        "run_bounded_capture",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError()),
     )
     failed = env_ops._probe_command(
@@ -77,11 +76,9 @@ def test_probe_command_reports_missing_timeout_error_and_version(monkeypatch):
     assert failed.available is False and failed.status == "error"
 
     monkeypatch.setattr(
-        env_ops.subprocess,
-        "run",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            returncode=0, stdout="git version 2.51.0\nprivate/path", stderr=""
-        ),
+        env_ops,
+        "run_bounded_capture",
+        lambda *_args, **_kwargs: (0, "git version 2.51.0\nprivate/path"),
     )
     available = env_ops._probe_command(
         env_ops._CommandProbe("git", ("git",), "configured")
@@ -94,11 +91,9 @@ def test_probe_command_reports_missing_timeout_error_and_version(monkeypatch):
     }
 
     monkeypatch.setattr(
-        env_ops.subprocess,
-        "run",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            returncode=1, stdout="tool 1.2.3", stderr="failure secret"
-        ),
+        env_ops,
+        "run_bounded_capture",
+        lambda *_args, **_kwargs: (1, "tool 1.2.3\nfailure secret"),
     )
     errored = env_ops._probe_command(
         env_ops._CommandProbe("git", ("git",), "configured")
