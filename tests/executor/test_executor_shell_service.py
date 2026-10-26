@@ -568,3 +568,60 @@ async def test_shell_service_stop_owned_rejects_still_live_failed_kill(
 
     with pytest.raises(RuntimeError, match="backend refused"):
         await service.stop_owned("sess-1")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("windows", "status", "shell_active", "reconcile_expected"),
+    [
+        (True, "lost", False, False),
+        (True, "lost", True, True),
+        (True, "running", False, True),
+        (False, "lost", False, True),
+    ],
+)
+async def test_reconnect_skips_terminal_lost_jobs_only_for_empty_windows_conpty(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    windows: bool,
+    status: str,
+    shell_active: bool,
+    reconcile_expected: bool,
+) -> None:
+    from workgate.executor import jobs as job_service_module
+    from workgate.platform import windows_conpty
+    from workgate.platform.host import HostOS
+
+    service, _store = _service(tmp_path)
+    monkeypatch.setattr(
+        job_service_module,
+        "host_os",
+        lambda: HostOS.WINDOWS if windows else HostOS.LINUX,
+    )
+    monkeypatch.setattr(
+        windows_conpty,
+        "conpty_registry",
+        lambda: SimpleNamespace(
+            active=lambda: {"live-shell": object()} if shell_active else {}
+        ),
+    )
+    calls = []
+
+    def snapshot(_ids):
+        calls.append("snapshot")
+        return (SimpleNamespace(status=status),), frozenset({"shell-id"})
+
+    async def reconcile():
+        calls.append("reconcile")
+        return True
+
+    monkeypatch.setattr(
+        job_service_module.shell_jobs, "shell_job_inventory_snapshot", snapshot
+    )
+    monkeypatch.setattr(service.jobs, "reconcile", reconcile)
+    jobs, shell_ids = await service.jobs.reconnect_inventory(
+        frozenset({"session-id"})
+    )
+    assert len(jobs) == 1
+    assert shell_ids == frozenset({"shell-id"})
+    assert calls.count("reconcile") == int(reconcile_expected)
