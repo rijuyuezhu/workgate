@@ -57,13 +57,11 @@ async def test_published_tag_resolves_immutable_commit(
             "https://github.com/rijuyuezhu/workgate.git",
         ]
         assert args[-2:] == [f"refs/tags/{TAG}", f"refs/tags/{TAG}^{{}}"]
-        assert kw["check"] is True
         assert kw["timeout"] == 25
         assert kw["env"]["GIT_TERMINAL_PROMPT"] == "0"
-        assert kw["stdin"] is subprocess.DEVNULL
-        return subprocess.CompletedProcess(args, 0, refs, "")
+        return 0, refs
 
-    monkeypatch.setattr(source_stage.subprocess, "run", fake_run)
+    monkeypatch.setattr(source_stage, "run_bounded_capture", fake_run)
     assert await source_stage.resolve_published_commit("6.0.0a1") == commit
 
 
@@ -99,11 +97,51 @@ async def test_untrusted_or_missing_published_tag_fails_closed(
 
     def fake_run(args: list[str], **kw):
         assert refs is not None
-        return subprocess.CompletedProcess(args, 0, refs, "")
+        return 0, refs
 
-    monkeypatch.setattr(source_stage.subprocess, "run", fake_run)
+    monkeypatch.setattr(source_stage, "run_bounded_capture", fake_run)
     with pytest.raises(RuntimeError):
         await source_stage.resolve_published_commit("6.0.0a1")
+
+
+@pytest.mark.asyncio
+async def test_official_git_lookup_failure_is_not_an_update_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _api(
+        monkeypatch,
+        {"tag_name": TAG, "draft": False, "published_at": "2026-10-27"},
+    )
+
+    def failed_lookup(*_args, **kwargs):
+        assert kwargs["timeout"] == 25
+        return 128, "not a valid tag"
+
+    monkeypatch.setattr(source_stage, "run_bounded_capture", failed_lookup)
+    with pytest.raises(
+        RuntimeError, match="could not resolve official release tag"
+    ):
+        await source_stage.resolve_published_commit("6.0.0a1")
+
+
+def test_bounded_capture_preserves_noninteractive_git_environment() -> None:
+    import os
+    import sys
+
+    from workgate.platform.process import run_bounded_capture
+
+    environment = {**os.environ, "WG_STAGE_PROBE": "noninteractive"}
+    code, output = run_bounded_capture(
+        [
+            sys.executable,
+            "-c",
+            "import os; print(os.environ['WG_STAGE_PROBE'])",
+        ],
+        timeout=5,
+        env=environment,
+    )
+    assert code == 0
+    assert output.strip() == "noninteractive"
 
 
 @pytest.mark.asyncio

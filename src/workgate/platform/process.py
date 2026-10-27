@@ -24,6 +24,7 @@ def run_bounded_capture(
     timeout: float,
     cwd: Path | None = None,
     include_stderr: bool = False,
+    env: dict[str, str] | None = None,
 ) -> tuple[int, str]:
     """Capture bounded helper output without Windows' timeout-unsafe pipe readers.
 
@@ -40,6 +41,7 @@ def run_bounded_capture(
             stderr=subprocess.STDOUT if include_stderr else subprocess.DEVNULL,
             timeout=timeout,
             check=False,
+            env=env,
             creationflags=noninteractive_creationflags(),
         )
         output.seek(0)

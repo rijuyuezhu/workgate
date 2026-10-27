@@ -3,12 +3,11 @@
 import asyncio
 import os
 import re
-import subprocess
 from pathlib import Path
 
 import httpx
 
-from ..platform.process import noninteractive_creationflags, run_bounded_capture
+from ..platform.process import run_bounded_capture
 from ..version import __version__
 from .source_provenance import verified_source_checkout
 
@@ -42,8 +41,8 @@ async def resolve_published_commit(version: str) -> str:
 
     # GitHub Release target_commitish can be a floating branch; resolve the
     # actual official Git tag instead, including peeled annotated tags.
-    result = await asyncio.to_thread(
-        subprocess.run,
+    code, output = await asyncio.to_thread(
+        run_bounded_capture,
         [
             "git",
             "ls-remote",
@@ -52,16 +51,13 @@ async def resolve_published_commit(version: str) -> str:
             f"refs/tags/{tag}",
             f"refs/tags/{tag}^{{}}",
         ],
-        capture_output=True,
-        text=True,
-        check=True,
         timeout=25,
         env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-        stdin=subprocess.DEVNULL,
-        creationflags=noninteractive_creationflags(),
     )
+    if code:
+        raise RuntimeError("could not resolve official release tag")
     refs = {}
-    for line in result.stdout.splitlines():
+    for line in output.splitlines():
         parts = line.split("\t")
         if len(parts) != 2 or _SHA.fullmatch(parts[0]) is None:
             raise RuntimeError("invalid official release tag response")
