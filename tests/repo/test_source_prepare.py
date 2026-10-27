@@ -1134,8 +1134,9 @@ def test_prepared_checkout_identity_is_rechecked_before_reuse(
 ):
     origin, _git = repo
     module, _calls, _fail = preparer
-    # Checkout identity is OS-independent; ARM64 wheel setup is tested separately.
+    # Checkout identity is OS-independent; ARM64 crypto setup is tested separately.
     monkeypatch.setattr(module, "_native_arm64", lambda: False)
+    monkeypatch.setattr(module, "_arm64_static_openssl_env", lambda: None)
     root = tmp_path / "managed"
     checkout = module.prepare(
         tag="v5.0.0a5", role="control", root=root, repository=str(origin)
