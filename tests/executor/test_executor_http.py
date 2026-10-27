@@ -121,6 +121,57 @@ def test_executor_routes_use_executor_bearer_and_stable_errors(
     assert "not-json" not in malformed.text
 
 
+def test_heartbeat_rechecks_version_after_control_upgrade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport, _, credential = _transport(tmp_path)
+    client = TestClient(Starlette(routes=executor_routes(transport)))
+    headers = {"Authorization": f"Bearer {credential}"}
+
+    # The new hint must not be available through an unauthenticated request.
+    assert client.post("/executor/v1/heartbeat").status_code == 401
+    assert (
+        client.post(
+            "/executor/v1/hello", json=_hello_payload(), headers=headers
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post("/executor/v1/heartbeat", headers=headers).status_code
+        == 204
+    )
+
+    monkeypatch.setattr(
+        "workgate.control.executor_transport.__version__", "next-release"
+    )
+    hint = client.post("/executor/v1/heartbeat", headers=headers)
+    assert hint.status_code == 200
+    assert hint.json() == {"required_workgate_version": "next-release"}
+
+    # The signal is advisory: only a new authenticated hello can update the
+    # remembered runtime. Repeating a stale hello cannot bypass version fencing.
+    stale = client.post(
+        "/executor/v1/hello", json=_hello_payload(), headers=headers
+    )
+    assert stale.json()["runtime_update_required"] is True
+    assert (
+        client.post("/executor/v1/heartbeat", headers=headers).status_code
+        == 200
+    )
+
+    updated = _hello_payload()
+    runtime = updated["runtime"]
+    assert isinstance(runtime, dict)
+    runtime["workgate_version"] = "next-release"
+    current = client.post("/executor/v1/hello", json=updated, headers=headers)
+    assert current.status_code == 200
+    assert current.json()["runtime_update_required"] is False
+    assert (
+        client.post("/executor/v1/heartbeat", headers=headers).status_code
+        == 204
+    )
+
+
 @pytest.mark.asyncio
 async def test_rest_owner_oauth_middleware_bypasses_executor_routes(
     tmp_path: Path,

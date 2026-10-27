@@ -701,11 +701,18 @@ async def test_temporary_duplicate_poll_overload_retries_without_owner_action() 
 @pytest.mark.asyncio
 async def test_poll_incompatible_after_control_restart_rehellos() -> None:
     client, retry_sleeps = await _exercise_reconnect(
-        (_protocol_error(ProtocolErrorCode.EXECUTOR_INCOMPATIBLE, status=400),)
+        (
+            _protocol_error(
+                ProtocolErrorCode.EXECUTOR_INCOMPATIBLE, status=400
+            ),
+            _protocol_error(
+                ProtocolErrorCode.EXECUTOR_INCOMPATIBLE, status=400
+            ),
+        )
     )
-    assert client.hello_calls == 2
-    assert client.poll_calls == 2
-    assert retry_sleeps == [0.5]
+    assert client.hello_calls == 3
+    assert client.poll_calls == 3
+    assert retry_sleeps == [0.5, 1.0]
 
 
 @pytest.mark.asyncio
@@ -933,6 +940,7 @@ def test_reconnect_backoff_is_exponential_jittered_and_bounded() -> None:
 @pytest.mark.asyncio
 async def test_heartbeat_hint_rehellos_then_drains_before_update() -> None:
     hinted = asyncio.Event()
+    second_hello = asyncio.Event()
     release = asyncio.Event()
     second_policy = asyncio.Event()
 
@@ -945,6 +953,7 @@ async def test_heartbeat_hint_rehellos_then_drains_before_update() -> None:
             self.hello_calls += 1
             if self.hello_calls == 1:
                 return _policy()
+            second_hello.set()
             return ExecutorHelloResponse(
                 heartbeat_interval_s=1,
                 offline_after_s=3,
@@ -995,8 +1004,7 @@ async def test_heartbeat_hint_rehellos_then_drains_before_update() -> None:
         await asyncio.wait_for(hinted.wait(), timeout=1)
         # The second hello occurs, but its update policy may not interrupt
         # the command already offered under the previous version.
-        for _ in range(10):
-            await asyncio.sleep(0)
+        await asyncio.wait_for(second_hello.wait(), timeout=1)
         assert client.hello_calls == 2
         assert not second_policy.is_set()
         assert not connection.restart_requested

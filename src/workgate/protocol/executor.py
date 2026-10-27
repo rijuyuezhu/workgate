@@ -151,7 +151,7 @@ class ExecutorHeartbeatResponse(BaseModel):
 
 
 class ExecutorHeartbeatRequest(BaseModel):
-    """Empty authenticated presence request; the endpoint may reply with 204."""
+    """Empty authenticated presence request; reply 204 or re-hello hint 200."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
