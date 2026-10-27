@@ -806,3 +806,110 @@ def test_windowless_windows_version_probe_matches_and_cleans_output(
     with pytest.raises(RuntimeError, match="required version 9.9.8"):
         runtime_update._validate_windows_service_executable(binary, "9.9.8")
     assert list(tmp_path.glob(".workgate.version.*")) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage_fails", [False, True])
+async def test_managed_source_policy_stages_only_without_switching(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stage_fails: bool,
+) -> None:
+    from workgate.executor.service import ExecutorServiceManager
+
+    runtime = build_executor_runtime(
+        resolve_executor_config(
+            Settings(
+                default_workdir=tmp_path / "workspace",
+                state_dir=tmp_path / "state",
+            )
+        ),
+        enable_control_connection=False,
+        managed_service=True,
+        runtime_ownership=ExecutorRuntimeOwnership.SOURCE,
+    )
+    checkout = tmp_path / "managed" / "versions" / ("a" * 40)
+    monkeypatch.setattr(
+        ExecutorServiceManager,
+        "verified_source_checkout",
+        lambda _self: checkout,
+    )
+    staged = []
+
+    async def prepare(_self, target: str) -> Path:
+        staged.append(target)
+        if stage_fails:
+            raise RuntimeError("secret bearer-token=do-not-persist")
+        return tmp_path / "managed" / "versions" / ("b" * 40)
+
+    monkeypatch.setattr(
+        ExecutorServiceManager, "prepare_source_update", prepare
+    )
+    policy = ExecutorHelloResponse(
+        heartbeat_interval_s=10,
+        offline_after_s=30,
+        poll_timeout_s=1,
+        required_workgate_version="5.0.0a99",
+        runtime_update_required=True,
+    )
+
+    action = await runtime._handle_runtime_policy(policy)
+
+    assert action is RuntimePolicyAction.BLOCK
+    assert staged == ["5.0.0a99"]
+    state = runtime.runtime_state_store.load()
+    assert state is not None
+    assert state.ownership is ExecutorRuntimeOwnership.SOURCE
+    assert state.update_target_version == "5.0.0a99"
+    assert state.update_status is (
+        ExecutorRuntimeUpdateStatus.FAILED
+        if stage_fails
+        else ExecutorRuntimeUpdateStatus.PENDING
+    )
+    assert "bearer-token" not in str(state.update_detail)
+    if not stage_fails:
+        assert "cutover pending" in str(state.update_detail)
+
+
+@pytest.mark.asyncio
+async def test_unverifiable_source_stays_owner_managed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from workgate.executor.service import ExecutorServiceManager
+
+    runtime = build_executor_runtime(
+        resolve_executor_config(
+            Settings(default_workdir=tmp_path, state_dir=tmp_path / "state")
+        ),
+        enable_control_connection=False,
+        managed_service=True,
+        runtime_ownership=ExecutorRuntimeOwnership.SOURCE,
+    )
+
+    def unavailable(_self):
+        raise RuntimeError("native source binding unavailable")
+
+    async def forbidden(_self, target: str):
+        raise AssertionError("must not prepare unverified source")
+
+    monkeypatch.setattr(
+        ExecutorServiceManager, "verified_source_checkout", unavailable
+    )
+    monkeypatch.setattr(
+        ExecutorServiceManager, "prepare_source_update", forbidden
+    )
+    policy = ExecutorHelloResponse(
+        heartbeat_interval_s=10,
+        offline_after_s=30,
+        poll_timeout_s=1,
+        required_workgate_version="5.0.0a99",
+        runtime_update_required=True,
+    )
+
+    assert (
+        await runtime._handle_runtime_policy(policy)
+        is RuntimePolicyAction.BLOCK
+    )
+    state = runtime.runtime_state_store.load()
+    assert state is not None
+    assert state.update_status is ExecutorRuntimeUpdateStatus.REQUIRED

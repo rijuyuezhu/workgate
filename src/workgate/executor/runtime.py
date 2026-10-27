@@ -251,6 +251,44 @@ class ExecutorRuntime:
             return RuntimePolicyAction.CONTINUE
 
         target = policy.required_workgate_version
+        if (
+            state.ownership is ExecutorRuntimeOwnership.SOURCE
+            and self.managed_service
+        ):
+            from .service import ExecutorServiceManager
+
+            manager = ExecutorServiceManager(self.config)
+            # SOURCE also includes user-managed checkouts. Do not take over.
+            try:
+                checkout = await asyncio.to_thread(
+                    manager.verified_source_checkout
+                )
+            except Exception:
+                checkout = None
+            if checkout is not None:
+                # This phase only prepares: native cutover must run outside
+                # the service being stopped.
+                try:
+                    await manager.prepare_source_update(target)
+                except Exception as exc:
+                    # An exception message could reveal a network credential.
+                    self.runtime_state_store.set_update(
+                        ExecutorRuntimeUpdateStatus.FAILED,
+                        target_version=target,
+                        detail=f"source preparation failed ({type(exc).__name__})",
+                    )
+                    logger.warning(
+                        "Source runtime staging failed (%s)",
+                        type(exc).__name__,
+                    )
+                else:
+                    self.runtime_state_store.set_update(
+                        ExecutorRuntimeUpdateStatus.PENDING,
+                        target_version=target,
+                        detail="source release prepared; native cutover pending",
+                    )
+                return RuntimePolicyAction.BLOCK
+
         if state.ownership is not ExecutorRuntimeOwnership.CONTROL_MANAGED:
             error = RuntimeError(
                 f"control requires Workgate {target}, but runtime ownership is "
