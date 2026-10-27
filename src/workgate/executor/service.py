@@ -1241,6 +1241,23 @@ class ExecutorServiceManager:
             checkout, version=version, system=self.system
         )
 
+    def schedule_linux_source_cutover(self, version: str) -> None:
+        """Hand off to a transient service, not a child of this Executor."""
+        if host_os(self.system) is not HostOS.LINUX:
+            raise UnsupportedExecutorServiceError(
+                "source cutover scheduling requires Linux systemd"
+            )
+        checkout = self.verified_source_checkout()
+        if checkout is None:
+            raise RuntimeError(
+                "Executor is not an owned managed source service"
+            )
+        from .source_handoff import schedule_linux_source_cutover
+
+        schedule_linux_source_cutover(
+            checkout, version=version, config=self.config_path
+        )
+
     def logs(self, *, lines: int = _DEFAULT_LOG_LINES) -> str:
         """Return a bounded recent log view from the native backend."""
 
