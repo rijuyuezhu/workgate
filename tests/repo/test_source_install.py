@@ -822,3 +822,305 @@ def test_tilde_control_config_uses_caller_home_not_checkout(
     )
     expected = str(Path.home() / "wg-test-control.yaml")
     assert any(expected in argv for argv in calls)
+
+
+@pytest.mark.parametrize("role", ["control", "executor", "colocate"])
+@pytest.mark.parametrize("platform", ["linux", "win32"])
+def test_installer_exact_same_release_is_noop_without_uv_or_restart(
+    installer, monkeypatch, tmp_path, role, platform
+):
+    switch = importlib.import_module("switch")
+    switch_windows = importlib.import_module("switch_windows")
+
+    monkeypatch.setattr(installer.sys, "platform", platform)
+    root = tmp_path / "source"
+    root.mkdir()
+    commit = "b" * 40
+    checkout = root / "versions" / commit
+    python = (
+        checkout
+        / ".venv"
+        / ("Scripts/python.exe" if platform == "win32" else "bin/python")
+    )
+    python.parent.mkdir(parents=True)
+    python.touch()
+    monkeypatch.setattr(
+        switch_windows if platform == "win32" else switch,
+        "_old_python",
+        lambda _root: python,
+    )
+    monkeypatch.setattr(switch, "_staged_python", lambda _root, _tag: python)
+    config = root / "executor.yaml"
+    config.write_text("state_dir: stable")
+    opts = dict(
+        control_url="https://control.example" if role == "executor" else None,
+        name="existing" if role != "control" else None,
+        control_config=None,
+        executor_config=config if role == "executor" else None,
+        host=None,
+        port=None,
+        base_url=None,
+        arm64_wheel=None,
+        arm64_wheel_sha256=None,
+    )
+    fingerprint = installer._install_fingerprint(
+        role,
+        "v5.0.0a6",
+        {
+            key: str(value) if isinstance(value, Path) else value
+            for key, value in opts.items()
+        },
+    )
+    installer._record_install(root, role, "v5.0.0a6", fingerprint)
+
+    if platform == "win32":
+        service = root / role / "service"
+        service.mkdir(parents=True)
+        launcher = service / "launcher.py"
+        launcher.write_text("managed test")
+        monkeypatch.setattr(
+            switch_windows,
+            "_native",
+            lambda executable, query_role: {
+                "state": "Running",
+                "action": {
+                    "execute": str(python.with_name("pythonw.exe")),
+                    "arguments": subprocess.list2cmdline([str(launcher)]),
+                    "working_directory": str(service),
+                },
+            },
+        )
+    else:
+        unit = root / "systemd" / "user" / f"workgate-{role}.service"
+        unit.parent.mkdir(parents=True)
+        unit.write_text(f"# Managed by workgate {role} install-service")
+        monkeypatch.setattr(
+            switch,
+            "_native",
+            lambda query_role: {
+                "LoadState": "loaded",
+                "ActiveState": "active",
+                "FragmentPath": str(unit),
+                "ExecStart": f"{{ path={python} ; argv[]={python} ... ; }}",
+            },
+        )
+
+    if role == "executor":
+
+        def status(argv, **kw):
+            assert argv[-2:] == ["--config", str(config)]
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                "State: running\nRuntime: current\n",
+            )
+
+        monkeypatch.setattr(installer.subprocess, "run", status)
+    else:
+        monkeypatch.setattr(
+            installer.subprocess,
+            "run",
+            lambda *args, **kw: pytest.fail("no subprocess on no-op"),
+        )
+
+    monkeypatch.setattr(
+        installer,
+        "prepare",
+        lambda **kw: pytest.fail("no uv sync/clone during no-op"),
+    )
+    monkeypatch.setattr(
+        installer,
+        "_write_launcher",
+        lambda *a: pytest.fail("no launcher rewrite"),
+    )
+    if platform == "win32":
+        monkeypatch.setattr(installer, "_check_launcher", lambda root: None)
+    assert (
+        installer.install(
+            role=role,
+            root=root,
+            tag="v5.0.0a6",
+            control_url=opts["control_url"],
+            name=opts["name"],
+            executor_config=opts["executor_config"],
+        )
+        == checkout
+    )
+
+
+def test_install_receipt_is_private_and_rejects_unknown_existing_data(
+    installer, tmp_path
+):
+    root = tmp_path
+    installer._record_install(root, "control", "v5.0.0a6", "a" * 64)
+    content = (root / "install.json").read_text()
+    assert "a" * 64 in content and "control" in content
+    if os.name != "nt":
+        assert (root / "install.json").stat().st_mode & 0o777 == 0o600
+    (root / "install.json").write_text("unmanaged")
+    with pytest.raises(RuntimeError, match="unknown install receipt"):
+        installer._record_install(root, "control", "v5.0.0a6", "a" * 64)
+
+
+def test_install_receipt_wrong_args_or_missing_record_never_triggers_noop(
+    installer, tmp_path
+):
+    root = tmp_path
+    good = installer._install_fingerprint(
+        "executor", "v5.0.0a6", {"control_url": "https://a.example"}
+    )
+    bad = installer._install_fingerprint(
+        "executor", "v5.0.0a6", {"control_url": "https://b.example"}
+    )
+    assert good != bad
+    assert (
+        installer._same_install(root, "executor", "v5.0.0a6", good, None, None)
+        is None
+    )
+    installer._record_install(root, "executor", "v5.0.0a6", good)
+    assert (
+        installer._same_install(root, "executor", "v5.0.0a6", bad, None, None)
+        is None
+    )
+    (root / "install.json").write_text("{broken")
+    assert (
+        installer._same_install(root, "executor", "v5.0.0a6", good, None, None)
+        is None
+    )
+
+
+@pytest.mark.parametrize("bad", ["unmanaged", '{"x":1}', "{broken"])
+def test_unknown_install_receipt_rejected_before_prepare(
+    installer, monkeypatch, tmp_path, bad
+):
+    (tmp_path / "install.json").write_text(bad)
+    monkeypatch.setattr(
+        installer,
+        "prepare",
+        lambda **kw: pytest.fail("must reject unknown receipt before sync"),
+    )
+    with pytest.raises(RuntimeError, match="unknown install receipt"):
+        installer.install(role="control", tag="v5.0.0a6", root=tmp_path)
+
+
+def test_symlinked_install_receipt_rejected_before_prepare(
+    installer, monkeypatch, tmp_path
+):
+    target = tmp_path / "not-ours.json"
+    target.write_text("do not touch")
+    try:
+        (tmp_path / "install.json").symlink_to(target)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows account lacks symlink creation privilege")
+        raise
+    monkeypatch.setattr(
+        installer,
+        "prepare",
+        lambda **kw: pytest.fail("must reject symlinked receipt before sync"),
+    )
+    with pytest.raises(RuntimeError, match="symlinked install receipt"):
+        installer.install(role="control", tag="v5.0.0a6", root=tmp_path)
+    assert target.read_text() == "do not touch"
+
+
+@pytest.mark.parametrize("platform", ["linux", "win32"])
+@pytest.mark.parametrize(
+    "fault", ["stopped", "other-runtime", "unmanaged-unit"]
+)
+def test_installer_never_noops_for_unverified_native_binding(
+    installer, monkeypatch, tmp_path, platform, fault
+):
+    switch = importlib.import_module("switch")
+    windows = importlib.import_module("switch_windows")
+    monkeypatch.setattr(installer.sys, "platform", platform)
+    root = tmp_path
+    version = root / "versions" / ("b" * 40)
+    python = (
+        version
+        / ".venv"
+        / ("Scripts/python.exe" if platform == "win32" else "bin/python")
+    )
+    python.parent.mkdir(parents=True)
+    python.touch()
+    fingerprint = installer._install_fingerprint(
+        "control", "v5.0.0a6", {"host": None}
+    )
+    installer._record_install(root, "control", "v5.0.0a6", fingerprint)
+    monkeypatch.setattr(switch, "_staged_python", lambda *_: python)
+
+    if platform == "win32":
+        monkeypatch.setattr(windows, "_old_python", lambda *_: python)
+        service = root / "control" / "service"
+        service.mkdir(parents=True)
+        launcher = service / "launcher.py"
+        launcher.write_text("managed test")
+        action = {
+            "execute": str(
+                python.with_name(
+                    "different-pythonw.exe"
+                    if fault == "other-runtime"
+                    else "pythonw.exe"
+                )
+            ),
+            "arguments": subprocess.list2cmdline([str(launcher)]),
+            "working_directory": str(service),
+        }
+        if fault == "unmanaged-unit":
+            action["working_directory"] = str(root / "foreign")
+        monkeypatch.setattr(
+            windows,
+            "_native",
+            lambda *_: {
+                "state": "Ready" if fault == "stopped" else "Running",
+                "action": action,
+            },
+        )
+    else:
+        monkeypatch.setattr(switch, "_old_python", lambda *_: python)
+        unit = root / "systemd/user/workgate-control.service"
+        unit.parent.mkdir(parents=True)
+        unit.write_text(
+            "foreign unit"
+            if fault == "unmanaged-unit"
+            else "# Managed by workgate control install-service"
+        )
+        monkeypatch.setattr(
+            switch,
+            "_native",
+            lambda *_: {
+                "LoadState": "loaded",
+                "ActiveState": "inactive" if fault == "stopped" else "active",
+                "FragmentPath": str(unit),
+                "ExecStart": (
+                    f"{{ path={root / 'foreign/python'} ; argv[]={python} ... ; }}"
+                    if fault == "other-runtime"
+                    else f"{{ path={python} ; argv[]={python} ... ; }}"
+                ),
+            },
+        )
+
+    assert (
+        installer._same_install(
+            root, "control", "v5.0.0a6", fingerprint, None, None
+        )
+        is None
+    )
+
+
+def test_existing_receipt_cannot_silently_change_install_role(
+    installer, monkeypatch, tmp_path
+):
+    installer._record_install(tmp_path, "control", "v5.0.0a6", "a" * 64)
+    monkeypatch.setattr(
+        installer,
+        "prepare",
+        lambda **kw: pytest.fail("another role must reject before sync"),
+    )
+    with pytest.raises(RuntimeError, match="another role"):
+        installer.install(
+            role="executor",
+            tag="v5.0.0a6",
+            root=tmp_path,
+            control_url="https://control.example",
+        )
