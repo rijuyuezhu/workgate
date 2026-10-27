@@ -344,12 +344,18 @@ class ExecutorRuntime:
                     state.update_status
                     is ExecutorRuntimeUpdateStatus.DISPATCHED
                 ):
-                    self.runtime_state_store.set_update(
-                        ExecutorRuntimeUpdateStatus.FAILED,
-                        target_version=state.update_target_version,
-                        detail="native cutover unconfirmed; previous version reconnected",
-                    )
-                    return RuntimePolicyAction.BLOCK
+                    from ..version import __version__
+
+                    # A new runtime that HAS reached the previous target may
+                    # legitimately discover an even newer Control version.
+                    # Only a still-old runtime must not repeat cutover.
+                    if state.update_target_version != __version__:
+                        self.runtime_state_store.set_update(
+                            ExecutorRuntimeUpdateStatus.FAILED,
+                            target_version=state.update_target_version,
+                            detail="native cutover unconfirmed; previous version reconnected",
+                        )
+                        return RuntimePolicyAction.BLOCK
                 try:
                     if self._prepared_source_version != target:
                         await manager.prepare_source_update(target)

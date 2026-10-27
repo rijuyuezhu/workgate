@@ -257,3 +257,42 @@ async def test_control_advances_while_busy_then_installs_latest_only(
     assert state is not None
     assert state.update_target_version == NEWER
     assert state.update_status is ExecutorRuntimeUpdateStatus.DISPATCHED
+
+
+@pytest.mark.asyncio
+async def test_newly_switched_runtime_catches_a_later_control_version(
+    source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime, calls, _config = source
+    assert (
+        await runtime._handle_runtime_policy(_policy(TARGET))
+        is RuntimePolicyAction.HANDOFF
+    )
+    assert ("handoff", TARGET) in calls
+
+    # The newly installed interpreter has reached the earlier dispatched
+    # target, while Control has advanced again before its first Hello.
+    import workgate.version as version_module
+
+    monkeypatch.setattr(version_module, "__version__", TARGET)
+    restarted = build_executor_runtime(
+        runtime.config,
+        enable_control_connection=False,
+        managed_service=True,
+        runtime_ownership=ExecutorRuntimeOwnership.SOURCE,
+    )
+
+    async def idle() -> None:
+        return None
+
+    monkeypatch.setattr(restarted, "require_source_cutover_idle", idle)
+    assert (
+        await restarted._handle_runtime_policy(_policy(NEWER))
+        is RuntimePolicyAction.HANDOFF
+    )
+    assert ("stage", NEWER) in calls
+    assert ("handoff", NEWER) in calls
+    state = restarted.runtime_state_store.load()
+    assert state is not None
+    assert state.update_status is ExecutorRuntimeUpdateStatus.DISPATCHED
+    assert state.update_target_version == NEWER
