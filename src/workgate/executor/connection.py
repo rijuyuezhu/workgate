@@ -14,6 +14,7 @@ from ..errors import tool_error_payload
 from ..protocol.errors import ProtocolErrorCode
 from ..protocol.executor import (
     ExecutorCommand,
+    ExecutorHeartbeatResponse,
     ExecutorHelloRequest,
     ExecutorHelloResponse,
     ExecutorResult,
@@ -122,7 +123,7 @@ class _ControlClient(Protocol):
         self, message: ExecutorHelloRequest
     ) -> ExecutorHelloResponse: ...
 
-    async def heartbeat(self) -> None: ...
+    async def heartbeat(self) -> ExecutorHeartbeatResponse | None: ...
 
     async def poll(self, *, timeout_s: float) -> ExecutorCommand | None: ...
 
@@ -303,9 +304,11 @@ class ExecutorConnection:
                 await self._sleep(self._retry_delay(attempt))
                 attempt += 1
             except ExecutorControlError as exc:
-                reconnectable = (
-                    exc.retryable
-                    or exc.code is ProtocolErrorCode.EXECUTOR_OVERLOADED
+                reconnectable = exc.retryable or exc.code in (
+                    ProtocolErrorCode.EXECUTOR_OVERLOADED,
+                    # Control might have restarted without this Executor's
+                    # process-local hello; re-hello instead of quiescing.
+                    ProtocolErrorCode.EXECUTOR_INCOMPATIBLE,
                 )
                 if exc.requires_owner_action or not reconnectable:
                     self._require_owner_action(exc)
@@ -377,7 +380,10 @@ class ExecutorConnection:
             if self._stop.is_set() or self._owner_action_error is not None:
                 return
             try:
-                await self._client.heartbeat()
+                if await self._client.heartbeat() is not None:
+                    # Leave the connected loop so existing hello/runtime policy
+                    # handles upgrades after draining previously offered work.
+                    return
                 if self._owner_action_error is None:
                     self._report_status("connected")
                 attempt = 0

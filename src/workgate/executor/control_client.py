@@ -18,6 +18,7 @@ from ..protocol.executor import (
     EXECUTOR_RESULT_PATH,
     EXECUTOR_VALIDATE_PATH,
     ExecutorCommand,
+    ExecutorHeartbeatResponse,
     ExecutorHelloRequest,
     ExecutorHelloResponse,
     ExecutorResult,
@@ -102,8 +103,18 @@ class ExecutorControlClient:
     async def validate(self) -> None:
         await self._post(EXECUTOR_VALIDATE_PATH, json={}, timeout=30.0)
 
-    async def heartbeat(self) -> None:
-        await self._post(EXECUTOR_HEARTBEAT_PATH, json={}, timeout=30.0)
+    async def heartbeat(self) -> ExecutorHeartbeatResponse | None:
+        response = await self._post(
+            EXECUTOR_HEARTBEAT_PATH, json={}, timeout=30.0
+        )
+        if response.status_code == 204:
+            return None
+        try:
+            return ExecutorHeartbeatResponse.model_validate(response.json())
+        except (ValueError, ValidationError) as exc:
+            raise ExecutorControlError(
+                "control returned an invalid heartbeat response"
+            ) from exc
 
     async def poll(self, *, timeout_s: float) -> ExecutorCommand | None:
         response = await self._post(

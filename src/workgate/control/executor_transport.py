@@ -15,6 +15,7 @@ from ..protocol.credentials import executor_credential_matches
 from ..protocol.errors import ProtocolError, ProtocolErrorCode
 from ..protocol.executor import (
     ExecutorCommand,
+    ExecutorHeartbeatResponse,
     ExecutorHelloRequest,
     ExecutorHelloResponse,
     ExecutorResult,
@@ -304,14 +305,24 @@ class ExecutorTransport:
         if callback is not None:
             await callback(executor_id, credential)
 
-    async def heartbeat(self, credential: str) -> None:
-        """Refresh authenticated presence independently of command capacity."""
+    async def heartbeat(
+        self, credential: str
+    ) -> ExecutorHeartbeatResponse | None:
+        """Refresh presence and signal a new hello after Control changes."""
         self._require_running()
         record = self._authenticate(credential)
         channel = self._channel(record.executor_id)
         async with channel.lock:
             self._reauthenticate(record.executor_id, credential)
             self._touch(channel)
+            if (
+                channel.hello is None
+                or channel.hello.runtime.workgate_version != __version__
+            ):
+                return ExecutorHeartbeatResponse(
+                    required_workgate_version=__version__
+                )
+            return None
 
     async def poll(self, credential: str) -> ExecutorCommand | None:
         """Long-poll for at most one command, marking it offered exactly once."""
