@@ -9,18 +9,15 @@ from typing import Any
 from fastapi import HTTPException
 from pydantic import TypeAdapter, ValidationError
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import Response
 
 from ...errors import PublicToolValueError
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
 from ...oauth.core.scopes import SCOPE_SHELL_READ, SCOPE_SHELL_WRITE
 from ...protocol.ids import TaskId
 from .common import json_error
+from .common import json_ok as _json_ok
 from .sessions import project_session_rows
-
-
-def _json_ok(data: Any = None, message: str = "") -> JSONResponse:
-    return JSONResponse({"ok": True, "message": message, "data": data})
 
 
 def _require_scopes(*, write: bool = False) -> None:

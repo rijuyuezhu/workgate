@@ -5,6 +5,28 @@ import pytest
 from workgate.ui.http import common as ui_common
 
 
+@pytest.mark.parametrize(
+    ("data", "message"),
+    [
+        (None, ""),
+        ({"executor_id": "exec_abc", "items": [1, 2]}, "Ready"),
+    ],
+)
+def test_json_ok_preserves_webui_envelope_and_default_headers(
+    data: object, message: str
+) -> None:
+    response = ui_common.json_ok(data, message)
+
+    assert response.status_code == 200
+    assert json.loads(bytes(response.body)) == {
+        "ok": True,
+        "message": message,
+        "data": data,
+    }
+    assert response.headers["content-type"] == "application/json"
+    assert "cache-control" not in response.headers
+
+
 def test_json_error_preserves_common_envelope() -> None:
     response = ui_common.json_error(ValueError("bad input"), status_code=409)
 
