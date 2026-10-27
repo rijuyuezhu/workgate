@@ -326,6 +326,28 @@ class ExecutorRuntime:
                 try:
                     await manager.prepare_source_update(target)
                 except Exception as exc:
+                    # Keep deterministic version/provenance failures blocked.
+                    # Transient release/network failures can re-Hello with the
+                    # connection's existing bounded reconnect backoff.
+                    import subprocess
+
+                    import httpx
+
+                    retryable = isinstance(
+                        exc,
+                        (
+                            httpx.TransportError,
+                            ConnectionError,
+                            TimeoutError,
+                            subprocess.TimeoutExpired,
+                        ),
+                    ) or (
+                        isinstance(exc, httpx.HTTPStatusError)
+                        and (
+                            exc.response.status_code in (408, 429)
+                            or exc.response.status_code >= 500
+                        )
+                    )
                     # An exception message could reveal a network credential.
                     self.runtime_state_store.set_update(
                         ExecutorRuntimeUpdateStatus.FAILED,
@@ -336,6 +358,13 @@ class ExecutorRuntime:
                         "Source runtime staging failed (%s)",
                         type(exc).__name__,
                     )
+                    if retryable:
+                        # ExecutorConnection already reconnects with a bounded
+                        # delay after ConnectionError, without polling commands.
+                        raise ConnectionError(
+                            "source release temporarily unavailable"
+                        ) from exc
+                    return RuntimePolicyAction.BLOCK
                 else:
                     self.runtime_state_store.set_update(
                         ExecutorRuntimeUpdateStatus.PENDING,

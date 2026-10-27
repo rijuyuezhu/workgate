@@ -1269,3 +1269,71 @@ async def test_status_callback_failure_cannot_disable_executor_connection() -> (
         assert connection.owner_action_error is None
     finally:
         await connection.aclose()
+
+
+@pytest.mark.asyncio
+async def test_transient_runtime_policy_failure_rehellos_with_bounded_backoff() -> (
+    None
+):
+    delays: list[float] = []
+    resumed = asyncio.Event()
+
+    class Client(_BaseFakeClient):
+        hello_calls = 0
+        poll_calls = 0
+
+        async def hello(
+            self, message: ExecutorHelloRequest
+        ) -> ExecutorHelloResponse:
+            self.hello_calls += 1
+            return ExecutorHelloResponse(
+                heartbeat_interval_s=10,
+                offline_after_s=30,
+                poll_timeout_s=1,
+                required_workgate_version="5.0.0a99",
+                runtime_update_required=self.hello_calls < 3,
+            )
+
+        async def heartbeat(self) -> None:
+            return None
+
+        async def poll(self, *, timeout_s: float) -> ExecutorCommand | None:
+            self.poll_calls += 1
+            resumed.set()
+            await asyncio.Event().wait()
+            return None
+
+        async def submit_result(self, result: ExecutorResult) -> None:
+            raise AssertionError("no result expected")
+
+    client = Client()
+
+    async def policy_handler(
+        policy: ExecutorHelloResponse,
+    ) -> RuntimePolicyAction:
+        if policy.runtime_update_required:
+            raise ConnectionError("source release temporarily unavailable")
+        return RuntimePolicyAction.CONTINUE
+
+    async def retry_sleep(delay: float) -> None:
+        delays.append(delay)
+        await asyncio.sleep(0)
+
+    connection = ExecutorConnection(
+        client,
+        hello_factory=_hello,
+        execute=lambda _command: None,
+        max_concurrent_commands=1,
+        runtime_policy_handler=policy_handler,
+        sleep=retry_sleep,
+        random_value=lambda: 0.5,
+    )
+    connection.start()
+    try:
+        await asyncio.wait_for(resumed.wait(), timeout=1)
+        assert client.hello_calls == 3
+        assert client.poll_calls == 1
+        assert delays[:2] == [0.5, 1.0]
+        assert connection.owner_action_error is None
+    finally:
+        await connection.aclose()
