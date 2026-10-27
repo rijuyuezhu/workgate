@@ -114,6 +114,8 @@ class ExecutorRuntime:
     )
     _started: bool = field(default=False, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
+    _source_cutover_fenced: bool = field(default=False, init=False, repr=False)
+    _active_protocol_commands: int = field(default=0, init=False, repr=False)
 
     def _runtime_state(self) -> ExecutorRuntimeState:
         from .runtime_update import (
@@ -251,22 +253,38 @@ class ExecutorRuntime:
         ):
             raise RuntimeError("no matching prepared managed source update")
 
-        await self.require_source_cutover_idle()
-        manager = ExecutorServiceManager(self.config)
-        system = host_os()
-        if system is HostOS.LINUX:
-            handoff = manager.schedule_linux_source_cutover
-        elif system is HostOS.WINDOWS:
-            handoff = manager.schedule_windows_source_cutover
-        else:
+        # Same event loop as the protocol dispatcher: no await between checking
+        # in-flight commands and closing admission. No extra lock/state manager.
+        if self._source_cutover_fenced or self._active_protocol_commands:
             raise RuntimeError(
-                "native source cutover is unsupported on this host"
+                "source cutover deferred: protocol commands active"
             )
+        self._source_cutover_fenced = True
+        submitting = False
+        try:
+            await self.require_source_cutover_idle()
+            manager = ExecutorServiceManager(self.config)
+            system = host_os()
+            if system is HostOS.LINUX:
+                handoff = manager.schedule_linux_source_cutover
+            elif system is HostOS.WINDOWS:
+                handoff = manager.schedule_windows_source_cutover
+            else:
+                raise RuntimeError(
+                    "native source cutover is unsupported on this host"
+                )
 
-        # Both native dispatchers revalidate actual service/source ownership.
-        # Keep PENDING: the independent switch may stop this process before
-        # it could record any post-dispatch result, and dispatch != success.
-        await asyncio.to_thread(handoff, target)
+            # The native dispatcher revalidates source/service ownership.
+            # A successful dispatch may stop us before any further write.
+            submitting = True
+            await asyncio.to_thread(handoff, target)
+        except BaseException as exc:
+            # Cancellation cannot stop an already-running to_thread scheduler:
+            # it may still submit the switch. Keep admission closed if its
+            # outcome is unknown; only definite failures reopen the entrance.
+            if not (submitting and isinstance(exc, asyncio.CancelledError)):
+                self._source_cutover_fenced = False
+            raise
 
     async def _handle_runtime_policy(
         self, policy: ExecutorHelloResponse
@@ -420,13 +438,19 @@ class ExecutorRuntime:
         self._started = True
 
     async def _execute_protocol_command(self, command: ExecutorCommand) -> Any:
-        """Execute one final command under this executor's state context."""
-        with (
-            use_role_config(self.config),
-            use_state_store(self.services.state_store),
-            use_terminal_runtime(self.terminal_runtime),
-        ):
-            return await self._execute_protocol_command_with_state(command)
+        """Enter the executor command path before any operation can start."""
+        if self._source_cutover_fenced:
+            raise RuntimeError("Executor source cutover in progress")
+        self._active_protocol_commands += 1
+        try:
+            with (
+                use_role_config(self.config),
+                use_state_store(self.services.state_store),
+                use_terminal_runtime(self.terminal_runtime),
+            ):
+                return await self._execute_protocol_command_with_state(command)
+        finally:
+            self._active_protocol_commands -= 1
 
     async def _execute_protocol_command_with_state(
         self, command: ExecutorCommand
