@@ -1126,3 +1126,57 @@ def test_first_stage_does_not_create_stable_launcher(tmp_path, repo, preparer):
     )
     assert not (root / "bin" / "workgate").exists()
     assert not (root / "bin" / "workgate.cmd").exists()
+
+
+@pytest.mark.parametrize("tamper", ["origin", "head", "tag"])
+def test_prepared_checkout_identity_is_rechecked_before_reuse(
+    tmp_path, repo, preparer, monkeypatch, tamper
+):
+    origin, _git = repo
+    module, _calls, _fail = preparer
+    # Checkout identity is OS-independent; ARM64 crypto setup is tested separately.
+    monkeypatch.setattr(module, "_native_arm64", lambda: False)
+    monkeypatch.setattr(module, "_arm64_static_openssl_env", lambda: None)
+    root = tmp_path / "managed"
+    checkout = module.prepare(
+        tag="v5.0.0a5", role="control", root=root, repository=str(origin)
+    )
+    if tamper == "origin":
+        subprocess.run(
+            ["git", "remote", "set-url", "origin", str(tmp_path / "foreign")],
+            cwd=checkout,
+            check=True,
+        )
+    elif tamper == "head":
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@invalid.example",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "unexpected HEAD",
+            ],
+            cwd=checkout,
+            check=True,
+        )
+    else:
+        subprocess.run(
+            ["git", "tag", "-d", "v5.0.0a5"],
+            cwd=checkout,
+            check=True,
+            capture_output=True,
+        )
+    launcher = (
+        root / "bin" / ("workgate.cmd" if os.name == "nt" else "workgate")
+    ).read_bytes()
+    with pytest.raises(RuntimeError, match="not this managed version"):
+        module.prepare(
+            tag="v5.0.0a5", role="control", root=root, repository=str(origin)
+        )
+    assert (
+        root / "bin" / ("workgate.cmd" if os.name == "nt" else "workgate")
+    ).read_bytes() == launcher
