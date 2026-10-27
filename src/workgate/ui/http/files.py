@@ -5,18 +5,15 @@ from typing import Any, cast
 from fastapi import HTTPException
 from pydantic import JsonValue
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import Response
 
 from ...control.ui_executor import call_ui_executor
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
 from ...oauth.core.scopes import SCOPE_SHELL_READ, SCOPE_SHELL_WRITE
 from .common import json_error as _json_error
+from .common import json_ok as _json_ok
 
 UI_FILE_PATH_MAX_BYTES = 4_096
-
-
-def _json_ok(data: Any = None, message: str = "") -> JSONResponse:
-    return JSONResponse({"ok": True, "message": message, "data": data})
 
 
 def _require_scopes(*required: str) -> None:

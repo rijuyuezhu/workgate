@@ -12,7 +12,6 @@ from starlette.requests import Request
 from starlette.responses import (
     FileResponse,
     HTMLResponse,
-    JSONResponse,
     RedirectResponse,
     Response,
 )
@@ -32,6 +31,7 @@ from ..session import (
     ui_csrf_cookie_name,
 )
 from .audit import api_audit, api_audit_detail
+from .common import json_ok as _json_ok
 from .dashboard import api_dashboard
 from .files import (
     api_file_action,
@@ -50,11 +50,6 @@ from .sessions import api_session_action, api_session_skills
 from .tasks import api_task_action, api_task_detail, api_tasks
 from .terminals import api_terminal_action, api_terminal_read, api_terminals
 from .todos import api_todos
-
-
-def _json_ok(data: Any = None, message: str = "") -> JSONResponse:
-    """Return the stable WebUI success envelope."""
-    return JSONResponse({"ok": True, "message": message, "data": data})
 
 
 def _assets_dir() -> Path:

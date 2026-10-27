@@ -6,6 +6,11 @@ from typing import Any
 from starlette.responses import JSONResponse
 
 
+def json_ok(data: Any = None, message: str = "") -> JSONResponse:
+    """Return the standard WebUI success envelope."""
+    return JSONResponse({"ok": True, "message": message, "data": data})
+
+
 def json_error(exc: Exception, status_code: int = 400) -> JSONResponse:
     """Return the common WebUI exception envelope."""
     return JSONResponse(

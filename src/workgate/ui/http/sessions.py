@@ -5,15 +5,12 @@ from typing import Any
 
 from fastapi import HTTPException
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import Response
 
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
 from ...oauth.core.scopes import SCOPE_SHELL_READ, SCOPE_SHELL_WRITE
 from .common import bounded_text, json_error
-
-
-def _json_ok(data: Any = None, message: str = "") -> JSONResponse:
-    return JSONResponse({"ok": True, "message": message, "data": data})
+from .common import json_ok as _json_ok
 
 
 def _require_scopes(*, write: bool = False) -> None:

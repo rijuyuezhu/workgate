@@ -7,7 +7,7 @@ from typing import Any, cast
 
 from fastapi import HTTPException
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import Response
 
 from ...audit import (
     audit_query_snapshot,
@@ -36,6 +36,7 @@ from .common import (
 from .common import (
     json_error as _json_error,
 )
+from .common import json_ok as _json_ok
 
 UI_AUDIT_ENTRY_ID_MAX_BYTES = 512
 UI_AUDIT_FILTER_MAX_BYTES = 1_024
@@ -62,10 +63,6 @@ _AUDIT_EXECUTE_TOOLS = frozenset(
         "session_start",
     }
 )
-
-
-def _json_ok(data: Any = None, message: str = "") -> JSONResponse:
-    return JSONResponse({"ok": True, "message": message, "data": data})
 
 
 def _require_scopes(*required: str) -> None:

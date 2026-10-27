@@ -18,6 +18,7 @@ from ...protocol.terminal import (
 )
 from .common import bounded_text as _bounded_text
 from .common import json_error as _json_error
+from .common import json_ok as _json_ok
 from .terminal_protocol import (
     UI_TERMINAL_DEFAULT_LINES,
     UI_TERMINAL_METADATA_MAX_BYTES,
@@ -34,10 +35,6 @@ from .terminal_protocol import (
 )
 
 __all__ = ["UI_TERMINAL_OUTPUT_MAX_BYTES", "_normalize_read"]
-
-
-def _json_ok(data: Any = None, message: str = "") -> JSONResponse:
-    return JSONResponse({"ok": True, "message": message, "data": data})
 
 
 def _terminal_error(exc: Exception) -> JSONResponse:

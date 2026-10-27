@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import HTTPException
 from pydantic import TypeAdapter, ValidationError
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import Response
 
 from ...config.control import get_control_config
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
@@ -14,15 +14,12 @@ from ...protocol.ids import TaskId
 from ...schemas.result_models.task import TaskOutput
 from ...schemas.result_models.todo import ReadTodosOutput, WriteTodosOutput
 from .common import json_error as _json_error
+from .common import json_ok as _json_ok
 
 UI_TODO_ID_MAX_BYTES = 256
 UI_TODO_CONTENT_MAX_BYTES = 16_384
 UI_TODO_LABEL_MAX_BYTES = 64
 _FINAL_TASK_ID_ADAPTER = TypeAdapter(TaskId)
-
-
-def _json_ok(data: Any = None, message: str = "") -> JSONResponse:
-    return JSONResponse({"ok": True, "message": message, "data": data})
 
 
 def _require_scopes(*required: str) -> None:
