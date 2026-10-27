@@ -156,6 +156,17 @@ class BrowserService:
         self._closed = False
         self._reaper_task: asyncio.Task[None] | None = None
 
+    async def has_active_resources(self) -> bool:
+        """Conservatively report browser launches, sessions and pending cleanup."""
+        async with self._lock:
+            return bool(
+                self._starting
+                or self._sessions
+                or self._cleanup_pending
+                or self._closing
+                or self._profiles_in_use
+            )
+
     async def manage(
         self,
         owner_session_id: str,
