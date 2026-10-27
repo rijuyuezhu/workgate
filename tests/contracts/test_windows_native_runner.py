@@ -22,14 +22,46 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_real_conpty_input_output_and_shutdown(tmp_path: Path) -> None:
-    assert is_available(), "Windows native pywinpty dependency is required"
+def _ready_powershell(tmp_path: Path, *, resize: bool = False):
+    """Model the minimal VT cursor-position reply a real terminal provides."""
     shell = spawn_conpty(
         ["powershell.exe", "-NoLogo", "-NoProfile"], cwd=str(tmp_path)
     )
+    reader = shell.subscribe()
+    output = bytearray()
+    answered = 0
+    try:
+        if resize:
+            shell.resize(95, 34)
+        deadline = time.monotonic() + 12
+        while time.monotonic() < deadline:
+            chunk, ended = reader.read_wait(4096, 200)
+            output.extend(chunk)
+            # PSReadLine sometimes queries cursor position before its prompt;
+            # a bare PTY test reader must answer as xterm.js would.
+            queries = output.count(b"\x1b[6n")
+            while answered < queries:
+                shell.write("\x1b[1;1R")
+                answered += 1
+            if b"PS " in output and b"> " in output:
+                return shell
+            if ended:
+                break
+        pytest.fail(
+            f"PowerShell prompt did not become ready: {bytes(output[-256:])!r}"
+        )
+    except BaseException:
+        shell.close()
+        raise
+    finally:
+        shell.unsubscribe(reader)
+
+
+def test_real_conpty_input_output_and_shutdown(tmp_path: Path) -> None:
+    assert is_available(), "Windows native pywinpty dependency is required"
+    shell = _ready_powershell(tmp_path, resize=True)
     try:
         reader = shell.subscribe()
-        shell.resize(95, 34)
         shell.write("Write-Output ('WG391_' + 'NATIVE_CONPTY_OK')\r")
         deadline = time.monotonic() + 12
         output = bytearray()
@@ -45,9 +77,7 @@ def test_real_conpty_input_output_and_shutdown(tmp_path: Path) -> None:
 
 
 def test_real_conpty_natural_exit_delivers_eof(tmp_path: Path) -> None:
-    shell = spawn_conpty(
-        ["powershell.exe", "-NoLogo", "-NoProfile"], cwd=str(tmp_path)
-    )
+    shell = _ready_powershell(tmp_path)
     try:
         reader = shell.subscribe()
         # Subscribe before triggering natural exit so a fast process cannot
@@ -101,9 +131,7 @@ def test_real_conpty_close_reaps_descendant(tmp_path: Path) -> None:
         "time.sleep(40)\n",
         encoding="utf-8",
     )
-    shell = spawn_conpty(
-        ["powershell.exe", "-NoLogo", "-NoProfile"], cwd=str(tmp_path)
-    )
+    shell = _ready_powershell(tmp_path)
     pid = None
     try:
         shell.write(
