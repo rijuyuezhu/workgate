@@ -37,6 +37,10 @@ def verified_source_checkout(
         return None
     windows = system == "Windows"
     path = executable.absolute()
+    # Windows Task Scheduler runs the windowless sibling of the same
+    # versioned interpreter; source preparation validates python.exe.
+    if system == "Windows" and path.name.lower() == "pythonw.exe":
+        path = path.with_name("python.exe")
     if len(path.parents) < 3:
         return None
     checkout = path.parents[2]
