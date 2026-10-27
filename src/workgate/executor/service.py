@@ -1211,6 +1211,21 @@ class ExecutorServiceManager:
             runtime_update_detail=runtime.update_detail,
         )
 
+    def verified_source_checkout(self) -> Path | None:
+        """Allow future source updates only for an owned, pinned native service."""
+        from .source_provenance import verified_source_checkout
+
+        status = self.status()
+        if not (
+            status.running
+            and status.runtime_current
+            and status.runtime_ownership is ExecutorRuntimeOwnership.SOURCE
+        ):
+            return None
+        return verified_source_checkout(
+            self.executable.absolute(), version=__version__, system=self.system
+        )
+
     def logs(self, *, lines: int = _DEFAULT_LOG_LINES) -> str:
         """Return a bounded recent log view from the native backend."""
 
