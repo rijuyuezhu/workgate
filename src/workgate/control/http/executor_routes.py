@@ -129,9 +129,11 @@ def executor_routes(
 
     async def heartbeat(request: Request) -> Response:
         try:
-            await transport.heartbeat(_bearer(request))
+            hint = await transport.heartbeat(_bearer(request))
         except ExecutorTransportError as exc:
             return _error_response(exc)
+        if hint is not None:
+            return JSONResponse(hint.model_dump(mode="json"))
         return Response(status_code=204)
 
     async def poll(request: Request) -> Response:

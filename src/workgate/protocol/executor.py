@@ -142,6 +142,14 @@ class ExecutorHelloResponse(BaseModel):
         return self
 
 
+class ExecutorHeartbeatResponse(BaseModel):
+    """Hint to re-hello when Control's runtime or process-local state changes."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    required_workgate_version: str = Field(min_length=1, max_length=128)
+
+
 class ExecutorHeartbeatRequest(BaseModel):
     """Empty authenticated presence request; the endpoint may reply with 204."""
 

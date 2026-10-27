@@ -90,6 +90,19 @@ def test_executor_routes_use_executor_bearer_and_stable_errors(
         client.post("/executor/v1/heartbeat", headers=headers).status_code
         == 204
     )
+    stale = _hello_payload()
+    stale_runtime = stale["runtime"]
+    assert isinstance(stale_runtime, dict)
+    stale_runtime["workgate_version"] = "0.0.0"
+    assert (
+        client.post(
+            "/executor/v1/hello", json=stale, headers=headers
+        ).status_code
+        == 200
+    )
+    hint = client.post("/executor/v1/heartbeat", headers=headers)
+    assert hint.status_code == 200
+    assert hint.json() == {"required_workgate_version": __version__}
 
     unknown = client.post(
         "/executor/v1/result",
@@ -140,7 +153,8 @@ async def test_rest_owner_oauth_middleware_bypasses_executor_routes(
                 "/executor/v1/heartbeat",
                 headers={"Authorization": f"Bearer {credential}"},
             )
-        assert response.status_code == 204
+        assert response.status_code == 200
+        assert response.json() == {"required_workgate_version": __version__}
     finally:
         await runtime.executor_pairing.aclose()
         await runtime.executor_transport.aclose()

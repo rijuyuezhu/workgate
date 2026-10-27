@@ -17,6 +17,7 @@ from workgate.executor.runtime import build_executor_runtime
 from workgate.protocol.errors import ProtocolError, ProtocolErrorCode
 from workgate.protocol.executor import (
     ExecutorCommand,
+    ExecutorHeartbeatResponse,
     ExecutorHelloRequest,
     ExecutorHelloResponse,
     ExecutorResult,
@@ -698,6 +699,16 @@ async def test_temporary_duplicate_poll_overload_retries_without_owner_action() 
 
 
 @pytest.mark.asyncio
+async def test_poll_incompatible_after_control_restart_rehellos() -> None:
+    client, retry_sleeps = await _exercise_reconnect(
+        (_protocol_error(ProtocolErrorCode.EXECUTOR_INCOMPATIBLE, status=400),)
+    )
+    assert client.hello_calls == 2
+    assert client.poll_calls == 2
+    assert retry_sleeps == [0.5]
+
+
+@pytest.mark.asyncio
 async def test_repeated_poll_failures_keep_backoff_across_successful_hello() -> (
     None
 ):
@@ -917,6 +928,86 @@ def test_reconnect_backoff_is_exponential_jittered_and_bounded() -> None:
     assert executor_retry_delay(0, 0.5) == 0.5
     assert executor_retry_delay(1, 0.5) == 1.0
     assert executor_retry_delay(20, 0.5) == 30.0
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_hint_rehellos_then_drains_before_update() -> None:
+    hinted = asyncio.Event()
+    release = asyncio.Event()
+    second_policy = asyncio.Event()
+
+    class Client(_BaseFakeClient):
+        hello_calls = 0
+
+        async def hello(
+            self, message: ExecutorHelloRequest
+        ) -> ExecutorHelloResponse:
+            self.hello_calls += 1
+            if self.hello_calls == 1:
+                return _policy()
+            return ExecutorHelloResponse(
+                heartbeat_interval_s=1,
+                offline_after_s=3,
+                poll_timeout_s=1,
+                required_workgate_version="new-release",
+                runtime_update_required=True,
+            )
+
+        async def heartbeat(self) -> ExecutorHeartbeatResponse:
+            hinted.set()
+            return ExecutorHeartbeatResponse(
+                required_workgate_version="new-release"
+            )
+
+        async def poll(self, *, timeout_s: float) -> ExecutorCommand | None:
+            await asyncio.Event().wait()
+            return None
+
+        async def submit_result(self, result: ExecutorResult) -> None:
+            raise AssertionError("no result expected")
+
+    async def runtime_policy(
+        policy: ExecutorHelloResponse,
+    ) -> RuntimePolicyAction:
+        if policy.runtime_update_required:
+            second_policy.set()
+            return RuntimePolicyAction.RESTART
+        return RuntimePolicyAction.CONTINUE
+
+    client = Client()
+    connection = ExecutorConnection(
+        client,
+        hello_factory=_hello,
+        execute=lambda command: None,
+        max_concurrent_commands=1,
+        runtime_policy_handler=runtime_policy,
+        sleep=lambda delay: asyncio.sleep(0),
+    )
+
+    async def active_command() -> None:
+        await release.wait()
+
+    task = asyncio.create_task(active_command())
+    connection._command_tasks.add(task)
+    task.add_done_callback(connection._command_tasks.discard)
+    connection.start()
+    try:
+        await asyncio.wait_for(hinted.wait(), timeout=1)
+        # The second hello occurs, but its update policy may not interrupt
+        # the command already offered under the previous version.
+        for _ in range(10):
+            await asyncio.sleep(0)
+        assert client.hello_calls == 2
+        assert not second_policy.is_set()
+        assert not connection.restart_requested
+
+        release.set()
+        await asyncio.wait_for(second_policy.wait(), timeout=1)
+        await asyncio.wait_for(connection.wait_owner_action(), timeout=1)
+        assert connection.restart_requested
+    finally:
+        release.set()
+        await connection.aclose()
 
 
 @pytest.mark.asyncio

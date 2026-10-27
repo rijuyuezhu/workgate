@@ -98,7 +98,11 @@ async def test_hello_heartbeat_and_presence_are_process_local(
     await transport.validate(credential)
     assert not await transport.is_online(executor_id)
     assert await transport.inventory(executor_id) is None
+    hint = await transport.heartbeat(credential)
+    assert hint is not None
+    assert hint.required_workgate_version == __version__
     await _mark_online(transport, credential)
+    assert await transport.heartbeat(credential) is None
     assert await transport.is_online(executor_id)
     assert await transport.inventory(executor_id) == _hello()
 
@@ -126,6 +130,9 @@ async def test_version_mismatch_is_visible_and_fences_new_work(
     assert policy.runtime_update_required is True
     assert await transport.is_online(executor_id)
     assert await transport.inventory(executor_id) == mismatched
+    heartbeat_hint = await transport.heartbeat(credential)
+    assert heartbeat_hint is not None
+    assert heartbeat_hint.required_workgate_version == __version__
 
     with pytest.raises(ExecutorTransportError) as call_error:
         await transport.call(executor_id, "shell.run", {"command": "true"})

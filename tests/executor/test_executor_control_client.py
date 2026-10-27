@@ -142,6 +142,37 @@ async def test_executor_control_client_uses_v2_paths_and_persisted_bearer() -> (
 
 
 @pytest.mark.asyncio
+async def test_heartbeat_supports_204_and_version_change_hint() -> None:
+    profile = _profile()
+    status = 204
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        if status == 204:
+            return httpx.Response(204)
+        if status == 200:
+            return httpx.Response(
+                200, json={"required_workgate_version": "next-release"}
+            )
+        return httpx.Response(200, json={"not_a_release": "bad"})
+
+    client, http = _client(profile, handler)
+    try:
+        assert await client.heartbeat() is None
+        status = 200
+        hint = await client.heartbeat()
+        assert hint is not None
+        assert hint.required_workgate_version == "next-release"
+        status = 422
+        with pytest.raises(
+            ExecutorControlError, match="invalid heartbeat response"
+        ):
+            await client.heartbeat()
+    finally:
+        await client.aclose()
+        await http.aclose()
+
+
+@pytest.mark.asyncio
 async def test_executor_control_client_parses_terminal_protocol_error() -> None:
     profile = _profile()
 
