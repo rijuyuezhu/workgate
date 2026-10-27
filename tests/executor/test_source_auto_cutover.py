@@ -120,8 +120,13 @@ async def test_managed_source_stages_then_dispatches_once_and_new_hello_clears(
     assert calls == [("stage", TARGET), ("idle", TARGET), ("handoff", TARGET)]
     unresolved = restarted.runtime_state_store.load()
     assert unresolved is not None
-    assert unresolved.update_status is ExecutorRuntimeUpdateStatus.FAILED
-    assert "previous version reconnected" in (unresolved.update_detail or "")
+    assert unresolved.update_status is ExecutorRuntimeUpdateStatus.DISPATCHED
+    # Repeated old-version reconnects must not lose the no-retry guard.
+    assert (
+        await restarted._handle_runtime_policy(_policy())
+        is RuntimePolicyAction.BLOCK
+    )
+    assert calls == [("stage", TARGET), ("idle", TARGET), ("handoff", TARGET)]
 
     # New native service with exact compatible version completes Hello and
     # becomes IDLE; a queued dispatch is not treated as completion before it.
@@ -225,8 +230,13 @@ async def test_unconfirmed_old_cutover_blocks_even_a_new_control_target(
     assert ("handoff", NEWER) not in calls
     final = restarted.runtime_state_store.load()
     assert final is not None
-    assert final.update_status is ExecutorRuntimeUpdateStatus.FAILED
+    assert final.update_status is ExecutorRuntimeUpdateStatus.DISPATCHED
     assert final.update_target_version == TARGET
+    assert (
+        await restarted._handle_runtime_policy(_policy(NEWER))
+        is RuntimePolicyAction.BLOCK
+    )
+    assert ("handoff", NEWER) not in calls
 
 
 @pytest.mark.asyncio

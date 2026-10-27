@@ -350,11 +350,9 @@ class ExecutorRuntime:
                     # legitimately discover an even newer Control version.
                     # Only a still-old runtime must not repeat cutover.
                     if state.update_target_version != __version__:
-                        self.runtime_state_store.set_update(
-                            ExecutorRuntimeUpdateStatus.FAILED,
-                            target_version=state.update_target_version,
-                            detail="native cutover unconfirmed; previous version reconnected",
-                        )
+                        # Keep DISPATCHED as a durable no-retry guard. Writing
+                        # FAILED here would permit a second old-runtime Hello
+                        # to schedule another competing native handoff.
                         return RuntimePolicyAction.BLOCK
                 try:
                     if self._prepared_source_version != target:
