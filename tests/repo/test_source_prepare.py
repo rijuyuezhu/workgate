@@ -608,6 +608,16 @@ def test_arm64_static_crypto_import_order_checked_before_browser(
 ):
     origin, _git = repo
     module, calls, _fail = preparer
+    monkeypatch.setenv("OPENSSL_MODULES", "user-openssl-modules")
+    envs = []
+    original_run = module._run
+
+    def record_env(*args, **kwargs):
+        if len(args) >= 3 and args[1] == "-c" and "AESGCM" in args[2]:
+            envs.append(kwargs.get("env"))
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(module, "_run", record_env)
     monkeypatch.setattr(
         module, "_arm64_static_openssl_env", lambda: {"OPENSSL_STATIC": "1"}
     )
@@ -631,6 +641,14 @@ def test_arm64_static_crypto_import_order_checked_before_browser(
         if a[1:4] == ("-m", "playwright", "install")
     )
     assert crypto_calls[-1][0] < browser
+    assert len(envs) == 2
+    assert all(
+        env["OPENSSL_MODULES"] == "user-openssl-modules"
+        and env["CRYPTOGRAPHY_OPENSSL_NO_LEGACY"] == "1"
+        for env in envs
+    )
+    assert os.environ["OPENSSL_MODULES"] == "user-openssl-modules"
+    assert "CRYPTOGRAPHY_OPENSSL_NO_LEGACY" not in os.environ
 
 
 def test_arm64_crypto_import_failure_preserves_launcher(

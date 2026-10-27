@@ -286,8 +286,11 @@ class ExecutorServiceManager:
             '"""Private Workgate managed-executor launcher. Generated; do not edit."""\n'
             "import contextlib\n"
             "import os\n"
+            "import sysconfig\n"
             "import traceback\n\n"
             f"CONFIG_PATH = {config_path!r}\n\n"
+            "if os.name == 'nt' and sysconfig.get_platform() == 'win-arm64':\n"
+            "    os.environ['CRYPTOGRAPHY_OPENSSL_NO_LEGACY'] = '1'\n"
             "for _name in list(os.environ):\n"
             "    if _name.startswith('WORKGATE_'):\n"
             "        os.environ.pop(_name, None)\n"

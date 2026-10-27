@@ -81,6 +81,21 @@ def _completed(
     return subprocess.CompletedProcess(command, returncode, stdout, stderr)
 
 
+def test_managed_executor_launcher_scopes_crypto_legacy_to_windows_arm64(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager, _profile_value = _paired_manager(tmp_path, system="Windows")
+    monkeypatch.delenv("CRYPTOGRAPHY_OPENSSL_NO_LEGACY", raising=False)
+    source = manager._launcher_source(ExecutorRuntimeOwnership.SOURCE)
+    compile(source, "<generated-executor-launcher>", "exec")
+    assert "sysconfig.get_platform() == 'win-arm64'" in source
+    assert "os.environ['CRYPTOGRAPHY_OPENSSL_NO_LEGACY'] = '1'" in source
+    assert source.index("CRYPTOGRAPHY_OPENSSL_NO_LEGACY") < source.index(
+        "from workgate.main import main"
+    )
+    assert "CRYPTOGRAPHY_OPENSSL_NO_LEGACY" not in os.environ
+
+
 def test_service_helpers_cover_nested_settings_and_command_failures(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
