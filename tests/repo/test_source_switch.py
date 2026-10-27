@@ -981,3 +981,51 @@ def test_executor_full_subprocess_cutover_and_failure_recovery(
     assert state["profile"].read_bytes() == identity_before
     assert switcher._old_python(root) == checkouts["v5.0.0a5"]
     assert "connect" not in actions.read_text()
+
+
+@pytest.mark.parametrize("tamper", ["origin", "head", "tag"])
+def test_staged_release_identity_tampering_refused_before_native_cutover(
+    staged, switcher, tmp_path, tamper
+):
+    root, config, checkouts, state = staged
+    checkout = checkouts["v5.0.0a6"].parents[2]
+    if tamper == "origin":
+        subprocess.run(
+            [
+                "git",
+                "remote",
+                "set-url",
+                "origin",
+                str(tmp_path / "wrong-origin"),
+            ],
+            cwd=checkout,
+            check=True,
+        )
+    elif tamper == "head":
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@invalid.example",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "unexpected HEAD",
+            ],
+            cwd=checkout,
+            check=True,
+        )
+    else:
+        subprocess.run(
+            ["git", "tag", "-d", "v5.0.0a6"],
+            cwd=checkout,
+            check=True,
+            capture_output=True,
+        )
+    launcher = (root / "bin/workgate").read_bytes()
+    with pytest.raises(RuntimeError, match="no prepared source release"):
+        switcher.switch(root=root, tag="v5.0.0a6", control_config=config)
+    assert state["calls"] == []
+    assert (root / "bin/workgate").read_bytes() == launcher

@@ -15,6 +15,7 @@ import tempfile
 import tomllib
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 
 REPOSITORY = "https://github.com/rijuyuezhu/workgate.git"
@@ -37,6 +38,34 @@ def _run(
         timeout=timeout,
     )
     return result.stdout.strip()
+
+
+def _managed_release_matches(
+    checkout: Path,
+    tag: str,
+    repository: str,
+    run: Callable[..., str],
+    *,
+    commit: str | None = None,
+) -> bool:
+    """Verify an existing checkout's origin, HEAD and exact release tag."""
+    expected = commit or checkout.name
+    try:
+        return (
+            run("git", "remote", "get-url", "origin", cwd=checkout)
+            == repository
+            and run("git", "rev-parse", "HEAD", cwd=checkout) == expected
+            and run(
+                "git",
+                "rev-parse",
+                "--verify",
+                f"refs/tags/{tag}^{{commit}}",
+                cwd=checkout,
+            )
+            == expected
+        )
+    except subprocess.CalledProcessError:
+        return False
 
 
 def _arm64_static_openssl_env(
@@ -399,15 +428,13 @@ def prepare(
         sha = _run("git", "rev-parse", "HEAD", cwd=temporary, timeout=15)
         if not re.fullmatch(r"[0-9a-f]{40}", sha):
             raise RuntimeError("Git did not resolve a full release commit")
-        tagged = _run(
-            "git",
-            "rev-parse",
-            "--verify",
-            f"refs/tags/{tag}^{{commit}}",
-            cwd=temporary,
-            timeout=15,
-        )
-        if tagged != sha:
+        if not _managed_release_matches(
+            temporary,
+            tag,
+            repository,
+            lambda *args, **kw: _run(*args, timeout=15, **kw),
+            commit=sha,
+        ):
             raise RuntimeError(
                 "checkout HEAD does not match the requested release tag"
             )
@@ -437,14 +464,11 @@ def prepare(
                 f"refusing to use a symlinked release checkout: {target}"
             )
         if target.exists():
-            if (
-                not (target / ".git").is_dir()
-                or _run(
-                    "git", "remote", "get-url", "origin", cwd=target, timeout=15
-                )
-                != repository
-                or _run("git", "rev-parse", "HEAD", cwd=target, timeout=15)
-                != sha
+            if not (target / ".git").is_dir() or not _managed_release_matches(
+                target,
+                tag,
+                repository,
+                lambda *args, **kw: _run(*args, timeout=15, **kw),
             ):
                 raise RuntimeError(
                     f"destination is not this managed version: {target}"

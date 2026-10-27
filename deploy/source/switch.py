@@ -12,6 +12,7 @@ from prepare import (
     REPOSITORY,
     _check_launcher,
     _default_root,
+    _managed_release_matches,
     _python,
     _write_launcher,
 )
@@ -61,24 +62,7 @@ def _staged_python(root: Path, tag: str) -> Path:
             or checkout.is_symlink()
         ):
             continue
-        try:
-            if (
-                _run("git", "-C", str(checkout), "remote", "get-url", "origin")
-                != REPOSITORY
-                or _run("git", "-C", str(checkout), "rev-parse", "HEAD")
-                != checkout.name
-                or _run(
-                    "git",
-                    "-C",
-                    str(checkout),
-                    "rev-parse",
-                    "--verify",
-                    f"refs/tags/{tag}^{{commit}}",
-                )
-                != checkout.name
-            ):
-                continue
-        except subprocess.CalledProcessError:
+        if not _managed_release_matches(checkout, tag, REPOSITORY, _run):
             continue
         if _run(
             "git",
