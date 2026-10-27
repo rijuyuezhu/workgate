@@ -119,7 +119,7 @@ async def test_official_git_lookup_failure_is_not_an_update_target(
 
     monkeypatch.setattr(source_stage, "run_bounded_capture", failed_lookup)
     with pytest.raises(
-        RuntimeError, match="could not resolve official release tag"
+        ConnectionError, match="could not resolve official release tag"
     ):
         await source_stage.resolve_published_commit("6.0.0a1")
 

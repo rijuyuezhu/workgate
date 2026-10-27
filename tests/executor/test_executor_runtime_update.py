@@ -913,3 +913,103 @@ async def test_unverifiable_source_stays_owner_managed(
     state = runtime.runtime_state_store.load()
     assert state is not None
     assert state.update_status is ExecutorRuntimeUpdateStatus.REQUIRED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure", "retry"),
+    [
+        (httpx.ConnectError("temporary offline"), True),
+        (httpx.ReadTimeout("timeout"), True),
+        (ConnectionError("git ls-remote unavailable"), True),
+        (TimeoutError("operation expired"), True),
+        (
+            httpx.HTTPStatusError(
+                "server failure",
+                request=httpx.Request("GET", "https://github.test/release"),
+                response=httpx.Response(503),
+            ),
+            True,
+        ),
+        (
+            httpx.HTTPStatusError(
+                "rate limited",
+                request=httpx.Request("GET", "https://github.test/release"),
+                response=httpx.Response(429),
+            ),
+            True,
+        ),
+        (
+            httpx.HTTPStatusError(
+                "unauthorized",
+                request=httpx.Request("GET", "https://github.test/release"),
+                response=httpx.Response(401),
+            ),
+            False,
+        ),
+        (
+            httpx.HTTPStatusError(
+                "release absent",
+                request=httpx.Request("GET", "https://github.test/release"),
+                response=httpx.Response(404),
+            ),
+            False,
+        ),
+        (RuntimeError("release tag and commit disagree"), False),
+    ],
+)
+async def test_source_staging_retries_only_transient_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+    retry: bool,
+) -> None:
+    from workgate.executor.service import ExecutorServiceManager
+
+    runtime = build_executor_runtime(
+        resolve_executor_config(
+            Settings(default_workdir=tmp_path, state_dir=tmp_path / "state")
+        ),
+        enable_control_connection=False,
+        managed_service=True,
+        runtime_ownership=ExecutorRuntimeOwnership.SOURCE,
+    )
+    checkout = tmp_path / "versions" / ("a" * 40)
+    monkeypatch.setattr(
+        ExecutorServiceManager,
+        "verified_source_checkout",
+        lambda _self: checkout,
+    )
+    prepared = []
+
+    async def prepare(_self, version: str) -> Path:
+        prepared.append(version)
+        raise failure
+
+    monkeypatch.setattr(
+        ExecutorServiceManager, "prepare_source_update", prepare
+    )
+    policy = ExecutorHelloResponse(
+        heartbeat_interval_s=10,
+        offline_after_s=30,
+        poll_timeout_s=1,
+        required_workgate_version="5.0.0a99",
+        runtime_update_required=True,
+    )
+    if retry:
+        with pytest.raises(
+            ConnectionError, match="temporarily unavailable"
+        ) as exc_info:
+            await runtime._handle_runtime_policy(policy)
+        assert exc_info.value.__cause__ is failure
+    else:
+        assert (
+            await runtime._handle_runtime_policy(policy)
+            is RuntimePolicyAction.BLOCK
+        )
+    assert prepared == ["5.0.0a99"]
+    state = runtime.runtime_state_store.load()
+    assert state is not None
+    assert state.update_status is ExecutorRuntimeUpdateStatus.FAILED
+    assert state.update_target_version == "5.0.0a99"
+    assert "https://github.test" not in (state.update_detail or "")

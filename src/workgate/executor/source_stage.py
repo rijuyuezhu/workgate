@@ -55,7 +55,9 @@ async def resolve_published_commit(version: str) -> str:
         env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
     )
     if code:
-        raise RuntimeError("could not resolve official release tag")
+        # Nonzero git transport failures (including offline) may recover.
+        # Malformed/missing successful tag responses are never retried.
+        raise ConnectionError("could not resolve official release tag")
     refs = {}
     for line in output.splitlines():
         parts = line.split("\t")
