@@ -37,6 +37,7 @@ class ExecutorRuntimeUpdateStatus(StrEnum):
     IDLE = "idle"
     REQUIRED = "required"
     PENDING = "pending"
+    DISPATCHED = "dispatched"
     FAILED = "failed"
 
 

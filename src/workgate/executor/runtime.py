@@ -44,6 +44,11 @@ from .ui_terminals import UiTerminalsService
 
 logger = logging.getLogger(__name__)
 
+
+class SourceCutoverDeferred(RuntimeError):
+    """Resources are busy: retry after reconnect, without interrupting work."""
+
+
 if TYPE_CHECKING:
     from ..protocol.executor import (
         ExecutorCommand,
@@ -116,6 +121,9 @@ class ExecutorRuntime:
     _closed: bool = field(default=False, init=False, repr=False)
     _source_cutover_fenced: bool = field(default=False, init=False, repr=False)
     _active_protocol_commands: int = field(default=0, init=False, repr=False)
+    _prepared_source_version: str | None = field(
+        default=None, init=False, repr=False
+    )
 
     def _runtime_state(self) -> ExecutorRuntimeState:
         from .runtime_update import (
@@ -178,7 +186,7 @@ class ExecutorRuntime:
                 "source cutover requires a running Executor connection"
             )
         if connection.active_command_count or self._terminal_stream_tasks:
-            raise RuntimeError(
+            raise SourceCutoverDeferred(
                 "source cutover deferred: commands or terminal streams active"
             )
 
@@ -192,7 +200,7 @@ class ExecutorRuntime:
                 for job in inventory.jobs
             )
         ):
-            raise RuntimeError(
+            raise SourceCutoverDeferred(
                 "source cutover deferred: persistent shells or jobs present"
             )
         # Reconnect inventory covers session-owned resources; unowned WebUI
@@ -212,7 +220,7 @@ class ExecutorRuntime:
                 "persistent shell inventory is not authoritative"
             )
         if active_shells:
-            raise RuntimeError(
+            raise SourceCutoverDeferred(
                 "source cutover deferred: persistent shells present"
             )
 
@@ -223,21 +231,22 @@ class ExecutorRuntime:
             or self.terminal_runtime.bridges.has_active_resources()
             or self.terminal_runtime.conpty.active()
         ):
-            raise RuntimeError(
+            raise SourceCutoverDeferred(
                 "source cutover deferred: browser, transfer or terminal resources active"
             )
 
         # Recheck work that could have changed during the inventory snapshot.
         if connection.active_command_count or self._terminal_stream_tasks:
-            raise RuntimeError(
+            raise SourceCutoverDeferred(
                 "source cutover deferred: commands or terminal streams active"
             )
 
     async def handoff_prepared_source_update(self, target: str) -> None:
         """Dispatch an already prepared release, never declare cutover success.
 
-        Not yet called by live version policy: admission must be fenced
-        through the entire resource check and native handoff first.
+        Called only from incompatible Hello policy after the old process has
+        drained offered commands; admission is fenced across idle verification
+        and native handoff.
         """
         from ..platform.host import HostOS, host_os
         from ..protocol.executor import ExecutorRuntimeOwnership
@@ -256,7 +265,7 @@ class ExecutorRuntime:
         # Same event loop as the protocol dispatcher: no await between checking
         # in-flight commands and closing admission. No extra lock/state manager.
         if self._source_cutover_fenced or self._active_protocol_commands:
-            raise RuntimeError(
+            raise SourceCutoverDeferred(
                 "source cutover deferred: protocol commands active"
             )
         self._source_cutover_fenced = True
@@ -274,8 +283,14 @@ class ExecutorRuntime:
                     "native source cutover is unsupported on this host"
                 )
 
-            # The native dispatcher revalidates source/service ownership.
-            # A successful dispatch may stop us before any further write.
+            # Persist the attempt BEFORE scheduling: the independent switch
+            # can stop this process, and a rollback must not auto-restart it
+            # into an uncontrolled repeated cutover loop.
+            self.runtime_state_store.set_update(
+                ExecutorRuntimeUpdateStatus.DISPATCHED,
+                target_version=target,
+                detail="native cutover requested; awaiting compatible hello",
+            )
             submitting = True
             await asyncio.to_thread(handoff, target)
         except BaseException as exc:
@@ -299,6 +314,7 @@ class ExecutorRuntime:
 
         state = self._runtime_state()
         if not policy.runtime_update_required:
+            self._prepared_source_version = None
             if self.managed_service:
                 self.runtime_state_store.set_update(
                     ExecutorRuntimeUpdateStatus.IDLE
@@ -321,10 +337,27 @@ class ExecutorRuntime:
             except Exception:
                 checkout = None
             if checkout is not None:
-                # This phase only prepares: native cutover must run outside
-                # the service being stopped.
+                # An old-version Hello after an external handoff proves the
+                # cutover remains unconfirmed. Never start a second native
+                # task, even if Control has since advanced the target version.
+                if (
+                    state.update_status
+                    is ExecutorRuntimeUpdateStatus.DISPATCHED
+                ):
+                    from ..version import __version__
+
+                    # A new runtime that HAS reached the previous target may
+                    # legitimately discover an even newer Control version.
+                    # Only a still-old runtime must not repeat cutover.
+                    if state.update_target_version != __version__:
+                        # Keep DISPATCHED as a durable no-retry guard. Writing
+                        # FAILED here would permit a second old-runtime Hello
+                        # to schedule another competing native handoff.
+                        return RuntimePolicyAction.BLOCK
                 try:
-                    await manager.prepare_source_update(target)
+                    if self._prepared_source_version != target:
+                        await manager.prepare_source_update(target)
+                        self._prepared_source_version = target
                 except Exception as exc:
                     # Keep deterministic version/provenance failures blocked.
                     # Transient release/network failures can re-Hello with the
@@ -371,7 +404,31 @@ class ExecutorRuntime:
                         target_version=target,
                         detail="source release prepared; native cutover pending",
                     )
-                return RuntimePolicyAction.BLOCK
+
+                try:
+                    await self.handoff_prepared_source_update(target)
+                except SourceCutoverDeferred as exc:
+                    # Existing connection backoff retries only once a fresh
+                    # Hello has again proved the required target.
+                    raise ConnectionError(
+                        "source cutover deferred while user work is active"
+                    ) from exc
+                except ExecutorResourceInventoryUnavailable:
+                    raise
+                except Exception as exc:
+                    self.runtime_state_store.set_update(
+                        ExecutorRuntimeUpdateStatus.FAILED,
+                        target_version=target,
+                        detail=f"native cutover could not be scheduled ({type(exc).__name__})",
+                    )
+                    logger.warning(
+                        "Managed source cutover dispatch failed (%s)",
+                        type(exc).__name__,
+                    )
+                    return RuntimePolicyAction.BLOCK
+                # An accepted handoff is not a successful upgrade: the old
+                # runtime remains quiescent until the service switch takes over.
+                return RuntimePolicyAction.HANDOFF
 
         if state.ownership is not ExecutorRuntimeOwnership.CONTROL_MANAGED:
             error = RuntimeError(

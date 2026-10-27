@@ -1337,3 +1337,56 @@ async def test_transient_runtime_policy_failure_rehellos_with_bounded_backoff() 
         assert connection.owner_action_error is None
     finally:
         await connection.aclose()
+
+
+@pytest.mark.asyncio
+async def test_source_cutover_handoff_quiesces_without_owner_action() -> None:
+    """A scheduled native switch cannot continue polling or claim success."""
+    handed_off = asyncio.Event()
+    phases: list[tuple[str, str | None]] = []
+
+    class Client(_BaseFakeClient):
+        async def hello(
+            self, message: ExecutorHelloRequest
+        ) -> ExecutorHelloResponse:
+            return ExecutorHelloResponse(
+                heartbeat_interval_s=10,
+                offline_after_s=30,
+                poll_timeout_s=1,
+                required_workgate_version="5.0.0a99",
+                runtime_update_required=True,
+            )
+
+        async def heartbeat(self) -> None:
+            raise AssertionError("source cutover cannot heartbeat")
+
+        async def poll(self, *, timeout_s: float) -> ExecutorCommand | None:
+            raise AssertionError("source cutover cannot accept new work")
+
+        async def submit_result(self, result: ExecutorResult) -> None:
+            raise AssertionError("no command results expected")
+
+    async def runtime_policy(
+        _policy: ExecutorHelloResponse,
+    ) -> RuntimePolicyAction:
+        handed_off.set()
+        return RuntimePolicyAction.HANDOFF
+
+    connection = ExecutorConnection(
+        Client(),
+        hello_factory=_hello,
+        execute=lambda _command: None,
+        max_concurrent_commands=1,
+        runtime_policy_handler=runtime_policy,
+        status_callback=lambda phase, error: phases.append((phase, error)),
+    )
+    connection.start()
+    try:
+        await asyncio.wait_for(handed_off.wait(), timeout=1)
+        await asyncio.sleep(0)
+        assert ("reconnecting", "RuntimeCutoverPending") in phases
+        assert connection.restart_requested is False
+        assert connection.owner_action_error is None
+        assert not connection._first_hello.is_set()
+    finally:
+        await connection.aclose()

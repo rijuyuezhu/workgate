@@ -810,7 +810,7 @@ def test_windowless_windows_version_probe_matches_and_cleans_output(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stage_fails", [False, True])
-async def test_managed_source_policy_stages_only_without_switching(
+async def test_managed_source_policy_stages_and_requests_handoff(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     stage_fails: bool,
@@ -845,6 +845,12 @@ async def test_managed_source_policy_stages_only_without_switching(
     monkeypatch.setattr(
         ExecutorServiceManager, "prepare_source_update", prepare
     )
+    handed_off: list[str] = []
+
+    async def handoff(target: str) -> None:
+        handed_off.append(target)
+
+    monkeypatch.setattr(runtime, "handoff_prepared_source_update", handoff)
     policy = ExecutorHelloResponse(
         heartbeat_interval_s=10,
         offline_after_s=30,
@@ -855,8 +861,13 @@ async def test_managed_source_policy_stages_only_without_switching(
 
     action = await runtime._handle_runtime_policy(policy)
 
-    assert action is RuntimePolicyAction.BLOCK
+    assert action is (
+        RuntimePolicyAction.BLOCK
+        if stage_fails
+        else RuntimePolicyAction.HANDOFF
+    )
     assert staged == ["5.0.0a99"]
+    assert handed_off == ([] if stage_fails else ["5.0.0a99"])
     state = runtime.runtime_state_store.load()
     assert state is not None
     assert state.ownership is ExecutorRuntimeOwnership.SOURCE

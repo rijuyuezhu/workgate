@@ -76,6 +76,7 @@ class RuntimePolicyAction(StrEnum):
     CONTINUE = "continue"
     RESTART = "restart"
     BLOCK = "block"
+    HANDOFF = "handoff"
 
 
 type RuntimePolicyHandler = Callable[
@@ -279,6 +280,14 @@ class ExecutorConnection:
                             "executor runtime updated; restart required"
                         )
                         self._owner_action.set()
+                        break
+                    if action is RuntimePolicyAction.HANDOFF:
+                        # An independent native switch is pending; old process
+                        # must stay quiescent, not claim owner action/success.
+                        self._report_status(
+                            "reconnecting", "RuntimeCutoverPending"
+                        )
+                        await self._stop.wait()
                         break
                     if action is RuntimePolicyAction.BLOCK:
                         self._report_status(
