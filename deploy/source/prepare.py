@@ -553,6 +553,7 @@ def prepare(
         else:
             _run(*sync_args, cwd=target, env=build_env)
         python = _python(target)
+        verify_env = None
         if not python.is_file():
             raise RuntimeError(
                 f"uv did not create the expected interpreter: {python}"
@@ -583,17 +584,36 @@ def prepare(
                     "; assert cryptography.__version__ == '50.0.2'"
                     "; assert Binding().ffi.string(Binding().lib.OpenSSL_version(0)).decode().startswith('OpenSSL 3.5.9 ')"
                 )
+            # Keep the user's Scoop OPENSSL_MODULES intact, but prevent
+            # cryptography's static OpenSSL from loading its older legacy DLL.
+            verify_env = {
+                **os.environ,
+                "CRYPTOGRAPHY_OPENSSL_NO_LEGACY": "1",
+            }
             for script in (f"{crypto}; import ssl", f"import ssl; {crypto}"):
                 try:
-                    _run(str(python), "-c", script, cwd=target)
+                    _run(str(python), "-c", script, cwd=target, env=verify_env)
                 except subprocess.CalledProcessError as exc:
                     raise RuntimeError(
                         "Windows ARM64 cryptography runtime verification failed "
                         "(check static OpenSSL linking)"
                     ) from exc
-        _run(str(python), "-m", "playwright", "install", "chromium", cwd=target)
+        _run(
+            str(python),
+            "-m",
+            "playwright",
+            "install",
+            "chromium",
+            cwd=target,
+            env=verify_env,
+        )
         version = _run(
-            str(python), "-m", "workgate.main", "--version", cwd=target
+            str(python),
+            "-m",
+            "workgate.main",
+            "--version",
+            cwd=target,
+            env=verify_env,
         )
         if version != f"workgate {tag[1:]}":
             raise RuntimeError(f"installed CLI version does not match {tag}")

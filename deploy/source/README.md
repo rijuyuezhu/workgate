@@ -266,6 +266,16 @@ upgrade and rollback acceptance before #456 can close.
 
 ## Windows ARM64 native cryptography prerequisite
 
+On ARM64, WorkGate's managed Executor launcher and source-preparation
+cryptography/SSL verification use `CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1` to
+avoid mixing the static cryptography OpenSSL runtime with the older Legacy
+Provider exposed by a user's Scoop `OPENSSL_MODULES`. The installer does
+**not** change the user environment or disable normal TLS/AES-GCM; legacy
+ciphers (e.g. RC2/Blowfish) are unavailable to cryptography in the managed
+Executor process. Other system programs are unchanged; subprocesses started
+by that Executor may inherit its environment, as they do with other variables.
+
+
 PyCA `cryptography` no longer publishes Windows ARM64 wheels for our current
 lockfile version. On **native** Windows ARM64 (including Spark), installing
 the package from source against dynamically linked OpenSSL can succeed at
