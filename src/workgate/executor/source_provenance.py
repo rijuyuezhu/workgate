@@ -74,23 +74,27 @@ def verified_source_checkout(
         or not launcher.is_file()
         or launcher.parent.is_symlink()
         or receipt.is_symlink()
-        or not receipt.is_file()
     ):
         return None
     try:
-        record = json.loads(receipt.read_text(encoding="utf-8"))
-        if (
-            not isinstance(record, dict)
-            or set(record) != {"role", "tag", "fingerprint"}
-            or record["role"] != "executor"
-            or not isinstance(record["tag"], str)
-            or _RELEASE_TAG.fullmatch(record["tag"]) is None
-            or not isinstance(record["fingerprint"], str)
-            or _FINGERPRINT.fullmatch(record["fingerprint"]) is None
-        ):
-            return None
-        # The install receipt records the *initial* tag: explicit switches do
-        # not rewrite it, so current release identity comes from Git instead.
+        if receipt.exists():
+            if not receipt.is_file():
+                return None
+            record = json.loads(receipt.read_text(encoding="utf-8"))
+            if (
+                not isinstance(record, dict)
+                or set(record) != {"role", "tag", "fingerprint"}
+                or record["role"] != "executor"
+                or not isinstance(record["tag"], str)
+                or _RELEASE_TAG.fullmatch(record["tag"]) is None
+                or not isinstance(record["fingerprint"], str)
+                or _FINGERPRINT.fullmatch(record["fingerprint"]) is None
+            ):
+                return None
+        # Explicit legacy Executor adoption also creates the managed launcher
+        # and owned native service, but does not create an install receipt.
+        # Any receipt that *is* present must be valid; its initial tag may be
+        # older than the current release after an explicit version switch.
         if windows:
             relative = os.path.relpath(path, launcher.parent)
             expected_lines = [

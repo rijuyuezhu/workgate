@@ -104,12 +104,15 @@ def test_pinned_managed_release_and_stale_initial_receipt(
     record["tag"] = "v5.0.0a1"
     receipt.write_text(json.dumps(record))
     assert _verify(python) == checkout
+    # Explicit legacy adoption binds a verified native service and stable
+    # launcher, but does not produce an install receipt.
+    receipt.unlink()
+    assert _verify(python) == checkout
 
 
 @pytest.mark.parametrize(
     "fault",
     [
-        "no-receipt",
         "invalid-receipt",
         "wrong-role",
         "malformed-fingerprint",
@@ -134,9 +137,7 @@ def test_managed_source_rejects_invalid_provenance(
     launcher = (
         root / "bin" / ("workgate.cmd" if os.name == "nt" else "workgate")
     )
-    if fault == "no-receipt":
-        receipt.unlink()
-    elif fault == "invalid-receipt":
+    if fault == "invalid-receipt":
         receipt.write_text("{broken")
     elif fault in {"wrong-role", "malformed-fingerprint"}:
         record = json.loads(receipt.read_text())
