@@ -193,6 +193,27 @@ class ExecutorRuntime:
             raise RuntimeError(
                 "source cutover deferred: persistent shells or jobs present"
             )
+        # Reconnect inventory covers session-owned resources; unowned WebUI
+        # shells may also be alive. Query the existing authoritative backend.
+        from .shell import authoritative_persistent_shell_ids_execute
+
+        with (
+            use_role_config(self.config),
+            use_state_store(self.services.state_store),
+            use_terminal_runtime(self.terminal_runtime),
+        ):
+            active_shells = await authoritative_persistent_shell_ids_execute(
+                self.config, self.shell.store
+            )
+        if active_shells is None:
+            raise ExecutorResourceInventoryUnavailable(
+                "persistent shell inventory is not authoritative"
+            )
+        if active_shells:
+            raise RuntimeError(
+                "source cutover deferred: persistent shells present"
+            )
+
         # Recheck work that could have changed during the inventory snapshot.
         if connection.active_command_count or self._terminal_stream_tasks:
             raise RuntimeError(

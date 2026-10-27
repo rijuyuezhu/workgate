@@ -40,6 +40,14 @@ def idle_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         return inventory
 
     monkeypatch.setattr(runtime, "_build_reconnect_hello", snapshot)
+
+    async def all_shells(*_args):
+        return set()
+
+    monkeypatch.setattr(
+        "workgate.executor.shell.authoritative_persistent_shell_ids_execute",
+        all_shells,
+    )
     return runtime, connection, inventory
 
 
@@ -140,6 +148,27 @@ async def test_active_command_or_terminal_blocks_without_inventory(
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
             runtime._terminal_stream_tasks.clear()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("active", [True, False])
+async def test_sessionless_shell_or_uncertain_shell_inventory_blocks(
+    idle_runtime, monkeypatch: pytest.MonkeyPatch, active: bool
+) -> None:
+    runtime, _connection, _inventory = idle_runtime
+
+    async def all_shells(*_args):
+        return {"unowned-ui-shell"} if active else None
+
+    monkeypatch.setattr(
+        "workgate.executor.shell.authoritative_persistent_shell_ids_execute",
+        all_shells,
+    )
+    with pytest.raises(
+        (RuntimeError, ExecutorResourceInventoryUnavailable),
+        match="persistent shell",
+    ):
+        await runtime.require_source_cutover_idle()
 
 
 @pytest.mark.asyncio
