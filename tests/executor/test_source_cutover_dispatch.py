@@ -76,9 +76,9 @@ async def test_dispatch_pending_version_through_existing_native_handoff(
     assert events == ["idle", event]
     state = runtime.runtime_state_store.load()
     assert state is not None
-    assert state.update_status is ExecutorRuntimeUpdateStatus.PENDING
+    assert state.update_status is ExecutorRuntimeUpdateStatus.DISPATCHED
     assert state.update_target_version == TARGET
-    assert "cutover pending" in (state.update_detail or "")
+    assert "native cutover requested" in (state.update_detail or "")
 
 
 @pytest.mark.asyncio
@@ -146,8 +146,10 @@ async def test_failed_native_scheduling_does_not_report_dispatch(
     assert events == ["idle", "windows"]
     state = runtime.runtime_state_store.load()
     assert state is not None
-    assert state.update_status is ExecutorRuntimeUpdateStatus.PENDING
-    assert "cutover pending" in (state.update_detail or "")
+    # Direct primitive records a conservative attempted handoff; the policy
+    # caller marks a definitive failed schedule as FAILED.
+    assert state.update_status is ExecutorRuntimeUpdateStatus.DISPATCHED
+    assert "native cutover requested" in (state.update_detail or "")
 
 
 @pytest.mark.asyncio
@@ -336,7 +338,9 @@ async def test_cancelled_native_submission_remains_fenced(
         # The scheduler thread may still register the independent native
         # task after this coroutine was cancelled: no new commands admitted.
         assert runtime._source_cutover_fenced
-        with pytest.raises(RuntimeError, match="protocol commands active"):
+        with pytest.raises(
+            RuntimeError, match="no matching prepared managed source"
+        ):
             await runtime.handoff_prepared_source_update(TARGET)
     finally:
         finish.set()
