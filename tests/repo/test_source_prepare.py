@@ -1130,10 +1130,12 @@ def test_first_stage_does_not_create_stable_launcher(tmp_path, repo, preparer):
 
 @pytest.mark.parametrize("tamper", ["origin", "head", "tag"])
 def test_prepared_checkout_identity_is_rechecked_before_reuse(
-    tmp_path, repo, preparer, tamper
+    tmp_path, repo, preparer, monkeypatch, tamper
 ):
     origin, _git = repo
     module, _calls, _fail = preparer
+    # Checkout identity is OS-independent; ARM64 wheel setup is tested separately.
+    monkeypatch.setattr(module, "_native_arm64", lambda: False)
     root = tmp_path / "managed"
     checkout = module.prepare(
         tag="v5.0.0a5", role="control", root=root, repository=str(origin)
