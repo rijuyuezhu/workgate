@@ -161,6 +161,65 @@ class ExecutorRuntime:
             "session inventory changed while reconnect snapshot was built"
         )
 
+    async def require_source_cutover_idle(self) -> None:
+        """Refuse a source cutover while existing work may still be active.
+
+        Sessions alone are durable metadata, not evidence of a running process.
+        The existing reconnect inventory is authoritative for shells and jobs.
+        This is a preflight, not permission to restart a native service.
+        """
+        from ..jobs.state import CONFIRMED_TERMINAL_STATUSES
+
+        connection = self.connection
+        if connection is None or not self._started:
+            raise RuntimeError(
+                "source cutover requires a running Executor connection"
+            )
+        if connection.active_command_count or self._terminal_stream_tasks:
+            raise RuntimeError(
+                "source cutover deferred: commands or terminal streams active"
+            )
+
+        inventory = await self._build_reconnect_hello()
+        if (
+            inventory.shells
+            or any(row.has_persistent_shells for row in inventory.sessions)
+            or any(row.has_active_jobs for row in inventory.sessions)
+            or any(
+                job.status not in CONFIRMED_TERMINAL_STATUSES
+                for job in inventory.jobs
+            )
+        ):
+            raise RuntimeError(
+                "source cutover deferred: persistent shells or jobs present"
+            )
+        # Reconnect inventory covers session-owned resources; unowned WebUI
+        # shells may also be alive. Query the existing authoritative backend.
+        from .shell import authoritative_persistent_shell_ids_execute
+
+        with (
+            use_role_config(self.config),
+            use_state_store(self.services.state_store),
+            use_terminal_runtime(self.terminal_runtime),
+        ):
+            active_shells = await authoritative_persistent_shell_ids_execute(
+                self.config, self.shell.store
+            )
+        if active_shells is None:
+            raise ExecutorResourceInventoryUnavailable(
+                "persistent shell inventory is not authoritative"
+            )
+        if active_shells:
+            raise RuntimeError(
+                "source cutover deferred: persistent shells present"
+            )
+
+        # Recheck work that could have changed during the inventory snapshot.
+        if connection.active_command_count or self._terminal_stream_tasks:
+            raise RuntimeError(
+                "source cutover deferred: commands or terminal streams active"
+            )
+
     async def _handle_runtime_policy(
         self, policy: ExecutorHelloResponse
     ) -> RuntimePolicyAction:
