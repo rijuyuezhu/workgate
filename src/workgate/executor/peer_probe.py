@@ -36,6 +36,11 @@ class PeerProbeManager:
         self._lock = asyncio.Lock()
         self._closed = False
 
+    async def has_active_resources(self) -> bool:
+        """Do not restart during a live or pending connectivity probe."""
+        async with self._lock:
+            return bool(self._probes)
+
     async def prepare(self, tailnet_id: str) -> PeerProbeEndpoint:
         async with self._lock:
             if self._closed or len(self._probes) >= _MAX_PROBES:

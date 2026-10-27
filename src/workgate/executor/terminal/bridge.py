@@ -151,6 +151,13 @@ class TerminalBridgeRegistry:
             )
         self._loop = loop
 
+    def has_active_resources(self) -> bool:
+        """Read existing live bridge and pending-operation state."""
+        with self.lock:
+            return bool(
+                self.bridges or self.pending_bridges or self._operations
+            )
+
     def stop_admission(self) -> None:
         """Reject new bridge operations while shutdown drains existing work."""
         self._closed = True

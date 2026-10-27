@@ -214,6 +214,17 @@ class ExecutorRuntime:
                 "source cutover deferred: persistent shells present"
             )
 
+        if (
+            await self.browser.has_active_resources()
+            or await self.peer_receiver.has_active_resources()
+            or await self.peer_probe.has_active_resources()
+            or self.terminal_runtime.bridges.has_active_resources()
+            or self.terminal_runtime.conpty.active()
+        ):
+            raise RuntimeError(
+                "source cutover deferred: browser, transfer or terminal resources active"
+            )
+
         # Recheck work that could have changed during the inventory snapshot.
         if connection.active_command_count or self._terminal_stream_tasks:
             raise RuntimeError(

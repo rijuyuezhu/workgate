@@ -65,6 +65,11 @@ class PeerReceiverManager:
         self._lock = asyncio.Lock()
         self._closed = False
 
+    async def has_active_resources(self) -> bool:
+        """Include active and preparing peer transfer leases."""
+        async with self._lock:
+            return bool(self._leases)
+
     async def _io(
         self, func: Callable[..., Any], *args: Any, **kwargs: Any
     ) -> Any:
