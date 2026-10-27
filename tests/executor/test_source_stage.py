@@ -60,6 +60,7 @@ async def test_published_tag_resolves_immutable_commit(
         assert kw["check"] is True
         assert kw["timeout"] == 25
         assert kw["env"]["GIT_TERMINAL_PROMPT"] == "0"
+        assert kw["stdin"] is subprocess.DEVNULL
         return subprocess.CompletedProcess(args, 0, refs, "")
 
     monkeypatch.setattr(source_stage.subprocess, "run", fake_run)
@@ -168,12 +169,13 @@ async def test_stage_passes_exact_commit_and_never_activates(
             "--no-activate-launcher",
         ]
         assert kw["cwd"] == worktree
-        assert kw["check"] is True
+        assert kw["timeout"] == 3600
+        assert kw["include_stderr"] is True
         destination = worktree.parent / SHA / ".venv"
         destination.mkdir(parents=True)
-        return subprocess.CompletedProcess(args, 0, "", "")
+        return 0, ""
 
-    monkeypatch.setattr(source_stage.subprocess, "run", fake_run)
+    monkeypatch.setattr(source_stage, "run_bounded_capture", fake_run)
     original = launcher.read_bytes()
     staged = await source_stage.prepare_managed_source(
         worktree, version="6.0.0a1", system="Linux"
@@ -209,9 +211,9 @@ async def test_failures_leave_old_launcher_unchanged(
         (worktree / "deploy/source/prepare.py").unlink()
 
     def fake_run(*_args, **_kwargs):
-        raise subprocess.CalledProcessError(1, "prepare", stderr="build failed")
+        return 1, "build failed"
 
-    monkeypatch.setattr(source_stage.subprocess, "run", fake_run)
+    monkeypatch.setattr(source_stage, "run_bounded_capture", fake_run)
     original = launcher.read_bytes()
     with pytest.raises(
         (

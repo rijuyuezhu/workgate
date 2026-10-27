@@ -8,6 +8,7 @@ from pathlib import Path
 
 import httpx
 
+from ..platform.process import noninteractive_creationflags, run_bounded_capture
 from ..version import __version__
 from .source_provenance import verified_source_checkout
 
@@ -56,6 +57,8 @@ async def resolve_published_commit(version: str) -> str:
         check=True,
         timeout=25,
         env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        stdin=subprocess.DEVNULL,
+        creationflags=noninteractive_creationflags(),
     )
     refs = {}
     for line in result.stdout.splitlines():
@@ -102,8 +105,8 @@ async def prepare_managed_source(
         raise RuntimeError("managed release has no trusted source preparer")
     commit = await resolve_published_commit(version)
     root = checkout.parent.parent
-    await asyncio.to_thread(
-        subprocess.run,
+    code, _output = await asyncio.to_thread(
+        run_bounded_capture,
         [
             str(python),
             str(preparer),
@@ -117,12 +120,12 @@ async def prepare_managed_source(
             str(root),
             "--no-activate-launcher",
         ],
-        check=True,
-        capture_output=True,
-        text=True,
         timeout=3600,
         cwd=checkout,
+        include_stderr=True,
     )
+    if code:
+        raise RuntimeError(f"source preparation failed (exit {code})")
     staged = root / "versions" / commit
     if not staged.is_dir() or not (staged / ".venv").is_dir():
         raise RuntimeError(
