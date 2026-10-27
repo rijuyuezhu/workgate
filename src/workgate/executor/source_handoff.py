@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ..platform.host import HostOS, host_os
 from ..platform.process import run_bounded_capture
-from ..platform.windows_task import WindowsUserTask
+from ..platform.windows_task import RunCommand, WindowsUserTask
 from .source_stage import _TAG
 
 # One well-known, automatically collected transient service. systemd refuses
@@ -71,7 +71,7 @@ def schedule_linux_source_cutover(
 
 
 def schedule_windows_source_cutover(
-    checkout: Path, *, version: str, config: Path, run
+    checkout: Path, *, version: str, config: Path, run: RunCommand
 ) -> None:
     """Hand off an existing prepared Windows switch to an expiring owned task.
 

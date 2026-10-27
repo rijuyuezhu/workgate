@@ -141,7 +141,7 @@ class WindowsUserTask:
         self._powershell(script)
 
     def schedule_once(self, command: list[str], *, cwd: str) -> None:
-        """Start a bounded one-shot user task without replacing any existing task.
+        """Schedule one bounded user task without replacing any existing task.
 
         Task Scheduler owns its process tree independently from a managed
         Executor task. An expiration boundary cleans up even after a crash.
@@ -161,13 +161,13 @@ class WindowsUserTask:
                 f"-Argument {_literal(arguments)} "
                 f"-WorkingDirectory {_literal(cwd)}",
                 "$trigger = New-ScheduledTaskTrigger -Once "
-                "-At ((Get-Date).AddSeconds(30))",
+                "-At ((Get-Date).AddSeconds(15))",
                 "$trigger.EndBoundary = (Get-Date).AddMinutes(30).ToString('s')",
                 "$settings = New-ScheduledTaskSettingsSet "
                 "-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries "
                 "-ExecutionTimeLimit (New-TimeSpan -Minutes 30) "
                 "-DeleteExpiredTaskAfter (New-TimeSpan -Minutes 5) "
-                "-MultipleInstances IgnoreNew",
+                "-MultipleInstances IgnoreNew -StartWhenAvailable",
                 "$principal = New-ScheduledTaskPrincipal -UserId $user "
                 "-LogonType Interactive -RunLevel Limited",
                 "Register-ScheduledTask "
@@ -175,7 +175,6 @@ class WindowsUserTask:
                 "-Settings $settings -Principal $principal "
                 f"-Description {_literal(self.description)} "
                 "-ErrorAction Stop | Out-Null",
-                f"Start-ScheduledTask {self._task} -ErrorAction Stop",
             ]
         )
         self._powershell(script)

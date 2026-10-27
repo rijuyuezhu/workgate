@@ -65,7 +65,10 @@ def test_windows_handoff_uses_separate_one_time_task(
     assert len(commands) == 2
     script = commands[-1][-1]
     assert "Register-ScheduledTask" in script
-    assert "Start-ScheduledTask" in script
+    assert "New-ScheduledTaskTrigger -Once" in script
+    assert "Start-ScheduledTask" not in script  # Avoid a second trigger run.
+    assert "-StartWhenAvailable" in script
+    assert "AddSeconds(15)" in script
     assert "Workgate Executor Source Cutover" in script
     assert "Workgate Executor', " not in script
     assert "Workgate Executor Source Cutover" != "Workgate Executor"
