@@ -231,6 +231,43 @@ class ExecutorRuntime:
                 "source cutover deferred: commands or terminal streams active"
             )
 
+    async def handoff_prepared_source_update(self, target: str) -> None:
+        """Dispatch an already prepared release, never declare cutover success.
+
+        Not yet called by live version policy: admission must be fenced
+        through the entire resource check and native handoff first.
+        """
+        from ..platform.host import HostOS, host_os
+        from ..protocol.executor import ExecutorRuntimeOwnership
+        from .runtime_update import ExecutorRuntimeUpdateStatus
+        from .service import ExecutorServiceManager
+
+        state = self._runtime_state()
+        if (
+            not self.managed_service
+            or state.ownership is not ExecutorRuntimeOwnership.SOURCE
+            or state.update_status is not ExecutorRuntimeUpdateStatus.PENDING
+            or state.update_target_version != target
+        ):
+            raise RuntimeError("no matching prepared managed source update")
+
+        await self.require_source_cutover_idle()
+        manager = ExecutorServiceManager(self.config)
+        system = host_os()
+        if system is HostOS.LINUX:
+            handoff = manager.schedule_linux_source_cutover
+        elif system is HostOS.WINDOWS:
+            handoff = manager.schedule_windows_source_cutover
+        else:
+            raise RuntimeError(
+                "native source cutover is unsupported on this host"
+            )
+
+        # Both native dispatchers revalidate actual service/source ownership.
+        # Keep PENDING: the independent switch may stop this process before
+        # it could record any post-dispatch result, and dispatch != success.
+        await asyncio.to_thread(handoff, target)
+
     async def _handle_runtime_policy(
         self, policy: ExecutorHelloResponse
     ) -> RuntimePolicyAction:
