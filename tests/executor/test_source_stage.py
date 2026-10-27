@@ -59,6 +59,7 @@ async def test_published_tag_resolves_immutable_commit(
         assert args[-2:] == [f"refs/tags/{TAG}", f"refs/tags/{TAG}^{{}}"]
         assert kw["check"] is True
         assert kw["timeout"] == 25
+        assert kw["env"]["GIT_TERMINAL_PROMPT"] == "0"
         return subprocess.CompletedProcess(args, 0, refs, "")
 
     monkeypatch.setattr(source_stage.subprocess, "run", fake_run)
@@ -237,3 +238,24 @@ async def test_manager_requires_existing_native_ownership(
     monkeypatch.setattr(manager, "verified_source_checkout", lambda: None)
     with pytest.raises(RuntimeError, match="not an owned managed source"):
         await manager.prepare_source_update("6.0.0a1")
+
+
+@pytest.mark.asyncio
+async def test_manager_hands_off_only_verified_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = object.__new__(ExecutorServiceManager)
+    manager.system = "Linux"
+    root = tmp_path / "checkout"
+    monkeypatch.setattr(manager, "verified_source_checkout", lambda: root)
+    observed = []
+
+    async def fake_stage(checkout: Path, *, version: str, system: str):
+        observed.append((checkout, version, system))
+        return tmp_path / "prepared"
+
+    monkeypatch.setattr(source_stage, "prepare_managed_source", fake_stage)
+    assert (
+        await manager.prepare_source_update("6.0.0a1") == tmp_path / "prepared"
+    )
+    assert observed == [(root, "6.0.0a1", "Linux")]

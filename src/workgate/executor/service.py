@@ -1228,7 +1228,9 @@ class ExecutorServiceManager:
 
     async def prepare_source_update(self, version: str) -> Path:
         """Stage a pinned release only after native ownership has been verified."""
-        checkout = self.verified_source_checkout()
+        import asyncio
+
+        checkout = await asyncio.to_thread(self.verified_source_checkout)
         if checkout is None:
             raise RuntimeError(
                 "Executor is not an owned managed source service"

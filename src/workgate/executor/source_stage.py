@@ -1,6 +1,7 @@
 """Stage a trusted, published source release without changing a live Executor."""
 
 import asyncio
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -54,6 +55,7 @@ async def resolve_published_commit(version: str) -> str:
         text=True,
         check=True,
         timeout=25,
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
     )
     refs = {}
     for line in result.stdout.splitlines():
@@ -90,10 +92,10 @@ async def prepare_managed_source(
         / ".venv"
         / ("Scripts/python.exe" if system == "Windows" else "bin/python")
     )
-    if (
-        verified_source_checkout(python, version=__version__, system=system)
-        != checkout
-    ):
+    verified = await asyncio.to_thread(
+        verified_source_checkout, python, version=__version__, system=system
+    )
+    if verified != checkout:
         raise RuntimeError("not a verified managed source checkout")
     preparer = checkout / "deploy" / "source" / "prepare.py"
     if preparer.is_symlink() or not preparer.is_file():
