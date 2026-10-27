@@ -1226,6 +1226,19 @@ class ExecutorServiceManager:
             self.executable.absolute(), version=__version__, system=self.system
         )
 
+    async def prepare_source_update(self, version: str) -> Path:
+        """Stage a pinned release only after native ownership has been verified."""
+        checkout = self.verified_source_checkout()
+        if checkout is None:
+            raise RuntimeError(
+                "Executor is not an owned managed source service"
+            )
+        from .source_stage import prepare_managed_source
+
+        return await prepare_managed_source(
+            checkout, version=version, system=self.system
+        )
+
     def logs(self, *, lines: int = _DEFAULT_LOG_LINES) -> str:
         """Return a bounded recent log view from the native backend."""
 

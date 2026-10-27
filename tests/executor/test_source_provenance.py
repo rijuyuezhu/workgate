@@ -110,6 +110,41 @@ def test_pinned_managed_release_and_stale_initial_receipt(
     assert _verify(python) == checkout
 
 
+def test_windowless_windows_executor_matches_the_pinned_python(
+    managed_source: tuple[Path, Path, Path],
+) -> None:
+    root, checkout, _python = managed_source
+    # Exercise the Windows layout even on Linux; the native Task Scheduler
+    # ownership check remains in ExecutorServiceManager.status().
+    native = checkout / ".venv" / "Scripts" / "python.exe"
+    native.parent.mkdir(parents=True, exist_ok=True)
+    native.write_bytes(b"test")
+    pythonw = native.with_name("pythonw.exe")
+    pythonw.write_bytes(b"windowless")
+    cli = root / "bin" / "workgate.cmd"
+    relative = os.path.relpath(native, cli.parent)
+    cli.write_text(
+        "@echo off\nrem Managed by Workgate source preparation\n"
+        f'"%~dp0{relative}" -m workgate.main %*\n'
+    )
+    assert (
+        verified_source_checkout(pythonw, version=__version__, system="Windows")
+        == checkout
+    )
+    assert (
+        verified_source_checkout(native, version=__version__, system="Windows")
+        == checkout
+    )
+    assert (
+        verified_source_checkout(
+            native.with_name("outside.exe"),
+            version=__version__,
+            system="Windows",
+        )
+        is None
+    )
+
+
 @pytest.mark.parametrize(
     "fault",
     [
