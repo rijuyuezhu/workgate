@@ -128,8 +128,20 @@ async def test_managed_source_stages_then_dispatches_once_and_new_hello_clears(
     )
     assert calls == [("stage", TARGET), ("idle", TARGET), ("handoff", TARGET)]
 
-    # New native service with exact compatible version completes Hello and
-    # becomes IDLE; a queued dispatch is not treated as completion before it.
+    # Even a compatible Hello from the old interpreter cannot confirm the
+    # independently scheduled native switch.
+    assert (
+        await restarted._handle_runtime_policy(_policy(required=False))
+        is RuntimePolicyAction.BLOCK
+    )
+    pending = restarted.runtime_state_store.load()
+    assert pending is not None
+    assert pending.update_status is ExecutorRuntimeUpdateStatus.DISPATCHED
+
+    # A new interpreter matching the dispatched release may clear the state.
+    import workgate.version as version_module
+
+    monkeypatch.setattr(version_module, "__version__", TARGET)
     assert (
         await restarted._handle_runtime_policy(_policy(required=False))
         is RuntimePolicyAction.CONTINUE

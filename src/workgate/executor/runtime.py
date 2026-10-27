@@ -314,6 +314,18 @@ class ExecutorRuntime:
 
         state = self._runtime_state()
         if not policy.runtime_update_required:
+            # A compatible Hello does not by itself prove the independently
+            # scheduled native switch started the intended source release.
+            if (
+                self.managed_service
+                and state.ownership is ExecutorRuntimeOwnership.SOURCE
+                and state.update_status
+                is ExecutorRuntimeUpdateStatus.DISPATCHED
+            ):
+                from ..version import __version__
+
+                if state.update_target_version != __version__:
+                    return RuntimePolicyAction.BLOCK
             self._prepared_source_version = None
             if self.managed_service:
                 self.runtime_state_store.set_update(
