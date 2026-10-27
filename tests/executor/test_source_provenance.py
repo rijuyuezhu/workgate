@@ -218,7 +218,9 @@ def test_short_executable_path_fails_closed() -> None:
     )
 
 
-@pytest.mark.parametrize("target", ["install.json", "launcher", "versions"])
+@pytest.mark.parametrize(
+    "target", ["install.json", "launcher", "versions", "python-bin"]
+)
 def test_managed_source_rejects_symlinks(
     managed_source: tuple[Path, Path, Path], target: str, tmp_path: Path
 ) -> None:
@@ -233,14 +235,21 @@ def test_managed_source_rejects_symlinks(
         )
         destination = tmp_path / path.name
         destination.write_bytes(path.read_bytes())
-    else:
+    elif target == "versions":
         path = root / "versions"
         destination = tmp_path / "moved versions"
         path.rename(destination)
-    if target != "versions":
+    else:
+        path = python.parent
+        destination = tmp_path / "moved python bin"
+        path.rename(destination)
+    if target in {"install.json", "launcher"}:
         path.unlink()
     try:
-        path.symlink_to(destination, target_is_directory=target == "versions")
+        path.symlink_to(
+            destination,
+            target_is_directory=target in {"versions", "python-bin"},
+        )
     except OSError as exc:
         if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
             pytest.skip("Windows symlink creation requires developer mode")

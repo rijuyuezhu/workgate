@@ -57,6 +57,7 @@ def verified_source_checkout(
                 checkout,
                 checkout / ".git",
                 checkout / ".venv",
+                path.parent,
             )
         )
         or not path.is_file()
