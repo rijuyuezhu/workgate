@@ -197,15 +197,15 @@ async def test_failed_native_schedule_records_safe_failure_not_success(
 
 
 @pytest.mark.asyncio
-async def test_new_control_required_version_supersedes_old_attempt(
+async def test_unconfirmed_old_cutover_blocks_even_a_new_control_target(
     source, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runtime, calls, _config = source
     await runtime._handle_runtime_policy(_policy())
     assert runtime._source_cutover_fenced
 
-    # New process reaches Control after an intervening Control upgrade.
-    # The earlier DISPATCHED marker cannot authorize a different target.
+    # Control advanced while an earlier externally scheduled native switch
+    # remains unconfirmed. Do not schedule a second competing cutover.
     restarted = build_executor_runtime(
         runtime.config,
         enable_control_connection=False,
@@ -219,11 +219,41 @@ async def test_new_control_required_version_supersedes_old_attempt(
     monkeypatch.setattr(restarted, "require_source_cutover_idle", idle)
     assert (
         await restarted._handle_runtime_policy(_policy(NEWER))
-        is RuntimePolicyAction.HANDOFF
+        is RuntimePolicyAction.BLOCK
     )
-    assert ("stage", NEWER) in calls
-    assert ("handoff", NEWER) in calls
+    assert ("stage", NEWER) not in calls
+    assert ("handoff", NEWER) not in calls
     final = restarted.runtime_state_store.load()
     assert final is not None
-    assert final.update_target_version == NEWER
-    assert final.update_status is ExecutorRuntimeUpdateStatus.DISPATCHED
+    assert final.update_status is ExecutorRuntimeUpdateStatus.FAILED
+    assert final.update_target_version == TARGET
+
+
+@pytest.mark.asyncio
+async def test_control_advances_while_busy_then_installs_latest_only(
+    source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime, calls, _config = source
+    waiting = True
+
+    async def idle() -> None:
+        if waiting:
+            raise SourceCutoverDeferred("persistent user shell still running")
+
+    monkeypatch.setattr(runtime, "require_source_cutover_idle", idle)
+    with pytest.raises(ConnectionError, match="user work is active"):
+        await runtime._handle_runtime_policy(_policy(TARGET))
+    assert calls == [("stage", TARGET)]
+
+    # After an intervening upgrade of Control, the old pending stage cannot
+    # determine the target. Always stage the newest required version.
+    waiting = False
+    assert (
+        await runtime._handle_runtime_policy(_policy(NEWER))
+        is RuntimePolicyAction.HANDOFF
+    )
+    assert calls == [("stage", TARGET), ("stage", NEWER), ("handoff", NEWER)]
+    state = runtime.runtime_state_store.load()
+    assert state is not None
+    assert state.update_target_version == NEWER
+    assert state.update_status is ExecutorRuntimeUpdateStatus.DISPATCHED

@@ -244,8 +244,9 @@ class ExecutorRuntime:
     async def handoff_prepared_source_update(self, target: str) -> None:
         """Dispatch an already prepared release, never declare cutover success.
 
-        Not yet called by live version policy: admission must be fenced
-        through the entire resource check and native handoff first.
+        Called only from incompatible Hello policy after the old process has
+        drained offered commands; admission is fenced across idle verification
+        and native handoff.
         """
         from ..platform.host import HostOS, host_os
         from ..protocol.executor import ExecutorRuntimeOwnership
@@ -336,19 +337,16 @@ class ExecutorRuntime:
             except Exception:
                 checkout = None
             if checkout is not None:
-                from .runtime_update import ExecutorRuntimeUpdateStatus
-
-                # An old-version Hello following an external handoff proves
-                # this upgrade is not yet healthy (rollback or interrupted).
-                # Never dispatch the same target in a native restart loop.
+                # An old-version Hello after an external handoff proves the
+                # cutover remains unconfirmed. Never start a second native
+                # task, even if Control has since advanced the target version.
                 if (
                     state.update_status
                     is ExecutorRuntimeUpdateStatus.DISPATCHED
-                    and state.update_target_version == target
                 ):
                     self.runtime_state_store.set_update(
                         ExecutorRuntimeUpdateStatus.FAILED,
-                        target_version=target,
+                        target_version=state.update_target_version,
                         detail="native cutover unconfirmed; previous version reconnected",
                     )
                     return RuntimePolicyAction.BLOCK
