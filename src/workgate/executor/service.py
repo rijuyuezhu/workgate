@@ -1258,6 +1258,26 @@ class ExecutorServiceManager:
             checkout, version=version, config=self.config_path
         )
 
+    def schedule_windows_source_cutover(self, version: str) -> None:
+        """Hand off Windows native replacement to an expiring owned task."""
+        if host_os(self.system) is not HostOS.WINDOWS:
+            raise UnsupportedExecutorServiceError(
+                "source cutover scheduling requires Windows Task Scheduler"
+            )
+        checkout = self.verified_source_checkout()
+        if checkout is None:
+            raise RuntimeError(
+                "Executor is not an owned managed source service"
+            )
+        from .source_handoff import schedule_windows_source_cutover
+
+        schedule_windows_source_cutover(
+            checkout,
+            version=version,
+            config=self.config_path,
+            run=self._run,
+        )
+
     def logs(self, *, lines: int = _DEFAULT_LOG_LINES) -> str:
         """Return a bounded recent log view from the native backend."""
 

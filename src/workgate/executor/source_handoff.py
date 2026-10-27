@@ -4,7 +4,9 @@ import os
 import sys
 from pathlib import Path
 
+from ..platform.host import HostOS, host_os
 from ..platform.process import run_bounded_capture
+from ..platform.windows_task import RunCommand, WindowsUserTask
 from .source_stage import _TAG
 
 # One well-known, automatically collected transient service. systemd refuses
@@ -66,3 +68,60 @@ def schedule_linux_source_cutover(
     )
     if code:
         raise RuntimeError("could not schedule native source cutover")
+
+
+def schedule_windows_source_cutover(
+    checkout: Path, *, version: str, config: Path, run: RunCommand
+) -> None:
+    """Hand off an existing prepared Windows switch to an expiring owned task.
+
+    The Task Scheduler owns this new one-shot task independently from the
+    running Executor task. Accepted scheduling is not proof of a cutover.
+    """
+    if host_os() is not HostOS.WINDOWS:
+        raise RuntimeError(
+            "native source handoff requires Windows Task Scheduler"
+        )
+    tag = f"v{version}"
+    if _TAG.fullmatch(tag) is None:
+        raise ValueError("invalid source release version")
+    if any(key.startswith("WORKGATE_") for key in os.environ):
+        raise RuntimeError(
+            "source cutover requires durable config, not overrides"
+        )
+
+    script = checkout / "deploy" / "source" / "switch_windows.py"
+    python = checkout / ".venv" / "Scripts" / "pythonw.exe"
+    if (
+        not script.is_file()
+        or script.is_symlink()
+        or not python.is_file()
+        or python.is_symlink()
+        or config.is_symlink()
+        or not config.is_file()
+        or not config.is_absolute()
+    ):
+        raise RuntimeError(
+            "managed Windows source cutover inputs are unavailable"
+        )
+
+    task = WindowsUserTask(
+        "Workgate Executor Source Cutover",
+        description="Managed by Workgate: executor source cutover",
+        run=run,
+    )
+    task.schedule_once(
+        [
+            str(python),
+            str(script),
+            "--role",
+            "executor",
+            "--tag",
+            tag,
+            "--install-root",
+            str(checkout.parent.parent),
+            "--executor-config",
+            str(config),
+        ],
+        cwd=str(checkout),
+    )
