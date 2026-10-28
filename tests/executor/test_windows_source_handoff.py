@@ -15,6 +15,7 @@ from workgate.executor.service import (
 )
 from workgate.platform.host import HostOS
 from workgate.platform.windows_task import _literal
+from workgate.supervisor import PARENT_FD_ENV
 
 VERSION = "5.0.0a77"
 
@@ -52,6 +53,8 @@ def test_windows_handoff_uses_separate_one_time_task(
 ) -> None:
     checkout, config, launcher = prepared
     existing = launcher.read_bytes()
+    # WorkGate's own supervised child receives this internal environment key.
+    monkeypatch.setenv(PARENT_FD_ENV, "123")
     commands = []
 
     def capture(argv: list[str]):
@@ -143,6 +146,7 @@ def test_invalid_handoff_never_registers_task(
     elif fault == "relative-config":
         config = Path("relative.json")
     else:
+        monkeypatch.setenv(PARENT_FD_ENV, "123")
         monkeypatch.setenv("WORKGATE_OVERRIDE", "unapproved")
 
     def forbidden(_argv):

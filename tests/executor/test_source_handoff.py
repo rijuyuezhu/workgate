@@ -13,6 +13,7 @@ from workgate.executor.service import (
     ExecutorServiceManager,
     UnsupportedExecutorServiceError,
 )
+from workgate.supervisor import PARENT_FD_ENV
 
 VERSION = "5.0.0a77"
 
@@ -54,6 +55,9 @@ def test_handoff_uses_transient_user_service_not_executor_cgroup(
 
     monkeypatch.setattr(source_handoff, "run_bounded_capture", record)
     existing = launcher.read_bytes()
+    # The supervised Executor child always has this internal IPC descriptor.
+    # It must not be treated as a user configuration override.
+    monkeypatch.setenv(PARENT_FD_ENV, "123")
     source_handoff.schedule_linux_source_cutover(
         checkout, version=VERSION, config=config
     )
@@ -120,6 +124,7 @@ def test_invalid_handoff_inputs_fail_without_scheduling(
     elif fault == "relative-config":
         config = Path("relative.yaml")
     elif fault == "environment-override":
+        monkeypatch.setenv(PARENT_FD_ENV, "123")
         monkeypatch.setenv("WORKGATE_OVERRIDE", "no")
 
     def forbidden(*_args, **_kwargs):
