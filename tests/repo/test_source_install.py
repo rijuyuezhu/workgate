@@ -1,8 +1,10 @@
 """Role-specific source orchestration; always reuse the pinned preparer."""
 
 import importlib.util
+import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -1124,3 +1126,252 @@ def test_existing_receipt_cannot_silently_change_install_role(
             root=tmp_path,
             control_url="https://control.example",
         )
+
+
+@pytest.fixture
+def owned_linux_colocate(installer, monkeypatch, tmp_path):
+    """A verified managed Colocate shape, without a real systemd unit."""
+    import importlib
+
+    source_switch = importlib.import_module("switch")
+    root = tmp_path / "managed"
+    commit = "b" * 40
+    checkout = root / "versions" / commit
+    python = checkout / ".venv/bin/python"
+    python.parent.mkdir(parents=True)
+    python.touch()
+    control_config = tmp_path / "control.yaml"
+    executor_config = tmp_path / "executor.yaml"
+    control_config.write_text("mode: mcp\nauth_mode: oauth\n")
+    executor_config.write_text("state_dir: existing\n")
+    profile = tmp_path / "existing-pairing.json"
+    profile.write_bytes(b"private-existing-pairing-must-remain-untouched")
+    unit = tmp_path / "systemd/user/workgate-colocate.service"
+    unit.parent.mkdir(parents=True)
+    unit.write_text("# Managed by workgate colocate install-service\n")
+    command = source_switch._command(
+        python, "colocate", control_config, executor_config
+    )
+    native = {
+        "LoadState": "loaded",
+        "ActiveState": "active",
+        "FragmentPath": str(unit),
+        "ExecStart": (
+            f"{{ path={python} ; argv[]={' '.join(command)} ; "
+            "ignore_errors=no ; pid=1 ; }}"
+        ),
+    }
+    monkeypatch.setattr(source_switch, "_old_python", lambda _root: python)
+
+    def pinned(_root, tag):
+        if tag != "v5.0.0a11":
+            raise RuntimeError("not a pinned prepared release")
+        return python
+
+    monkeypatch.setattr(source_switch, "_staged_python", pinned)
+    monkeypatch.setattr(source_switch, "_native", lambda role: native)
+    monkeypatch.setattr(installer, "_check_launcher", lambda _root: None)
+    monkeypatch.setattr(
+        installer, "prepare", lambda **kw: pytest.fail("no checkout or uv sync")
+    )
+    monkeypatch.setattr(
+        installer.subprocess,
+        "run",
+        lambda *args, **kw: pytest.fail(
+            "no CLI setup/pairing/service mutation"
+        ),
+    )
+    return (
+        root,
+        checkout,
+        commit,
+        control_config,
+        executor_config,
+        profile,
+        unit,
+        native,
+    )
+
+
+def _adoption_options(owned):
+    root, _checkout, commit, control, executor, *_ = owned
+    return {
+        "role": "colocate",
+        "tag": "v5.0.0a11",
+        "root": root,
+        "expected_commit": commit,
+        "control_config": control,
+        "executor_config": executor,
+        "adopt_existing_colocate": True,
+    }
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="explicit Colocate adoption is Linux-only"
+)
+def test_explicit_existing_colocate_adoption_writes_receipt_only_and_reruns_noop(
+    owned_linux_colocate, installer
+):
+    root, checkout, _commit, _control, _executor, profile, unit, _native = (
+        owned_linux_colocate
+    )
+    options = _adoption_options(owned_linux_colocate)
+    identity = profile.read_bytes()
+    native_definition = unit.read_bytes()
+
+    assert installer.install(**options) == checkout
+    receipt = root / "install.json"
+    assert receipt.is_file()
+    assert receipt.stat().st_mode & 0o077 == 0
+    stored = json.loads(receipt.read_text())
+    assert stored["role"] == "colocate"
+    assert stored["tag"] == "v5.0.0a11"
+    assert set(stored) == {"role", "tag", "fingerprint"}
+    assert profile.read_bytes() == identity
+    assert unit.read_bytes() == native_definition
+    before = receipt.read_bytes()
+
+    with pytest.raises(RuntimeError, match="already exists"):
+        installer.install(**options)
+    # The ordinary exact-argument repeat is a no-op, with native configs checked.
+    repeat = dict(options)
+    repeat.pop("adopt_existing_colocate")
+    assert installer.install(**repeat) == checkout
+    assert receipt.read_bytes() == before
+    assert profile.read_bytes() == identity
+    assert unit.read_bytes() == native_definition
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux native binding only")
+def test_adopted_receipt_does_not_mask_later_native_config_drift(
+    owned_linux_colocate, installer
+):
+    root, checkout, _commit, control, executor, _profile, _unit, native = (
+        owned_linux_colocate
+    )
+    options = _adoption_options(owned_linux_colocate)
+    assert installer.install(**options) == checkout
+    receipt = json.loads((root / "install.json").read_text())
+    native["ExecStart"] = native["ExecStart"].replace(
+        str(control), "/other/config.yaml"
+    )
+    assert (
+        installer._same_install(
+            root,
+            "colocate",
+            "v5.0.0a11",
+            receipt["fingerprint"],
+            options["expected_commit"],
+            executor,
+            control,
+        )
+        is None
+    )
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="explicit Colocate adoption is Linux-only"
+)
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "wrong-commit",
+        "wrong-tag",
+        "missing-control-config",
+        "config-symlink",
+        "wrong-config",
+        "inactive",
+        "foreign-unit",
+        "foreign-exec",
+        "other-service-path",
+        "missing-commit",
+        "with-first-run-name",
+        "with-wheel",
+    ],
+)
+def test_existing_colocate_adoption_fails_closed_and_never_mutates(
+    owned_linux_colocate, installer, fault, tmp_path
+):
+    root, _checkout, _commit, control, executor, profile, unit, native = (
+        owned_linux_colocate
+    )
+    options = _adoption_options(owned_linux_colocate)
+    if fault == "wrong-commit":
+        options["expected_commit"] = "a" * 40
+    elif fault == "wrong-tag":
+        options["tag"] = "v5.0.0a10"
+    elif fault == "missing-control-config":
+        control.unlink()
+    elif fault == "config-symlink":
+        control.unlink()
+        control.symlink_to(executor)
+    elif fault == "wrong-config":
+        other = tmp_path / "other-control.yaml"
+        other.write_text("mode: http")
+        options["control_config"] = other
+    elif fault == "inactive":
+        native["ActiveState"] = "inactive"
+    elif fault == "foreign-unit":
+        unit.write_text("[Unit]\nDescription=Foreign service\n")
+    elif fault == "foreign-exec":
+        native["ExecStart"] = native["ExecStart"].replace(
+            "ignore_errors=no", "ignore_errors=yes"
+        )
+    elif fault == "other-service-path":
+        native["FragmentPath"] = str(tmp_path / "other-unit.service")
+    elif fault == "missing-commit":
+        options["expected_commit"] = None
+    elif fault == "with-first-run-name":
+        options["name"] = "should-not-repair"
+    elif fault == "with-wheel":
+        options["arm64_wheel"] = "https://example.com/private.whl"
+
+    old_identity = profile.read_bytes()
+    with pytest.raises((RuntimeError, ValueError)):
+        installer.install(**options)
+    assert not (root / "install.json").exists()
+    assert profile.read_bytes() == old_identity
+
+
+@pytest.mark.parametrize("role", ["control", "executor"])
+def test_colocate_adoption_rejects_other_roles_before_prepare(
+    installer, monkeypatch, tmp_path, role
+):
+    monkeypatch.setattr(
+        installer,
+        "prepare",
+        lambda **kw: pytest.fail("must not touch checkout"),
+    )
+    with pytest.raises(ValueError, match="only for an existing Colocate"):
+        installer.install(
+            role=role,
+            tag="v5.0.0a11",
+            root=tmp_path,
+            control_url="https://control.example"
+            if role == "executor"
+            else None,
+            adopt_existing_colocate=True,
+        )
+
+
+@pytest.mark.parametrize("other_platform", ["darwin", "win32"])
+def test_adoption_refuses_non_linux_platforms_without_role_setup(
+    installer, monkeypatch, tmp_path, other_platform
+):
+    monkeypatch.setattr(installer.sys, "platform", other_platform)
+    monkeypatch.setattr(
+        installer,
+        "prepare",
+        lambda **kwargs: pytest.fail("must not prepare on unsupported host"),
+    )
+    with pytest.raises(ValueError, match="requires Linux systemd"):
+        installer.install(
+            role="colocate",
+            tag="v5.0.0a11",
+            root=tmp_path,
+            expected_commit="b" * 40,
+            control_config=tmp_path / "control.yaml",
+            executor_config=tmp_path / "executor.yaml",
+            adopt_existing_colocate=True,
+        )
+    assert not (tmp_path / "install.json").exists()

@@ -241,6 +241,7 @@ def _same_install(
     fingerprint: str,
     expected_commit: str | None,
     executor_config: Path | None,
+    control_config: Path | None = None,
 ) -> Path | None:
     """Only a verified, still-running pinned native service may be a no-op."""
     receipt = root / "install.json"
@@ -317,6 +318,20 @@ def _same_install(
         ):
             return None
 
+    if (
+        sys.platform == "linux"
+        and role == "colocate"
+        and control_config is not None
+    ):
+        from switch import _command, _matches
+
+        if executor_config is None or not _matches(
+            native,
+            fragment,
+            _command(python, "colocate", control_config, executor_config),
+        ):
+            return None
+
     if role == "executor":
         command = [str(python), "-m", "workgate.main", "executor", "status"]
         if executor_config is not None:
@@ -336,6 +351,62 @@ def _same_install(
     return checkout
 
 
+def _adopt_running_linux_colocate(
+    root: Path,
+    tag: str,
+    commit: str | None,
+    control_config: Path | None,
+    executor_config: Path | None,
+) -> Path:
+    """Record an already-owned release without setup, pairing or restart."""
+    if sys.platform != "linux":
+        raise ValueError("existing Colocate adoption requires Linux systemd")
+    if (
+        commit is None
+        or len(commit) != 40
+        or any(char not in "0123456789abcdef" for char in commit)
+        or control_config is None
+        or executor_config is None
+        or any(
+            not path.is_file() or path.is_symlink()
+            for path in (control_config, executor_config)
+        )
+    ):
+        raise ValueError(
+            "adoption requires a pinned commit and both regular existing YAML configs"
+        )
+
+    from switch import _command, _matches, _native, _old_python, _staged_python
+
+    python = _old_python(root)
+    if python.parents[2].name != commit or python != _staged_python(root, tag):
+        raise RuntimeError(
+            "running Colocate is not the requested pinned release"
+        )
+    native = _native("colocate")
+    unit = Path(native.get("FragmentPath") or "")
+    if (
+        not unit.is_absolute()
+        or unit.name != "workgate-colocate.service"
+        or unit.parent.name != "user"
+        or unit.parent.parent.name != "systemd"
+        or not unit.is_file()
+        or unit.is_symlink()
+        or not unit.read_text(encoding="utf-8").startswith(
+            "# Managed by workgate colocate install-service"
+        )
+        or not _matches(
+            native,
+            unit,
+            _command(python, "colocate", control_config, executor_config),
+        )
+    ):
+        raise RuntimeError(
+            "running Colocate service is not owned by this release and configs"
+        )
+    return python.parents[2]
+
+
 def install(
     *,
     role: str,
@@ -351,6 +422,7 @@ def install(
     expected_commit: str | None = None,
     arm64_wheel: str | None = None,
     arm64_wheel_sha256: str | None = None,
+    adopt_existing_colocate: bool = False,
 ) -> Path:
     if any(key.startswith("WORKGATE_") for key in os.environ):
         raise RuntimeError(
@@ -373,6 +445,16 @@ def install(
         base_url=base_url,
     )
     root = root.expanduser().absolute()
+    if adopt_existing_colocate and (
+        role != "colocate"
+        or name is not None
+        or arm64_wheel is not None
+        or arm64_wheel_sha256 is not None
+    ):
+        raise ValueError(
+            "adoption is only for an existing Colocate with explicit configs; "
+            "do not use first-run or wheel options"
+        )
     options = {
         "control_url": control_url,
         "name": name,
@@ -394,8 +476,25 @@ def install(
             raise RuntimeError(
                 "install root already belongs to another role; use a separate root"
             )
+    if adopt_existing_colocate:
+        if receipt.exists():
+            raise RuntimeError(
+                "install receipt already exists; do not adopt again"
+            )
+        checkout = _adopt_running_linux_colocate(
+            root, tag, expected_commit, control_config, executor_config
+        )
+        _record_install(root, role, tag, fingerprint)
+        print(f"Adopted running Colocate without restart: {checkout}")
+        return checkout
     existing = _same_install(
-        root, role, tag, fingerprint, expected_commit, executor_config
+        root,
+        role,
+        tag,
+        fingerprint,
+        expected_commit,
+        executor_config,
+        control_config,
     )
     if existing is not None:
         print(f"Workgate {role} already installed at {existing}; no restart")
@@ -462,6 +561,11 @@ def main() -> None:
     parser.add_argument("--name", help="Executor/Colocate name")
     parser.add_argument("--control-config", type=Path)
     parser.add_argument("--executor-config", type=Path)
+    parser.add_argument(
+        "--adopt-existing-colocate",
+        action="store_true",
+        help="Linux only: register an existing pinned running Colocate without restart",
+    )
     parser.add_argument("--host", help="Control HTTP bind address")
     parser.add_argument("--port", type=int, help="Control HTTP port")
     parser.add_argument(
@@ -483,6 +587,7 @@ def main() -> None:
             expected_commit=args.expected_commit,
             arm64_wheel=args.arm64_wheel,
             arm64_wheel_sha256=args.arm64_wheel_sha256,
+            adopt_existing_colocate=args.adopt_existing_colocate,
         )
     except (
         subprocess.SubprocessError,

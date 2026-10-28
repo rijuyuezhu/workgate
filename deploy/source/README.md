@@ -453,3 +453,30 @@ The next stage must securely publish and validate those entrypoints, initialize
 Control configuration/approval, handle Executor and Colocate pairing, and
 install/restart each role's native service only after validation. Never
 advertise a prepared but unpaired Executor as a completed installation.
+
+## Explicitly register an already-running Linux managed Colocate
+
+An existing Linux Colocate that was **already installed from WorkGate's
+official versioned source layout**, but predates the installer receipt, can be
+registered without reinstalling, re-pairing, changing Control's auth/mode, or
+restarting its systemd service. Run the installer **from the matching published
+release checkout**, with its exact tag, full commit and current YAML files:
+
+```sh
+sh deploy/source/install.sh --role colocate --tag vRELEASE \
+  --expected-commit FULL_SHA --adopt-existing-colocate \
+  --install-root "$HOME/.local/opt/workgate" \
+  --control-config "$HOME/.config/workgate/config.yaml" \
+  --executor-config "$HOME/.config/workgate/executor/config.yaml"
+```
+
+The command rejects an unmatched release, absent or changed configs, foreign,
+stopped or incorrectly bound native service, another role, existing installer
+receipt and all first-run options. The **only intended write** is the private
+`install.json` receipt in the managed install root. It neither downloads
+packages nor modifies native services. A subsequent **identical ordinary
+install command without** `--adopt-existing-colocate` is a no-op when the
+running release and config binding still match. New-version upgrades still use
+the explicit prepare + switch procedure above; an adoption receipt is not an
+upgrade or a claim of HTTP health. Do not use this on an unversioned, frozen,
+foreign or Windows installation.
