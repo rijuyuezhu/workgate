@@ -197,6 +197,7 @@ class ExecutorRuntime:
             or any(row.has_active_jobs for row in inventory.sessions)
             or any(
                 job.status not in CONFIRMED_TERMINAL_STATUSES
+                and not (job.status == "lost" and job._shell_absence_confirmed)
                 for job in inventory.jobs
             )
         ):

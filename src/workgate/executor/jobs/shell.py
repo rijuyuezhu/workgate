@@ -481,13 +481,22 @@ def shell_job_inventory_snapshot(
                 raise RuntimeError(
                     "tracked executor job is missing durable inventory identity"
                 )
-            rows.append(
-                JobInventorySummary(
-                    job_id=job_id,
-                    session_id=session_id,
-                    status=status,
-                )
+            completed = row.get("completed_at")
+            job = JobInventorySummary(
+                job_id=job_id, session_id=session_id, status=status
             )
+            # Preserve the actual lost status. Only a confirmed-absent
+            # completed shell attempt is safe for native source cutover.
+            job._shell_absence_confirmed = (
+                status == "lost"
+                and row.get("shell_absence_confirmed") is True
+                and isinstance(completed, (int, float))
+                and not isinstance(completed, bool)
+                and completed > 0
+                and not row.get("operation_id")
+                and not row.get("pending_shell_id")
+            )
+            rows.append(job)
             backing_shell_ids.update(_job_reserved_shell_ids(row))
     rows.sort(key=lambda row: (str(row.session_id), row.job_id))
     return tuple(rows), frozenset(backing_shell_ids)
