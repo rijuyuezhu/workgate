@@ -9,6 +9,7 @@ from pydantic import (
     ConfigDict,
     Field,
     JsonValue,
+    PrivateAttr,
     field_validator,
     model_validator,
 )
@@ -86,6 +87,8 @@ class JobInventorySummary(BaseModel):
     job_id: str = Field(min_length=1, max_length=128)
     session_id: SessionId
     status: str = Field(min_length=1, max_length=64)
+    # Local-only cutover evidence; not part of the Hello wire schema.
+    _shell_absence_confirmed: bool = PrivateAttr(default=False)
 
 
 class TrustedOverlay(BaseModel):

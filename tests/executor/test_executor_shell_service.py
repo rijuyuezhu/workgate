@@ -625,3 +625,57 @@ async def test_reconnect_skips_terminal_lost_jobs_only_for_empty_windows_conpty(
     assert len(jobs) == 1
     assert shell_ids == frozenset({"shell-id"})
     assert calls.count("reconcile") == int(reconcile_expected)
+
+
+@pytest.mark.parametrize(
+    ("status", "confirmed", "completed", "operation", "pending", "expected"),
+    [
+        ("lost", True, 123.0, None, None, True),
+        ("lost", True, None, None, None, False),
+        ("lost", False, 123.0, None, None, False),
+        ("lost", "true", 123.0, None, None, False),
+        ("lost", True, 123.0, "in-progress", None, False),
+        ("lost", True, 123.0, None, "retry-shell", False),
+        ("lost", True, 0.0, None, None, False),
+        ("lost", True, True, None, None, False),
+        ("running", True, 123.0, None, None, False),
+    ],
+)
+def test_lost_job_cutover_evidence_requires_durable_confirmed_absence(
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+    confirmed: object,
+    completed: float | None,
+    operation: str | None,
+    pending: str | None,
+    expected: bool,
+) -> None:
+    from contextlib import contextmanager
+
+    from workgate.executor.jobs import shell as jobs_shell
+
+    sid = "sess_0000000000000000000001"
+    row = {
+        "kind": "shell",
+        "session_id": sid,
+        "job_id": "job-old",
+        "status": status,
+        "shell_absence_confirmed": confirmed,
+        "completed_at": completed,
+        "operation_id": operation,
+        "pending_shell_id": pending,
+        "shell_id": "job-shell",
+    }
+
+    @contextmanager
+    def fake_transaction():
+        yield {"jobs": [row]}
+
+    monkeypatch.setattr(jobs_shell, "_store_transaction", fake_transaction)
+    jobs, shell_ids = jobs_shell.shell_job_inventory_snapshot(frozenset({sid}))
+    assert shell_ids == frozenset(
+        {"job-shell"} | ({pending} if pending else set())
+    )
+    assert len(jobs) == 1
+    assert jobs[0].status == status
+    assert jobs[0]._shell_absence_confirmed is expected

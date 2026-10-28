@@ -9,7 +9,10 @@ import pytest
 from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings
 from workgate.executor.errors import ExecutorResourceInventoryUnavailable
-from workgate.executor.runtime import build_executor_runtime
+from workgate.executor.runtime import (
+    SourceCutoverDeferred,
+    build_executor_runtime,
+)
 from workgate.protocol.executor import (
     JobInventorySummary,
     SessionInventorySummary,
@@ -109,6 +112,27 @@ async def test_live_or_uncertain_owned_resources_block(
     inventory.jobs = jobs
     with pytest.raises(RuntimeError, match="persistent shells or jobs"):
         await runtime.require_source_cutover_idle()
+
+
+def test_local_lost_job_evidence_is_never_sent_to_control() -> None:
+    job = JobInventorySummary(
+        job_id="job-old", session_id=SESSION, status="lost"
+    )
+    job._shell_absence_confirmed = True
+    assert "shell_absence_confirmed" not in job.model_dump()
+    assert "shell_absence_confirmed" not in job.model_dump_json()
+    assert "shell_absence_confirmed" not in job.model_json_schema()
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        JobInventorySummary.model_validate(
+            {
+                "job_id": "job-old",
+                "session_id": SESSION,
+                "status": "lost",
+                "shell_absence_confirmed": True,
+            }
+        )
 
 
 @pytest.mark.asyncio
@@ -248,3 +272,75 @@ async def test_readiness_reuses_the_authoritative_reconnect_inventory(
     with pytest.raises(RuntimeError, match="persistent shells or jobs"):
         await runtime.require_source_cutover_idle()
     assert observed == [frozenset({SESSION})]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("confirmed", [False, True])
+async def test_durable_lost_job_full_cutover_inventory_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, confirmed: bool
+) -> None:
+    """Real private jobs.json -> Hello projection -> native cutover guard."""
+    from workgate.executor.jobs.shell import shell_job_inventory_snapshot
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    runtime = build_executor_runtime(
+        resolve_executor_config(
+            Settings(default_workdir=workspace, state_dir=tmp_path / "state")
+        )
+    )
+    state_store = runtime.services.state_store
+    jobs_path = state_store.layout.jobs_store_path
+    jobs_path.parent.mkdir(parents=True, exist_ok=True)
+    state_store.write_json(
+        jobs_path,
+        {
+            "version": 2,
+            "jobs": [
+                {
+                    "kind": "shell",
+                    "session_id": SESSION,
+                    "job_id": "job-historical",
+                    "status": "lost",
+                    "shell_id": "shell-gone",
+                    "completed_at": 100.0,
+                    "shell_absence_confirmed": confirmed,
+                }
+            ],
+        },
+    )
+    session = SessionInventorySummary(
+        session_id=SESSION, workdir=str(workspace)
+    )
+    monkeypatch.setattr(runtime.sessions, "inventory", lambda: (session,))
+    monkeypatch.setattr(
+        runtime, "connection", SimpleNamespace(active_command_count=0)
+    )
+    monkeypatch.setattr(runtime, "_started", True)
+    monkeypatch.setattr(
+        "workgate.executor.overlay.detect_tailscale_overlay", lambda: None
+    )
+
+    async def inventory(session_ids: frozenset[str]):
+        jobs, _private_shells = shell_job_inventory_snapshot(session_ids)
+        return (), jobs
+
+    async def absent(*_args):
+        return set()
+
+    monkeypatch.setattr(runtime.shell, "reconnect_inventory", inventory)
+    monkeypatch.setattr(
+        "workgate.executor.shell.authoritative_persistent_shell_ids_execute",
+        absent,
+    )
+    hello = await runtime._build_reconnect_hello()
+    assert len(hello.jobs) == 1
+    assert hello.jobs[0].status == "lost"
+    assert hello.jobs[0]._shell_absence_confirmed is confirmed
+    assert "shell_absence_confirmed" not in hello.model_dump_json()
+
+    if confirmed:
+        await runtime.require_source_cutover_idle()
+    else:
+        with pytest.raises(SourceCutoverDeferred, match="jobs present"):
+            await runtime.require_source_cutover_idle()
