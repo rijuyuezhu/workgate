@@ -1312,3 +1312,112 @@ def test_systemd_status_requires_correct_loaded_fragment_for_current_runtime(
 
     monkeypatch.setattr(manager, "_run", fake_run)
     assert not manager.status().runtime_current
+
+
+def test_systemd_install_refuses_unowned_unit_before_touching_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager, profile = _paired_manager(tmp_path, system="Linux")
+    native_dir = tmp_path / "native" / "systemd" / "user"
+    native_dir.mkdir(parents=True)
+    foreign = native_dir / "workgate-executor.service"
+    foreign.write_text("[Service]\nExecStart=/usr/bin/false\n")
+    original_unit = foreign.read_bytes()
+    monkeypatch.setattr(
+        service.shutil, "which", lambda name: "/usr/bin/systemctl"
+    )
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if command[-3:] == ["show", "--property=UnitPath", "--value"]:
+            return _completed(
+                command, stdout=f'"{native_dir}" /etc/systemd/user\n'
+            )
+        return _completed(command)
+
+    monkeypatch.setattr(manager, "_run", run)
+    with pytest.raises(RuntimeError, match="unmanaged|unowned|foreign"):
+        manager.install()
+    assert foreign.read_bytes() == original_unit
+    assert ExecutorProfileStore(manager.state_store).load() == profile
+    assert not manager.config_path.exists()
+    assert not manager.metadata_path.exists()
+    assert not any("restart" in command for command in calls)
+
+
+@pytest.mark.parametrize("alteration", ["modified", "symlink"])
+def test_systemd_install_rejects_tampered_owned_unit_before_state_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, alteration: str
+) -> None:
+    manager, profile = _paired_manager(tmp_path, system="Linux")
+    unit_dir = tmp_path / "native" / "systemd" / "user"
+    unit_dir.mkdir(parents=True)
+    unit = unit_dir / "workgate-executor.service"
+    command = manager._runtime_command()
+    manager._write_systemd_unit(command, path=unit)
+    manager._write_metadata("systemd", command, service_file=unit)
+    original_metadata = manager.metadata_path.read_bytes()
+    if alteration == "modified":
+        unit.write_text("[Service]\nExecStart=/usr/bin/false\n")
+    else:
+        unit.unlink()
+        target = tmp_path / "external.service"
+        target.write_text("[Service]\nExecStart=/usr/bin/false\n")
+        unit.symlink_to(target)
+    old_unit = unit.read_bytes()
+
+    monkeypatch.setattr(
+        service.shutil, "which", lambda _name: "/usr/bin/systemctl"
+    )
+
+    def run(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        if command[-3:] == ["show", "--property=UnitPath", "--value"]:
+            return _completed(
+                command, stdout=f'"{unit_dir}" /etc/systemd/user\n'
+            )
+        return _completed(command)
+
+    monkeypatch.setattr(manager, "_run", run)
+    with pytest.raises(RuntimeError, match="unmanaged"):
+        manager.install()
+    assert unit.read_bytes() == old_unit
+    assert manager.metadata_path.read_bytes() == original_metadata
+    assert not manager.config_path.exists()
+    assert ExecutorProfileStore(manager.state_store).load() == profile
+
+
+def test_systemd_install_rejects_foreign_loaded_unit_from_another_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager, profile = _paired_manager(tmp_path, system="Linux")
+    unit_dir = tmp_path / "native" / "systemd" / "user"
+    unit_dir.mkdir(parents=True)
+    monkeypatch.setattr(
+        service.shutil, "which", lambda _name: "/usr/bin/systemctl"
+    )
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if command[-3:] == ["show", "--property=UnitPath", "--value"]:
+            return _completed(
+                command, stdout=f'"{unit_dir}" /etc/systemd/user\n'
+            )
+        if "--property=FragmentPath" in command:
+            return _completed(
+                command,
+                stdout=(
+                    "LoadState=loaded\n"
+                    f"FragmentPath={tmp_path / 'foreign' / 'workgate-executor.service'}\n"
+                ),
+            )
+        return _completed(command)
+
+    monkeypatch.setattr(manager, "_run", run)
+    with pytest.raises(RuntimeError, match="loaded from another path"):
+        manager.install()
+    assert not (unit_dir / "workgate-executor.service").exists()
+    assert not manager.config_path.exists()
+    assert ExecutorProfileStore(manager.state_store).load() == profile
+    assert not any("restart" in command for command in calls)

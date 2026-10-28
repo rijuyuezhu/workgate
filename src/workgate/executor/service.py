@@ -579,6 +579,40 @@ class ExecutorServiceManager:
         )
         return self.launchd_plist_path
 
+    def _ensure_owned_systemd_unit(self, unit: Path) -> None:
+        """A native unit may only be replaced when backed by our own receipt."""
+        if unit.is_symlink() or (unit.exists() and not unit.is_file()):
+            raise RuntimeError(
+                f"refusing to replace unmanaged executor unit: {unit}"
+            )
+        if unit.exists():
+            metadata = self._read_metadata()
+            command = None if metadata is None else metadata.get("command")
+            if (
+                metadata is None
+                or metadata.get("backend") != "systemd"
+                or metadata.get("service_file") != str(unit.absolute())
+                or not isinstance(command, list)
+                or not command
+                or not all(isinstance(part, str) for part in command)
+                or "ExecStart="
+                + " ".join(systemd_quote(part) for part in command)
+                not in unit.read_text(encoding="utf-8").splitlines()
+            ):
+                raise RuntimeError(
+                    f"refusing to replace unmanaged executor unit: {unit}"
+                )
+        native = self._systemd_native_state()
+        fragment = native.get("FragmentPath", "")
+        if (
+            native.get("LoadState") not in ("", "not-found")
+            and fragment
+            and Path(fragment).absolute() != unit.absolute()
+        ):
+            raise RuntimeError(
+                "refusing to replace executor unit loaded from another path"
+            )
+
     def install(
         self,
         *,
@@ -592,6 +626,10 @@ class ExecutorServiceManager:
         # Validate the windowless frozen sibling before any service-side effects.
         command = self._runtime_command(runtime_state.ownership)
         backend = self.backend(require_available=True)
+        unit_path = None
+        if backend == "systemd":
+            unit_path = self._systemd_install_unit_path()
+            self._ensure_owned_systemd_unit(unit_path)
         self._write_service_config()
         self._write_launcher(
             command,
@@ -599,9 +637,10 @@ class ExecutorServiceManager:
         )
 
         if backend == "systemd":
+            assert unit_path is not None
             service_file = self._write_systemd_unit(
                 command,
-                path=self._systemd_install_unit_path(),
+                path=unit_path,
             )
             self._run(["systemctl", "--user", "daemon-reload"])
             self._run(
