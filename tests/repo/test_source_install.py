@@ -644,6 +644,74 @@ def test_existing_service_fails_before_prepare(
     assert not (tmp_path / "versions" / "old").exists()
 
 
+@pytest.mark.parametrize("role", ["control", "executor", "colocate"])
+def test_stale_receipt_after_native_cutover_refuses_reinstall_before_prepare(
+    installer, monkeypatch, tmp_path, role
+):
+    """The original install receipt is not a source-of-truth for cutover."""
+    root = tmp_path / "source"
+    root.mkdir()
+    runtime = (
+        root
+        / "versions"
+        / ("b" * 40)
+        / ".venv"
+        / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    )
+    installer._write_launcher(root, runtime)
+    installer._record_install(root, role, "v5.0.0a10", "a" * 64)
+    launcher = (
+        root / "bin" / ("workgate.cmd" if os.name == "nt" else "workgate")
+    )
+    profile = tmp_path / "existing-pairing.json"
+    profile.write_bytes(b"existing paired identity must not change")
+    original = (launcher.read_bytes(), (root / "install.json").read_bytes())
+    checked = []
+
+    def native_status(argv, **kwargs):
+        assert argv[0] == str(launcher)
+        assert "-m" not in argv
+        assert kwargs["capture_output"] is True
+        candidate = argv[1]
+        checked.append(candidate)
+        prefix = (
+            "State: "
+            if candidate == "executor"
+            else f"{candidate.capitalize()} service: "
+        )
+        state = "running" if candidate == role else "not-installed"
+        return subprocess.CompletedProcess(argv, 0, prefix + state + "\n")
+
+    monkeypatch.setattr(installer.subprocess, "run", native_status)
+    monkeypatch.setattr(
+        installer,
+        "prepare",
+        lambda **kw: pytest.fail(
+            "must not fetch or uv sync over running service"
+        ),
+    )
+    monkeypatch.setattr(
+        installer,
+        "_write_launcher",
+        lambda *a, **kw: pytest.fail("must not replace existing command"),
+    )
+    with pytest.raises(RuntimeError, match="already installed"):
+        installer.install(
+            role=role,
+            tag="v5.0.0a11",
+            root=root,
+            control_url="https://control.example"
+            if role == "executor"
+            else None,
+        )
+    assert role in checked
+    assert (
+        launcher.read_bytes(),
+        (root / "install.json").read_bytes(),
+    ) == original
+    assert profile.read_bytes() == b"existing paired identity must not change"
+
+
 def test_existing_managed_launcher_allows_fresh_install_if_no_service(
     installer, monkeypatch, tmp_path
 ):

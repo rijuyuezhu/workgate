@@ -65,6 +65,16 @@ The existing service and stable CLI stay untouched on refusal. Use the
 existing role service commands for explicit changes; new-version migration,
 rolling upgrade and rollback remain separate #456 acceptance work.
 
+After an explicit native source cutover or managed Executor auto-update,
+`install.json` may still show the **original install tag**, even when the
+stable CLI and native service are running the newer release. That receipt
+records first-install arguments, **not the current running version**. A new
+`install` invocation with the newer tag must reject the already-installed
+service before cloning or running `uv sync`; it does not re-pair or restart.
+Check the stable `workgate --version` and owned native service instead. Use
+the documented `prepare` + `switch` path for an explicit upgrade/rollback;
+do not hand-edit `install.json` to make its tag match.
+
 ## Stage a release without switching the running installation
 
 For a planned upgrade or rollback, first prepare the requested released tag
