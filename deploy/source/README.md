@@ -1,10 +1,69 @@
 # Versioned source runtime and role setup (#456)
 
+## Published v5.0.0a11 bootstrap (Linux and native Windows)
+
+The **published** [v5.0.0a11 prerelease](https://github.com/rijuyuezhu/workgate/releases/tag/v5.0.0a11)
+contains both source bootstraps at commit `9aeedc78df7ccab2a5c1ea6d1b89d115abd16845`. These
+commands pin the **same** tag and full commit in the fetched script and the
+installed source. They are first-install commands, **not** upgrade commands.
+Run as the normal logged-in user with Git available; the bootstrap provisions
+missing `uv` in the user account. Choose **one** role per machine.
+
+Linux (paste **one** complete line):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/9aeedc78df7ccab2a5c1ea6d1b89d115abd16845/deploy/source/bootstrap.sh | sh -s -- v5.0.0a11 9aeedc78df7ccab2a5c1ea6d1b89d115abd16845 --role control
+curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/9aeedc78df7ccab2a5c1ea6d1b89d115abd16845/deploy/source/bootstrap.sh | sh -s -- v5.0.0a11 9aeedc78df7ccab2a5c1ea6d1b89d115abd16845 --role executor --control-url https://control.example.com --name workstation
+curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/9aeedc78df7ccab2a5c1ea6d1b89d115abd16845/deploy/source/bootstrap.sh | sh -s -- v5.0.0a11 9aeedc78df7ccab2a5c1ea6d1b89d115abd16845 --role colocate --name workstation
+```
+
+For Executor-only, replace the example URL with an **actual trusted HTTPS
+Control endpoint**. Control-only initializes a private OAuth-enabled config
+and prints instructions for its owner; Executor and Colocate require interactive
+owner approval during first-time pairing. Do not pipe these commands from
+an unattended job expecting approval to be automatic.
+
+Native Windows PowerShell (download and run a pinned script; choose one
+`-Role` command, using process-local execution-policy override without
+changing machine settings):
+
+```powershell
+$tag = 'v5.0.0a11'
+$sha = '9aeedc78df7ccab2a5c1ea6d1b89d115abd16845'
+$bootstrap = Join-Path $env:TEMP ("workgate-bootstrap-" + [guid]::NewGuid().ToString('N') + '.ps1')
+try {
+    Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/rijuyuezhu/workgate/$sha/deploy/source/bootstrap.ps1" -OutFile $bootstrap
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bootstrap -Role control -Tag $tag -Commit $sha
+    # Instead of the preceding line, choose one:
+    # powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bootstrap -Role executor -Tag $tag -Commit $sha -ControlUrl 'https://control.example.com' -Name 'workstation'
+    # powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bootstrap -Role colocate -Tag $tag -Commit $sha -Name 'workstation'
+} finally {
+    Remove-Item -LiteralPath $bootstrap -ErrorAction SilentlyContinue
+}
+```
+
+The native ARM64 Windows preparer may require its documented verified
+cryptography Wheel or ARM64 toolchain; neither bootstrap silently substitutes
+x64 binaries. All hosts prepare locked Python 3.14 with GUI/S3 extras and the
+Chromium runtime; native GUI permissions and desktop/system tools are separate
+host prerequisites. See the ARM64 section below.
+
+**Acceptance boundary:** the fixed-SHA Linux public bootstrap was fetched
+and checked against the published tag and rejected an invalid role before
+installing anything. Separately, Linux systemd and native Windows x64/ARM64
+were exercised with disposable Control/Executor identities, temporary native
+tasks/units, HTTP readiness and a11 → a10 → a11 version restoration.
+That does **not** certify a complete public-bootstrap clean-machine install
+or an application-level managed `switch.sh` / `switch.ps1` rollback.
+No existing service should be reinstalled implicitly. Follow #456 for the
+remaining end-to-end acceptance.
+
 ## Local one-command install (requires an existing Git checkout)
 
-Once a release contains the source-role commands, specify its **actual
-published tag** and choose exactly one role. The examples below use
-`vRELEASE` as a placeholder; **do not use an older tag that lacks `setup`**.
+If you already have a local checkout and prefer its scripts, specify
+the **actual published tag** and exactly one role. These generic examples
+use `vRELEASE` as a placeholder; see the verified a11 bootstrap above
+for commands requiring no checkout. Do not use older tags lacking `setup`.
 Git is required. The public bootstraps install missing uv with Astral's
 official user-local installer; local checkout scripts still require uv on PATH.
 Source installation never requests administrator rights by default.
@@ -222,7 +281,7 @@ machine without a planned maintenance window and rollback approval.
 
 ## Public GitHub bootstrap, pinned to a release commit
 
-After a **new release contains these bootstrap files**, obtain the full
+For releases **other than the published a11 example above**, obtain the full
 40-character release commit SHA from the official GitHub release's Git tag.
 Use the same SHA in both the raw GitHub URL and the bootstrap arguments.
 Replace `FULL_SHA` and `vRELEASE` together; the older `v5.0.0a5`
@@ -271,8 +330,8 @@ The official uv installer is fetched over HTTPS from Astral, independently
 of the pinned WorkGate source; an absent Git/curl or failed installer is
 reported. No running Control is needed to fetch the installer.
 
-The public bootstrap still needs release publication and real clean-machine,
-upgrade and rollback acceptance before #456 can close.
+The public bootstrap is already published in a11; full clean-machine,
+upgrade and application-level rollback acceptance is still required before #456 can close.
 
 ## Windows ARM64 native cryptography prerequisite
 
