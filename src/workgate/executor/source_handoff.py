@@ -7,6 +7,7 @@ from pathlib import Path
 from ..platform.host import HostOS, host_os
 from ..platform.process import run_bounded_capture
 from ..platform.windows_task import RunCommand, WindowsUserTask
+from ..supervisor import PARENT_FD_ENV
 from .source_stage import _TAG
 
 # One well-known, automatically collected transient service. systemd refuses
@@ -28,7 +29,10 @@ def schedule_linux_source_cutover(
     tag = f"v{version}"
     if _TAG.fullmatch(tag) is None:
         raise ValueError("invalid source release version")
-    if any(key.startswith("WORKGATE_") for key in os.environ):
+    if any(
+        key.startswith("WORKGATE_") and key != PARENT_FD_ENV
+        for key in os.environ
+    ):
         raise RuntimeError(
             "source cutover requires durable config, not overrides"
         )
@@ -85,7 +89,10 @@ def schedule_windows_source_cutover(
     tag = f"v{version}"
     if _TAG.fullmatch(tag) is None:
         raise ValueError("invalid source release version")
-    if any(key.startswith("WORKGATE_") for key in os.environ):
+    if any(
+        key.startswith("WORKGATE_") and key != PARENT_FD_ENV
+        for key in os.environ
+    ):
         raise RuntimeError(
             "source cutover requires durable config, not overrides"
         )
