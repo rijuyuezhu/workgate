@@ -13,7 +13,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tests.e2e.helpers import isolated_process_env, isolated_xdg_env
+from tests.e2e.helpers import (
+    isolated_process_env,
+    isolated_xdg_env,
+    provision_executor_pair,
+)
+from workgate.persistence import FileStateStore
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "linux", reason="Linux systemd user units only"
@@ -29,6 +34,8 @@ root = Path(os.environ["WG_TEST_NATIVE_ROOT"])
 unit_dir = root / "systemd" / "user"
 unit = unit_dir / "workgate-control.service"
 state = root / "active"
+colocate = unit_dir / "workgate-colocate.service"
+colocate_state = root / "colocate-active"
 argv = sys.argv[1:]
 assert argv.pop(0) == "--user"
 with (root / "calls.jsonl").open("a") as log:
@@ -38,7 +45,20 @@ if argv == ["show", "--property=UnitPath", "--value"]:
 elif argv == ["show", "workgate-control.service", "--property=LoadState", "--value"]:
     print("loaded" if unit.is_file() else "not-found")
 elif argv == ["show", "workgate-colocate.service", "--property=LoadState", "--value"]:
-    print("not-found")
+    print("loaded" if colocate.is_file() else "not-found")
+elif argv == ["is-active", "workgate-colocate.service"]:
+    print(colocate_state.read_text() if colocate_state.exists() else "inactive")
+elif argv in (
+    ["enable", "workgate-colocate.service"],
+    ["restart", "workgate-colocate.service"],
+    ["start", "workgate-colocate.service"],
+):
+    colocate_state.write_text("active")
+elif argv in (
+    ["stop", "workgate-colocate.service"],
+    ["disable", "--now", "workgate-colocate.service"],
+):
+    colocate_state.write_text("inactive")
 elif argv == ["show", "workgate-control.service",
               "--property=LoadState", "--property=ActiveState",
               "--property=FragmentPath", "--property=ExecStart"]:
@@ -264,3 +284,102 @@ def test_full_control_installer_orchestrates_real_native_cli_and_safe_rerun(
         installer.install(**options)
     assert (root / "install.json").read_bytes() == receipt_before
     assert config.read_bytes() == before
+
+
+@pytest.fixture
+def colocate_env(isolated_native_control, tmp_path: Path):
+    """Real CLI, disposable native backend and a pairing option."""
+    _run, control, _control_unit, native, env = isolated_native_control
+    executor_state = tmp_path / "paired-executor"
+    executor_yaml = tmp_path / "executor.yaml"
+    executor_yaml.write_text(f"state_dir: {executor_state}\n")
+    unit = native / "systemd/user/workgate-colocate.service"
+    profile = FileStateStore(
+        lambda: executor_state
+    ).layout.executor_profile_path
+
+    def run(*args: str, success: bool = True):
+        result = subprocess.run(
+            [sys.executable, "-m", "workgate.main", "colocate", *args],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=35,
+        )
+        if success:
+            assert result.returncode == 0, result.stderr
+        else:
+            assert result.returncode != 0
+        return result
+
+    def pair():
+        provision_executor_pair(
+            control_state_dir=tmp_path / "trust-state",
+            executor_state_dir=executor_state,
+            control_url="http://127.0.0.1:8765",
+        )
+        return profile.read_bytes()
+
+    args = (
+        "install-service",
+        "--control-config",
+        str(control),
+        "--executor-config",
+        str(executor_yaml),
+    )
+    return run, pair, args, unit, profile, native
+
+
+def test_real_colocate_cli_requires_pairing_then_preserves_identity_through_lifecycle(
+    colocate_env,
+):
+    run, pair, args, unit, profile, native = colocate_env
+    failed = run(*args, success=False)
+    assert "pair the executor" in failed.stderr
+    assert not unit.exists()
+    identity = pair()
+    assert "not-installed" in run("status-service").stdout
+
+    run(*args)
+    content = unit.read_text()
+    assert content.startswith("# Managed by workgate colocate install-service")
+    assert args[2] in content and args[4] in content
+    assert "UMask=0077" in content
+    assert unit.stat().st_mode & 0o077 == 0
+    assert "active" in run("status-service").stdout
+    run("stop-service")
+    assert "inactive" in run("status-service").stdout
+    run("start-service")
+    run("restart-service")
+    assert profile.read_bytes() == identity
+    run("uninstall-service")
+    assert not unit.exists()
+    assert "not-installed" in run("status-service").stdout
+    assert profile.read_bytes() == identity
+    commands = [
+        json.loads(line)
+        for line in (native / "calls.jsonl").read_text().splitlines()
+    ]
+    assert ["disable", "--now", "workgate-colocate.service"] in commands
+
+
+def test_real_colocate_cli_does_not_overwrite_foreign_unit_or_pairing(
+    colocate_env,
+):
+    run, pair, args, unit, profile, native = colocate_env
+    identity = pair()
+    foreign = "[Service]\nExecStart=/bin/false\n"
+    unit.write_text(foreign)
+    assert "unmanaged service" in run(*args, success=False).stderr
+    assert "unmanaged service" in run("uninstall-service", success=False).stderr
+    assert unit.read_text() == foreign
+    assert profile.read_bytes() == identity
+    commands = [
+        json.loads(line)
+        for line in (native / "calls.jsonl").read_text().splitlines()
+    ]
+    assert not any(
+        item[0] in {"enable", "restart", "disable"}
+        and item[-1] == "workgate-colocate.service"
+        for item in commands
+    )
