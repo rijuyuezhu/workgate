@@ -36,6 +36,8 @@ unit = unit_dir / "workgate-control.service"
 state = root / "active"
 colocate = unit_dir / "workgate-colocate.service"
 colocate_state = root / "colocate-active"
+executor = unit_dir / "workgate-executor.service"
+executor_state = root / "executor-active"
 argv = sys.argv[1:]
 assert argv.pop(0) == "--user"
 with (root / "calls.jsonl").open("a") as log:
@@ -46,6 +48,36 @@ elif argv == ["show", "workgate-control.service", "--property=LoadState", "--val
     print("loaded" if unit.is_file() else "not-found")
 elif argv == ["show", "workgate-colocate.service", "--property=LoadState", "--value"]:
     print("loaded" if colocate.is_file() else "not-found")
+elif argv == ["show", "workgate-executor.service",
+              "--property=LoadState", "--property=ActiveState",
+              "--property=SubState", "--property=FragmentPath",
+              "--property=ExecStart"]:
+    import shlex
+    values = shlex.split(
+        next(line.partition("=")[2] for line in executor.read_text().splitlines()
+             if line.startswith("ExecStart="))
+    ) if executor.is_file() else []
+    active = executor_state.read_text() if executor_state.exists() else "inactive"
+    print("LoadState=" + ("loaded" if executor.is_file() else "not-found"))
+    print("ActiveState=" + active)
+    print("SubState=" + ("running" if active == "active" else "dead"))
+    print("FragmentPath=" + (str(executor) if executor.is_file() else ""))
+    print("ExecStart=" + (
+        f"{{ path={values[0]} ; argv[]={' '.join(values)} ; ignore_errors=no ; }}"
+        if values else ""
+    ))
+elif argv in (
+    ["restart", "workgate-executor.service"],
+    ["start", "workgate-executor.service"],
+):
+    executor_state.write_text("active")
+elif argv in (
+    ["stop", "workgate-executor.service"],
+    ["disable", "--now", "workgate-executor.service"],
+):
+    executor_state.write_text("inactive")
+elif argv == ["enable", "workgate-executor.service"]:
+    pass
 elif argv == ["is-active", "workgate-colocate.service"]:
     print(colocate_state.read_text() if colocate_state.exists() else "inactive")
 elif argv in (
@@ -383,3 +415,142 @@ def test_real_colocate_cli_does_not_overwrite_foreign_unit_or_pairing(
         and item[-1] == "workgate-colocate.service"
         for item in commands
     )
+
+
+@pytest.fixture
+def executor_env(isolated_native_control, tmp_path: Path):
+    """Real Executor CLI with a private paired profile and native systemd shim."""
+    _run, control, _control_unit, native, env = isolated_native_control
+    executor_state_dir = tmp_path / "executor-state"
+    config = tmp_path / "executor.yaml"
+    config.write_text(f"state_dir: {executor_state_dir}\n")
+    unit = native / "systemd/user/workgate-executor.service"
+    layout = FileStateStore(lambda: executor_state_dir).layout
+
+    def run(*args: str, success: bool = True):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "workgate.main",
+                "executor",
+                *args,
+                "--config",
+                str(config),
+            ],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=35,
+        )
+        if success:
+            assert result.returncode == 0, result.stderr
+        else:
+            assert result.returncode != 0
+        return result
+
+    def pair():
+        provision_executor_pair(
+            control_state_dir=tmp_path / "trust-state",
+            executor_state_dir=executor_state_dir,
+            control_url="http://127.0.0.1:8765",
+        )
+        return layout.executor_profile_path.read_bytes()
+
+    return run, pair, config, unit, layout, native, env
+
+
+def test_real_executor_service_native_lifecycle_preserves_identity(
+    executor_env,
+):
+    run, pair, config, unit, layout, native, _env = executor_env
+    assert "not-installed" in run("status").stdout
+    refused = run("install-service", success=False)
+    assert "not paired" in refused.stderr
+    assert not unit.exists()
+    identity = pair()
+    installed = run("install-service").stdout
+    assert "State: running" in installed
+    assert "Runtime: current" in installed
+    assert "Runtime owner: source" in installed
+    assert unit.is_file() and unit.stat().st_mode & 0o077 == 0
+    content = unit.read_text()
+    assert "ExecStart=" in content
+    assert "Restart=always" in content
+    assert layout.executor_profile_path.read_bytes() == identity
+    service_dir = layout.executor_dir / "service"
+    metadata = json.loads((service_dir / "installation.json").read_text())
+    assert metadata["backend"] == "systemd"
+    assert metadata["service_file"] == str(unit)
+    assert metadata["version"] == 3
+    assert (service_dir / "launcher.py").is_file()
+    assert (service_dir / "config.json").is_file()
+    assert "State: stopped" in run("stop").stdout
+    assert "State: running" in run("start").stdout
+    assert "State: running" in run("restart").stdout
+    run("uninstall-service")
+    assert "not-installed" in run("status").stdout
+    assert not unit.exists()
+    assert layout.executor_profile_path.read_bytes() == identity
+    assert not (service_dir / "installation.json").exists()
+    assert not (service_dir / "launcher.py").exists()
+    calls = [
+        json.loads(line)
+        for line in (native / "calls.jsonl").read_text().splitlines()
+    ]
+    assert ["disable", "--now", "workgate-executor.service"] in calls
+
+
+def test_real_executor_cli_reinstall_refreshes_only_managed_assets(
+    executor_env,
+):
+    run, pair, config, unit, layout, native, _env = executor_env
+    identity = pair()
+    run("install-service")
+    first_unit = unit.read_bytes()
+    service_dir = layout.executor_dir / "service"
+    first_metadata = (service_dir / "installation.json").read_bytes()
+    run("install-service")
+    assert unit.read_bytes() == first_unit
+    assert (service_dir / "installation.json").read_bytes() == first_metadata
+    assert layout.executor_profile_path.read_bytes() == identity
+    calls = [
+        json.loads(line)
+        for line in (native / "calls.jsonl").read_text().splitlines()
+    ]
+    assert calls.count(["restart", "workgate-executor.service"]) == 2
+
+
+def test_real_executor_cli_fails_closed_on_foreign_unit(executor_env):
+    run, pair, config, unit, layout, native, _env = executor_env
+    identity = pair()
+    foreign = "[Service]\nExecStart=/bin/false\n"
+    unit.write_text(foreign)
+    failure = run("install-service", success=False)
+    assert "unmanaged executor unit" in failure.stderr
+    assert unit.read_text() == foreign
+    assert layout.executor_profile_path.read_bytes() == identity
+    calls = [
+        json.loads(line)
+        for line in (native / "calls.jsonl").read_text().splitlines()
+    ]
+    assert not any("restart" in item for item in calls)
+
+
+def test_real_executor_cli_detects_config_drift_and_recovers_without_repairing(
+    executor_env,
+):
+    run, pair, config, unit, layout, native, _env = executor_env
+    identity = pair()
+    run("install-service")
+    service_dir = layout.executor_dir / "service"
+    before = (service_dir / "installation.json").read_bytes()
+    config.write_text(config.read_text() + "run_shell_default_timeout_s: 17\n")
+    status = run("status").stdout
+    assert "State: running" in status
+    assert "Runtime: stale" in status
+    run("install-service")
+    assert "Runtime: current" in run("status").stdout
+    assert (service_dir / "installation.json").read_bytes() != before
+    assert layout.executor_profile_path.read_bytes() == identity
+    assert unit.is_file()

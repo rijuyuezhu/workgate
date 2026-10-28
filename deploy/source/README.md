@@ -353,6 +353,24 @@ Previous releases without an ARM64 Wheel asset cannot use this automatic path.
 Full native service upgrade/rollback still requires the separate #456/#459
 acceptance; source preparation alone never replaces a running service.
 
+## Installation acceptance checkpoints
+
+For a release candidate, verify the three roles using **disposable state** first:
+
+| Role | Fresh install | Same-release behavior | Removal keeps |
+| --- | --- | --- | --- |
+| Control | Private OAuth YAML, HTTP service and native binding | `install.py` with identical arguments skips setup and restart | Config and admin identity |
+| Executor-only | Owner-approved pairing, native launcher and runtime metadata | `install.py` skips when healthy; direct `executor install-service` explicitly refreshes the service | Paired Executor profile |
+| Colocate | Temporary loopback Control, paired Executor and one combined service | The normal installer skips when its release/config binding is unchanged | Both Control config and Executor profile |
+
+The automated subprocess checks use a temporary `systemctl` replacement,
+not a real user manager. Windows Task Scheduler and Linux native upgrades are
+tested separately. Before marking a **live release** accepted, also verify
+native ownership, online connectivity, an active command, stop/restart and
+rollback on the actual target OS. Never interpret systemd/Task Scheduler
+`Running` alone as proof the application is connected. Do not repeat first-run
+pairing to test an existing deployment.
+
 ## Runtime preparation without role setup
 
 This prepares **only** the reproducible source runtime and a stable CLI.
