@@ -4,7 +4,52 @@ Install Workgate wherever the **control** runs and on every machine that acts as
 an **executor**. They may be the same physical machine, but they remain separate
 runtime roles.
 
-## Source checkout
+## Published release source install (recommended for first-time setup)
+
+The source installer is the normal method for Linux and native Windows;
+it installs locked Python 3.14, GUI/S3 extras, browser assets and the selected
+native user service. The published **v5.0.0a11 prerelease** has a
+commit-verified bootstrap (`9aeedc78df7ccab2a5c1ea6d1b89d115abd16845`).
+
+Linux, paste **one** of these commands (exactly one role):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/9aeedc78df7ccab2a5c1ea6d1b89d115abd16845/deploy/source/bootstrap.sh | sh -s -- v5.0.0a11 9aeedc78df7ccab2a5c1ea6d1b89d115abd16845 --role control
+curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/9aeedc78df7ccab2a5c1ea6d1b89d115abd16845/deploy/source/bootstrap.sh | sh -s -- v5.0.0a11 9aeedc78df7ccab2a5c1ea6d1b89d115abd16845 --role executor --control-url https://control.example.com --name workstation
+curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/9aeedc78df7ccab2a5c1ea6d1b89d115abd16845/deploy/source/bootstrap.sh | sh -s -- v5.0.0a11 9aeedc78df7ccab2a5c1ea6d1b89d115abd16845 --role colocate --name workstation
+```
+
+Native Windows PowerShell (choose one role line; the execution-policy
+override is only for that PowerShell process):
+
+```powershell
+$tag = 'v5.0.0a11'
+$sha = '9aeedc78df7ccab2a5c1ea6d1b89d115abd16845'
+$script = Join-Path $env:TEMP ("workgate-bootstrap-" + [guid]::NewGuid().ToString('N') + '.ps1')
+try {
+    Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/rijuyuezhu/workgate/$sha/deploy/source/bootstrap.ps1" -OutFile $script
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -Role control -Tag $tag -Commit $sha
+    # Or use this line instead, for Executor-only:
+    # powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -Role executor -Tag $tag -Commit $sha -ControlUrl 'https://control.example.com' -Name 'workstation'
+    # Or for Colocate:
+    # powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -Role colocate -Tag $tag -Commit $sha -Name 'workstation'
+} finally {
+    Remove-Item -LiteralPath $script -ErrorAction SilentlyContinue
+}
+```
+
+Replace `control.example.com` with the HTTPS endpoint of your Control.
+Executor/Colocate pairing requires owner approval; native Windows ARM64 may
+also require the documented cryptography toolchain or verified release Wheel.
+Git is required; missing `uv` is installed in user space. No Docker or npm
+is needed for these source installations. The commands **do not** replace
+existing installed services: use explicit `prepare` and `switch` for that.
+For detailed prerequisites, identity-preserving upgrade/rollback instructions
+and limits of real-machine acceptance, see the
+[source installer guide](https://github.com/rijuyuezhu/workgate/blob/main/deploy/source/README.md).
+The prerelease examples are not a claim of a supported stable production release.
+
+## Source checkout (development)
 
 Best for development and early deployments:
 
@@ -22,18 +67,12 @@ For a **versioned, full-extras** runtime without changing the currently running
 services, use the repository's [source preparation scripts]
 (https://github.com/rijuyuezhu/workgate/tree/main/deploy/source). They resolve a specific release tag to a
 commit-addressed checkout, run locked uv installation and provision Chromium.
-The same directory now includes a local-checkout
-[`install.sh` / `install.ps1`](https://github.com/rijuyuezhu/workgate/tree/main/deploy/source)
-for versioned preparation **and** interactive role setup/pairing. Choose an
-actual release tag containing these commands. The [commit-pinned GitHub bootstrap](https://github.com/rijuyuezhu/workgate/tree/main/deploy/source)
-adds Linux `curl | sh` and native Windows PowerShell download commands.
-Use them only for a release **containing the bootstrap**, with the full release
-commit SHA explicitly pinned in the URL and arguments; see the
-[source installation README](https://github.com/rijuyuezhu/workgate/blob/main/deploy/source/README.md).
-The existing `v5.0.0a5` release predates these entrypoints. Existing managed services are not implicitly overwritten or restarted by
-the source first-run installer; an already-installed role is reported and
-requires explicit service management. Clean-machine, safe no-op rerun,
-migration and rollback acceptance is still tracked under #456.
+The same directory also includes checkout-local `install.sh` and
+`install.ps1` for interactive role setup/pairing. The verified GitHub
+bootstrap examples above need no existing checkout. Older releases such as
+`v5.0.0a5` predate those entrypoints. An installed service is never
+implicitly overwritten or restarted; explicit upgrade/rollback procedures
+and remaining clean-host acceptance are tracked in #456.
 
 ## Python installation from GitHub
 
