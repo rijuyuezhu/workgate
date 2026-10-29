@@ -85,9 +85,7 @@ class Settings(BaseSettings):
     """Bind host for HTTP/MCP transports; defaults to loopback for reverse-proxy deployments."""
     port: _Port = 8765
     """Bind port for HTTP/MCP transports."""
-    log_level: Literal["critical", "error", "warning", "info", "debug"] = (
-        "warning"
-    )
+    log_level: Literal["critical", "error", "warning", "info", "debug"] = "info"
     """Runtime log level for Workgate and its HTTP server."""
     forwarded_allow_ips: str = "127.0.0.1"
     """Comma-separated proxy addresses/networks trusted for forwarded HTTP headers."""

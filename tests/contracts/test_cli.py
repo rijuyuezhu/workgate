@@ -685,7 +685,7 @@ def test_control_handler_initializes_only_control_owned_directories(
     assert data_dir.stat().st_mode & 0o777 == 0o700
     assert settings.audit_log_path.parent.stat().st_mode & 0o777 == 0o700
     assert configured == [settings]
-    assert configured_log_levels == ["warning"]
+    assert configured_log_levels == ["info"]
     assert dispatched == [settings]
 
 
