@@ -1,5 +1,6 @@
 """Real native Windows Task Scheduler Executor -> Control reconnect lifecycle."""
 
+import argparse
 import asyncio
 import os
 import shutil
@@ -49,7 +50,7 @@ def _task_last_run(task_name: str) -> str:
     ).stdout.strip()
 
 
-async def main() -> None:
+async def main(*, outage_only: bool = False) -> None:
     root = Path(tempfile.gettempdir()) / f"wg392-paired-service-{uuid4().hex}"
     root.mkdir()
     task = WindowsUserTask(
@@ -199,25 +200,26 @@ async def main() -> None:
             assert _task_last_run(task.name) == original_start
             assert profile_path.read_bytes() == original_profile
 
-            # Keep the existing explicit native Task stop/start acceptance.
-            task.stop()
-            deadline = asyncio.get_running_loop().time() + 15
-            while task.status()["state"].lower() in {"running", "queued"}:
-                assert asyncio.get_running_loop().time() < deadline, (
-                    "Task Scheduler did not stop the Executor"
+            # Existing explicit stop/restart test remains in the full CI smoke.
+            if not outage_only:
+                task.stop()
+                deadline = asyncio.get_running_loop().time() + 15
+                while task.status()["state"].lower() in {"running", "queued"}:
+                    assert asyncio.get_running_loop().time() < deadline, (
+                        "Task Scheduler did not stop the Executor"
+                    )
+                    await asyncio.sleep(0.2)
+                task.start()
+                await wait_for_executor_online(
+                    url,
+                    control,
+                    executor_id,
+                    after_last_seen=first_seen,
+                    timeout_s=55,
+                    stdout_path=root / "control.out",
+                    stderr_path=root / "control.err",
                 )
-                await asyncio.sleep(0.2)
-            task.start()
-            await wait_for_executor_online(
-                url,
-                control,
-                executor_id,
-                after_last_seen=first_seen,
-                timeout_s=55,
-                stdout_path=root / "control.out",
-                stderr_path=root / "control.err",
-            )
-            assert task.status()["state"].lower() == "running"
+                assert task.status()["state"].lower() == "running"
         except Exception:
             error_file = root / "executor-error.log"
             diagnostic = (
@@ -248,9 +250,13 @@ async def main() -> None:
                 )  # Do not report success if cleanup never finishes.
     print(
         "Native Windows paired Task Scheduler Control outage/recovery "
-        "without task restart, identity preservation, and explicit restart: PASS"
+        "without task restart and with identity preservation: PASS"
     )
+    if not outage_only:
+        print("Native Windows paired Task Scheduler explicit restart: PASS")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--outage-only", action="store_true")
+    asyncio.run(main(outage_only=parser.parse_args().outage_only))
