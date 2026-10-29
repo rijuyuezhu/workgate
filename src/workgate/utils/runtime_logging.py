@@ -14,5 +14,9 @@ _LOG_LEVELS = {
 def configure_runtime_logging(log_level: str) -> None:
     """Apply the configured level without adding duplicate root handlers."""
     level = _LOG_LEVELS[log_level]
-    logging.basicConfig(level=level)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S%z",
+    )
     logging.getLogger().setLevel(level)
