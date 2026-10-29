@@ -81,6 +81,20 @@ jobs:
         run: uv run python scripts/validation/windows-native-ci.py
       - name: Pinned source installer and Windows Task Scheduler contracts
         run: uv run pytest -q tests/repo/test_source_bootstrap.py tests/repo/test_source_install.py tests/repo/test_source_prepare.py tests/repo/test_source_switch_windows.py
+      - name: Actual a11 frozen to source Windows Task Scheduler migration and rollback
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $old = Join-Path $env:RUNNER_TEMP 'wg457-old-frozen'
+          New-Item -ItemType Directory -Force -Path $old | Out-Null
+          gh release download v5.0.0a11 -R rijuyuezhu/workgate --dir $old --pattern workgate-windows-x86_64.zip --pattern workgate-windows-x86_64.sha256
+          $expected = (Get-Content (Join-Path $old 'workgate-windows-x86_64.sha256') -Raw).Trim().Split(' ')[0]
+          $archive = Join-Path $old 'workgate-windows-x86_64.zip'
+          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw 'Historical frozen artifact SHA256 mismatch' }
+          Expand-Archive -LiteralPath $archive -DestinationPath $old
+          uv run python scripts/validation/windows-frozen-migration-smoke.py (Join-Path $old 'workgate-windows-x86_64/workgate.exe')
       - name: Verify clean Windows wheel installation
         shell: pwsh
         run: |
