@@ -161,9 +161,12 @@ async def main() -> None:
             deadline = asyncio.get_running_loop().time() + 25
             while not connection.describe().startswith("reconnecting"):
                 assert task.status()["state"].lower() == "running"
-                assert not connection.describe().startswith("action-required")
+                current = connection.describe()
+                assert not current.startswith("action-required"), (
+                    f"Executor incorrectly requires owner action after Control loss: {current}"
+                )
                 assert asyncio.get_running_loop().time() < deadline, (
-                    "Executor did not enter reconnecting state after Control loss"
+                    f"Executor did not enter reconnecting state after Control loss: {current}"
                 )
                 await asyncio.sleep(0.25)
 
