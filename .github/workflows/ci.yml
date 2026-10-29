@@ -79,6 +79,8 @@ jobs:
       - run: uv sync --locked --group dev
       - name: Native Windows contracts and integration smoke
         run: uv run python scripts/validation/windows-native-ci.py
+      - name: Pinned source installer and Windows Task Scheduler contracts
+        run: uv run pytest -q tests/repo/test_source_bootstrap.py tests/repo/test_source_install.py tests/repo/test_source_prepare.py tests/repo/test_source_switch_windows.py
       - name: Verify clean Windows wheel installation
         shell: pwsh
         run: |
@@ -105,6 +107,8 @@ jobs:
       - run: uv sync --locked --group dev --extra s3
       - name: Run real-process deployment topologies
         run: uv run pytest -q -m topology --basetemp=topology-artifacts
+      - name: Source-native service setup and rollback contracts
+        run: uv run pytest -q tests/e2e/test_source_control_native_service.py tests/repo/test_source_switch.py
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
@@ -176,54 +180,6 @@ jobs:
           path: browser-artifacts
           if-no-files-found: warn
           retention-days: 14
-
-  binary-smoke:
-    name: Self-contained binary (${{ matrix.artifact }})
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 35
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - artifact: linux-x86_64
-            runner: ubuntu-latest
-          - artifact: linux-aarch64
-            runner: ubuntu-24.04-arm
-          - artifact: macos-x86_64
-            runner: macos-15-intel
-          - artifact: macos-aarch64
-            runner: macos-15
-          - artifact: windows-x86_64
-            runner: windows-2022
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.14'
-      - uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-      - if: runner.os != 'Windows'
-        run: bash scripts/release/build-binary.sh
-      - if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/release/build-binary.ps1
-      - if: runner.os != 'Windows'
-        run: python scripts/release/smoke-binary.py dist/workgate
-      - if: runner.os == 'Windows'
-        run: python scripts/release/smoke-binary.py dist/workgate.exe
-      - if: runner.os == 'Windows'
-        run: uv run pytest -q tests/contracts/test_windows_frozen_service.py
-      - if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/release/package-windows.ps1
-      - name: Build distinct acceptance-only older Windows frozen PE
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/validation/build-windows-older-frozen.ps1
-      - name: Native frozen Windows PowerShell bootstrap and automatic cross-version update E2E
-        if: runner.os == 'Windows'
-        run: uv run python scripts/validation/windows-frozen-bootstrap-smoke.py --older-service dist/workgatew-older.exe
 
   package-smoke:
     name: Package smoke
@@ -314,7 +270,6 @@ jobs:
       - topology
       - coverage
       - browser-e2e
-      - binary-smoke
       - package-smoke
       - release-matrix
     if: always()
