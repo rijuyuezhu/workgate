@@ -369,3 +369,37 @@ def test_colocate_native_load_state_error_refuses_install_and_status(
     with pytest.raises(RuntimeError, match="cannot query unit"):
         service.install_colocate_service(args)
     assert not unit.exists()
+
+
+def test_windows_colocate_launcher_compacts_before_start(
+    installer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    args, _commands, pair, _unit = installer
+    pair()
+    monkeypatch.setattr(service.sys, "platform", "win32")
+    monkeypatch.setattr(service.WindowsUserTask, "available", lambda: True)
+    executable = tmp_path / "Scripts" / "python.exe"
+    executable.parent.mkdir()
+    executable.touch()
+    executable.with_name("pythonw.exe").touch()
+    monkeypatch.setattr(service.sys, "executable", str(executable))
+    service_dir = tmp_path / "windows-service"
+    monkeypatch.setattr(service, "_windows_service_dir", lambda: service_dir)
+
+    class Task:
+        def status(self):
+            return None
+
+        def install(self, command, *, cwd):
+            assert command[0].endswith("pythonw.exe")
+            assert cwd == str(service_dir)
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(service, "_windows_task", lambda: Task())
+    service.install_colocate_service(args)
+    launcher = (service_dir / "launcher.py").read_text()
+    compile(launcher, str(service_dir / "launcher.py"), "exec")
+    assert "compact_service_log(log)" in launcher
+    assert "'a+'" in launcher

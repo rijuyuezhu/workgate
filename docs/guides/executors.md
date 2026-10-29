@@ -81,6 +81,14 @@ when that user logs in, not as machine-wide Windows services before login.
 `status-service`, and `uninstall-service`. Installation requires a paired
 executor and durable role configuration.
 
+Windows source Control, Executor and Colocate tasks append their parent/child
+diagnostics to private `control.log`, `executor.log` or `colocate.log` files
+under the corresponding role's state `service` directory. On launcher startup,
+an existing log larger than 4 MiB is compacted in place to its most recent
+approximately 2 MiB, before a Child inherits its stream. This preserves recent
+failures across restarts without replacing open handles, but **does not limit
+growth during one uninterrupted service run**. Linux uses journald instead.
+
 Windows GUI automation also requires a logged-in, unlocked foreground
 desktop. It uses native UI Automation and isolated per-window screenshots;
 Windows service processes with no accessible input desktop still expose
