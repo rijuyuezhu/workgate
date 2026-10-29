@@ -7,6 +7,7 @@ process lifetime; the Child continues to own all runtime and configuration.
 import argparse
 import hashlib
 import json
+import logging
 import os
 import selectors
 import signal
@@ -20,6 +21,10 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from .utils.runtime_logging import configure_runtime_logging
+
+logger = logging.getLogger(__name__)
 
 PARENT_FD_ENV = "WORKGATE_PARENT_IPC_FD"
 _STOP_TIMEOUT_SECONDS = 3
@@ -290,6 +295,8 @@ def supervise(commands: list[ChildCommand]) -> int:
     """Run exactly one Parent, with one independently restartable Child/role."""
     if not commands or len({item.role for item in commands}) != len(commands):
         raise ValueError("each supervised role must be unique")
+    # The parent has no role config; keep its lifecycle diagnostics at WARNING.
+    configure_runtime_logging("warning")
 
     # A restart must preserve startup ENV and CLI arguments. Children reread
     # their file-backed configuration because every restart is a fresh exec.
@@ -401,7 +408,15 @@ def supervise(commands: list[ChildCommand]) -> int:
             if progress is None or progress.recovering:
                 return False
             if not _restore_good(progress.good, progress.candidate):
+                logger.error(
+                    "supervisor rollback unavailable for roles=%s",
+                    ",".join(progress.roles),
+                )
                 return False
+            logger.warning(
+                "supervisor rolling back configuration for roles=%s",
+                ",".join(progress.roles),
+            )
             progress.recovering = True
             progress.ready.clear()
             restart_roles(progress.roles)
@@ -418,6 +433,11 @@ def supervise(commands: list[ChildCommand]) -> int:
                         continue  # A sibling's shared-file Apply replaced it.
                     exit_code = child.process.poll()
                     if exit_code is not None:
+                        logger.warning(
+                            "supervisor child %s exited unexpectedly (code=%s)",
+                            role,
+                            exit_code,
+                        )
                         if (
                             applying is not None
                             and role in applying.roles
@@ -429,8 +449,19 @@ def supervise(commands: list[ChildCommand]) -> int:
                     applying is not None
                     and time.monotonic() - applying.started_at
                     > _APPLY_TIMEOUT_SECONDS
-                ) and not recover():
-                    return 1
+                ):
+                    if applying.recovering:
+                        logger.error(
+                            "supervisor rollback timed out for roles=%s",
+                            ",".join(applying.roles),
+                        )
+                        return 1
+                    logger.warning(
+                        "supervisor apply timed out for roles=%s",
+                        ",".join(applying.roles),
+                    )
+                    if not recover():
+                        return 1
                 # Windows select() rejects an empty socket set. A role may
                 # close IPC just before its process exit is observable.
                 if not selector.get_map():
@@ -540,6 +571,11 @@ def supervise(commands: list[ChildCommand]) -> int:
                                 continue
                             progress.ready.add(role)
                             if len(progress.ready) == len(progress.roles):
+                                if progress.recovering:
+                                    logger.warning(
+                                        "supervisor rollback completed for roles=%s",
+                                        ",".join(progress.roles),
+                                    )
                                 for member in progress.roles:
                                     children[member].status = (
                                         "recovered"
