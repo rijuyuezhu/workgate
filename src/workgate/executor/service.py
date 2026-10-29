@@ -25,7 +25,7 @@ from ..config.executor import EXECUTOR_SETTING_NAMES, ExecutorConfig
 from ..persistence import FileStateStore
 from ..platform.host import HostOS, host_os
 from ..platform.process import noninteractive_creationflags
-from ..platform.windows_task import WindowsUserTask, is_windowless_pe
+from ..platform.windows_task import WindowsUserTask
 from ..protocol.executor import ExecutorRuntimeOwnership
 from ..utils.private_files import (
     atomic_write_private_bytes,
@@ -318,13 +318,7 @@ class ExecutorServiceManager:
         *,
         runtime_ownership: ExecutorRuntimeOwnership | None = None,
     ) -> None:
-        frozen = bool(getattr(sys, "frozen", False))
         ownership = runtime_ownership or self._runtime_ownership()
-        if command is None:
-            command = self._runtime_command(ownership)
-        if frozen:
-            self.launcher_path.unlink(missing_ok=True)
-            return
         atomic_write_private_text(
             self.launcher_path, self._launcher_source(ownership)
         )
@@ -338,38 +332,10 @@ class ExecutorServiceManager:
             else store.install_state().ownership
         )
 
-    def _runtime_command(
-        self,
-        runtime_ownership: ExecutorRuntimeOwnership | None = None,
-    ) -> list[str]:
+    def _runtime_command(self) -> list[str]:
         # Preserve a virtualenv/pipx interpreter symlink. Resolving it can escape
         # the environment that actually contains the Workgate installation.
         executable = self.executable.absolute()
-        ownership = runtime_ownership or self._runtime_ownership()
-        if getattr(sys, "frozen", False):
-            if (
-                host_os(self.system) is HostOS.WINDOWS
-                and executable.name.lower() == "workgate.exe"
-            ):
-                # CLI remains console-capable; Task Scheduler runs the windowless
-                # sibling from the same verified release installation.
-                executable = executable.with_name("workgatew.exe")
-            if host_os(self.system) is HostOS.WINDOWS and not is_windowless_pe(
-                executable
-            ):
-                raise UnsupportedExecutorServiceError(
-                    "Windows frozen service requires a valid windowless workgatew.exe"
-                )
-            return [
-                str(executable),
-                "executor",
-                "run",
-                "--managed-service",
-                "--runtime-ownership",
-                ownership.value,
-                "--config",
-                str(self.config_path.resolve()),
-            ]
         if host_os(self.system) is HostOS.WINDOWS:
             pythonw = executable.with_name("pythonw.exe")
             if not pythonw.is_file():
@@ -435,18 +401,19 @@ class ExecutorServiceManager:
         return _settings_payload_digest(payload)
 
     def _runtime_launcher_present(self) -> bool:
-        if not getattr(sys, "frozen", False):
-            return self.launcher_path.is_file()
-        return True
+        return self.launcher_path.is_file()
 
     def _runtime_current(self) -> bool:
         payload = self._read_metadata()
         expected_settings = _executor_service_settings_digest(self.config)
         runtime = ExecutorRuntimeStateStore(self.state_store).load()
+        # A persisted frozen owner must not appear current under a source CLI.
+        if runtime is not None and runtime.ownership in (
+            ExecutorRuntimeOwnership.CONTROL_MANAGED,
+            ExecutorRuntimeOwnership.SELF_CONTAINED,
+        ):
+            return False
         version_current = (
-            runtime is not None
-            and runtime.ownership is ExecutorRuntimeOwnership.CONTROL_MANAGED
-        ) or (
             payload is not None
             and payload.get("workgate_version") == __version__
         )
@@ -466,19 +433,7 @@ class ExecutorServiceManager:
         ):
             return False
         try:
-            expected = self._runtime_command()
-            if (
-                self.backend() == "scheduled-task"
-                and runtime is not None
-                and runtime.ownership
-                is ExecutorRuntimeOwnership.CONTROL_MANAGED
-                and runtime.executable is not None
-            ):
-                # A managed Windows service updates its executable independently
-                # from the interactive installer CLI. Compare the recorded task
-                # image, not the CLI's original adjacent workgatew.exe.
-                expected[0] = runtime.executable
-            return command == expected
+            return command == self._runtime_command()
         except UnsupportedExecutorServiceError:
             return False
 
@@ -623,8 +578,7 @@ class ExecutorServiceManager:
         self._ensure_paired()
         runtime_store = ExecutorRuntimeStateStore(self.state_store)
         runtime_state = runtime_store.install_state(runtime_ownership)
-        # Validate the windowless frozen sibling before any service-side effects.
-        command = self._runtime_command(runtime_state.ownership)
+        command = self._runtime_command()
         backend = self.backend(require_available=True)
         unit_path = None
         if backend == "systemd":
@@ -674,58 +628,8 @@ class ExecutorServiceManager:
             self._write_metadata(backend, command)
             task.start()
 
-        if (
-            backend == "scheduled-task"
-            and runtime_state.ownership
-            is ExecutorRuntimeOwnership.CONTROL_MANAGED
-        ):
-            # The installing CLI may be workgate.exe; the service actually runs
-            # workgatew.exe. Persist the Task Scheduler executable, not the CLI.
-            runtime_store.save(
-                runtime_state.model_copy(update={"executable": command[0]})
-            )
-        else:
-            runtime_store.service_runtime_state(runtime_state.ownership)
+        runtime_store.service_runtime_state(runtime_state.ownership)
         return self.status()
-
-    def activate_windows_runtime(self, old: Path, new: Path) -> None:
-        """Switch the existing owned task to a verified next executable."""
-        if host_os(self.system) is not HostOS.WINDOWS:
-            raise UnsupportedExecutorServiceError(
-                "native Windows task required"
-            )
-        metadata = self._read_metadata()
-        command = None if metadata is None else metadata.get("command")
-        if (
-            metadata is None
-            or metadata.get("backend") != "scheduled-task"
-            or not isinstance(command, list)
-            or not command
-            or not all(isinstance(arg, str) for arg in command)
-            or Path(command[0]) != old
-        ):
-            raise RuntimeError(
-                "managed Windows executable does not match installed service"
-            )
-        if not is_windowless_pe(new):
-            raise RuntimeError(
-                "managed Windows replacement is not a windowless executable"
-            )
-        # Persist the new command *before* switching the native task: a
-        # metadata write error must not leave a task running an unrecorded exe.
-        self._write_metadata("scheduled-task", [str(new), *command[1:]])
-        try:
-            self._windows_task().switch_runtime(
-                expected=str(old), replacement=str(new)
-            )
-        except Exception:
-            try:
-                self._write_metadata("scheduled-task", command)
-            except Exception as exc:
-                raise RuntimeError(
-                    "Windows task switch failed and service metadata rollback failed"
-                ) from exc
-            raise
 
     def _systemd_native_state(self) -> dict[str, str]:
         result = self._run(

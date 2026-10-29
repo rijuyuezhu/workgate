@@ -6,7 +6,6 @@ from .. import __version__
 from ..audit import audit
 from ..config.control import ControlConfig
 from ..schemas.result_models.executor import (
-    ExecutorBootstrapRecipe,
     ExecutorFleetEntry,
     ExecutorFleetOutput,
     ExecutorSessionCapacity,
@@ -37,26 +36,6 @@ class ControlExecutorFleetService:
         self._sessions = sessions
         self._pairing = pairing
         self._config = config
-
-    def _bootstrap(self) -> ExecutorBootstrapRecipe:
-        url = (
-            self._config.resolved_base_url.rstrip("/")
-            + "/executor/v1/bootstrap"
-        )
-        windows_url = url + ".ps1"
-        quoted_windows_url = windows_url.replace("'", "''")
-        return ExecutorBootstrapRecipe(
-            url=url,
-            command=f"curl -fsSL {url} | bash -s -- --persist",
-            windows_url=windows_url,
-            windows_command=(
-                "Invoke-WebRequest -UseBasicParsing "
-                f"'{quoted_windows_url}' "
-                "-OutFile workgate-bootstrap.ps1 -ErrorAction Stop; "
-                "powershell.exe -NoProfile -ExecutionPolicy Bypass "
-                r"-File .\workgate-bootstrap.ps1 -Persist"
-            ),
-        )
 
     def _capacity(self) -> ExecutorSessionCapacity:
         used, limit, available = self._sessions.session_capacity()
@@ -141,16 +120,11 @@ class ControlExecutorFleetService:
         )
         entries = [await self._entry(record) for record in records]
         capacity = self._capacity()
-        output = ExecutorFleetOutput(
+        return ExecutorFleetOutput(
             action="list",
             executors=entries,
             session_capacity=capacity,
         )
-        if capacity.available and not any(
-            entry.session_admission for entry in entries
-        ):
-            output.bootstrap = self._bootstrap()
-        return output
 
     async def inspect(self, executor_id: str) -> ExecutorFleetOutput:
         return ExecutorFleetOutput(
@@ -232,14 +206,9 @@ class ControlExecutorFleetService:
                 raise ValueError("list does not accept executor_id or name")
             return await self.list()
         if action == "bootstrap":
-            if executor_id is not None or name is not None:
-                raise ValueError(
-                    "bootstrap does not accept executor_id or name"
-                )
-            return ExecutorFleetOutput(
-                action="bootstrap",
-                session_capacity=self._capacity(),
-                bootstrap=self._bootstrap(),
+            raise ValueError(
+                "legacy frozen bootstrap is retired; use the published "
+                "source + uv installation guide"
             )
 
         target = self._require_executor_id(action, executor_id)

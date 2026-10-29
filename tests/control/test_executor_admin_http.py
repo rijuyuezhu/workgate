@@ -166,10 +166,7 @@ def test_owner_can_approve_list_rename_and_revoke_final_executor(
                 "offline",
                 "inventory_unavailable",
             ]
-            assert (
-                listing_data["bootstrap"]["pairing_approval"]
-                == "human_required"
-            )
+            assert listing_data["bootstrap"] is None
             assert credential not in listing.text
             assert "credential_verifier" not in listing.text
 

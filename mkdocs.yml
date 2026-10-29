@@ -65,15 +65,19 @@ nav:
       - Other MCP clients: getting-started/mcp-clients.md
       - ChatGPT connector: getting-started/chatgpt-connector.md
       - Install options: getting-started/install-options.md
+      - Persistent Control service: getting-started/control-service.md
   - Guides:
       - Common workflows: guides/common-workflows.md
       - WebUI: guides/webui.md
       - Executors: guides/executors.md
+      - Migrate legacy executors: guides/migrate-frozen.md
       - Agent capability bridge: guides/agent-bridge.md
       - Audit log: guides/audit-log.md
   - Reference:
       - Configuration: reference/configuration.md
       - CLI: reference/cli.md
       - Tools: reference/tools.md
+  - Maintenance:
+      - Windows platform: maintenance/windows-platform-backends.md
   - Security: security.md
   - Troubleshooting: troubleshooting.md

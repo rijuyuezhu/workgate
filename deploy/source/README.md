@@ -121,8 +121,8 @@ and is never sufficient on its own to claim a healthy native service.
 No-op behavior does not claim that the Executor is currently connected.
 
 The existing service and stable CLI stay untouched on refusal. Use the
-existing role service commands for explicit changes; new-version migration,
-rolling upgrade and rollback remain separate #456 acceptance work.
+existing role service commands for explicit changes; new-version migration, rolling upgrade and rollback require an explicit
+prepare + switch procedure rather than a first-install command.
 
 After an explicit native source cutover or managed Executor auto-update,
 `install.json` may still show the **original install tag**, even when the
@@ -207,9 +207,10 @@ and cannot be used as a managed Control rollback target.
 
 This cutover supports **Linux Control, Colocate, and standalone Executor**.
 It checks native systemd active state, not HTTP/WebUI health or Executor
-connectivity. Verify the application after switching. Windows and full
-real-release rollback acceptance remain under #456. Existing unmanaged
-installations are not adopted automatically.
+connectivity. Verify the application after switching. For tested
+frozen-to-source migration evidence and remaining limitations, see
+[the migration guide](../../docs/guides/migrate-frozen.md).
+Existing unmanaged installations are not adopted automatically.
 
 ## Explicit staged Windows Control / Colocate cutover
 
@@ -453,13 +454,13 @@ From a checked-out copy of this repository, with Git and uv installed:
 **Linux:**
 
 ```sh
-sh deploy/source/prepare.sh --role control --tag v5.0.0a5
+sh deploy/source/prepare.sh --role control --tag v5.0.0a12
 ```
 
 **Windows PowerShell:**
 
 ```powershell
-& .\deploy\source\prepare.ps1 -Role executor -Tag v5.0.0a5
+& .\deploy\source\prepare.ps1 -Role executor -Tag v5.0.0a12
 ```
 
 The role is mandatory, never silently selected. Replace the tag with the
@@ -482,8 +483,8 @@ modified/untracked source files in an already managed release checkout.
 Place that `bin` directory on PATH if desired. Old checkouts and running
 services remain unchanged so an upgrade can be rolled back. The tag/commit
 check establishes consistency with the Git repository, not a separately
-verified publisher signature; trusted public bootstrap delivery is a later
-stage of #456.
+verified publisher signature. For a published, commit-pinned bootstrap, use
+the release installation examples at the top of this guide.
 
 ## Executor-only: pairing and native service
 
@@ -536,11 +537,10 @@ service (including stopped ones); it never stops unrelated user services.
 When running over SSH, forward the target localhost port to open the WebUI.
 Custom YAMLs are selected with --control-config and --executor-config.
 
-This is **not yet** the final external `curl | sh` or `irm` install endpoint.
-The next stage must securely publish and validate those entrypoints, initialize
-Control configuration/approval, handle Executor and Colocate pairing, and
-install/restart each role's native service only after validation. Never
-advertise a prepared but unpaired Executor as a completed installation.
+For first-time installation, use the published, pinned source bootstrap at
+the top of this guide. The manual commands above remain useful for explicit
+preparation and native service operations, not as a second default installer.
+Never advertise a prepared but unpaired Executor as a completed installation.
 
 ## Explicitly register an already-running Linux managed Colocate
 

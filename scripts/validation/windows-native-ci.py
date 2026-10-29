@@ -1,4 +1,4 @@
-"""Run the native Windows CI suite; frozen tests run after binary packaging."""
+"""Run native Windows contracts and real source-service integration smoke."""
 
 import subprocess
 import sys
@@ -20,7 +20,6 @@ def main() -> None:
         p
         for folder in ("contracts", "executor")
         for p in (ROOT / "tests" / folder).glob("test_windows_*.py")
-        if p.name != "test_windows_frozen_service.py"
     )
     if not modules:
         raise RuntimeError("No native Windows test modules found")

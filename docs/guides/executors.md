@@ -4,29 +4,22 @@ Executors are the machines that own working directories, files, shells, jobs,
 PTYs, and machine-local integrations. They connect outbound to one control
 endpoint; no inbound Workgate port is required on the executor.
 
-## Bootstrap a fresh machine
+## Install an Executor on a fresh machine
 
-For a supported Linux or macOS machine connecting to a self-hosted Workgate
-control, run the public bootstrap script:
+Follow the [published source + uv installation guide](../getting-started/install-options.md)
+and choose the **Executor-only** role. This supports Linux and native Windows
+with the selected role, installs the matching native per-user service,
+and asks the Control owner to approve pairing. It requires Git but does not
+require Docker or a separate Workgate executable archive.
 
-```bash
-curl -fsSL https://control.example/executor/v1/bootstrap | bash -s -- --name gpu1
-```
-
-The script downloads the matching official Workgate release, verifies its
-SHA-256 and version, extracts only the expected `workgate` executable, then
-runs the normal device-code pairing flow. Nothing is pre-authorized: open the
-verification URL printed on the executor and approve the request as usual.
-
-Add `--persist` to install and start the existing native per-user service:
-
-```bash
-curl -fsSL https://control.example/executor/v1/bootstrap | bash -s -- --name gpu1 --persist
-```
-
-Use `--default-workdir /path` only when the executor should start somewhere
-other than its normal default. Re-running bootstrap reuses the existing paired
-identity when it is still valid.
+If the Executor was previously installed using a frozen executable, do not
+replace its running service with the first-install command. Preserve its
+paired profile and follow the
+[explicit migration and rollback guide](migrate-frozen.md).
+The migration guide documents tested Linux x86-64 and Windows x64 a11
+cutovers, rollback, and the remaining macOS boundary. Follow
+[issue #457](https://github.com/rijuyuezhu/workgate/issues/457)
+for additional platform acceptance.
 
 ## Pair an already-installed executor
 
@@ -64,19 +57,13 @@ The same CLI provides `start`, `stop`, `restart`, `logs`, and
 `uninstall-service`. Reinstalling refreshes the service without changing the
 paired executor identity.
 
-A service installed by the persistent bootstrap owns its self-contained Workgate
-runtime. When control requires a different Workgate version, that executor
-stops accepting new work, finishes already-offered commands, downloads and
-validates the matching control release, then atomically replaces the stable
-runtime. Validation failure leaves the previous runtime untouched. The service
-reconnects with the same executor identity after a successful replacement; a
-failed update stays quiescent instead of retrying in a loop, and
-`workgate executor status` shows the local update state.
-
-Package-manager, Python-package, and source-checkout installations remain
-externally owned. Workgate never rewrites them to satisfy control; update them
-with their owning installation method, then restart or refresh the executor
-service as needed.
+A managed versioned **source + uv** Executor can follow the Control's
+required release while retaining its paired identity and durable state.
+It prepares a separate pinned source checkout and validates it before
+switching the owned native service; failure keeps the previous runtime for
+recovery. A user-owned development checkout is never silently mutated.
+See [versioned source setup and cutover](https://github.com/rijuyuezhu/workgate/blob/main/deploy/source/README.md)
+for explicit upgrade and rollback.
 
 Linux uses a systemd user service. It is enabled for future user-manager
 sessions; remaining active without a logged-in user depends on the host's
@@ -92,16 +79,12 @@ when that user logs in, not as machine-wide Windows services before login.
 `restart`, `status`, `logs`, and `uninstall-service` operations; Colocate offers
 `install-service`, `start-service`, `stop-service`, `restart-service`,
 `status-service`, and `uninstall-service`. Installation requires a paired
-executor and durable role configuration. Frozen Windows bundles use the
-adjacent `workgatew.exe` windowless runtime for the Task Scheduler service;
-new-style frozen managed Executor updates replace the owned task action, not
-the running executable in place.
+executor and durable role configuration.
 
 Windows GUI automation also requires a logged-in, unlocked foreground
 desktop. It uses native UI Automation and isolated per-window screenshots;
 Windows service processes with no accessible input desktop still expose
-non-GUI Executor operations. Frozen bundles use the bundled CLI for the
-screenshot helper without installing an additional executable.
+non-GUI Executor operations.
 
 Temporary network or control outages reconnect with the same profile. Normal
 reboots or long periods offline do not require pairing again. If the executor

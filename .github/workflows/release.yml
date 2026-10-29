@@ -118,114 +118,6 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-  build-binary:
-    name: Build binary (${{ matrix.artifact }})
-    needs: validate-release
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - artifact: linux-x86_64
-            runner: ubuntu-latest
-          - artifact: linux-aarch64
-            runner: ubuntu-24.04-arm
-          - artifact: macos-x86_64
-            runner: macos-15-intel
-          - artifact: macos-aarch64
-            runner: macos-15
-          - artifact: windows-x86_64
-            runner: windows-2022
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-
-      - name: Build self-contained executable (POSIX)
-        if: runner.os != 'Windows'
-        run: bash scripts/release/build-binary.sh
-
-      - name: Build self-contained executable (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/release/build-binary.ps1
-
-      - name: Smoke frozen CLI, control health, and WebUI (POSIX)
-        if: runner.os != 'Windows'
-        run: python scripts/release/smoke-binary.py dist/workgate
-
-      - name: Smoke frozen CLI, control health, and WebUI (Windows)
-        if: runner.os == 'Windows'
-        run: python scripts/release/smoke-binary.py dist/workgate.exe
-
-      - name: Package executable
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p release/workgate-${{ matrix.artifact }}
-          cp dist/workgate release/workgate-${{ matrix.artifact }}/
-          cp README.md LICENSE release/workgate-${{ matrix.artifact }}/
-          cat > release/workgate-${{ matrix.artifact }}/QUICKSTART.txt <<'EOF'
-          Start a network Workgate control:
-
-            ./workgate control --mode http
-
-          Pair an executor in another terminal, then run it:
-
-            ./workgate executor connect http://127.0.0.1:8765
-            ./workgate executor run --default-workdir /path/to/workspace
-
-          POSIX persistent shells require tmux on the executor host.
-
-          Open the browser UI by starting control in HTTP mode and visiting /ui.
-
-          Useful control environment variables:
-
-            WORKGATE_HOST=127.0.0.1
-            WORKGATE_PORT=8765
-            WORKGATE_AUTH_MODE=oauth
-            WORKGATE_BASE_URL=https://your-public-host.example.com
-            WORKGATE_OAUTH_ADMIN_PIN=change-me
-            WORKGATE_OAUTH_JWT_SECRET=change-me-64-hex-random-secret
-
-          Workspace and machine policy belong to the executor, not the control.
-          EOF
-          cd release
-          tar -czf workgate-${{ matrix.artifact }}.tar.gz workgate-${{ matrix.artifact }}
-
-      - name: Validate native windowless Task Scheduler binary
-        if: runner.os == 'Windows'
-        run: uv run pytest -q tests/contracts/test_windows_frozen_service.py
-
-      - name: Package and verify Windows executable
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/release/package-windows.ps1
-
-      - name: Generate binary checksums
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          cd release
-          if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum workgate-${{ matrix.artifact }}.* > workgate-${{ matrix.artifact }}.sha256
-          else
-            shasum -a 256 workgate-${{ matrix.artifact }}.* > workgate-${{ matrix.artifact }}.sha256
-          fi
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: binary-${{ matrix.artifact }}
-          path: |
-            release/workgate-${{ matrix.artifact }}.*
-          if-no-files-found: error
   build-arm64-cryptography:
     name: Build native ARM64 cryptography wheel
     runs-on: windows-11-arm
@@ -260,7 +152,6 @@ jobs:
     needs:
       - validate-release
       - build-python-package
-      - build-binary
       - build-arm64-cryptography
     steps:
       - uses: actions/checkout@v6
@@ -269,13 +160,6 @@ jobs:
         with:
           name: python-dist
           path: dist
-
-      - name: Download binary artifacts
-        uses: actions/download-artifact@v8
-        with:
-          pattern: binary-*
-          path: dist
-          merge-multiple: true
 
       - name: Download verified native ARM64 cryptography wheel
         uses: actions/download-artifact@v8
@@ -293,26 +177,20 @@ jobs:
           cat > RELEASE_NOTES.md <<EOF
           One universal \`py3-none-any\` Python wheel and one source distribution are attached.
 
-          All-in-one executable downloads are attached for:
+          This is a source + uv release, not a standalone executable release.
+          Use a pinned Git release and the official Linux or Windows
+          source bootstrap in the installation guide.
 
-          \`\`\`text
-          linux-x86_64
-          linux-aarch64
-          macos-x86_64
-          macos-aarch64
-          windows-x86_64
-          \`\`\`
-
-          Run the self-contained executable:
-
-          \`\`\`bash
-          ./workgate control --mode mcp
-          \`\`\`
+          Upgrade order matters: migrate paired legacy frozen Executors
+          to managed source BEFORE upgrading Control to this release.
+          The old binary download/update endpoints are retired; an
+          unmigrated frozen Executor will require explicit owner action.
+          See docs/guides/migrate-frozen.md.
 
           A native Windows ARM64 cryptography wheel and its provenance are included.
-          The wheel checksum is included in SHA256SUMS.txt.
+          Its checksum is recorded in SHA256SUMS.txt.
 
-          Universal Python package artifacts, executable archives, and SHA256 checksums are attached below.
+          The universal Python wheel and source distribution are also attached.
 
           Python package version in \`pyproject.toml\`: \`${{ needs.validate-release.outputs.version }}\`
           EOF

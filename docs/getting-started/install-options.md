@@ -64,56 +64,26 @@ see [Persistent Control service](control-service.md) to install a native
 Control-only user service without modifying its state.
 
 For a **versioned, full-extras** runtime without changing the currently running
-services, use the repository's [source preparation scripts]
-(https://github.com/rijuyuezhu/workgate/tree/main/deploy/source). They resolve a specific release tag to a
+services, use the repository's [source preparation scripts](https://github.com/rijuyuezhu/workgate/tree/main/deploy/source). They resolve a specific release tag to a
 commit-addressed checkout, run locked uv installation and provision Chromium.
 The same directory also includes checkout-local `install.sh` and
 `install.ps1` for interactive role setup/pairing. The verified GitHub
 bootstrap examples above need no existing checkout. Older releases such as
 `v5.0.0a5` predate those entrypoints. An installed service is never
-implicitly overwritten or restarted; explicit upgrade/rollback procedures
-and remaining clean-host acceptance are tracked in #456.
-
-## Python installation from GitHub
-
-Workgate is **not published to PyPI**. Choose a tag from
-[GitHub Releases](https://github.com/rijuyuezhu/workgate/releases) and install
-from that Git revision, not from `pip install workgate` or `uvx workgate`.
-The examples below pin `v5.0.0a6` (**prerelease**); choose a non-prerelease
-release tag for a stable deployment.
-
-Run without a persistent installation (requires Python 3.14):
-
-```bash
-uvx --python 3.14 --from 'git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a6' workgate --help
-```
-
-Or install the CLI in an isolated environment:
-
-```bash
-pipx install 'git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a6' --python python3.14
-workgate --help
-```
-
-Replace the tag in both commands when choosing a different GitHub release.
-Use `@main` or a full commit hash only when deliberately testing development
-code, not for a normal installation. The Python distribution builds a universal
-wheel and source distribution; use the browser WebUI for interactive management
-and persistent terminals.
+implicitly overwritten or restarted; use explicit upgrade/rollback procedures
+from the source installer guide.
 
 ## Native desktop automation
 
 Native `gui_list`, `gui_state`, and `gui_action` require the dedicated `gui:use`
 OAuth scope and run only on the executor that owns the selected Workgate session.
-For source or Python-package executors, install the optional GUI bindings:
+For a source checkout, the installer provisions GUI dependencies by default.
+For an existing development checkout, use:
 
 ```bash
-uv sync --extra gui  # source checkout
-pipx install 'workgate[gui] @ git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a6' --python python3.14
-python3.14 -m pip install 'workgate[gui] @ git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a6'  # existing environment
+uv sync --extra gui
 ```
 
-Release self-contained executables already bundle the corresponding Python GUI bindings.
 macOS requires Accessibility permission for native control. Window screenshots
 also require Screen Recording permission; without it, use `gui_state` with
 `screenshot=false`. Linux requires a graphical desktop session plus the system
@@ -123,49 +93,28 @@ X server. Executors without supported bindings or a usable Linux graphical sessi
 omit `gui.v1`. Runtime permission or desktop-session failures are reported
 explicitly; GUI tools never fall back to the control machine.
 
-## Native Windows (PowerShell)
+## Native Windows
 
-On native Windows x86-64, use a Python 3.14 source checkout or the
-release-backed PowerShell bootstrap with a matching Windows archive containing
-both `workgate.exe` and `workgatew.exe`. Neither option requires Bash or
-WSL. For a source checkout:
+Use the **published source PowerShell bootstrap** at the top of this page.
+Choose one role and approve pairing from the Control WebUI. The managed
+Executor starts as a native user-level Task Scheduler task and uses
+`pythonw.exe` from the pinned source runtime, not a frozen EXE. No WSL
+or administrator permission is required for ordinary user setup.
 
-```powershell
-git clone https://github.com/rijuyuezhu/workgate.git
-Set-Location workgate
-uv sync
-uv run workgate executor connect https://control.example --name windows-laptop
-uv run workgate executor run
-```
+For a development checkout, use `git clone` and `uv sync` as described
+above. Existing native Workgate scheduled tasks are never silently
+overwritten by the source bootstrap; use the explicit source
+[prepare/switch procedure](https://github.com/rijuyuezhu/workgate/blob/main/deploy/source/README.md)
+for a managed source upgrade.
 
-For a Control-provided native binary, replace the example hostname with the
-HTTPS Control URL you trust, then run in the logged-in user PowerShell:
+## Existing self-contained installations
 
-```powershell
-Invoke-WebRequest -UseBasicParsing 'https://control.example/executor/v1/bootstrap.ps1' -OutFile workgate-bootstrap.ps1
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\workgate-bootstrap.ps1 -Persist
-```
-
-The script downloads only the matching Windows x86-64 release asset from the
-Control's release proxy, verifies the release's SHA-256 checksum, extracts the
-console and windowless executables, checks their versions, and prompts for
-normal pairing approval. `-Persist` installs the user-level Task Scheduler
-Executor; omit it to run in the foreground instead. An unattended service cannot use native GUI
-input unless the user's interactive desktop is accessible and unlocked.
-
-Older Windows releases such as `v5.0.0a1` used the former `worker`/TUI model:
-the published ZIP contains `workgate.exe` and `workgate-tui.exe`, not
-`workgatew.exe`, and its CLI has no `executor` command. **Do not attempt an
-in-place managed Executor upgrade from that layout.** Stop the old deployment,
-install the current Executor separately, and complete a new owner-approved
-pairing; legacy worker credentials are not an Executor profile.
-
-## Release archive
-
-For a self-contained install, download the archive matching your operating
-system and architecture from the GitHub release and run the included `workgate`
-executable.
-
-The runtime commands and configuration files are the same regardless of install
-method. See [Choose a deployment](deployment.md) for the topology and
-[Configuration](../reference/configuration.md) for the YAML paths.
+Older Workgate releases distributed standalone executables. Those are **not**
+the recommended installation path. Keep the existing Executor profile,
+configuration and native service until a planned source migration has been
+verified; **do not** run the new first-install bootstrap over an existing
+task or delete its private state to force a new pairing. Follow the
+[explicit migration and rollback guide](../guides/migrate-frozen.md), which
+documents tested Linux x86-64 and Windows x64 a11 cutovers and remaining
+unsupported cases (notably macOS). Additional work is tracked under
+[issue #457](https://github.com/rijuyuezhu/workgate/issues/457).

@@ -79,6 +79,22 @@ jobs:
       - run: uv sync --locked --group dev
       - name: Native Windows contracts and integration smoke
         run: uv run python scripts/validation/windows-native-ci.py
+      - name: Pinned source installer and Windows Task Scheduler contracts
+        run: uv run pytest -q tests/repo/test_source_bootstrap.py tests/repo/test_source_install.py tests/repo/test_source_prepare.py tests/repo/test_source_switch_windows.py
+      - name: Actual a11 frozen to source Windows Task Scheduler migration and rollback
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $old = Join-Path $env:RUNNER_TEMP 'wg457-old-frozen'
+          New-Item -ItemType Directory -Force -Path $old | Out-Null
+          gh release download v5.0.0a11 -R rijuyuezhu/workgate --dir $old --pattern workgate-windows-x86_64.zip --pattern workgate-windows-x86_64.sha256
+          $expected = (Get-Content (Join-Path $old 'workgate-windows-x86_64.sha256') -Raw).Trim().Split(' ')[0]
+          $archive = Join-Path $old 'workgate-windows-x86_64.zip'
+          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw 'Historical frozen artifact SHA256 mismatch' }
+          Expand-Archive -LiteralPath $archive -DestinationPath $old
+          uv run python scripts/validation/windows-frozen-migration-smoke.py (Join-Path $old 'workgate-windows-x86_64/workgate.exe')
       - name: Verify clean Windows wheel installation
         shell: pwsh
         run: |
@@ -105,6 +121,8 @@ jobs:
       - run: uv sync --locked --group dev --extra s3
       - name: Run real-process deployment topologies
         run: uv run pytest -q -m topology --basetemp=topology-artifacts
+      - name: Source-native service setup and rollback contracts
+        run: uv run pytest -q tests/e2e/test_source_control_native_service.py tests/repo/test_source_switch.py
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
@@ -177,54 +195,6 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  binary-smoke:
-    name: Self-contained binary (${{ matrix.artifact }})
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 35
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - artifact: linux-x86_64
-            runner: ubuntu-latest
-          - artifact: linux-aarch64
-            runner: ubuntu-24.04-arm
-          - artifact: macos-x86_64
-            runner: macos-15-intel
-          - artifact: macos-aarch64
-            runner: macos-15
-          - artifact: windows-x86_64
-            runner: windows-2022
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.14'
-      - uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-      - if: runner.os != 'Windows'
-        run: bash scripts/release/build-binary.sh
-      - if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/release/build-binary.ps1
-      - if: runner.os != 'Windows'
-        run: python scripts/release/smoke-binary.py dist/workgate
-      - if: runner.os == 'Windows'
-        run: python scripts/release/smoke-binary.py dist/workgate.exe
-      - if: runner.os == 'Windows'
-        run: uv run pytest -q tests/contracts/test_windows_frozen_service.py
-      - if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/release/package-windows.ps1
-      - name: Build distinct acceptance-only older Windows frozen PE
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: ./scripts/validation/build-windows-older-frozen.ps1
-      - name: Native frozen Windows PowerShell bootstrap and automatic cross-version update E2E
-        if: runner.os == 'Windows'
-        run: uv run python scripts/validation/windows-frozen-bootstrap-smoke.py --older-service dist/workgatew-older.exe
-
   package-smoke:
     name: Package smoke
     runs-on: ubuntu-latest
@@ -284,17 +254,8 @@ jobs:
           /tmp/workgate-wheel-venv/bin/python -m pip install dist/*.whl
           /tmp/workgate-wheel-venv/bin/workgate --version
           /tmp/workgate-wheel-venv/bin/workgate version
-      - name: Smoke pinned GitHub uvx and pipx installation
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Validate Git-based installation, independently of the current PR's wheel smoke.
-          package='git+https://github.com/${{ github.repository }}.git@v5.0.0a1'
-          uvx --python 3.14 --from "$package" workgate --help >/dev/null
-          export PIPX_HOME="${RUNNER_TEMP}/workgate-pipx-home"
-          export PIPX_BIN_DIR="${RUNNER_TEMP}/workgate-pipx-bin"
-          uvx --python 3.14 --from pipx pipx install "$package" --python python3.14
-          "$PIPX_BIN_DIR/workgate" --version
+      - name: Smoke installed source wheel stdio Control CLI
+        run: /tmp/workgate-wheel-venv/bin/workgate control --help >/dev/null
 
   release-matrix:
     name: Release matrix check
@@ -314,7 +275,6 @@ jobs:
       - topology
       - coverage
       - browser-e2e
-      - binary-smoke
       - package-smoke
       - release-matrix
     if: always()

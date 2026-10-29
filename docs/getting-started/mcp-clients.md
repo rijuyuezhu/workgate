@@ -35,29 +35,24 @@ A stdio-only Workgate control has **no HTTP executor connection or pairing
 endpoint**. Unlike colocated HTTP, it cannot attach an executor for shell,
 filesystem, or session operations. Use HTTP above for ordinary workspace tasks.
 
-If your local client needs the control-only MCP interface, install Workgate from
-a [GitHub release](install-options.md) or launch the pinned GitHub revision
-through `uvx`. The generic JSON shape is:
+If your local client needs the control-only MCP interface, first install
+the [published source + uv release](install-options.md). Point the client
+at that installation's stable `workgate` command:
 
 ```json
 {
   "mcpServers": {
     "workgate": {
-      "command": "uvx",
-      "args": [
-        "--python", "3.14",
-        "--from", "git+https://github.com/rijuyuezhu/workgate.git@v5.0.0a6",
-        "workgate", "control", "--mode", "stdio", "--auth-mode", "none"
-      ]
+      "command": "workgate",
+      "args": ["control", "--mode", "stdio", "--auth-mode", "none"]
     }
   }
 }
 ```
 
-Client configuration keys vary; use its equivalent command, arguments and
-environment fields. If installed with `pipx`, use `workgate` as the command and
-`["control", "--mode", "stdio", "--auth-mode", "none"]` as the arguments.
-Use the appropriate release tag in place of the prerelease example above.
+Client configuration keys vary. If the installer directory is not on
+`PATH`, replace `workgate` with the absolute path to the pinned source
+installation's `bin/workgate` (Linux) or `bin/workgate.cmd` (Windows).
 
 Stdio communicates only with its parent process, not over a public network.
 The `--auth-mode none` example is **only for that local stdio process**; do not

@@ -64,5 +64,6 @@ unmanaged user unit/task. `uninstall-service` removes only the service, not its
 Control configuration, approval records, or state.
 
 Run these commands from the validated Python 3.14 environment or use a stable
-launcher pointing to that environment. Full one-step Linux and PowerShell
-source setup is tracked separately under #456.
+launcher pointing to that environment. For a new installation, prefer the
+[published source + uv installer](install-options.md); use these manual commands
+for an existing source checkout or explicit native service management.

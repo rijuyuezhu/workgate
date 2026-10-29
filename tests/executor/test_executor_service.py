@@ -465,23 +465,6 @@ def test_systemd_failed_reload_keeps_previous_runtime_metadata(
     assert manager._runtime_current() is False
 
 
-def test_frozen_runtime_uses_managed_service_mode(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    manager, _profile_value = _paired_manager(tmp_path, system="Linux")
-    monkeypatch.setattr(service.sys, "frozen", True, raising=False)
-
-    command = manager._runtime_command()
-
-    assert command[:4] == [
-        str(manager.executable.absolute()),
-        "executor",
-        "run",
-        "--managed-service",
-    ]
-    assert command[4:6] == ["--runtime-ownership", "self-contained"]
-
-
 def test_runtime_command_preserves_virtualenv_interpreter_symlink(
     tmp_path: Path,
 ) -> None:
@@ -654,6 +637,9 @@ def test_status_does_not_reclassify_control_managed_runtime(
     status = manager.status()
 
     assert status.runtime_ownership is ExecutorRuntimeOwnership.CONTROL_MANAGED
+    assert (
+        not status.runtime_current
+    )  # Historical frozen owners cannot claim source currency.
     persisted = state_store.load()
     assert persisted is not None
     assert persisted.ownership is ExecutorRuntimeOwnership.CONTROL_MANAGED
