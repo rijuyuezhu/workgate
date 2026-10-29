@@ -206,14 +206,9 @@ class ControlExecutorFleetService:
                 raise ValueError("list does not accept executor_id or name")
             return await self.list()
         if action == "bootstrap":
-            if executor_id is not None or name is not None:
-                raise ValueError(
-                    "bootstrap does not accept executor_id or name"
-                )
-            return ExecutorFleetOutput(
-                action="bootstrap",
-                session_capacity=self._capacity(),
-                bootstrap=self._bootstrap(),
+            raise ValueError(
+                "legacy frozen bootstrap is retired; use the published "
+                "source + uv installation guide"
             )
 
         target = self._require_executor_id(action, executor_id)

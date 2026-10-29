@@ -286,6 +286,16 @@ async def test_command_capacity_blocks_session_admission_and_suggests_scale_up(
 
 
 @pytest.mark.asyncio
+async def test_retired_fleet_bootstrap_action_is_explicit(
+    tmp_path: Path,
+) -> None:
+    runtime = _runtime(tmp_path)
+    async with runtime.lifespan():
+        with pytest.raises(ValueError, match=r"source \+ uv"):
+            await runtime.executor_fleet.execute(action="bootstrap")
+
+
+@pytest.mark.asyncio
 async def test_drain_state_survives_control_restart(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
