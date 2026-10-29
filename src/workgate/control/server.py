@@ -19,6 +19,7 @@ def run_uvicorn(app: Any, *, config: ControlConfig) -> None:
         forwarded_allow_ips=config.forwarded_allow_ips,
         timeout_graceful_shutdown=_GRACEFUL_SHUTDOWN_TIMEOUT_S,
         log_level=config.log_level,
+        access_log=False,  # Request paths may contain sensitive query strings.
     )
     if not is_child():
         uvicorn.run(app, **options)

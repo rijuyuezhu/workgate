@@ -104,7 +104,7 @@
           },
           "critical | error | warning | info | debug",
           {
-            "code": "warning"
+            "code": "info"
           },
           "Runtime log level for Workgate and its HTTP server."
         ],
@@ -2126,8 +2126,8 @@
         "debug"
       ],
       "cli": "--log-level",
-      "default": "warning",
-      "default_display": "warning",
+      "default": "info",
+      "default_display": "info",
       "description": "Runtime log level for Workgate and its HTTP server.",
       "env": "WORKGATE_LOG_LEVEL",
       "name": "log_level",
