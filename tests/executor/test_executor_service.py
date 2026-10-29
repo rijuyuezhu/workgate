@@ -88,6 +88,8 @@ def test_managed_executor_launcher_scopes_crypto_legacy_to_windows_arm64(
     monkeypatch.delenv("CRYPTOGRAPHY_OPENSSL_NO_LEGACY", raising=False)
     source = manager._launcher_source(ExecutorRuntimeOwnership.SOURCE)
     compile(source, "<generated-executor-launcher>", "exec")
+    assert "compact_service_log(_log)" in source
+    assert "'a+'" in source
     assert "sysconfig.get_platform() == 'win-arm64'" in source
     assert "os.environ['CRYPTOGRAPHY_OPENSSL_NO_LEGACY'] = '1'" in source
     assert source.index("CRYPTOGRAPHY_OPENSSL_NO_LEGACY") < source.index(

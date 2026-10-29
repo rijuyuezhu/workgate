@@ -210,6 +210,9 @@ def test_windows_control_service_windowless_launcher(tmp_path, monkeypatch):
     launcher = tmp_path / "state" / "control" / "service" / "launcher.py"
     assert launcher.is_file()
     assert "workgate.main import main" in launcher.read_text()
+    assert "compact_service_log(stream)" in launcher.read_text()
+    assert "'a+'" in launcher.read_text()
+    compile(launcher.read_text(), str(launcher), "exec")
     assert repr(str(config)) in launcher.read_text()
     log = launcher.parent / "control.log"
     log.write_text("retain service diagnostics")
