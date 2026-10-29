@@ -64,15 +64,14 @@ see [Persistent Control service](control-service.md) to install a native
 Control-only user service without modifying its state.
 
 For a **versioned, full-extras** runtime without changing the currently running
-services, use the repository's [source preparation scripts]
-(https://github.com/rijuyuezhu/workgate/tree/main/deploy/source). They resolve a specific release tag to a
+services, use the repository's [source preparation scripts](https://github.com/rijuyuezhu/workgate/tree/main/deploy/source). They resolve a specific release tag to a
 commit-addressed checkout, run locked uv installation and provision Chromium.
 The same directory also includes checkout-local `install.sh` and
 `install.ps1` for interactive role setup/pairing. The verified GitHub
 bootstrap examples above need no existing checkout. Older releases such as
 `v5.0.0a5` predate those entrypoints. An installed service is never
-implicitly overwritten or restarted; explicit upgrade/rollback procedures
-and remaining clean-host acceptance are tracked in #456.
+implicitly overwritten or restarted; use explicit upgrade/rollback procedures
+from the source installer guide.
 
 ## Native desktop automation
 
@@ -114,6 +113,7 @@ Older Workgate releases distributed standalone executables. Those are **not**
 the recommended installation path. Keep the existing Executor profile,
 configuration and native service until a planned source migration has been
 verified; **do not** run the new first-install bootstrap over an existing
-task or delete its private state to force a new pairing. Track the
-identity-preserving frozen-to-source transition under
+task or delete its private state to force a new pairing. Follow the
+[explicit migration and rollback guide](../guides/migrate-frozen.md);
+real frozen-to-source acceptance remains tracked under
 [issue #457](https://github.com/rijuyuezhu/workgate/issues/457).

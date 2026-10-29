@@ -8,14 +8,16 @@ endpoint; no inbound Workgate port is required on the executor.
 
 Follow the [published source + uv installation guide](../getting-started/install-options.md)
 and choose the **Executor-only** role. This supports Linux and native Windows
-with one role per machine, installs the matching native per-user service,
+with the selected role, installs the matching native per-user service,
 and asks the Control owner to approve pairing. It requires Git but does not
 require Docker or a separate Workgate executable archive.
 
 If the Executor was previously installed using a frozen executable, do not
 replace its running service with the first-install command. Preserve its
-paired profile and follow a controlled migration (tracked in
-[issue #457](https://github.com/rijuyuezhu/workgate/issues/457)).
+paired profile and follow the
+[explicit migration and rollback guide](migrate-frozen.md).
+Native frozen-to-source acceptance remains tracked in
+[issue #457](https://github.com/rijuyuezhu/workgate/issues/457).
 
 ## Pair an already-installed executor
 
