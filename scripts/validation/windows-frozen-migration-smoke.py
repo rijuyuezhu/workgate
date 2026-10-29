@@ -69,6 +69,21 @@ def control(
         )
 
 
+def stop_control(process: subprocess.Popen[str]) -> None:
+    # A frozen Windows Control has a supervisor child; terminate our whole
+    # disposable process tree so it cannot retain the old Control state lock.
+    if process.poll() is None:
+        subprocess.run(
+            ["taskkill.exe", "/PID", str(process.pid), "/T", "/F"],
+            check=True,
+            capture_output=True,
+            timeout=25,
+        )
+        process.wait(timeout=20)
+    else:
+        stop_process(process)
+
+
 async def online(
     base_url: str,
     process: subprocess.Popen[str],
@@ -194,8 +209,9 @@ async def main(old_exe: Path) -> None:
             assert TASK.status() is None
             assert profile.read_bytes() == original_profile
             assert process is not None
-            stop_process(process)
+            stop_control(process)
             process = None
+            await asyncio.sleep(0.4)
 
         await stage("frozen-before", old, "self-contained")
         await stop(old)
@@ -208,7 +224,7 @@ async def main(old_exe: Path) -> None:
         )
     finally:
         if process is not None:
-            stop_process(process)
+            stop_control(process)
         # This test only owns the task when it was absent at entry.
         if TASK.status() is not None:
             TASK.uninstall()
