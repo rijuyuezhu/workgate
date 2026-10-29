@@ -181,6 +181,12 @@ jobs:
           Use a pinned Git release and the official Linux or Windows
           source bootstrap in the installation guide.
 
+          Upgrade order matters: migrate paired legacy frozen Executors
+          to managed source BEFORE upgrading Control to this release.
+          The old binary download/update endpoints are retired; an
+          unmigrated frozen Executor will require explicit owner action.
+          See docs/guides/migrate-frozen.md.
+
           A native Windows ARM64 cryptography wheel and its provenance are included.
           Its checksum is recorded in SHA256SUMS.txt.
 
