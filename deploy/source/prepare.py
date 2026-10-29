@@ -336,10 +336,14 @@ def _write_launcher(root: Path, python: Path) -> Path:
         launcher = directory / "workgate.cmd"
         # Keep batch file ASCII-only, including when the user's home path
         # contains non-ASCII characters; CMD expands %~dp0 itself.
-        relative = os.path.relpath(python, directory)
+        try:
+            target = "%~dp0" + os.path.relpath(python, directory)
+        except ValueError:
+            # Windows cannot make a relative path across different drives.
+            target = str(python)
         content = (
             f"@echo off\r\nrem {_LAUNCHER_MARKER}\r\n"
-            f'"%~dp0{relative}" -m workgate.main %*\r\n'
+            f'"{target}" -m workgate.main %*\r\n'
         )
     else:
         launcher = directory / "workgate"
