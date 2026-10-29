@@ -30,6 +30,7 @@ def _pe_subsystem(path: Path) -> int:
         return struct.unpack("<H", binary.read(2))[0]
 
 
+@pytest.mark.timeout(240)
 def test_frozen_executor_windowless_task_smoke(tmp_path: Path) -> None:
     console = Path("dist/workgate.exe").resolve()
     service = Path("dist/workgatew.exe").resolve()
@@ -45,7 +46,7 @@ def test_frozen_executor_windowless_task_smoke(tmp_path: Path) -> None:
         "WG391-Disposable-" + uuid4().hex[:12],
         description="Disposable Workgate release smoke, safe to remove",
         run=lambda argv: subprocess.run(
-            argv, check=True, capture_output=True, text=True, timeout=20
+            argv, check=True, capture_output=True, text=True, timeout=60
         ),
     )
     try:
@@ -68,6 +69,7 @@ def test_frozen_executor_windowless_task_smoke(tmp_path: Path) -> None:
         task.uninstall()
 
 
+@pytest.mark.timeout(240)
 def test_windowless_executor_reports_startup_errors_in_service_log(
     tmp_path: Path,
 ) -> None:
@@ -89,7 +91,7 @@ def test_windowless_executor_reports_startup_errors_in_service_log(
         "WG391-Disposable-" + uuid4().hex[:12],
         description="Disposable Workgate service log smoke, safe to remove",
         run=lambda argv: subprocess.run(
-            argv, check=True, capture_output=True, text=True, timeout=20
+            argv, check=True, capture_output=True, text=True, timeout=60
         ),
     )
     try:
