@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
@@ -2955,8 +2956,9 @@ def test_launch_managed_job_releases_new_lease_when_task_creation_fails(
 
 @pytest.mark.asyncio
 async def test_managed_job_failure_result_bounds_and_launch_rollback(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, caplog: pytest.LogCaptureFixture
 ):
+    caplog.set_level(logging.WARNING, logger="workgate.jobs.managed")
     _configure_job_state(tmp_path, monkeypatch)
     session_id = _create_session()
 
@@ -2991,6 +2993,15 @@ async def test_managed_job_failure_result_bounds_and_launch_rollback(
     assert current.exit_code == 1
     assert current.error == "RuntimeError: managed failure"
     assert (
+        "WARNING",
+        f"managed job {failed.job_id} failed (RuntimeError)",
+    ) in [
+        (record.levelname, record.getMessage())
+        for record in caplog.records
+        if record.name == "workgate.jobs.managed"
+    ]
+    assert "managed failure" not in caplog.text
+    assert (
         "managed failure"
         in (await _test_job_tail_execute(session_id, failed.job_id)).output
     )
@@ -3012,6 +3023,14 @@ async def test_managed_job_failure_result_bounds_and_launch_rollback(
             break
     assert oversized_row.status == "failed"
     assert "managed job result exceeds" in str(oversized_row.error)
+    assert any(
+        record.name == "workgate.jobs.managed"
+        and record.levelname == "ERROR"
+        and f"managed job {oversized.job_id} completion failed ("
+        in record.getMessage()
+        for record in caplog.records
+    )
+    assert "managed job result exceeds" not in caplog.text
 
     job_managed.register_managed_job_handler(
         "test-managed-oversized-progress", oversized_progress_handler
