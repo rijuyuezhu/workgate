@@ -1,9 +1,9 @@
 # Versioned source runtime and role setup (#456)
 
-## Published v5.0.0a11 bootstrap (Linux and native Windows)
+## Published v5.0.0a12 bootstrap (Linux and native Windows)
 
-The **published** [v5.0.0a11 prerelease](https://github.com/rijuyuezhu/workgate/releases/tag/v5.0.0a11)
-contains both source bootstraps at commit `9aeedc78df7ccab2a5c1ea6d1b89d115abd16845`. These
+The **published** [v5.0.0a12 prerelease](https://github.com/rijuyuezhu/workgate/releases/tag/v5.0.0a12)
+contains both source bootstraps at commit `ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775`. These
 commands pin the **same** tag and full commit in the fetched script and the
 installed source. They are first-install commands, **not** upgrade commands.
 Run as the normal logged-in user with Git available; the bootstrap provisions
@@ -12,9 +12,9 @@ missing `uv` in the user account. Choose **one** role per machine.
 Linux (paste **one** complete line):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/9aeedc78df7ccab2a5c1ea6d1b89d115abd16845/deploy/source/bootstrap.sh | sh -s -- v5.0.0a11 9aeedc78df7ccab2a5c1ea6d1b89d115abd16845 --role control
-curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/9aeedc78df7ccab2a5c1ea6d1b89d115abd16845/deploy/source/bootstrap.sh | sh -s -- v5.0.0a11 9aeedc78df7ccab2a5c1ea6d1b89d115abd16845 --role executor --control-url https://control.example.com --name workstation
-curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/9aeedc78df7ccab2a5c1ea6d1b89d115abd16845/deploy/source/bootstrap.sh | sh -s -- v5.0.0a11 9aeedc78df7ccab2a5c1ea6d1b89d115abd16845 --role colocate --name workstation
+curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775/deploy/source/bootstrap.sh | sh -s -- v5.0.0a12 ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775 --role control
+curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775/deploy/source/bootstrap.sh | sh -s -- v5.0.0a12 ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775 --role executor --control-url https://control.example.com --name workstation
+curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775/deploy/source/bootstrap.sh | sh -s -- v5.0.0a12 ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775 --role colocate --name workstation
 ```
 
 For Executor-only, replace the example URL with an **actual trusted HTTPS
@@ -28,8 +28,8 @@ Native Windows PowerShell (download and run a pinned script; choose one
 changing machine settings):
 
 ```powershell
-$tag = 'v5.0.0a11'
-$sha = '9aeedc78df7ccab2a5c1ea6d1b89d115abd16845'
+$tag = 'v5.0.0a12'
+$sha = 'ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775'
 $bootstrap = Join-Path $env:TEMP ("workgate-bootstrap-" + [guid]::NewGuid().ToString('N') + '.ps1')
 try {
     Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/rijuyuezhu/workgate/$sha/deploy/source/bootstrap.ps1" -OutFile $bootstrap
@@ -48,21 +48,21 @@ x64 binaries. All hosts prepare locked Python 3.14 with GUI/S3 extras and the
 Chromium runtime; native GUI permissions and desktop/system tools are separate
 host prerequisites. See the ARM64 section below.
 
-**Acceptance boundary:** the fixed-SHA Linux public bootstrap was fetched
-and checked against the published tag and rejected an invalid role before
-installing anything. Separately, Linux systemd and native Windows x64/ARM64
-were exercised with disposable Control/Executor identities, temporary native
-tasks/units, HTTP readiness and a11 → a10 → a11 version restoration.
-That does **not** certify a complete public-bootstrap clean-machine install
-or an application-level managed `switch.sh` / `switch.ps1` rollback.
-No existing service should be reinstalled implicitly. Follow #456 for the
-remaining end-to-end acceptance.
+**Acceptance:** Published bootstrap first-run setup and real Control-owner
+OAuth approval have been exercised for Executor and Colocate on Linux and
+Windows x64/ARM64. The original published a12 Windows x64 and native ARM64 Colocate bootstraps
+completed owner approval, native scheduled-task startup, and HTTP readiness
+without patching release code. ARM64 used the verified a12 release Wheel. Linux and Windows application-level upgrade and rollback
+were also tested with isolated services. Windows tests used disposable task-name
+mappings to avoid colliding with installed production roles; an untouched new
+Windows account with the original global task names remains a separate
+acceptance case. See #456 for the detailed evidence and remaining checks.
 
 ## Local one-command install (requires an existing Git checkout)
 
 If you already have a local checkout and prefer its scripts, specify
 the **actual published tag** and exactly one role. These generic examples
-use `vRELEASE` as a placeholder; see the verified a11 bootstrap above
+use `vRELEASE` as a placeholder; see the verified a12 bootstrap above
 for commands requiring no checkout. Do not use older tags lacking `setup`.
 Git is required. The public bootstraps install missing uv with Astral's
 official user-local installer; local checkout scripts still require uv on PATH.
@@ -281,7 +281,7 @@ machine without a planned maintenance window and rollback approval.
 
 ## Public GitHub bootstrap, pinned to a release commit
 
-For releases **other than the published a11 example above**, obtain the full
+For releases **other than the published a12 example above**, obtain the full
 40-character release commit SHA from the official GitHub release's Git tag.
 Use the same SHA in both the raw GitHub URL and the bootstrap arguments.
 Replace `FULL_SHA` and `vRELEASE` together; the older `v5.0.0a5`
@@ -330,8 +330,9 @@ The official uv installer is fetched over HTTPS from Astral, independently
 of the pinned WorkGate source; an absent Git/curl or failed installer is
 reported. No running Control is needed to fetch the installer.
 
-The public bootstrap is already published in a11; full clean-machine,
-upgrade and application-level rollback acceptance is still required before #456 can close.
+The public bootstrap is published in a12. Role setup, owner pairing,
+upgrade, and rollback have isolated-host acceptance; clean-account installation
+with unmodified Windows global task names is still tracked in #456.
 
 ## Windows ARM64 native cryptography prerequisite
 

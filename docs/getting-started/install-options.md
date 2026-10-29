@@ -8,23 +8,23 @@ runtime roles.
 
 The source installer is the normal method for Linux and native Windows;
 it installs locked Python 3.14, GUI/S3 extras, browser assets and the selected
-native user service. The published **v5.0.0a11 prerelease** has a
-commit-verified bootstrap (`9aeedc78df7ccab2a5c1ea6d1b89d115abd16845`).
+native user service. The published **v5.0.0a12 prerelease** has a
+commit-verified bootstrap (`ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775`).
 
 Linux, paste **one** of these commands (exactly one role):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/9aeedc78df7ccab2a5c1ea6d1b89d115abd16845/deploy/source/bootstrap.sh | sh -s -- v5.0.0a11 9aeedc78df7ccab2a5c1ea6d1b89d115abd16845 --role control
-curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/9aeedc78df7ccab2a5c1ea6d1b89d115abd16845/deploy/source/bootstrap.sh | sh -s -- v5.0.0a11 9aeedc78df7ccab2a5c1ea6d1b89d115abd16845 --role executor --control-url https://control.example.com --name workstation
-curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/9aeedc78df7ccab2a5c1ea6d1b89d115abd16845/deploy/source/bootstrap.sh | sh -s -- v5.0.0a11 9aeedc78df7ccab2a5c1ea6d1b89d115abd16845 --role colocate --name workstation
+curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775/deploy/source/bootstrap.sh | sh -s -- v5.0.0a12 ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775 --role control
+curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775/deploy/source/bootstrap.sh | sh -s -- v5.0.0a12 ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775 --role executor --control-url https://control.example.com --name workstation
+curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775/deploy/source/bootstrap.sh | sh -s -- v5.0.0a12 ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775 --role colocate --name workstation
 ```
 
 Native Windows PowerShell (choose one role line; the execution-policy
 override is only for that PowerShell process):
 
 ```powershell
-$tag = 'v5.0.0a11'
-$sha = '9aeedc78df7ccab2a5c1ea6d1b89d115abd16845'
+$tag = 'v5.0.0a12'
+$sha = 'ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775'
 $script = Join-Path $env:TEMP ("workgate-bootstrap-" + [guid]::NewGuid().ToString('N') + '.ps1')
 try {
     Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/rijuyuezhu/workgate/$sha/deploy/source/bootstrap.ps1" -OutFile $script
