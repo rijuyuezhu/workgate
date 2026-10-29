@@ -98,20 +98,7 @@ async def test_fleet_list_explains_eligibility_and_scale_up(
         offline = await runtime.executor_fleet.list()
         assert offline.session_capacity is not None
         assert offline.session_capacity.available is True
-        assert offline.bootstrap is not None
-        assert offline.bootstrap.url == (
-            "https://control.test/executor/v1/bootstrap"
-        )
-        assert offline.bootstrap.pairing_approval == "human_required"
-        assert (
-            offline.bootstrap.windows_url
-            == "https://control.test/executor/v1/bootstrap.ps1"
-        )
-        assert offline.bootstrap.windows_command is not None
-        assert (
-            "workgate-bootstrap.ps1 -Persist"
-            in offline.bootstrap.windows_command
-        )
+        assert offline.bootstrap is None  # No frozen installer is advertised.
         assert offline.executors[0].executor_id == executor_id
         assert offline.executors[0].session_admission is False
         assert offline.executors[0].session_admission_reasons == [
@@ -287,7 +274,7 @@ async def test_command_capacity_blocks_session_admission_and_suggests_scale_up(
 
         fleet = await runtime.executor_fleet.list()
 
-        assert fleet.bootstrap is not None
+        assert fleet.bootstrap is None
         assert fleet.executors[0].session_admission is False
         assert fleet.executors[0].session_admission_reasons == [
             "command_capacity_full"

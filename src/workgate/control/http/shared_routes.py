@@ -27,7 +27,7 @@ def control_http_routes(
                 *executor_routes(
                     runtime.executor_transport, runtime.executor_pairing
                 ),
-                *executor_bootstrap_routes(settings.resolved_base_url),
+                *executor_bootstrap_routes(),
                 *runtime.transfer_gateway.routes(),
                 *terminal_stream_routes(
                     runtime.executor_transport, runtime.stream_hub
