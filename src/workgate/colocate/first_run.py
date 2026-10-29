@@ -28,6 +28,23 @@ def _local_host(host: str) -> str:
     )
 
 
+def _require_free_control_port(host: str, port: int) -> None:
+    # Check the intended bind, not the platform-specific error from connecting
+    # to a port where no server exists (Windows can report TimeoutError).
+    family = socket.AF_INET6 if host == "[::1]" else socket.AF_INET
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as probe:
+            if sys.platform == "win32":
+                probe.setsockopt(
+                    socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1
+                )
+            probe.bind((host.strip("[]"), port))
+    except OSError as exc:
+        raise RuntimeError(
+            "Control port is occupied or unavailable; stop the existing service first"
+        ) from exc
+
+
 def _wait_ready(url: str, process: subprocess.Popen[bytes]) -> None:
     # Never proxy a health check for a local service.
     opener = build_opener(ProxyHandler({}))
@@ -175,15 +192,7 @@ def setup_colocate(args: argparse.Namespace) -> None:
     url = f"http://{host}:{settings.port}"
 
     # Refuse to attach to or interrupt any pre-existing listener.
-    try:
-        with socket.create_connection(
-            (host.strip("[]"), settings.port), timeout=0.5
-        ):
-            raise RuntimeError(
-                "Control port is occupied; stop the existing service first"
-            )
-    except ConnectionRefusedError:
-        pass
+    _require_free_control_port(host, settings.port)
 
     process = subprocess.Popen(
         [

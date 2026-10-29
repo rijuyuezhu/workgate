@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import socket
 import subprocess
 from pathlib import Path
 from typing import cast
@@ -69,9 +70,9 @@ def _mock_setup(tmp_path, monkeypatch, *, ready=True, paired=True):
     monkeypatch.setattr(first_run, "_initialize_control", init)
     monkeypatch.setattr(first_run, "load_settings", lambda *a, **k: Settings())
     monkeypatch.setattr(
-        first_run.socket,
-        "create_connection",
-        lambda *a, **k: (_ for _ in ()).throw(ConnectionRefusedError()),
+        first_run,
+        "_require_free_control_port",
+        lambda host, port: events.append(("port-free", host, port)),
     )
     monkeypatch.setattr(first_run.subprocess, "Popen", launch)
     monkeypatch.setattr(first_run, "_connect", pair)
@@ -107,13 +108,17 @@ def test_colocate_pairing_then_stops_temp_control_before_service(
 ):
     parsed, events = _mock_setup(tmp_path, monkeypatch)
     first_run.setup_colocate(parsed)
-    assert events[:2] == ["check-services", "initialize"]
-    assert events[2][0] == "launch"
-    assert "-m" in events[2][1]
-    assert "workgate.colocate.temporary_control" in events[2][1]
-    assert events[3] == ("ready", "http://127.0.0.1:8765")
-    assert events[4] == ("connect", "http://127.0.0.1:8765")
-    assert events[5:] == ["terminate", "wait", "install"]
+    assert events[:3] == [
+        "check-services",
+        "initialize",
+        ("port-free", "127.0.0.1", 8765),
+    ]
+    assert events[3][0] == "launch"
+    assert "-m" in events[3][1]
+    assert "workgate.colocate.temporary_control" in events[3][1]
+    assert events[4] == ("ready", "http://127.0.0.1:8765")
+    assert events[5] == ("connect", "http://127.0.0.1:8765")
+    assert events[6:] == ["terminate", "wait", "install"]
 
 
 @pytest.mark.parametrize("ready,paired", [(False, True), (True, False)])
@@ -132,21 +137,26 @@ def test_colocate_failure_never_installs_service(
 def test_colocate_rejects_existing_listener(tmp_path, monkeypatch):
     parsed, events = _mock_setup(tmp_path, monkeypatch)
 
-    class Connection:
-        def __enter__(self):
-            return self
+    def deny(*_args):
+        raise RuntimeError("Control port is occupied")
 
-        def __exit__(self, *_):
-            return False
-
-    monkeypatch.setattr(
-        first_run.socket, "create_connection", lambda *a, **k: Connection()
-    )
+    monkeypatch.setattr(first_run, "_require_free_control_port", deny)
     with pytest.raises(RuntimeError, match="occupied"):
         first_run.setup_colocate(parsed)
     assert not any(
         isinstance(event, tuple) and event[0] == "launch" for event in events
     )
+
+
+def test_colocate_port_probe_rejects_listener_and_accepts_free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+        server.bind(("127.0.0.1", 0))
+        server.listen()
+        port = server.getsockname()[1]
+        with pytest.raises(RuntimeError, match="occupied"):
+            first_run._require_free_control_port("127.0.0.1", port)
+
+    first_run._require_free_control_port("127.0.0.1", port)
 
 
 @pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.168.2.1"])
