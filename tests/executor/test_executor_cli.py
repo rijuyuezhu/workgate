@@ -78,6 +78,41 @@ def test_run_async_reports_command_failure(
 
 
 @pytest.mark.asyncio
+async def test_executor_run_configures_runtime_logging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path).model_copy(update={"log_level": "info"})
+    calls: list[str] = []
+
+    class Runtime:
+        connection = None
+
+        @asynccontextmanager
+        async def lifespan(self):
+            yield
+
+    monkeypatch.setattr(
+        executor_cli,
+        "settings_and_source_from_args",
+        lambda _args: (
+            settings,
+            LoadedConfigFile(None, None, frozenset()),
+        ),
+    )
+    monkeypatch.setattr(executor_cli, "configure_runtime_logging", calls.append)
+    monkeypatch.setattr(
+        executor_cli,
+        "build_executor_runtime",
+        lambda _config, **_kwargs: Runtime(),
+    )
+
+    with pytest.raises(RuntimeError, match="executor is not paired"):
+        await executor_cli._run(argparse.Namespace(managed_service=False))
+
+    assert calls == ["info"]
+
+
+@pytest.mark.asyncio
 async def test_run_requires_paired_executor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

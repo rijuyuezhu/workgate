@@ -19,6 +19,7 @@ from ..persistence import FileStateStore
 from ..protocol.errors import ProtocolErrorCode
 from ..protocol.executor import ExecutorRuntimeOwnership
 from ..supervisor import supervise_cli_role
+from ..utils.runtime_logging import configure_runtime_logging
 from .control_client import ExecutorControlClient, ExecutorControlError
 from .pairing import (
     ExecutorPairingClient,
@@ -120,6 +121,7 @@ async def _run(args: argparse.Namespace) -> None:
     settings, source = settings_and_source_from_args(args)
     capture_startup_config("executor", args, settings, source)
     initialize_runtime_directories(settings)
+    configure_runtime_logging(settings.log_level)
     managed_service = bool(getattr(args, "managed_service", False))
     ownership_value = getattr(args, "runtime_ownership", None)
     runtime_ownership = (

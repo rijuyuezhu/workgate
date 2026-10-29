@@ -1,6 +1,7 @@
 import logging
 
 import workgate.control.server as control_server
+import workgate.utils.runtime_logging as runtime_logging
 from workgate.config.control import resolve_control_config
 from workgate.config.settings import Settings
 
@@ -43,14 +44,30 @@ def test_configure_runtime_logging_applies_resolved_level(monkeypatch):
     root = logging.getLogger()
     previous_level = root.level
     monkeypatch.setattr(
-        control_server.logging,
+        runtime_logging.logging,
         "basicConfig",
         lambda *, level: basic_levels.append(level),
     )
 
     try:
-        control_server.configure_runtime_logging("debug")
+        runtime_logging.configure_runtime_logging("debug")
         assert basic_levels == [logging.DEBUG]
         assert root.level == logging.DEBUG
+    finally:
+        root.setLevel(previous_level)
+
+
+def test_runtime_logging_reuses_existing_root_handlers(caplog):
+    root = logging.getLogger()
+    existing = tuple(root.handlers)
+    previous_level = root.level
+    try:
+        runtime_logging.configure_runtime_logging("info")
+        runtime_logging.configure_runtime_logging("warning")
+        assert tuple(root.handlers) == existing
+        assert root.level == logging.WARNING
+        runtime_logging.configure_runtime_logging("info")
+        logging.getLogger("workgate.executor.runtime").info("startup probe")
+        assert "startup probe" in caplog.text
     finally:
         root.setLevel(previous_level)
