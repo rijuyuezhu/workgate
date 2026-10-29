@@ -1,5 +1,6 @@
 """Real native Windows Task Scheduler Executor -> Control reconnect lifecycle."""
 
+import argparse
 import asyncio
 import os
 import shutil
@@ -26,6 +27,10 @@ from tests.e2e.helpers import (  # noqa: E402
     wait_for_http_ready,
     write_yaml_config,
 )
+from workgate.executor.connection_status import (  # noqa: E402
+    ExecutorConnectionStatusStore,
+)
+from workgate.persistence import FileStateStore  # noqa: E402
 from workgate.platform.windows_task import WindowsUserTask  # noqa: E402
 
 
@@ -35,7 +40,17 @@ def _powershell(argv: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
-async def main() -> None:
+def _task_last_run(task_name: str) -> str:
+    script = (
+        f"(Get-ScheduledTaskInfo -TaskPath '\\' -TaskName '{task_name}')"
+        ".LastRunTime.ToUniversalTime().Ticks"
+    )
+    return _powershell(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script]
+    ).stdout.strip()
+
+
+async def main(*, outage_only: bool = False) -> None:
     root = Path(tempfile.gettempdir()) / f"wg392-paired-service-{uuid4().hex}"
     root.mkdir()
     task = WindowsUserTask(
@@ -91,7 +106,9 @@ async def main() -> None:
         # explicit and disposable rather than touching Windows-wide settings.
         launcher = root / "run-executor.py"
         launcher.write_text(
-            "import contextlib, sys, traceback\n"
+            "import contextlib, os, sys, sysconfig, traceback\n"
+            "if os.name == 'nt' and sysconfig.get_platform() == 'win-arm64':\n"
+            "    os.environ['CRYPTOGRAPHY_OPENSSL_NO_LEGACY'] = '1'\n"
             f"sys.path.insert(0, {str(Path(__file__).resolve().parents[2] / 'src')!r})\n"
             f"with open({str(root / 'executor-error.log')!r}, 'a', encoding='utf-8', buffering=1) as log:\n"
             "    with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):\n"
@@ -130,16 +147,46 @@ async def main() -> None:
                 stdout_path=root / "control.out",
                 stderr_path=root / "control.err",
             )
-            assert task.status()["state"].lower() == "running"
-            task.stop()
-            deadline = asyncio.get_running_loop().time() + 15
-            while task.status()["state"].lower() in {"running", "queued"}:
-                assert asyncio.get_running_loop().time() < deadline, (
-                    "Task Scheduler did not stop the Executor"
+            original_task = task.status()
+            assert original_task["state"].lower() == "running"
+            original_start = _task_last_run(task.name)
+            profile_path = FileStateStore(
+                lambda: executor_state
+            ).layout.executor_profile_path
+            original_profile = profile_path.read_bytes()
+            connection = ExecutorConnectionStatusStore(
+                FileStateStore(lambda: executor_state)
+            )
+
+            # Simulate temporary Control loss, not a managed Executor restart.
+            stop_process(control)
+            control = None
+            deadline = asyncio.get_running_loop().time() + 25
+            while not connection.describe().startswith("reconnecting"):
+                assert task.status()["state"].lower() == "running"
+                current = connection.describe()
+                assert not current.startswith("action-required"), (
+                    f"Executor incorrectly requires owner action after Control loss: {current}"
                 )
-                await asyncio.sleep(0.2)
-            task.start()
-            await wait_for_executor_online(
+                assert asyncio.get_running_loop().time() < deadline, (
+                    f"Executor did not enter reconnecting state after Control loss: {current}"
+                )
+                await asyncio.sleep(0.25)
+
+            control = start_control_process(
+                control_config,
+                env=isolated_xdg_env(root / "xdg"),
+                stdout_path=root / "control.out",
+                stderr_path=root / "control.err",
+            )
+            await wait_for_http_ready(
+                url,
+                control,
+                stdout_path=root / "control.out",
+                stderr_path=root / "control.err",
+                timeout_s=35,
+            )
+            first_seen = await wait_for_executor_online(
                 url,
                 control,
                 executor_id,
@@ -148,7 +195,40 @@ async def main() -> None:
                 stdout_path=root / "control.out",
                 stderr_path=root / "control.err",
             )
-            assert task.status()["state"].lower() == "running"
+            # Control sees Hello before the Executor can persist its local
+            # connected snapshot; allow that short cross-process ordering gap.
+            deadline = asyncio.get_running_loop().time() + 10
+            while not connection.describe().startswith("connected;"):
+                current = connection.describe()
+                assert not current.startswith("action-required"), current
+                assert asyncio.get_running_loop().time() < deadline, (
+                    f"Executor did not report recovery: {current}"
+                )
+                await asyncio.sleep(0.25)
+            assert task.status() == original_task
+            assert _task_last_run(task.name) == original_start
+            assert profile_path.read_bytes() == original_profile
+
+            # Existing explicit stop/restart test remains in the full CI smoke.
+            if not outage_only:
+                task.stop()
+                deadline = asyncio.get_running_loop().time() + 15
+                while task.status()["state"].lower() in {"running", "queued"}:
+                    assert asyncio.get_running_loop().time() < deadline, (
+                        "Task Scheduler did not stop the Executor"
+                    )
+                    await asyncio.sleep(0.2)
+                task.start()
+                await wait_for_executor_online(
+                    url,
+                    control,
+                    executor_id,
+                    after_last_seen=first_seen,
+                    timeout_s=55,
+                    stdout_path=root / "control.out",
+                    stderr_path=root / "control.err",
+                )
+                assert task.status()["state"].lower() == "running"
         except Exception:
             error_file = root / "executor-error.log"
             diagnostic = (
@@ -178,9 +258,14 @@ async def main() -> None:
                     root
                 )  # Do not report success if cleanup never finishes.
     print(
-        "Native Windows paired Task Scheduler Executor stop/restart/reconnect: PASS"
+        "Native Windows paired Task Scheduler Control outage/recovery "
+        "without task restart and with identity preservation: PASS"
     )
+    if not outage_only:
+        print("Native Windows paired Task Scheduler explicit restart: PASS")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--outage-only", action="store_true")
+    asyncio.run(main(outage_only=parser.parse_args().outage_only))
