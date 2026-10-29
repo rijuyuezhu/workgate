@@ -1,4 +1,4 @@
-"""Launch the existing Linux source switch outside the Executor service cgroup."""
+"""Schedule native Executor cutovers outside their current managed service."""
 
 import os
 import sys
@@ -132,3 +132,56 @@ def schedule_windows_source_cutover(
         ],
         cwd=str(checkout),
     )
+
+
+def schedule_macos_source_cutover(
+    checkout: Path, *, version: str, config: Path
+) -> None:
+    """Submit a one-shot launchd job outside the running Executor LaunchAgent."""
+    if host_os() is not HostOS.MACOS:
+        raise RuntimeError("native source handoff requires macOS launchd")
+    tag = f"v{version}"
+    if _TAG.fullmatch(tag) is None:
+        raise ValueError("invalid source release version")
+    if any(
+        key.startswith("WORKGATE_") and key != PARENT_FD_ENV
+        for key in os.environ
+    ):
+        raise RuntimeError(
+            "source cutover requires durable config, not overrides"
+        )
+    script = checkout / "deploy/source/switch_macos.py"
+    python = checkout / ".venv/bin/python"
+    if (
+        any(
+            path.is_symlink() or not path.is_file()
+            for path in (script, python, config)
+        )
+        or not config.is_absolute()
+    ):
+        raise RuntimeError(
+            "managed macOS source cutover inputs are unavailable"
+        )
+
+    # launchctl submit runs in launchd, not as a child of the LaunchAgent
+    # being replaced. Reusing the label blocks concurrent same-version handoffs.
+    code, _ = run_bounded_capture(
+        [
+            "launchctl",
+            "submit",
+            "-l",
+            "com.workgate.executor.source-cutover." + version,
+            "--",
+            str(python),
+            str(script),
+            "--tag",
+            tag,
+            "--install-root",
+            str(checkout.parent.parent),
+            "--executor-config",
+            str(config),
+        ],
+        timeout=30,
+    )
+    if code:
+        raise RuntimeError("could not schedule macOS source cutover")

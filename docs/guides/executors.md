@@ -62,6 +62,13 @@ required release while retaining its paired identity and durable state.
 It prepares a separate pinned source checkout and validates it before
 switching the owned native service; failure keeps the previous runtime for
 recovery. A user-owned development checkout is never silently mutated.
+On macOS, this requires an owned, pinned source installation with its
+LaunchAgent running in a logged-in user session; the Executor hands off to a
+separate one-shot launchd job, verifies the native service and retains the old
+release for rollback. A previously installed Executor running a release
+without macOS auto-update support (such as a11) must first be moved to a
+capable release through an explicit, owner-approved local upgrade; upgrading
+Control alone cannot add this behavior to the old Mac process.
 See [versioned source setup and cutover](https://github.com/rijuyuezhu/workgate/blob/main/deploy/source/README.md)
 for explicit upgrade and rollback.
 

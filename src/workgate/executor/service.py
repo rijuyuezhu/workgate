@@ -1226,6 +1226,23 @@ class ExecutorServiceManager:
             run=self._run,
         )
 
+    def schedule_macos_source_cutover(self, version: str) -> None:
+        """Hand off a verified native LaunchAgent to an independent launchd job."""
+        if host_os(self.system) is not HostOS.MACOS:
+            raise UnsupportedExecutorServiceError(
+                "source cutover scheduling requires macOS launchd"
+            )
+        checkout = self.verified_source_checkout()
+        if checkout is None:
+            raise RuntimeError(
+                "Executor is not an owned managed source service"
+            )
+        from .source_handoff import schedule_macos_source_cutover
+
+        schedule_macos_source_cutover(
+            checkout, version=version, config=self.config_path
+        )
+
     def logs(self, *, lines: int = _DEFAULT_LOG_LINES) -> str:
         """Return a bounded recent log view from the native backend."""
 

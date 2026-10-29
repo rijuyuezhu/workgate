@@ -110,6 +110,22 @@ def test_pinned_managed_release_and_stale_initial_receipt(
     assert _verify(python) == checkout
 
 
+def test_macos_managed_source_reuses_posix_release_proof(
+    managed_source: tuple[Path, Path, Path],
+) -> None:
+    _root, checkout, python = managed_source
+    if os.name == "nt":
+        pytest.skip("native Windows paths differ from macOS")
+    assert (
+        verified_source_checkout(python, version=__version__, system="Darwin")
+        == checkout
+    )
+    assert (
+        verified_source_checkout(python, version=__version__, system="FreeBSD")
+        is None
+    )
+
+
 def test_windowless_windows_executor_matches_the_pinned_python(
     managed_source: tuple[Path, Path, Path],
 ) -> None:
