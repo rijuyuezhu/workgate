@@ -175,11 +175,12 @@ def _recovered_pair(
     )
 
 
-def _shutdown(process: subprocess.Popen[str]):
+def _shutdown(process: subprocess.Popen[str]) -> str:
     if process.poll() is None:
         process.terminate()
     stdout, stderr = process.communicate(timeout=12)
     assert process.returncode == 143, (process.returncode, stdout, stderr)
+    return stderr
 
 
 def _pid_gone(pid: int):
@@ -204,7 +205,8 @@ def test_one_parent_restarts_only_child_with_original_env_and_new_file(
         assert int(rows[1][2]) == process.pid
         assert rows[1][3:] == ["parent-startup", "second"]
     finally:
-        _shutdown(process)
+        stderr = _shutdown(process)
+    assert "WARNING workgate.supervisor" not in stderr
     for row in rows:
         _pid_gone(int(row[1]))
 
@@ -235,6 +237,10 @@ def test_unexpected_child_exit_stops_sibling_without_restart_loop(tmp_path):
     )
     stdout, stderr = process.communicate(timeout=12)
     assert process.returncode == 7, (stdout, stderr)
+    assert (
+        "WARNING workgate.supervisor: supervisor child control exited unexpectedly (code=7)"
+        in stderr
+    )
     rows = _lines(record, 1)
     assert sum(row[0] == "control" for row in rows) == 1
     for row in rows:
@@ -391,7 +397,9 @@ def test_apply_failure_restores_healthy_child_config_not_last_backup(tmp_path):
         assert (tmp_path / "config.yaml.bak").read_text() == "intermediate"
         assert process.poll() is None
     finally:
-        _shutdown(process)
+        stderr = _shutdown(process)
+    assert "supervisor rolling back configuration for roles=control" in stderr
+    assert "supervisor rollback completed for roles=control" in stderr
     for row in _lines(record, 3):
         _pid_gone(int(row[1]))
 
@@ -474,7 +482,9 @@ def test_apply_health_timeout_rolls_back_to_last_healthy_child(tmp_path):
         assert config.read_text() == "first"
         assert process.poll() is None
     finally:
-        _shutdown(process)
+        stderr = _shutdown(process)
+    assert "supervisor apply timed out for roles=executor" in stderr
+    assert "supervisor rollback completed for roles=executor" in stderr
     for row in _lines(record, 3):
         _pid_gone(int(row[1]))
 
