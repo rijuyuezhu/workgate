@@ -430,6 +430,8 @@ async def test_legacy_control_managed_requires_explicit_source_migration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     executable = tmp_path / "old-frozen-workgate"
+    original = b"keep the existing frozen runtime for explicit rollback"
+    executable.write_bytes(original)
     _freeze_runtime(monkeypatch, executable)
     runtime = build_executor_runtime(
         resolve_executor_config(
@@ -457,3 +459,4 @@ async def test_legacy_control_managed_requires_explicit_source_migration(
     assert state.update_status is ExecutorRuntimeUpdateStatus.REQUIRED
     assert state.update_target_version == "5.0.0a99"
     assert "migrate the legacy frozen Executor" in (state.update_detail or "")
+    assert executable.read_bytes() == original
