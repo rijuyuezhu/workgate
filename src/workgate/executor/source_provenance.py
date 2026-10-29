@@ -101,11 +101,15 @@ def verified_source_checkout(
         # Any receipt that *is* present must be valid; its initial tag may be
         # older than the current release after an explicit version switch.
         if windows:
-            relative = os.path.relpath(path, launcher.parent)
+            try:
+                target = "%~dp0" + os.path.relpath(path, launcher.parent)
+            except ValueError:
+                # Same cross-drive layout as the managed Windows launcher.
+                target = str(path)
             expected_lines = [
                 "@echo off",
                 "rem Managed by Workgate source preparation",
-                f'"%~dp0{relative}" -m workgate.main %*',
+                f'"{target}" -m workgate.main %*',
             ]
         else:
             expected_lines = [

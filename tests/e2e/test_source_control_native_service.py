@@ -501,6 +501,34 @@ def test_real_executor_service_native_lifecycle_preserves_identity(
     assert ["disable", "--now", "workgate-executor.service"] in calls
 
 
+def test_executor_legacy_runtime_metadata_reinstalls_as_source_without_repair(
+    executor_env,
+):
+    """A removed legacy service must not destroy the original pairing profile."""
+    run, pair, _config, unit, layout, _native, _env = executor_env
+    identity = pair()
+    assert "State: running" in run("install-service").stdout
+
+    # Simulate durable metadata of an old control-managed frozen Executor.
+    # This is a state migration regression, not a frozen-binary boot test.
+    path = layout.executor_runtime_path
+    old_state = json.loads(path.read_text(encoding="utf-8"))
+    old_state["ownership"] = "control-managed"
+    old_state["executable"] = "/tmp/old-workgate-frozen"
+    path.write_text(json.dumps(old_state), encoding="utf-8")
+
+    run("uninstall-service")
+    assert not unit.exists()
+    assert not path.exists()
+    assert layout.executor_profile_path.read_bytes() == identity
+
+    updated = run("install-service").stdout
+    assert "State: running" in updated
+    assert "Runtime owner: source" in updated
+    assert unit.is_file()
+    assert layout.executor_profile_path.read_bytes() == identity
+
+
 def test_real_executor_cli_reinstall_refreshes_only_managed_assets(
     executor_env,
 ):
