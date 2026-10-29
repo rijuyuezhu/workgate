@@ -1,6 +1,7 @@
 """A managed macOS source handoff is independent of the Executor LaunchAgent."""
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -164,7 +165,7 @@ def test_manager_requires_verified_managed_source(
 
 
 @pytest.mark.skipif(
-    os.sys.platform != "darwin" or os.environ.get("GITHUB_ACTIONS") != "true",
+    sys.platform != "darwin" or os.environ.get("GITHUB_ACTIONS") != "true",
     reason="isolated native launchctl submit smoke only on ephemeral macOS CI runner",
 )
 def test_native_launchctl_submit_executes_outside_caller(
@@ -172,7 +173,6 @@ def test_native_launchctl_submit_executes_outside_caller(
 ) -> None:
     """Exercise the actual launchctl CLI without touching a Workgate LaunchAgent."""
     import subprocess
-    import sys
     import time
     import uuid
 
