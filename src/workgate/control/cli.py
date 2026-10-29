@@ -16,10 +16,10 @@ from ..config.inspection import capture_startup_config
 from ..config.settings import configure_settings
 from ..supervisor import supervise_cli_role
 from ..utils.private_files import private_file_lock
+from ..utils.runtime_logging import configure_runtime_logging
 from .http.app import run_http
 from .mcp.app import run_mcp
 from .runtime import build_control_runtime
-from .server import configure_runtime_logging
 
 
 def register_control_cli(subparsers: Any) -> argparse.ArgumentParser:

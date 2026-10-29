@@ -1,6 +1,5 @@
 """Shared HTTP server runtime behavior for control transports."""
 
-import logging
 from typing import Any
 
 import uvicorn
@@ -8,20 +7,6 @@ import uvicorn
 from ..config.control import ControlConfig
 
 _GRACEFUL_SHUTDOWN_TIMEOUT_S = 10
-_LOG_LEVELS = {
-    "critical": logging.CRITICAL,
-    "error": logging.ERROR,
-    "warning": logging.WARNING,
-    "info": logging.INFO,
-    "debug": logging.DEBUG,
-}
-
-
-def configure_runtime_logging(log_level: str) -> None:
-    """Apply one resolved control log level to Workgate runtime logging."""
-    level = _LOG_LEVELS[log_level]
-    logging.basicConfig(level=level)
-    logging.getLogger().setLevel(level)
 
 
 def run_uvicorn(app: Any, *, config: ControlConfig) -> None:
