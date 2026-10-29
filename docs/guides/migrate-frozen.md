@@ -117,10 +117,14 @@ transaction. It includes a short service interruption and cannot make
 in-flight commands atomic. The durable profile is intentionally reused;
 source and old binary artifacts are not deleted by this procedure.
 
-**Evidence boundary:** native Linux and Windows tests establish that
-Executor `uninstall-service` preserves pairing identity, and a disposable
-Linux test confirms old `control-managed` runtime metadata can be removed
-and replaced with `source` metadata without changing the profile. A full
-live frozen-executable-to-source service cutover across every old release
-and OS is **not yet certified**; it remains a release gate under
-[issue #457](https://github.com/rijuyuezhu/workgate/issues/457).
+**Evidence boundary:** disposable Linux x86-64 and Windows x64 tests ran
+the **published a11 frozen executable → pinned source → a11 rollback**,
+preserving the same Executor ID and byte-identical paired profile, with real
+Control-to-Executor remote file reads in all three stages. Windows used an
+actual owned Task Scheduler task on a clean CI runner; Linux verified the
+service CLI and rollback with an isolated systemd shim (not a live user
+manager). An injected Linux source-service restart failure also recovered
+through explicit operator rollback. This does **not** certify every historic
+release, automatic rollback, Windows failure-injection recovery or a macOS
+LaunchAgent cutover. Keep those boundaries and the migration-before-Control
+upgrade order in [issue #457](https://github.com/rijuyuezhu/workgate/issues/457).
