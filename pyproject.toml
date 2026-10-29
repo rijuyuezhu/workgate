@@ -1,6 +1,6 @@
 [project]
 name = "workgate"
-version = "5.0.0a11"
+version = "5.0.0a12"
 description = "A self-hosted workspace control plane for coding agents."
 readme = "README.md"
 requires-python = ">=3.14"
