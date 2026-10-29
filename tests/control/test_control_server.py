@@ -49,6 +49,9 @@ def test_configure_runtime_logging_applies_resolved_level(monkeypatch):
     previous_level = root.level
     workgate = logging.getLogger("workgate")
     previous_workgate_level = workgate.level
+    existing_filters = {
+        handler: tuple(handler.filters) for handler in root.handlers
+    }
     monkeypatch.setattr(
         runtime_logging.logging,
         "basicConfig",
@@ -69,6 +72,8 @@ def test_configure_runtime_logging_applies_resolved_level(monkeypatch):
     finally:
         root.setLevel(previous_level)
         workgate.setLevel(previous_workgate_level)
+        for handler, filters in existing_filters.items():
+            handler.filters[:] = filters
 
 
 def test_runtime_logging_reuses_existing_root_handlers(caplog):
@@ -77,19 +82,44 @@ def test_runtime_logging_reuses_existing_root_handlers(caplog):
     previous_level = root.level
     workgate = logging.getLogger("workgate")
     previous_workgate_level = workgate.level
+    existing_filters = {
+        handler: tuple(handler.filters) for handler in root.handlers
+    }
     try:
         runtime_logging.configure_runtime_logging("info")
         runtime_logging.configure_runtime_logging("warning")
         assert tuple(root.handlers) == existing
+        assert all(
+            handler.filters.count(runtime_logging._INFO_FILTER) == 1
+            for handler in existing
+        )
         assert root.level == logging.WARNING
         assert workgate.level == logging.WARNING
+        assert (
+            logging.getLogger("workgate.executor.connection").isEnabledFor(
+                logging.INFO
+            )
+            is False
+        )
         runtime_logging.configure_runtime_logging("info")
         assert workgate.level == logging.INFO
+        assert logging.getLogger("workgate.executor.connection").isEnabledFor(
+            logging.INFO
+        )
+        runtime_logging.configure_runtime_logging("debug")
+        assert workgate.level == logging.DEBUG
+        assert root.level == logging.WARNING
+        assert all(
+            handler.filters.count(runtime_logging._INFO_FILTER) == 1
+            for handler in existing
+        )
         logging.getLogger("workgate.executor.runtime").info("startup probe")
         assert "startup probe" in caplog.text
     finally:
         root.setLevel(previous_level)
         workgate.setLevel(previous_workgate_level)
+        for handler, filters in existing_filters.items():
+            handler.filters[:] = filters
 
 
 def test_runtime_logging_emits_timestamp_level_and_module_from_fresh_process():
@@ -125,7 +155,9 @@ def test_default_info_reports_workgate_events_but_not_third_party_requests():
             "from workgate.utils.runtime_logging import configure_runtime_logging; "
             "configure_runtime_logging(Settings().log_level); "
             "logging.getLogger('workgate.executor.connection').info('connected'); "
-            "logging.getLogger('httpx').info('HTTP Request: https://example.test/?token=raw-secret')",
+            "logging.getLogger('httpx').setLevel(logging.INFO); "
+            "logging.getLogger('httpx').info('HTTP Request: https://example.test/?token=raw-secret'); "
+            "logging.getLogger('httpx').warning('retryable problem')",
         ],
         check=True,
         capture_output=True,
@@ -133,4 +165,5 @@ def test_default_info_reports_workgate_events_but_not_third_party_requests():
     )
     assert "INFO workgate.executor.connection: connected" in result.stderr
     assert "raw-secret" not in result.stderr
-    assert "httpx" not in result.stderr
+    assert "INFO httpx" not in result.stderr
+    assert "WARNING httpx: retryable problem" in result.stderr
