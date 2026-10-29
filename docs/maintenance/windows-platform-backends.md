@@ -37,9 +37,8 @@ justify native NT abstractions in #383.
 
 ## Shell support (#384)
 
-Windows defaults to PowerShell; native source installations use their Python
-interpreter, while frozen builds require an external Python on PATH (or an
-explicit python_bin). Commands retain their native syntax: PowerShell
+Windows defaults to PowerShell; source installations use their managed Python
+interpreter. Commands retain their native syntax: PowerShell
 selects UTF-8 for its output, and cmd.exe selects code page 65001. External
 programs may still emit different encodings. PowerShell preserves native
 executable exit codes; Python subprocess handles trusted .exe, .cmd and .bat
@@ -108,15 +107,6 @@ WebSocket protocol or session manager is introduced.
   Control + Executor, real WebUI API and two authenticated WebSocket terminal
   clients sharing one PowerShell, with independent detach and continued use.
   This full native-process scenario is enforced in the Windows Python 3.14 CI lane.
-- scripts/validation/windows-frozen-bootstrap-smoke.py: on disposable
-  `windows-2022` CI, serve the actual newly built release ZIP through the
-  standard Control bootstrap HTTP routes, run the real downloaded PowerShell
-  script with `-Persist`, approve device-code pairing, verify the windowless
-  Task Scheduler Executor reaches Control, then reject a tampered checksum
-  without stopping the existing service. The frozen CLI itself must uninstall
-  the Task Scheduler service; the E2E then verifies process/log cleanup and
-  removes its versioned runtime directory. This test runs only on disposable
-  GitHub Windows runners and uses a local archive because the version is unreleased.
 - scripts/validation/windows-pairing-approval-smoke.py: native
   `executor connect` device-code approval and denial against disposable
   loopback Controls in both `auth_mode: none` and **OAuth-protected** modes.
@@ -175,9 +165,8 @@ pixels, including negative origins for other monitors.
 Screenshots use a short-lived, timeout-bounded Win32 `PrintWindow` child to
 capture **only the requested window**, rather than cropping a full-desktop image.
 The shared GUI service enforces session ownership, screenshot/element bounds,
-action limits and snapshot cleanup. Source Python invokes the isolated capture
-module; frozen Windows re-enters the bundled executable through a private,
-timeout-bounded capture entry point (verified in Windows binary smoke).
+action limits and snapshot cleanup. The managed source Python invokes the isolated capture module through a
+timeout-bounded process.
 
 Mandatory `windows-2022` native CI runs `windows-gui-task-smoke.py --ci`
 and inspects the **actual** desktop state: if interactive, it requires a real
@@ -195,108 +184,34 @@ session cannot take foreground input (for instance while disconnected), the
 script reports a **skip** for physical input rather than claiming it passed.
 It always unregisters the disposable task and removes the temporary files.
 
-## PowerShell enrollment and global Agent Skills (#390)
+## Native Windows source enrollment and global Agent Skills (#390, #457)
 
-Native Windows uses the public `/executor/v1/bootstrap.ps1` PowerShell endpoint
-and the same checksum/release proxy as POSIX, with a
-`workgate-windows-x86_64.zip` archive containing both
-`workgate-windows-x86_64/workgate.exe` (interactive CLI) and
-`workgate-windows-x86_64/workgatew.exe` (windowless Executor). The bootstrap
-extracts exactly these two entries with bounded decompression, verifies both
-versions, and installs into a separate versioned directory rather than replacing
-an in-use executable. Native Windows build, PE subsystem and disposable Task
-Scheduler startup checks are required by #391 CI. A native Windows
-PowerShell Bootstrap E2E also passed pairing, Executor Online, managed frozen
-A-to-B auto-upgrade and safe uninstall on a physical Windows host (#390),
-using an isolated Control with test-only approval. Persistent fresh-machine
-bootstrap installs a per-user Task Scheduler service without administrator
-elevation, WSL, or Bash.
+The published GitHub PowerShell `deploy/source/bootstrap.ps1` installs one
+pinned, uv-managed Control, Executor-only or Colocate role, retaining actual
+user-level Task Scheduler and OAuth owner-approved pairing. Unlike the
+retired Control-hosted binary bootstrap, it requires no bundled Workgate EXE
+or Control-proxied downloadable archive. Historic frozen installation owners
+must preserve their original profile/identity until an explicit source
+migration and rollback have been validated; see #457.
 
 For global Agent Skills discovery, Windows defaults to
 `%APPDATA%\agents\skills` rather than a POSIX `~/.config` path. An absolute
 `XDG_CONFIG_HOME` override remains supported, consistent with the existing
 source priority (project > managed > global).
 
-### Control-managed frozen runtime updates (#390)
+### Versioned source Executor updates (#458)
 
-Windows Executors cannot replace their own mapped `.exe` in place. A
-control-managed Windows update validates the Control-proxied checksum, extracts
-only `workgate-windows-x86_64/workgatew.exe`, and checks the requested version
-using its private output-file probe (the windowless executable has no stdout).
-It publishes the verified executable to a unique versioned filename and updates
-the **existing owned Task Scheduler action** to launch that file. The task's
-original logon trigger is preserved; a short, bounded one-time trigger retry
-window schedules the next start after the current Executor drains active
-commands and exits. The window tolerates delayed shutdown without keeping a
-permanent periodic task. Explicit Executor `stop` and `restart` cancel the pending
-upgrade trigger, so a manual stop cannot be undone by a delayed timer. Neither a
-second supervisor nor a new service definition is required.
+Managed versioned source Executors prepare the published pinned Git release
+without replacing the running native service. An owner-checked source switch
+preserves the Executor profile and attempts rollback on failure; user-owned
+source checkouts are not silently mutated. Retained persisted frozen ownership
+values are historical compatibility data, not a supported new binary install.
 
-If updating the task or its stored metadata fails, the original executable is
-retained and the update is marked failed. Source/Python-package installs remain
-owned by their installer and are not self-mutated. The prior Windows image
-remains on disk during a switch because the running process owns it; old
-Workgate-generated runtime images are retained until an explicit cleanup so an
-otherwise idle service or another owned task never loses its referenced binary.
-When a frozen Windows Task Scheduler service stops, the Scheduler may leave
-behind the PyInstaller one-file child holding the service log open. The shared
-task stop path reaps only processes matching the verified owned task's exact
-windowless executable path and managed-service command arguments.
+## Windows x86-64 native CI and release (#391, #457)
 
-Windows frozen Task Scheduler services use the bundled windowless entry point.
-CI also builds an **acceptance-only synthetic older** windowless PE with version
-`5.0.0a3.dev0` in `scripts/validation/build-windows-older-frozen.ps1` while
-preserving the tracked source. Against the current locally built Control,
-`windows-frozen-bootstrap-smoke.py` installs a disposable service, switches it
-to this older PE, then checks its **automatic policy-driven upgrade** to the
-current independently built version, real Task Scheduler scheduled restart,
-re-authentication and failure recovery. The synthetic PE reuses this checkout's
-source except for the version string; it is **not** the historical v5.0.0a3
-release, and cannot substitute for testing upgrade across real historical
-release artifacts. The CI test never publishes this synthetic build.
-The published, checksum-verified Windows `v5.0.0a1` ZIP instead contains
-`workgate.exe` and `workgate-tui.exe`, **not** `workgatew.exe`. Its native CLI
-still uses `worker` and has no `executor` command, so it cannot serve as an
-older managed-Executor image for this update test. Moving from that legacy
-worker/TUI installation to the current Executor requires a fresh installation
-and owner-approved pairing, not a compatibility shim or in-place managed update.
-Upgrade between published compatible Windows Executor releases awaits an
-actual older release archive with the managed Executor layout. The real
-human-approved HP Linux to native Windows Control OAuth pairing, cross-host
-file/shell commands, preserved Session after Executor restart, and scoped HTTPS
-outage/recovery passed on two physical hosts (#392). A full Tailscale route
-partition was not tested, to avoid disrupting production connectivity.
-
-## Windows x86-64 native CI and release (#391)
-
-The `windows-2022` x64 GitHub Actions runner uses Python 3.14 to run native
-ConPTY, Win32 Job Object, file-lock, Scheduler and GUI contract tests. The
-Windows PyInstaller build is a native PowerShell invocation of the existing
-one-file CLI entrypoint. CI runs the same frozen executable CLI/HTTP/WebUI
-smoke as Linux/macOS. No WSL/Bash installation is required for Windows.
-
-Release archives use `workgate-windows-x86_64.zip`, containing
-`workgate-windows-x86_64/workgate.exe` and
-`workgate-windows-x86_64/workgatew.exe` alongside README, LICENSE and
-QUICKSTART.txt. The matching SHA-256 checksum follows the existing release
-proxy format and is verified by Control bootstrap and managed updates.
-Existing four Linux/macOS release targets remain required.
-The Windows release contains a console CLI (`workgate.exe`) and a windowless
-Task Scheduler runtime (`workgatew.exe`) built from the same entry point. The
-service installer checks for the windowless sibling before writing its service
-config, and CI registers a disposable real Task Scheduler task to verify the
-built binary's PE subsystem and process start. The two binaries must remain
-adjacent for local persistent Executor installation.
-Control-managed updates switch the windowless Executor image referenced by
-Task Scheduler; they do **not** overwrite the interactive `workgate.exe` while
-it is installed. The CLI can therefore report its original package version
-while the managed Executor is running a newer version. Executor service status
-uses the recorded Task Scheduler executable to avoid reporting a healthy
-versioned Executor as stale. The real native Windows persistent Bootstrap
-and managed A-to-B automatic upgrade E2E passed independently (#390).
-
-The frozen Windows GUI screenshot worker re-enters the existing bundled
-`workgate.exe` through a private `--_windows-capture` subcommand. Source builds
-continue to use the Python module. Both paths use the same bounded per-window
-PrintWindow implementation and child-process timeout; no machine-wide screen
-capture fallback is added.
+Native `windows-2022` Python 3.14 CI runs Task Scheduler, ConPTY, GUI,
+paired-service, security and real source-role smoke tests. The source + uv
+release publishes a Python wheel/sdist and a verified native Windows ARM64
+cryptography dependency Wheel, not a platform-specific Workgate EXE archive.
+The installed Windows native service runs `pythonw.exe` from its pinned
+versioned source environment.
