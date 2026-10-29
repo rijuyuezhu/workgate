@@ -308,10 +308,7 @@ class ExecutorRuntime:
         """Apply exact-version policy without mutating externally owned installs."""
         from ..protocol.executor import ExecutorRuntimeOwnership
         from .connection import RuntimePolicyAction
-        from .runtime_update import (
-            ExecutorRuntimeUpdateStatus,
-            apply_control_managed_update,
-        )
+        from .runtime_update import ExecutorRuntimeUpdateStatus
 
         state = self._runtime_state()
         if not policy.runtime_update_required:
@@ -443,48 +440,23 @@ class ExecutorRuntime:
                 # runtime remains quiescent until the service switch takes over.
                 return RuntimePolicyAction.HANDOFF
 
-        if state.ownership is not ExecutorRuntimeOwnership.CONTROL_MANAGED:
-            error = RuntimeError(
-                f"control requires Workgate {target}, but runtime ownership is "
-                f"{state.ownership.value}; use the installation owner to update it"
-            )
-            if self.managed_service:
-                self.runtime_state_store.set_update(
-                    ExecutorRuntimeUpdateStatus.REQUIRED,
-                    target_version=target,
-                    detail=str(error),
-                )
-                return RuntimePolicyAction.BLOCK
-            raise error
-        if not self.managed_service:
-            raise RuntimeError(
-                "control-managed updates require the installed executor service"
-            )
-
-        profile_store = self.profile_store
-        if profile_store is None:
-            raise RuntimeError("executor profile store is unavailable")
-        profile = profile_store.load()
-        if profile is None:
-            raise RuntimeError("executor profile is unavailable")
-        from ..platform.host import HostOS, host_os
-        from .service import ExecutorServiceManager
-
-        windows_activate = (
-            ExecutorServiceManager(self.config).activate_windows_runtime
-            if host_os() is HostOS.WINDOWS
-            else None
+        # Old persisted frozen ownership must remain readable, but a source
+        # release no longer distributes or replaces standalone executables.
+        # Never change a paired service's native action or credentials here.
+        detail = (
+            "legacy frozen Executor requires explicit managed-source migration"
+            if state.ownership is ExecutorRuntimeOwnership.CONTROL_MANAGED
+            else f"runtime ownership is {state.ownership.value}; "
+            "use the installation owner to update it"
         )
-        try:
-            await apply_control_managed_update(
-                control_url=profile.control_url,
+        if self.managed_service:
+            self.runtime_state_store.set_update(
+                ExecutorRuntimeUpdateStatus.REQUIRED,
                 target_version=target,
-                store=self.runtime_state_store,
-                windows_activate=windows_activate,
+                detail=detail,
             )
-        except Exception:
             return RuntimePolicyAction.BLOCK
-        return RuntimePolicyAction.RESTART
+        raise RuntimeError(f"control requires Workgate {target}; {detail}")
 
     async def start(self) -> None:
         """Start resources owned by this executor runtime."""
