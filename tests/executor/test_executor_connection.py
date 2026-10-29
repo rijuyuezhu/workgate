@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import threading
 
 import pytest
@@ -1134,6 +1135,74 @@ async def test_blocked_runtime_policy_quiesces_without_requesting_restart() -> (
         assert connection.restart_requested is False
     finally:
         await connection.aclose()
+
+
+def test_connection_logging_deduplicates_heartbeats_and_redacts_raw_errors(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    observed: list[tuple[str, str | None]] = []
+    connection = ExecutorConnection(
+        _BaseFakeClient(),
+        hello_factory=_hello,
+        execute=lambda _command: None,
+        max_concurrent_commands=1,
+        status_callback=lambda phase, reason: observed.append((phase, reason)),
+    )
+
+    with caplog.at_level(logging.INFO, logger="workgate.executor.connection"):
+        connection._report_status("reconnecting")
+        connection._report_status("reconnecting", "TimeoutError")
+        connection._report_status("reconnecting", "TimeoutError")
+        connection._report_status("connected")
+        connection._report_status("connected")
+        connection._report_status("reconnecting", "ConnectionError")
+        connection._report_status("reconnecting", "ConnectionError")
+        connection._report_status("connected")
+        connection._report_status("action-required", "executor_revoked")
+        connection._report_status("action-required", "executor_revoked")
+
+    assert [
+        (record.levelname, record.getMessage()) for record in caplog.records
+    ] == [
+        ("INFO", "executor connecting"),
+        ("WARNING", "executor reconnecting: TimeoutError"),
+        ("INFO", "executor connection established"),
+        ("WARNING", "executor reconnecting: ConnectionError"),
+        ("INFO", "executor connection recovered"),
+        ("ERROR", "executor requires owner action: executor_revoked"),
+    ]
+    # Durable status callbacks still run on every heartbeat.
+    assert len(observed) == 10
+
+    with caplog.at_level(logging.INFO, logger="workgate.executor.connection"):
+        connection._report_status(
+            "reconnecting", "secret\nAuthorization: bearer hidden"
+        )
+    assert caplog.records[-1].getMessage() == "executor reconnecting: unknown"
+    assert "Authorization" not in caplog.text
+    assert "bearer hidden" not in caplog.text
+
+
+def test_connection_logging_failure_does_not_block_status_callback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from workgate.executor import connection as connection_module
+
+    observed: list[tuple[str, str | None]] = []
+
+    def unavailable_logger(*_args: object) -> None:
+        raise RuntimeError("logging sink failed")
+
+    monkeypatch.setattr(connection_module.logger, "warning", unavailable_logger)
+    connection = ExecutorConnection(
+        _BaseFakeClient(),
+        hello_factory=_hello,
+        execute=lambda _command: None,
+        max_concurrent_commands=1,
+        status_callback=lambda phase, reason: observed.append((phase, reason)),
+    )
+    connection._report_status("reconnecting", "TimeoutError")
+    assert observed == [("reconnecting", "TimeoutError")]
 
 
 @pytest.mark.asyncio

@@ -2,6 +2,7 @@
 
 import asyncio
 import inspect
+import logging
 import random
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
@@ -27,6 +28,8 @@ from .errors import (
     ExecutorOperationFailure,
     ExecutorResourceInventoryUnavailable,
 )
+
+logger = logging.getLogger(__name__)
 
 _JSON_VALUE = TypeAdapter(JsonValue)
 _INITIAL_RETRY_DELAY_S = 0.5
@@ -194,6 +197,8 @@ class ExecutorConnection:
         ] = {}
         self._main_task: asyncio.Task[None] | None = None
         self._restart_requested = False
+        self._logged_status: tuple[ConnectionPhase, str | None] | None = None
+        self._was_connected = False
 
     @classmethod
     def from_client(
@@ -594,12 +599,37 @@ class ExecutorConnection:
     def _report_status(
         self, phase: ConnectionPhase, error_class: str | None = None
     ) -> None:
+        event = (phase, error_class)
+        if event != self._logged_status:
+            self._logged_status = event
+            # Only known internal error codes/classes; never exception messages.
+            reason = (
+                error_class
+                if error_class
+                and error_class.isascii()
+                and error_class.isidentifier()
+                else "unknown"
+            )
+            with suppress(Exception):
+                if phase == "connected":
+                    logger.info(
+                        "executor connection %s",
+                        "recovered" if self._was_connected else "established",
+                    )
+                elif phase == "action-required":
+                    logger.error("executor requires owner action: %s", reason)
+                elif error_class is not None or self._was_connected:
+                    logger.warning("executor reconnecting: %s", reason)
+                else:
+                    logger.info("executor connecting")
+            if phase == "connected":
+                self._was_connected = True
+
         callback = self._status_callback
-        if callback is None:
-            return
-        # Diagnostic persistence must never prevent Control reconnection.
-        with suppress(Exception):
-            callback(phase, error_class)
+        if callback is not None:
+            # Diagnostic persistence must never prevent Control reconnection.
+            with suppress(Exception):
+                callback(phase, error_class)
 
     def _retry_delay(self, attempt: int) -> float:
         return executor_retry_delay(attempt, self._random_value())
