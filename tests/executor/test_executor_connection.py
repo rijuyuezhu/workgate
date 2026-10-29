@@ -1152,10 +1152,12 @@ def test_connection_logging_deduplicates_heartbeats_and_redacts_raw_errors(
     with caplog.at_level(logging.INFO, logger="workgate.executor.connection"):
         connection._report_status("reconnecting")
         connection._report_status("reconnecting", "TimeoutError")
+        connection._report_status("reconnecting", "ConnectionResetError")
         connection._report_status("reconnecting", "TimeoutError")
         connection._report_status("connected")
         connection._report_status("connected")
         connection._report_status("reconnecting", "ConnectionError")
+        connection._report_status("reconnecting", "TimeoutError")
         connection._report_status("reconnecting", "ConnectionError")
         connection._report_status("connected")
         connection._report_status("action-required", "executor_revoked")
@@ -1172,7 +1174,7 @@ def test_connection_logging_deduplicates_heartbeats_and_redacts_raw_errors(
         ("ERROR", "executor requires owner action: executor_revoked"),
     ]
     # Durable status callbacks still run on every heartbeat.
-    assert len(observed) == 10
+    assert len(observed) == 12
 
     with caplog.at_level(logging.INFO, logger="workgate.executor.connection"):
         connection._report_status(

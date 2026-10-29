@@ -197,7 +197,7 @@ class ExecutorConnection:
         ] = {}
         self._main_task: asyncio.Task[None] | None = None
         self._restart_requested = False
-        self._logged_status: tuple[ConnectionPhase, str | None] | None = None
+        self._last_logged_state: str | None = None
         self._was_connected = False
 
     @classmethod
@@ -599,9 +599,16 @@ class ExecutorConnection:
     def _report_status(
         self, phase: ConnectionPhase, error_class: str | None = None
     ) -> None:
-        event = (phase, error_class)
-        if event != self._logged_status:
-            self._logged_status = event
+        # Log each connection phase once, even if retry error classes change.
+        state = (
+            "connecting"
+            if phase == "reconnecting"
+            and not self._was_connected
+            and error_class is None
+            else phase
+        )
+        if state != self._last_logged_state:
+            self._last_logged_state = state
             # Only known internal error codes/classes; never exception messages.
             reason = (
                 error_class
