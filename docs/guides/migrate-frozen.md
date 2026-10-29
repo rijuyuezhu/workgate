@@ -11,6 +11,12 @@ refuses to overwrite a running or stopped native service. That refusal protects
 the existing Executor ID, bearer profile and service ownership. Workgate does
 **not** silently adopt frozen installations.
 
+This procedure covers Linux systemd and native Windows Task Scheduler.
+It does **not** establish a tested macOS LaunchAgent cutover. Legacy frozen
+macOS Executors must retain their existing runtime until an explicit,
+release-specific source migration is verified; do not apply Linux/Windows
+service commands on macOS.
+
 ## Before changing the service
 
 1. Record the **actual existing** CLI executable, Control URL, Executor
