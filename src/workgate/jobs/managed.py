@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import logging
 import math
 import time
 from collections.abc import Awaitable, Callable, Generator, Mapping
@@ -82,6 +83,8 @@ from .state import (
 from .state import (
     utc as _utc,
 )
+
+logger = logging.getLogger(__name__)
 
 MANAGED_JOB_STORE_RETRY_ATTEMPTS = 2
 JOB_STORE_LOCK_RETRY_INTERVAL_S = job_recovery.JOB_STORE_LOCK_RETRY_INTERVAL_S
@@ -476,6 +479,8 @@ async def _run_managed_job(
         )
         raise
     except Exception as exc:
+        # The private job log has details; the service log gets no handler payload.
+        logger.warning("managed job %s failed (%s)", job_id, type(exc).__name__)
         error = f"{public_error_type(exc)}: {exc}"
         with contextlib.suppress(Exception):
             await context.log(error)
@@ -499,6 +504,11 @@ async def _run_managed_job(
                 result=result,
             )
         except Exception as exc:
+            logger.error(
+                "managed job %s completion failed (%s)",
+                job_id,
+                type(exc).__name__,
+            )
             error = f"{public_error_type(exc)}: {exc}"
             with contextlib.suppress(Exception):
                 await context.log(error)
