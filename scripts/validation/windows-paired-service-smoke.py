@@ -195,7 +195,16 @@ async def main(*, outage_only: bool = False) -> None:
                 stdout_path=root / "control.out",
                 stderr_path=root / "control.err",
             )
-            assert connection.describe().startswith("connected;")
+            # Control sees Hello before the Executor can persist its local
+            # connected snapshot; allow that short cross-process ordering gap.
+            deadline = asyncio.get_running_loop().time() + 10
+            while not connection.describe().startswith("connected;"):
+                current = connection.describe()
+                assert not current.startswith("action-required"), current
+                assert asyncio.get_running_loop().time() < deadline, (
+                    f"Executor did not report recovery: {current}"
+                )
+                await asyncio.sleep(0.25)
             assert task.status() == original_task
             assert _task_last_run(task.name) == original_start
             assert profile_path.read_bytes() == original_profile
