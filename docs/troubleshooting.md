@@ -76,10 +76,11 @@ Every routed MCP or REST debug tool call should produce a `tool_call_start` and 
 - The state directory is writable.
 - The call is not being rejected before routing.
 
-## Release binary lacks system tools
+## Source runtime lacks system tools
 
-The self-contained binary includes the Python server and default OAuth
-dependencies. On POSIX systems, persistent shells require a host tmux executable;
-the default is `tmux` from `PATH`, and the `tmux_bin` setting may point to a
-different executable. Git, shells, compilers, LibreOffice, and other host tools
-are not bundled.
+The versioned source + uv installation provides the Python runtime and
+locked Workgate dependencies, but it does not install arbitrary OS programs.
+On POSIX systems, persistent shells require a host `tmux` executable;
+the default is `tmux` from `PATH`, and `tmux_bin` can point to another
+installation. Git, shells, compilers, LibreOffice and other host tools
+remain the responsibility of that Executor machine.
