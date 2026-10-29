@@ -105,7 +105,9 @@ async def main() -> None:
         # explicit and disposable rather than touching Windows-wide settings.
         launcher = root / "run-executor.py"
         launcher.write_text(
-            "import contextlib, sys, traceback\n"
+            "import contextlib, os, sys, sysconfig, traceback\n"
+            "if os.name == 'nt' and sysconfig.get_platform() == 'win-arm64':\n"
+            "    os.environ['CRYPTOGRAPHY_OPENSSL_NO_LEGACY'] = '1'\n"
             f"sys.path.insert(0, {str(Path(__file__).resolve().parents[2] / 'src')!r})\n"
             f"with open({str(root / 'executor-error.log')!r}, 'a', encoding='utf-8', buffering=1) as log:\n"
             "    with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):\n"
