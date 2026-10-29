@@ -16,8 +16,10 @@ If the Executor was previously installed using a frozen executable, do not
 replace its running service with the first-install command. Preserve its
 paired profile and follow the
 [explicit migration and rollback guide](migrate-frozen.md).
-Native frozen-to-source acceptance remains tracked in
-[issue #457](https://github.com/rijuyuezhu/workgate/issues/457).
+The migration guide documents tested Linux x86-64 and Windows x64 a11
+cutovers, rollback, and the remaining macOS boundary. Follow
+[issue #457](https://github.com/rijuyuezhu/workgate/issues/457)
+for additional platform acceptance.
 
 ## Pair an already-installed executor
 

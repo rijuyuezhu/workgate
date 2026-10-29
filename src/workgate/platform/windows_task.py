@@ -4,29 +4,9 @@ import json
 import shutil
 import subprocess
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 RunCommand = Callable[..., subprocess.CompletedProcess[str]]
-
-
-def is_windowless_pe(path: Path) -> bool:
-    """Check that a frozen Windows Task Scheduler target is actually GUI-subsystem."""
-    try:
-        with path.open("rb") as executable:
-            header = executable.read(64)
-            if len(header) < 64 or header[:2] != b"MZ":
-                return False
-            offset = int.from_bytes(header[0x3C:0x40], "little")
-            if offset > 65536:
-                return False
-            executable.seek(offset)
-            if executable.read(4) != b"PE\0\0":
-                return False
-            executable.seek(offset + 4 + 20 + 68)
-            return int.from_bytes(executable.read(2), "little") == 2
-    except OSError:
-        return False
 
 
 def _literal(value: str) -> str:
@@ -183,41 +163,6 @@ class WindowsUserTask:
         if self.status() is None:
             raise RuntimeError(f"scheduled task is not installed: {self.name}")
         self._powershell(f"Start-ScheduledTask {self._task}")
-
-    def switch_runtime(self, *, expected: str, replacement: str) -> None:
-        """Switch one owned task's executable without stopping its running instance."""
-        if self.status() is None:
-            raise RuntimeError(f"scheduled task is not installed: {self.name}")
-        script = "\n".join(
-            [
-                f"$task = Get-ScheduledTask {self._task} -ErrorAction Stop",
-                "if (@($task.Actions).Count -ne 1) { "
-                "throw 'unexpected scheduled task action count' }",
-                "$action = $task.Actions[0]",
-                f"$expected = [IO.Path]::GetFullPath({_literal(expected)})",
-                "$found = [IO.Path]::GetFullPath([string]$action.Execute)",
-                "if (-not [string]::Equals($expected, $found, "
-                "[StringComparison]::OrdinalIgnoreCase)) { "
-                "throw 'scheduled task executable changed unexpectedly' }",
-                "$logon = @($task.Triggers | Where-Object { "
-                "$_.CimClass.CimClassName -eq 'MSFT_TaskLogonTrigger' })",
-                "if ($logon.Count -ne 1) { "
-                "throw 'expected a single logon trigger' }",
-                "$newAction = New-ScheduledTaskAction "
-                f"-Execute {_literal(replacement)} "
-                "-Argument $action.Arguments "
-                "-WorkingDirectory $action.WorkingDirectory",
-                "$oneTime = New-ScheduledTaskTrigger -Once "
-                "-At ((Get-Date).AddSeconds(45)) "
-                "-RepetitionInterval (New-TimeSpan -Minutes 1) "
-                "-RepetitionDuration (New-TimeSpan -Minutes 5)",
-                "$triggers = @($logon[0], $oneTime)",
-                f"Set-ScheduledTask {self._task} "
-                "-Action $newAction -Trigger $triggers -ErrorAction Stop "
-                "| Out-Null",
-            ]
-        )
-        self._powershell(script)
 
     def cancel_runtime_restart(self) -> None:
         """Remove only our pending update trigger before an explicit stop/restart."""

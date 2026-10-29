@@ -114,6 +114,7 @@ the recommended installation path. Keep the existing Executor profile,
 configuration and native service until a planned source migration has been
 verified; **do not** run the new first-install bootstrap over an existing
 task or delete its private state to force a new pairing. Follow the
-[explicit migration and rollback guide](../guides/migrate-frozen.md);
-real frozen-to-source acceptance remains tracked under
+[explicit migration and rollback guide](../guides/migrate-frozen.md), which
+documents tested Linux x86-64 and Windows x64 a11 cutovers and remaining
+unsupported cases (notably macOS). Additional work is tracked under
 [issue #457](https://github.com/rijuyuezhu/workgate/issues/457).

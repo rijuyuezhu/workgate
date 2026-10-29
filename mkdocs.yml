@@ -76,5 +76,7 @@ nav:
       - Configuration: reference/configuration.md
       - CLI: reference/cli.md
       - Tools: reference/tools.md
+  - Maintenance:
+      - Windows platform: maintenance/windows-platform-backends.md
   - Security: security.md
   - Troubleshooting: troubleshooting.md

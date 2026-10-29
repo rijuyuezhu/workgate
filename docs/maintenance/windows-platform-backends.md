@@ -59,8 +59,8 @@ forced Parent exit, descendant cleanup, independent role restart and shared
 configuration Apply. Colocate user services use Windows Task Scheduler or Linux
 systemd; `install-service`, `start-service`, `stop-service`, `restart-service`,
 `status-service` and `uninstall-service` are exposed through the same CLI.
-Frozen Windows Colocate service installation is not yet supported; use the
-native source `pythonw.exe` launcher instead.
+Windows Colocate services use the native source `pythonw.exe` launcher.
+New frozen executable installations are no longer published.
 
 ## Interactive terminal (#386)
 
