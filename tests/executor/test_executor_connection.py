@@ -1142,7 +1142,7 @@ def test_connection_logging_deduplicates_heartbeats_and_redacts_raw_errors(
 ) -> None:
     observed: list[tuple[str, str | None]] = []
     connection = ExecutorConnection(
-        _BaseFakeClient(),
+        _ScriptedReconnectClient(()),
         hello_factory=_hello,
         execute=lambda _command: None,
         max_concurrent_commands=1,
@@ -1195,7 +1195,7 @@ def test_connection_logging_failure_does_not_block_status_callback(
 
     monkeypatch.setattr(connection_module.logger, "warning", unavailable_logger)
     connection = ExecutorConnection(
-        _BaseFakeClient(),
+        _ScriptedReconnectClient(()),
         hello_factory=_hello,
         execute=lambda _command: None,
         max_concurrent_commands=1,
