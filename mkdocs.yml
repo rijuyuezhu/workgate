@@ -69,6 +69,7 @@ nav:
       - Common workflows: guides/common-workflows.md
       - WebUI: guides/webui.md
       - Executors: guides/executors.md
+      - Migrate legacy executors: guides/migrate-frozen.md
       - Agent capability bridge: guides/agent-bridge.md
       - Audit log: guides/audit-log.md
   - Reference:
