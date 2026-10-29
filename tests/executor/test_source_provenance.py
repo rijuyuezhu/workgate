@@ -145,6 +145,40 @@ def test_windowless_windows_executor_matches_the_pinned_python(
     )
 
 
+def test_windows_source_launcher_across_drives_preserves_provenance(
+    managed_source: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, checkout, _ = managed_source
+    native = checkout / ".venv/Scripts/python.exe"
+    native.parent.mkdir(parents=True, exist_ok=True)
+    native.write_bytes(b"python")
+    launcher = root / "bin/workgate.cmd"
+    launcher.write_text(
+        "@echo off\nrem Managed by Workgate source preparation\n"
+        f'"{native}" -m workgate.main %*\n'
+    )
+    original = os.path.relpath
+
+    def cross_drive(path, start):
+        if Path(path) == native and Path(start) == launcher.parent:
+            raise ValueError("path is on mount 'D:', start on mount 'C:'")
+        return original(path, start)
+
+    monkeypatch.setattr(os.path, "relpath", cross_drive)
+    assert (
+        verified_source_checkout(native, version=__version__, system="Windows")
+        == checkout
+    )
+    launcher.write_text(
+        launcher.read_text().replace("workgate.main", "other.main")
+    )
+    assert (
+        verified_source_checkout(native, version=__version__, system="Windows")
+        is None
+    )
+
+
 @pytest.mark.parametrize(
     "fault",
     [
