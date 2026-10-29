@@ -215,16 +215,7 @@ def _run_service_action(args: argparse.Namespace, action: str) -> None:
     try:
         manager = _service_manager(args)
         if action == "install":
-            ownership_value = getattr(args, "runtime_ownership", None)
-            if ownership_value is None:
-                status = manager.install()
-            else:
-                status = manager.install(
-                    runtime_ownership=ExecutorRuntimeOwnership(
-                        str(ownership_value)
-                    )
-                )
-            _print_service_status(status)
+            _print_service_status(manager.install())
             return
         if action == "uninstall":
             _print_service_status(manager.uninstall())
@@ -336,13 +327,6 @@ def register_executor_cli(subparsers: Any) -> argparse.ArgumentParser:
     )
     for name, help_text, action in lifecycle:
         parser = actions.add_parser(name, help=help_text)
-        if name == "install-service":
-            parser.add_argument(
-                "--runtime-ownership",
-                choices=[ExecutorRuntimeOwnership.CONTROL_MANAGED.value],
-                default=None,
-                help=argparse.SUPPRESS,
-            )
         register_config_and_setting_args(
             parser,
             setting_names=EXECUTOR_SETTING_NAMES,

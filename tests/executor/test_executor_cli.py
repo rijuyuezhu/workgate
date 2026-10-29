@@ -517,6 +517,17 @@ def test_root_parser_exposes_executor_runtime_and_service_lifecycle() -> None:
     assert logs.executor_command == "logs"
     assert logs.lines == 25
 
+    # Retired frozen installer ownership cannot be requested from a source CLI.
+    with pytest.raises(SystemExit):
+        _build_parser().parse_args(
+            [
+                "executor",
+                "install-service",
+                "--runtime-ownership",
+                "control-managed",
+            ]
+        )
+
 
 @pytest.mark.asyncio
 async def test_connect_rejects_existing_profile_for_different_control_url(
