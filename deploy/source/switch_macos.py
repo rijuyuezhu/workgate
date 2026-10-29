@@ -6,6 +6,7 @@ import plistlib
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from switch import _old_python, _staged_python, _write_launcher
@@ -107,6 +108,16 @@ def _binding(python: Path, config: Path, *, current: bool) -> Path:
     return profile
 
 
+def _wait_for_binding(python: Path, config: Path) -> Path:
+    """Allow launchd a brief window to start a freshly bootstrapped agent."""
+    for _ in range(19):
+        try:
+            return _binding(python, config, current=True)
+        except RuntimeError:
+            time.sleep(0.25)
+    return _binding(python, config, current=True)
+
+
 def _install(python: Path, config: Path) -> None:
     _run(
         str(python),
@@ -147,7 +158,7 @@ def switch(*, root: Path, tag: str, config: Path) -> None:
         raise RuntimeError("staged Executor resolves a different native state")
     try:
         _install(new, config)
-        if _binding(new, config, current=True) != profile:
+        if _wait_for_binding(new, config) != profile:
             raise RuntimeError("new Executor service uses a different identity")
         if profile.read_bytes() != identity:
             raise RuntimeError(
@@ -157,7 +168,7 @@ def switch(*, root: Path, tag: str, config: Path) -> None:
     except Exception as exc:
         try:
             _install(old, config)
-            if _binding(old, config, current=True) != profile:
+            if _wait_for_binding(old, config) != profile:
                 raise RuntimeError("old Executor native service not restored")
             if profile.read_bytes() != identity:
                 raise RuntimeError(

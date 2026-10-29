@@ -214,3 +214,23 @@ def test_binding_checks_live_launchctl_and_plist(switcher, installation):
     state["loaded"] = False
     with pytest.raises(RuntimeError, match="loaded LaunchAgent"):
         switcher._binding(old, config, current=True)
+
+
+def test_macos_bootstrap_waits_for_running_state(
+    switcher, installation, monkeypatch: pytest.MonkeyPatch
+):
+    root, config, old, new, _plist, _profile, stable, state = installation
+    original = switcher._binding
+    calls = []
+
+    def delayed(python, config, *, current):
+        if python == new and len(calls) < 3:
+            calls.append("waiting")
+            raise RuntimeError("launchd still starting")
+        return original(python, config, current=current)
+
+    monkeypatch.setattr(switcher, "_binding", delayed)
+    monkeypatch.setattr(switcher.time, "sleep", lambda _delay: None)
+    switcher.switch(root=root, tag="v5.0.0a99", config=config)
+    assert calls == ["waiting"] * 3
+    assert stable.read_text() == str(new)
