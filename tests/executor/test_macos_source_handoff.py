@@ -244,9 +244,10 @@ def test_native_one_shot_launchd_agent_exits_without_restart(
     output = tmp_path / "runs.txt"
     script = tmp_path / "worker.py"
     script.write_text(
-        "from pathlib import Path\\nimport sys\\np = Path(sys.argv[1])\\n"
-        "p.write_text(p.read_text() + 'x' if p.exists() else 'x')\\n"
+        "from pathlib import Path\nimport sys\np = Path(sys.argv[1])\n"
+        "p.write_text(p.read_text() + 'x' if p.exists() else 'x')\n"
     )
+    compile(script.read_text(), str(script), "exec")
     label = "com.workgate.test.source-cutover." + uuid.uuid4().hex
     plist = tmp_path / "runner.plist"
     plist.write_bytes(
