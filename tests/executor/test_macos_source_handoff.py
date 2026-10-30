@@ -1,6 +1,7 @@
 """A managed macOS source handoff is independent of the Executor LaunchAgent."""
 
 import os
+import plistlib
 import sys
 from pathlib import Path
 
@@ -39,7 +40,9 @@ def prepared(tmp_path: Path):
     return checkout, config, stable
 
 
-def test_submit_detached_launchd_job(prepared, monkeypatch: pytest.MonkeyPatch):
+def test_one_shot_launchd_agent_never_restarts(
+    prepared, monkeypatch: pytest.MonkeyPatch
+):
     checkout, config, stable = prepared
     submitted = []
     monkeypatch.setattr(
@@ -50,31 +53,46 @@ def test_submit_detached_launchd_job(prepared, monkeypatch: pytest.MonkeyPatch):
         ),
     )
     source_handoff.schedule_macos_source_cutover(
-        checkout,
-        version=VERSION,
-        config=config,
+        checkout, version=VERSION, config=config
     )
+    directory = checkout.parent.parent / "source-cutover"
+    plist = directory / (VERSION + ".plist")
+    payload = plistlib.loads(plist.read_bytes())
+    assert payload == {
+        "Label": "com.workgate.executor.source-cutover." + VERSION,
+        "ProgramArguments": [
+            str(checkout / ".venv/bin/python"),
+            str(checkout / "deploy/source/switch_macos.py"),
+            "--tag",
+            "v" + VERSION,
+            "--install-root",
+            str(checkout.parent.parent),
+            "--executor-config",
+            str(config),
+        ],
+        "RunAtLoad": True,
+        "KeepAlive": False,
+        "StandardOutPath": str(directory / "cutover.log"),
+        "StandardErrorPath": str(directory / "cutover.log"),
+    }
     assert submitted == [
         (
-            [
-                "launchctl",
-                "submit",
-                "-l",
-                "com.workgate.executor.source-cutover." + VERSION,
-                "--",
-                str(checkout / ".venv/bin/python"),
-                str(checkout / "deploy/source/switch_macos.py"),
-                "--tag",
-                "v" + VERSION,
-                "--install-root",
-                str(checkout.parent.parent),
-                "--executor-config",
-                str(config),
-            ],
+            ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)],
             {"timeout": 30},
         )
     ]
     assert stable.read_text() == "unchanged"
+    assert directory.stat().st_mode & 0o077 == 0
+    assert plist.stat().st_mode & 0o077 == 0
+
+    # It is critical that one target cannot be scheduled twice.
+    with pytest.raises(FileExistsError):
+        source_handoff.schedule_macos_source_cutover(
+            checkout,
+            version=VERSION,
+            config=config,
+        )
+    assert len(submitted) == 1
 
 
 @pytest.mark.parametrize(
@@ -138,6 +156,53 @@ def test_invalid_input_cannot_schedule(
     assert commands == ([] if fault != "launchd-failure" else [commands[0]])
 
 
+def test_cutover_directory_symlink_is_rejected(
+    prepared, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    checkout, config, _stable = prepared
+    directory = checkout.parent.parent / "source-cutover"
+    other = tmp_path / "foreign"
+    other.mkdir()
+    directory.symlink_to(other, target_is_directory=True)
+    calls = []
+    monkeypatch.setattr(
+        source_handoff,
+        "run_bounded_capture",
+        lambda command, **kwargs: calls.append(command) or (0, ""),
+    )
+    with pytest.raises(OSError):
+        source_handoff.schedule_macos_source_cutover(
+            checkout, version=VERSION, config=config
+        )
+    assert not calls
+    assert not list(other.iterdir())
+
+
+def test_uncertain_launchd_handoff_retains_duplicate_guard(
+    prepared,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    checkout, config, _stable = prepared
+    calls = []
+    monkeypatch.setattr(
+        source_handoff,
+        "run_bounded_capture",
+        lambda command, **kwargs: calls.append(command) or (1, ""),
+    )
+    with pytest.raises(RuntimeError, match="could not schedule"):
+        source_handoff.schedule_macos_source_cutover(
+            checkout, version=VERSION, config=config
+        )
+    assert (
+        checkout.parent.parent / "source-cutover" / (VERSION + ".plist")
+    ).is_file()
+    with pytest.raises(FileExistsError):
+        source_handoff.schedule_macos_source_cutover(
+            checkout, version=VERSION, config=config
+        )
+    assert len(calls) == 1
+
+
 def test_manager_requires_verified_managed_source(
     prepared,
     monkeypatch: pytest.MonkeyPatch,
@@ -166,41 +231,67 @@ def test_manager_requires_verified_managed_source(
 
 @pytest.mark.skipif(
     sys.platform != "darwin" or os.environ.get("GITHUB_ACTIONS") != "true",
-    reason="isolated native launchctl submit smoke only on ephemeral macOS CI runner",
+    reason="isolated native launchctl bootstrap smoke only on ephemeral macOS CI",
 )
-def test_native_launchctl_submit_executes_outside_caller(
+def test_native_one_shot_launchd_agent_exits_without_restart(
     tmp_path: Path,
 ) -> None:
-    """Exercise the actual launchctl CLI without touching a Workgate LaunchAgent."""
+    """Actually bootstrap an isolated KeepAlive=False LaunchAgent on macOS."""
     import subprocess
     import time
     import uuid
 
-    output = tmp_path / "started"
+    output = tmp_path / "runs.txt"
     script = tmp_path / "worker.py"
     script.write_text(
-        "from pathlib import Path\nimport sys\nPath(sys.argv[1]).write_text('ok')\n"
+        "from pathlib import Path\\nimport sys\\np = Path(sys.argv[1])\\n"
+        "p.write_text(p.read_text() + 'x' if p.exists() else 'x')\\n"
     )
     label = "com.workgate.test.source-cutover." + uuid.uuid4().hex
+    plist = tmp_path / "runner.plist"
+    plist.write_bytes(
+        plistlib.dumps(
+            {
+                "Label": label,
+                "ProgramArguments": [sys.executable, str(script), str(output)],
+                "RunAtLoad": True,
+                "KeepAlive": False,
+            }
+        )
+    )
+    domain = f"gui/{os.getuid()}"
     submit = subprocess.run(
-        [
-            "launchctl",
-            "submit",
-            "-l",
-            label,
-            "--",
-            sys.executable,
-            str(script),
-            str(output),
-        ],
+        ["launchctl", "bootstrap", domain, str(plist)],
         capture_output=True,
         text=True,
         timeout=15,
         check=False,
     )
-    assert submit.returncode == 0, submit.stderr[-1000:]
-    for _ in range(50):
-        if output.exists() and output.read_text() == "ok":
-            break
-        time.sleep(0.1)
-    assert output.read_text() == "ok"
+    try:
+        assert submit.returncode == 0, submit.stderr[-1000:]
+        for _ in range(50):
+            if output.exists():
+                break
+            time.sleep(0.1)
+        assert output.read_text() == "x"
+        loaded = subprocess.run(
+            ["launchctl", "print", domain + "/" + label],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=True,
+        )
+        # The production switch verifies these loaded native-action fields,
+        # not just the saved plist on disk.
+        assert f"path = {plist}" in loaded.stdout
+        assert f"program = {sys.executable}" in loaded.stdout
+        time.sleep(1)
+        assert output.read_text() == "x"
+    finally:
+        subprocess.run(
+            ["launchctl", "bootout", domain + "/" + label],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )

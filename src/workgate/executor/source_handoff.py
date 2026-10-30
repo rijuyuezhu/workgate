@@ -1,13 +1,16 @@
 """Schedule native Executor cutovers outside their current managed service."""
 
 import os
+import plistlib
 import sys
 from pathlib import Path
 
+from ..app_paths import ensure_private_directory
 from ..platform.host import HostOS, host_os
 from ..platform.process import run_bounded_capture
 from ..platform.windows_task import RunCommand, WindowsUserTask
 from ..supervisor import PARENT_FD_ENV
+from ..utils.private_files import write_private_bytes
 from .source_stage import _TAG
 
 # One well-known, automatically collected transient service. systemd refuses
@@ -163,15 +166,16 @@ def schedule_macos_source_cutover(
             "managed macOS source cutover inputs are unavailable"
         )
 
-    # launchctl submit runs in launchd, not as a child of the LaunchAgent
-    # being replaced. Reusing the label blocks concurrent same-version handoffs.
-    code, _ = run_bounded_capture(
-        [
-            "launchctl",
-            "submit",
-            "-l",
-            "com.workgate.executor.source-cutover." + version,
-            "--",
+    # launchctl submit infers KeepAlive; use a one-shot plist that does not
+    # relaunch the completed switch and restart the Executor in a loop.
+    directory = ensure_private_directory(
+        checkout.parent.parent / "source-cutover"
+    )
+    plist = directory / (version + ".plist")
+    label = "com.workgate.executor.source-cutover." + version
+    payload = {
+        "Label": label,
+        "ProgramArguments": [
             str(python),
             str(script),
             "--tag",
@@ -181,7 +185,18 @@ def schedule_macos_source_cutover(
             "--executor-config",
             str(config),
         ],
+        "RunAtLoad": True,
+        "KeepAlive": False,
+        "StandardOutPath": str(directory / "cutover.log"),
+        "StandardErrorPath": str(directory / "cutover.log"),
+    }
+    # A fixed per-release filename is an additional fail-closed duplicate
+    # guard. Do not replace a previous handoff or follow a foreign symlink.
+    write_private_bytes(plist, plistlib.dumps(payload), exclusive=True)
+    code, _ = run_bounded_capture(
+        ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)],
         timeout=30,
     )
     if code:
+        # A failed/uncertain launchd handoff must not automatically retry.
         raise RuntimeError("could not schedule macOS source cutover")
