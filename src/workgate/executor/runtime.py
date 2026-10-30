@@ -279,6 +279,8 @@ class ExecutorRuntime:
                 handoff = manager.schedule_linux_source_cutover
             elif system is HostOS.WINDOWS:
                 handoff = manager.schedule_windows_source_cutover
+            elif system is HostOS.MACOS:
+                handoff = manager.schedule_macos_source_cutover
             else:
                 raise RuntimeError(
                     "native source cutover is unsupported on this host"

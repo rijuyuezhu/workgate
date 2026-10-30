@@ -1,13 +1,16 @@
-"""Launch the existing Linux source switch outside the Executor service cgroup."""
+"""Schedule native Executor cutovers outside their current managed service."""
 
 import os
+import plistlib
 import sys
 from pathlib import Path
 
+from ..app_paths import ensure_private_directory
 from ..platform.host import HostOS, host_os
 from ..platform.process import run_bounded_capture
 from ..platform.windows_task import RunCommand, WindowsUserTask
 from ..supervisor import PARENT_FD_ENV
+from ..utils.private_files import write_private_bytes
 from .source_stage import _TAG
 
 # One well-known, automatically collected transient service. systemd refuses
@@ -132,3 +135,68 @@ def schedule_windows_source_cutover(
         ],
         cwd=str(checkout),
     )
+
+
+def schedule_macos_source_cutover(
+    checkout: Path, *, version: str, config: Path
+) -> None:
+    """Submit a one-shot launchd job outside the running Executor LaunchAgent."""
+    if host_os() is not HostOS.MACOS:
+        raise RuntimeError("native source handoff requires macOS launchd")
+    tag = f"v{version}"
+    if _TAG.fullmatch(tag) is None:
+        raise ValueError("invalid source release version")
+    if any(
+        key.startswith("WORKGATE_") and key != PARENT_FD_ENV
+        for key in os.environ
+    ):
+        raise RuntimeError(
+            "source cutover requires durable config, not overrides"
+        )
+    script = checkout / "deploy/source/switch_macos.py"
+    python = checkout / ".venv/bin/python"
+    if (
+        any(
+            path.is_symlink() or not path.is_file()
+            for path in (script, python, config)
+        )
+        or not config.is_absolute()
+    ):
+        raise RuntimeError(
+            "managed macOS source cutover inputs are unavailable"
+        )
+
+    # launchctl submit infers KeepAlive; use a one-shot plist that does not
+    # relaunch the completed switch and restart the Executor in a loop.
+    directory = ensure_private_directory(
+        checkout.parent.parent / "source-cutover"
+    )
+    plist = directory / (version + ".plist")
+    label = "com.workgate.executor.source-cutover." + version
+    payload = {
+        "Label": label,
+        "ProgramArguments": [
+            str(python),
+            str(script),
+            "--tag",
+            tag,
+            "--install-root",
+            str(checkout.parent.parent),
+            "--executor-config",
+            str(config),
+        ],
+        "RunAtLoad": True,
+        "KeepAlive": False,
+        "StandardOutPath": str(directory / "cutover.log"),
+        "StandardErrorPath": str(directory / "cutover.log"),
+    }
+    # A fixed per-release filename is an additional fail-closed duplicate
+    # guard. Do not replace a previous handoff or follow a foreign symlink.
+    write_private_bytes(plist, plistlib.dumps(payload), exclusive=True)
+    code, _ = run_bounded_capture(
+        ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)],
+        timeout=30,
+    )
+    if code:
+        # A failed/uncertain launchd handoff must not automatically retry.
+        raise RuntimeError("could not schedule macOS source cutover")

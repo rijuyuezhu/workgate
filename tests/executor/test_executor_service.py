@@ -1409,3 +1409,67 @@ def test_systemd_install_rejects_foreign_loaded_unit_from_another_path(
     assert not manager.config_path.exists()
     assert ExecutorProfileStore(manager.state_store).load() == profile
     assert not any("restart" in command for command in calls)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "none",
+        "foreign-loaded-path",
+        "foreign-loaded-program",
+        "not-running",
+        "foreign-plist-program",
+        "foreign-plist-label",
+        "symlink-plist",
+        "mismatched-metadata",
+        "launchctl-failure",
+    ],
+)
+def test_macos_auto_update_requires_actual_owned_launchd_action(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    manager, _profile = _paired_manager(tmp_path, system="Darwin")
+    manager._write_service_config()
+    manager._write_launcher()
+    command = manager._runtime_command()
+    plist = manager._write_launchd_plist(command)
+    manager._write_metadata("launchd", command, service_file=plist)
+
+    native_path = (
+        "/foreign/agent.plist" if fault == "foreign-loaded-path" else str(plist)
+    )
+    native_program = (
+        "/foreign/python" if fault == "foreign-loaded-program" else command[0]
+    )
+    native_state = "waiting" if fault == "not-running" else "running"
+
+    def read_native(argv, **_kwargs):
+        assert argv == ["launchctl", "print", manager._launchd_service_target]
+        return _completed(
+            argv,
+            returncode=1 if fault == "launchctl-failure" else 0,
+            stdout=(
+                f"path = {native_path}\nprogram = {native_program}\n"
+                f"state = {native_state}\n"
+            ),
+        )
+
+    monkeypatch.setattr(manager, "_run", read_native)
+    if fault.startswith("foreign-plist"):
+        payload = plistlib.loads(plist.read_bytes())
+        if fault == "foreign-plist-program":
+            payload["ProgramArguments"][0] = "/foreign/python"
+        else:
+            payload["Label"] = "com.foreign.executor"
+        plist.write_bytes(plistlib.dumps(payload))
+    elif fault == "symlink-plist":
+        target = tmp_path / "foreign-agent.plist"
+        plist.rename(target)
+        plist.symlink_to(target)
+    elif fault == "mismatched-metadata":
+        manager._write_metadata(
+            "launchd",
+            ["/foreign/python", str(manager.launcher_path)],
+            service_file=plist,
+        )
+    assert manager._launchd_source_owned() is (fault == "none")
