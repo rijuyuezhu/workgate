@@ -1159,6 +1159,48 @@ class ExecutorServiceManager:
             runtime_update_detail=runtime.update_detail,
         )
 
+    def _launchd_source_owned(self) -> bool:
+        """Verify the loaded macOS native job, not only its saved receipt."""
+        plist = self.launchd_plist_path
+        command = self._runtime_command()
+        metadata = self._read_metadata()
+        if (
+            plist.is_symlink()
+            or not plist.is_file()
+            or self.launcher_path.is_symlink()
+            or metadata is None
+            or metadata.get("backend") != "launchd"
+            or metadata.get("service_file") != str(plist.absolute())
+            or metadata.get("command") != command
+        ):
+            return False
+        try:
+            payload = plistlib.loads(plist.read_bytes())
+            if (
+                not isinstance(payload, dict)
+                or payload.get("Label") != _LAUNCHD_LABEL
+                or payload.get("ProgramArguments") != command
+            ):
+                return False
+            native = self._run(
+                ["launchctl", "print", self._launchd_service_target],
+                check=False,
+            )
+            if native.returncode:
+                return False
+            fields = {}
+            for line in native.stdout.splitlines():
+                key, sep, value = line.strip().partition("=")
+                if sep and key.strip() in {"path", "program", "state"}:
+                    fields[key.strip()] = value.strip()
+            return (
+                fields.get("path") == str(plist)
+                and fields.get("program") == command[0]
+                and fields.get("state") == "running"
+            )
+        except OSError, ValueError, TypeError, RuntimeError:
+            return False
+
     def verified_source_checkout(self) -> Path | None:
         """Allow future source updates only for an owned, pinned native service."""
         from .source_provenance import verified_source_checkout
@@ -1168,6 +1210,11 @@ class ExecutorServiceManager:
             status.running
             and status.runtime_current
             and status.runtime_ownership is ExecutorRuntimeOwnership.SOURCE
+        ):
+            return None
+        if (
+            host_os(self.system) is HostOS.MACOS
+            and not self._launchd_source_owned()
         ):
             return None
         return verified_source_checkout(
