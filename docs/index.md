@@ -1,38 +1,26 @@
 # Workgate
 
-Workgate lets ChatGPT and other MCP clients work in controlled project
-workspaces. One **control** endpoint handles clients, authentication, UI, and
-orchestration; paired **executors** perform machine-facing work such as files,
-shells, jobs, and terminals.
+Use ChatGPT or another MCP client to work on your own machines: browse projects, edit files, run tests, use Git, and manage long-running tasks.
 
-## Start here
+Workgate has two parts: **Control** connects to your MCP client, and **Executor** performs work on a computer. Install both on one computer (**Colocate**) to start; add more Executors later.
 
-- Follow the [Quickstart](getting-started/quickstart.md) for the simplest local setup.
-- Use [Choose a deployment](getting-started/deployment.md) for public HTTPS, VPS, or multi-machine setups.
-- Pair another machine with [Executors](guides/executors.md).
-- Connect [another MCP client](getting-started/mcp-clients.md) over HTTP or local stdio.
-- Connect the service to [ChatGPT](getting-started/chatgpt-connector.md).
-- Read [Security](security.md) before exposing Workgate outside localhost.
+## Get started
 
-## What you can do
+1. [Quickstart](getting-started/quickstart.md) — install and make your first tool call.
+2. [Connect ChatGPT](getting-started/chatgpt-connector.md) or [another MCP client](getting-started/mcp-clients.md).
+3. [Add another computer](guides/executors.md) or [choose a deployment](getting-started/deployment.md).
 
-After connecting an MCP client, start an execution session and ask it to:
+## Use Workgate
 
-- inspect, search, edit, and patch repositories;
-- run tests, builds, Git commands, and bounded shell tasks;
-- keep long-running jobs or persistent terminals;
-- copy data between sessions on the same or different executors;
-- keep durable task objectives, progress reports, findings, blockers, and structured plans across control/executor restarts;
-- review task/plan state and Audit history in the WebUI;
-- use configured Skills or upstream MCP servers.
+- [Common workflows](guides/common-workflows.md): typical workspace tasks.
+- [WebUI](guides/webui.md): sessions, tasks, files and settings.
+- [Skills and MCP integrations](guides/agent-bridge.md): extend available tools.
 
-See [Common workflows](guides/common-workflows.md) for examples and the
-generated [Tool reference](reference/tools.md) for exact tool contracts.
+## Find help
 
-The browser interface is available at `/ui`. See [WebUI](guides/webui.md).
+- [Troubleshooting](troubleshooting.md) when something doesn't work.
+- [Operations](getting-started/deployment.md) for remote hosting and service management.
+- [Reference](reference/cli.md) for the live CLI, settings and tools.
+- [Development](development.md) to work on the code.
 
-!!! warning
-    An executor can access any filesystem location permitted to its OS account.
-    `default_workdir` sets its starting directory; it is not a filesystem
-    access boundary or sandbox. Run executors as suitably restricted users,
-    and keep OAuth enabled for public deployments.
+Executors run with the permissions of their operating-system account. See [Security](security.md) before granting workspace access.

@@ -1,86 +1,49 @@
 # Troubleshooting
 
-## Connector shows only `search` and `fetch`
+Start with the symptom, then check the component closest to it.
 
-Likely causes:
+## Can't connect to Workgate
 
-- ChatGPT Developer Mode is not enabled.
-- The client is a regular connector or Deep Research-style client that only supports read-only tools.
-- The connector tool list was not refreshed after server changes.
+1. Open Control's local WebUI at **http://127.0.0.1:8765/ui** on the Control machine.
+2. Check **http://127.0.0.1:8765/healthz** or the Control service status.
+3. If local access works but the public address fails, check the HTTPS proxy and public hostname.
+4. Check the MCP URL ends in **/mcp**. ChatGPT needs a reachable HTTPS endpoint.
 
-Enable Developer Mode for the full coding-agent surface, then refresh the connector.
+See [Connect ChatGPT](getting-started/chatgpt-connector.md) or [VPS deployment](getting-started/vps.md).
 
-## OAuth approval fails
+## OAuth or approval fails
 
-Check:
+Check the Control **base_url** matches its public HTTPS origin and that the correct owner account is approving access. If you changed the hostname, check the running Control configuration and its configured OAuth settings.
 
-```yaml
-base_url: https://your-public-host.example.com
-auth_mode: oauth
-oauth_admin_pin: ...
-```
+## Executor is offline
 
-Make sure the connector URL is exactly:
+On the Executor computer:
 
-```text
-https://your-public-host.example.com/mcp
-```
+~~~sh
+workgate executor status
+workgate executor logs
+~~~
 
-The public base URL should be the origin only, without `/mcp`.
+Check that the Control URL is reachable and the saved Executor pairing is still valid. An Executor normally reconnects after temporary outages. If it was revoked, use the [Executor pairing guide](guides/executors.md) to pair again.
 
-## Public URL does not work
+## A tool times out or fails
 
-Check the local health endpoint first:
+Check the session's selected Executor and whether the requested tool is available there. For long-running commands, use a Workgate Job or persistent shell.
 
-```bash
-curl -i http://127.0.0.1:8765/healthz
-```
+For a **413** result-upload error behind a reverse proxy, inspect the proxy's request-body size setting. See [VPS deployment](getting-started/vps.md).
 
-Then check the tunnel or reverse proxy:
+## Browser or desktop tools are unavailable
 
-- It must forward to the server port, usually `8765`.
-- It must preserve HTTPS externally for ChatGPT.
-- The public hostname must match the configured `base_url`.
+Check Chromium and the relevant desktop environment on the **Executor machine**. GUI automation requires a logged-in accessible graphical session and OS permissions.
 
-## Tool call times out
+See [Executors](guides/executors.md).
 
-Public tool calls are bounded by strict watchdogs and shell timeouts. Check these settings:
+## Missing commands or dependencies
 
-```yaml
-tool_timeout_s: 60
-run_shell_default_timeout_s: 10
-run_shell_max_timeout_s: 120
-```
+The managed Workgate runtime installs its Python dependencies. Tools invoked by your project—such as Git, compilers and tmux—must exist on the Executor host.
 
-Use persistent shells for long-running dev servers, REPLs, or interactive commands.
+## Audit entries seem missing
 
-## Executor does not connect
+Check the selected Control, session/task, time range and permissions. See [Audit](guides/audit-log.md).
 
-Check:
-
-- The control URL is reachable from the executor over outbound HTTPS, or loopback HTTP for a same-machine deployment.
-- `workgate executor connect CONTROL_URL` completed owner-approved pairing and persisted the executor profile.
-- The executor has not been revoked or had its credential replaced.
-- `workgate executor run` is running from the same private state/config context that contains the paired profile.
-
-The executor reconnects after temporary network or control outages using its saved long-lived credential; ordinary downtime does not require a new pairing. If authentication is rejected because trust was revoked or replaced, run `workgate executor connect CONTROL_URL` and explicitly approve the replacement from the **Executors** page.
-
-If the executor process exits or fails before connecting, run `workgate executor run` in the foreground and inspect its local output. For unattended deployments, inspect the service manager that launches the executor.
-
-## Audit log is missing expected calls
-
-Every routed MCP or REST debug tool call should produce a `tool_call_start` and `tool_call_end` pair. Check:
-
-- The server is the instance your connector is actually using.
-- The audit log path points to the location you are tailing.
-- The state directory is writable.
-- The call is not being rejected before routing.
-
-## Source runtime lacks system tools
-
-The versioned source + uv installation provides the Python runtime and
-locked Workgate dependencies, but it does not install arbitrary OS programs.
-On POSIX systems, persistent shells require a host `tmux` executable;
-the default is `tmux` from `PATH`, and `tmux_bin` can point to another
-installation. Git, shells, compilers, LibreOffice and other host tools
-remain the responsibility of that Executor machine.
+For command options and settings, use [CLI help](reference/cli.md) and [Configuration](reference/configuration.md).

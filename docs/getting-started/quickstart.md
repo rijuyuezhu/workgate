@@ -1,60 +1,39 @@
 # Quickstart
 
-Workgate runs a **Control** process serving MCP, OAuth and the WebUI and an
-**Executor** process owning files, shells and sessions. They use the same
-protocol whether on one host or two.
+Start with Workgate on one computer, then connect your MCP client.
 
 ## 1. Install
 
-```bash
-git clone https://github.com/rijuyuezhu/workgate.git
-cd workgate
-uv sync
-```
+On **Linux**, install **Colocate** (Control and Executor together) using the published source installer:
 
-Install the host tools you intend to use (such as Git, `ripgrep`, compilers
-and `tmux`).
+~~~sh
+curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/1424b9e9d84d5ae1405d28c2ea9a7d3d94e193be/deploy/source/bootstrap.sh | sh -s -- v5.0.0a13 1424b9e9d84d5ae1405d28c2ea9a7d3d94e193be --role colocate --name workstation
+~~~
 
-## 2. Configure and pair once
+You need Git, curl and an interactive terminal. The installer sets up the runtime and shows you how to approve the local Executor in the WebUI.
 
-Use the normal role-specific files on Linux:
+On **Windows**, use the [PowerShell installation instructions](install-options.md#windows-powershell). For a different layout, see [Install Workgate](install-options.md).
 
-```text
-~/.config/workgate/config.yaml           # Control
-~/.config/workgate/executor/config.yaml  # Executor
-```
+## 2. Connect
 
-Set a strong `oauth_admin_pin` in the Control configuration for approval.
-Set `default_workdir: /absolute/path/to/project` in the Executor
-configuration for your preferred working directory.
+After installation, open your local [WebUI](http://127.0.0.1:8765/ui). For an MCP client running on the **same computer**, use:
 
-Start `uv run workgate control`, then in another terminal:
+~~~text
+http://127.0.0.1:8765/mcp
+~~~
 
-```bash
-uv run workgate executor connect http://127.0.0.1:8765 --name local
-```
+For **ChatGPT** or an MCP client running on another computer, set up a reachable HTTPS endpoint with [VPS deployment](vps.md), then follow [Connect ChatGPT](chatgpt-connector.md) or [Connect an MCP client](mcp-clients.md). Cloud-hosted clients cannot use your computer's localhost address.
 
-Approve the device pairing in the [WebUI](http://127.0.0.1:8765/ui)
-using your Control admin PIN. Stop the Control process.
+## 3. Try it
 
-## 3. Run locally
+Ask your client:
 
-```bash
-uv run workgate colocate
-```
+> Use Workgate to start a session in my project directory, show the Git status, and summarize the project.
 
-This is a small launcher for the **ordinary** Control and Executor child
-processes, using their normal configuration and state directories. It does
-not perform automatic pairing or introduce a special local state layout.
+See [Common workflows](../guides/common-workflows.md) for more examples.
 
-MCP: `http://127.0.0.1:8765/mcp`
-WebUI: `http://127.0.0.1:8765/ui`
+## What's next?
 
-Connect a local MCP client and try:
+[Add another Executor](../guides/executors.md), [choose a multi-machine deployment](deployment.md), or [explore the WebUI](../guides/webui.md).
 
-> Start a session in my configured default workdir, inspect Git status,
-> and do not change any files.
-
-For how the two processes share a host, see
-[Colocated local mode](colocate.md). For other hosts or public endpoints,
-see [Choose a deployment](deployment.md) and [VPS deployment](vps.md).
+Working on Workgate itself? Start with [Development](../development.md).

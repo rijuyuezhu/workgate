@@ -1,5 +1,5 @@
 site_name: Workgate
-site_description: Self-hosted workspace control plane for coding agents
+site_description: Connect MCP clients to workspaces on your computers
 site_url: https://project.rijuyuezhu.top/workgate/
 repo_url: https://github.com/rijuyuezhu/workgate
 repo_name: rijuyuezhu/workgate
@@ -57,27 +57,29 @@ extra_javascript:
 
 nav:
   - Home: index.md
-  - Getting started:
+  - Get started:
       - Quickstart: getting-started/quickstart.md
+      - Install Workgate: getting-started/install-options.md
+      - Connect ChatGPT: getting-started/chatgpt-connector.md
+      - Connect an MCP client: getting-started/mcp-clients.md
       - Choose a deployment: getting-started/deployment.md
-      - Colocated local mode: getting-started/colocate.md
-      - VPS deployment: getting-started/vps.md
-      - Other MCP clients: getting-started/mcp-clients.md
-      - ChatGPT connector: getting-started/chatgpt-connector.md
-      - Install options: getting-started/install-options.md
-      - Persistent Control service: getting-started/control-service.md
-  - Guides:
+  - Use Workgate:
       - Common workflows: guides/common-workflows.md
       - WebUI: guides/webui.md
       - Executors: guides/executors.md
-      - Migrate legacy executors: guides/migrate-frozen.md
-      - Agent capability bridge: guides/agent-bridge.md
+      - Skills and MCP integrations: guides/agent-bridge.md
+  - Operations:
+      - VPS deployment: getting-started/vps.md
+      - Migrate an older installation: guides/migrate-frozen.md
       - Audit log: guides/audit-log.md
+      - Troubleshooting: troubleshooting.md
+      - Security: security.md
   - Reference:
-      - Configuration: reference/configuration.md
       - CLI: reference/cli.md
+      - Configuration: reference/configuration.md
       - Tools: reference/tools.md
-  - Maintenance:
+  - Development:
+      - Development guide: development.md
+      - Colocate from source: getting-started/colocate.md
+      - Control service from source: getting-started/control-service.md
       - Windows platform: maintenance/windows-platform-backends.md
-  - Security: security.md
-  - Troubleshooting: troubleshooting.md

@@ -1,10 +1,8 @@
 # Workgate
 
-Workgate is a self-hosted workspace control plane for coding agents. It gives MCP clients controlled shell, filesystem, Git, executor-backed machine tools, and related development tools.
+Workgate connects ChatGPT and other MCP clients to workspaces on your own computers. Inspect and edit files, work with Git, run commands and tests, keep jobs running, and use local tools.
 
-## Documentation
-
-https://project.rijuyuezhu.top/workgate/
+[Get started](https://project.rijuyuezhu.top/workgate/getting-started/quickstart/) · [Documentation](https://project.rijuyuezhu.top/workgate/) · [GitHub](https://github.com/rijuyuezhu/workgate)
 
 ## License
 

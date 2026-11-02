@@ -1,69 +1,33 @@
-# Persistent Control service (source checkout)
+# Manage a Control service
 
-The Control-only role uses the existing native user service managers, like
-Executor and Colocate. This does not create an additional Workgate supervisor.
+For a new server, install the **Control** role using [Install Workgate](install-options.md). For public HTTPS, follow [VPS deployment](vps.md).
 
-Prepare a **durable** Control YAML file (default:
-`~/.config/workgate/config.yaml`). Use HTTP mode and configure OAuth before
-exposing it beyond loopback, including a strong non-placeholder
-`oauth_admin_pin` (at least 8 characters for public OAuth URLs). The normal
-Control startup checks public OAuth security and stores its signing secret in
-private state; do not print or embed secrets in a service command.
+## Existing development checkout
 
-After installing the locked source checkout and its Python 3.14 environment,
-initialize Control's OAuth-enabled HTTP configuration once:
+From a prepared source checkout, initialize Control's config and install its user service:
 
-```sh
-.venv/bin/workgate control init-config
-```
+~~~sh
+uv run workgate control init-config
+uv run workgate control install-service
+uv run workgate control status-service
+~~~
 
-This is noninteractive: it creates a random, non-placeholder admin approval PIN
-in a user-private YAML (0600 on Linux), and the existing Workgate persistence
-mechanism creates its OAuth signing secret. **The PIN and signing secret are
-never printed**; view the PIN locally inside your private configuration when
-performing a browser approval. For custom locations, supply `--config PATH`
-and optionally `--state-dir PATH`; Control binds to loopback by default.
-Non-loopback listeners need an explicit `--base-url` for secure OAuth metadata.
-Re-running validates and preserves the existing YAML, PIN, and signing identity
-rather than replacing them. If a preexisting file is weak, public or invalid,
-the command stops and instructs you to correct it; it will never silently
-rewrite credentials. On Windows, custom configuration files inherit the parent
-directory's NTFS ACL: use an account-private directory, not a shared/public
-folder. The default per-user AppData location is preferred.
+Control keeps its configuration and authentication state in its user-owned directories. Use the generated admin approval PIN in your private config when approving users.
 
-Install the Control service afterwards:
+To operate an existing service:
 
-```sh
-.venv/bin/workgate control install-service
-.venv/bin/workgate control status-service
-.venv/bin/workgate control restart-service
-.venv/bin/workgate control stop-service
-.venv/bin/workgate control start-service
-.venv/bin/workgate control uninstall-service
-```
+~~~sh
+uv run workgate control restart-service
+uv run workgate control stop-service
+uv run workgate control start-service
+~~~
 
-For a nondefault Control YAML location, pass `--config /absolute/config.yaml`
-to `install-service`. Installation pins that absolute file path and the
-current `.venv` Python executable; it never invokes `uv run` at service startup
-(which might resync the environment without selected runtime extras).
+For custom config paths and other options, use **workgate control --help**.
 
-On Linux, this installs `workgate-control.service` under
-`systemd --user`. Ensure the user manager is available. For unattended boot,
-configure user lingering and the host's own startup separately. On native
-Windows, it installs the non-elevated current-user `Workgate Control` Task
-Scheduler task using `pythonw.exe`; it runs at user logon and writes its own
-private service log under the Workgate state directory. The log is retained when
-uninstalling so startup failures remain diagnosable. On Linux, systemd's
-imported `WORKGATE_*` overrides for Control are explicitly unset so the pinned
-YAML remains authoritative even if the login shell and user service manager
-have different environments.
+## Diagnose a problem
 
-Reinstall updates only this managed service definition, not existing Control
-state or OAuth signing identity. The installer refuses to overwrite an
-unmanaged user unit/task. `uninstall-service` removes only the service, not its
-Control configuration, approval records, or state.
+- Service cannot start: check its native systemd user unit, Windows Task Scheduler task, or corresponding log.
+- Public URL fails: check local Control health first, then the HTTPS reverse proxy.
+- Pairing approval fails: verify Control's public origin and the saved OAuth config.
 
-Run these commands from the validated Python 3.14 environment or use a stable
-launcher pointing to that environment. For a new installation, prefer the
-[published source + uv installer](install-options.md); use these manual commands
-for an existing source checkout or explicit native service management.
+See [Troubleshooting](../troubleshooting.md) and [Configuration](../reference/configuration.md).
