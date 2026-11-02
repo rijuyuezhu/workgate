@@ -30,9 +30,11 @@ def prepared(tmp_path: Path):
     python = checkout / ".venv/bin/python"
     script = checkout / "deploy/source/switch_macos.py"
     config = tmp_path / "executor config.yaml"
-    for path in (python, script):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("fixture")
+    python.parent.mkdir(parents=True, exist_ok=True)
+    # uv normally links venv Python to its centrally managed interpreter.
+    python.symlink_to(sys.executable)
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text("fixture")
     config.write_text("profile: keep")
     stable = checkout.parent.parent / "bin/workgate"
     stable.parent.mkdir()

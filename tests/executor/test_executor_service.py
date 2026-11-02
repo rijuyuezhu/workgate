@@ -818,6 +818,8 @@ def test_launchd_definition_uses_private_local_paths_without_credentials(
     ) -> subprocess.CompletedProcess[str]:
         calls.append(command)
         if command[:2] == ["launchctl", "print"]:
+            if not any(c[:2] == ["launchctl", "bootstrap"] for c in calls):
+                return _completed(command, returncode=3)
             return _completed(
                 command,
                 stdout="state = running\nlast exit code = 0\n",
@@ -869,6 +871,46 @@ def test_launchd_plist_passes_native_plutil_lint(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr or result.stdout
 
 
+@pytest.mark.parametrize("stuck", [False, True])
+def test_launchd_reinstall_waits_for_native_bootout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stuck: bool
+) -> None:
+    manager, _profile = _paired_manager(tmp_path, system="Darwin")
+    monkeypatch.setattr(
+        service.shutil, "which", lambda _name: "/usr/bin/launchctl"
+    )
+    monkeypatch.setattr(service.time, "sleep", lambda _delay: None)
+    calls: list[list[str]] = []
+    checks = 0
+    bootstrapped = False
+
+    def fake_run(command, **_kwargs):
+        nonlocal checks, bootstrapped
+        calls.append(command)
+        if command[:2] == ["launchctl", "print"]:
+            checks += 1
+            if checks <= 3 or (stuck and not bootstrapped):
+                return _completed(command, stdout="state = SIGTERMed\n")
+            if not bootstrapped:
+                return _completed(command, returncode=3)
+            return _completed(command, stdout="state = running\n")
+        if command[:2] == ["launchctl", "bootstrap"]:
+            bootstrapped = True
+        return _completed(command)
+
+    monkeypatch.setattr(manager, "_run", fake_run)
+    if stuck:
+        with pytest.raises(RuntimeError, match="did not unload"):
+            manager.install()
+        assert checks == 20
+        assert not bootstrapped
+    else:
+        assert manager.install().running
+        assert checks >= 5
+        assert bootstrapped
+    assert calls[0][:2] == ["launchctl", "bootout"]
+
+
 def test_launchd_failed_bootstrap_keeps_previous_runtime_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -886,6 +928,8 @@ def test_launchd_failed_bootstrap_keeps_previous_runtime_metadata(
     def fake_run(
         command: list[str], **_kwargs
     ) -> subprocess.CompletedProcess[str]:
+        if command[:2] == ["launchctl", "print"]:
+            return _completed(command, returncode=3)
         if command[:2] == ["launchctl", "bootstrap"]:
             raise RuntimeError("bootstrap failed")
         return _completed(command)
@@ -1449,8 +1493,8 @@ def test_macos_auto_update_requires_actual_owned_launchd_action(
             argv,
             returncode=1 if fault == "launchctl-failure" else 0,
             stdout=(
-                f"path = {native_path}\nprogram = {native_program}\n"
-                f"state = {native_state}\n"
+                f"\tpath = {native_path}\n\tprogram = {native_program}\n"
+                f"\tstate = {native_state}\n\t\tstate = active\n"
             ),
         )
 

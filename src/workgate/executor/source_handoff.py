@@ -156,10 +156,11 @@ def schedule_macos_source_cutover(
     script = checkout / "deploy/source/switch_macos.py"
     python = checkout / ".venv/bin/python"
     if (
-        any(
-            path.is_symlink() or not path.is_file()
-            for path in (script, python, config)
-        )
+        script.is_symlink()
+        or not script.is_file()
+        or not python.is_file()
+        or config.is_symlink()
+        or not config.is_file()
         or not config.is_absolute()
     ):
         raise RuntimeError(

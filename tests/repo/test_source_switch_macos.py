@@ -89,9 +89,9 @@ def installation(tmp_path: Path, switcher, monkeypatch: pytest.MonkeyPatch):
             f"gui/{os.getuid()}/com.workgate.executor",
         )
         if not state["loaded"]:
-            return "path = /foreign/agent.plist\nstate = running\nprogram = /usr/bin/python"
+            return "\tpath = /foreign/agent.plist\n\tstate = running\n\tprogram = /usr/bin/python"
         python = state["active"]
-        return f"path = {plist}\nstate = running\nprogram = {python}\n"
+        return f"\tpath = {plist}\n\tstate = running\n\tprogram = {python}\n\t\tstate = active\n"
 
     def install(python, saved_config):
         assert saved_config == config

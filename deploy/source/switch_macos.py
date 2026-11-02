@@ -96,6 +96,9 @@ def _binding(python: Path, config: Path, *, current: bool) -> Path:
     loaded = _run("launchctl", "print", f"gui/{os.getuid()}/{_LABEL}")
     fields = {}
     for line in loaded.splitlines():
+        # launchctl includes nested state entries unrelated to this job.
+        if not line.startswith("\t") or line.startswith("\t\t"):
+            continue
         key, sep, value = line.strip().partition(" = ")
         if sep and key in {"path", "state", "program"}:
             fields[key] = value

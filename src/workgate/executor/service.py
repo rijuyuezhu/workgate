@@ -15,6 +15,7 @@ import posixpath
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
@@ -617,6 +618,19 @@ class ExecutorServiceManager:
                 ["launchctl", "bootout", self._launchd_service_target],
                 check=False,
             )
+            # bootout can return while the previous job is still SIGTERMed.
+            # bootstrap during that interval fails with launchctl exit 5.
+            for _ in range(20):
+                if self._run(
+                    ["launchctl", "print", self._launchd_service_target],
+                    check=False,
+                ).returncode:
+                    break
+                time.sleep(0.25)
+            else:
+                raise RuntimeError(
+                    "previous Executor LaunchAgent did not unload"
+                )
             self._run(["launchctl", "bootstrap", domain, str(service_file)])
             self._write_metadata(
                 backend,
@@ -1190,6 +1204,10 @@ class ExecutorServiceManager:
                 return False
             fields = {}
             for line in native.stdout.splitlines():
+                # launchctl prints nested state fields; inspect only the job's
+                # top-level fields, never a child service's state.
+                if not line.startswith("\t") or line.startswith("\t\t"):
+                    continue
                 key, sep, value = line.strip().partition("=")
                 if sep and key.strip() in {"path", "program", "state"}:
                     fields[key.strip()] = value.strip()
