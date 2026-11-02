@@ -156,12 +156,6 @@ class ToolSessionStore:
 
     _session_has_active_jobs = staticmethod(session_has_active_jobs)
 
-    def _session_has_active_jobs_locked(self, session_id: str) -> bool:
-        """Conservatively protect one session participating in durable jobs."""
-        return session_has_active_jobs(
-            session_id, self._active_job_session_ids_locked()
-        )
-
     def _read_all_sessions_locked(self) -> dict[str, AgentSession]:
         """Load valid durable session metadata without applying retention."""
         return self._session_repository.read_all()
