@@ -1,75 +1,37 @@
 # Configuration reference
 
-The primary copy-editable example is `config.example.yaml` at the repository
-root. `.env.example` exists for deployments that intentionally use environment
-overrides; YAML is the normal durable setup.
+Workgate uses role-specific YAML configuration. The repository's [example config](https://github.com/rijuyuezhu/workgate/blob/main/config.example.yaml) is a starting point; the generated reference below shows the current settings and defaults.
 
-## Loading settings
+## Find and edit settings
 
-Precedence is:
+For an installed Workgate service, open **Control config** or the selected Executor's **Config** tab in the [WebUI](../guides/webui.md). The UI shows the saved values and defaults. Save changes and choose **Apply** when a restart is needed.
 
-```text
-defaults < config file < WORKGATE_* environment variables < CLI arguments
-```
+You can also edit the role's YAML file. On Linux the usual locations are:
 
-The config file is selected in this order:
+~~~text
+~/.config/workgate/config.yaml
+~/.config/workgate/executor/config.yaml
+~~~
 
-1. `--config PATH`;
-2. `WORKGATE_CONFIG`;
-3. the role-specific platform default, when that file exists.
+For installed source services, use the actual selected config path shown by the service/CLI. Keep config, state and credential files private.
 
-On Linux the defaults are:
+For most settings, precedence is:
 
-```text
-~/.config/workgate/config.yaml           # control/general commands
-~/.config/workgate/executor/config.yaml  # executor connect/run
-```
+~~~text
+defaults < YAML < WORKGATE_* environment < CLI arguments
+~~~
 
-The authenticated WebUI configuration inspector uses this same precedence and reads from the role's *actual* selected startup file. A managed Executor may instead start from its service-generated private `config.json`; the inspector shows that path, not a guessed default YAML. Authorized users can edit file-owned settings in the WebUI or through the Control `config_inspect`/`config_save` MCP tools. Saving requires existing write permission, checks the current file SHA-256 revision, validates the whole candidate role configuration, and atomically replaces only that role's selected file with a private `.bak` copy. CLI/ENV overrides remain read-only, and the live Child is never restarted or reconfigured by Save. Applying a saved file belongs to #358.
+The CLI **--help** output lists supported overrides.
 
-Control accepts control/shared settings; executor accepts executor/shared
-settings. `workgate colocate` runs both ordinary child processes with
-role-specific configuration and state directories. Each role's `--help`
-lists its supported CLI overrides.
+## Choose a working directory
 
-YAML uses flat setting names such as `auth_mode` and `default_workdir`.
-Persistent filesystem paths in YAML must resolve to absolute paths. Relative
-environment or CLI path overrides are invocation-oriented and resolve from the
-directory Workgate was started in.
+Set **default_workdir** in the Executor configuration to a trusted project directory. It determines where relative workspace operations start; the Executor retains the permissions of its OS account.
 
-`default_workdir` anchors relative executor paths. Long-running executors
-should set it explicitly when they want a stable default independent of the
-service manager's working directory.
+## Before migrating a config
 
-## Application-owned paths
+Record the actual current config and state paths and back up the role's private state. Reuse those paths when upgrading an existing paired Executor.
 
-Workgate keeps application data separate from executor working directories.
-Linux defaults are:
-
-| Lifetime | Default | Examples |
-| --- | --- | --- |
-| config | `${XDG_CONFIG_HOME:-~/.config}/workgate` | control `config.yaml` and `agent/`; executor `executor/config.yaml` and `executor/agent/` |
-| state | `${XDG_STATE_HOME:-~/.local/state}/workgate` | control state; executor defaults to `executor-runtime/` |
-| data | `${XDG_DATA_HOME:-~/.local/share}/workgate` | control-owned persistent payload/data |
-| runtime/temp | `$XDG_RUNTIME_DIR/workgate` when suitable, otherwise a private per-user temp root | disposable scratch files |
-
-Only absolute XDG base-directory values are honored. macOS uses
-its native per-user application locations.
-
-`audit_log_path` and the private Agent Bridge credential directory are derived
-from each role's `state_dir`. The executor profile lives under
-`<executor state_dir>/executor/profile.json`.
-
-## Migration from pre-5.0-alpha layouts
-
-Workgate does not automatically migrate old state roots. If an existing
-deployment must keep an old control or executor state directory, configure that
-absolute `state_dir` explicitly before upgrading. In particular, the executor's
-new private default does not copy a previous paired profile; preserve the old
-executor state root explicitly or pair again.
-
-Move legacy Agent Bridge configuration separately into the appropriate
-role-private config namespace and keep credential-bearing files private.
+## All settings
 
 <div class="generated-reference" data-reference-json="../generated/configuration.json">
 Loading generated configuration reference...

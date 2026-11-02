@@ -1,154 +1,44 @@
-# Agent capability bridge
+# Skills and MCP integrations
 
-The Agent Bridge makes reusable Skills and selected upstream MCP servers available through `workgate`. Use it when several clients should share the same server-managed capabilities.
+Workgate can expose reusable **Skills** and tools from other **MCP servers** to connected clients.
 
-## Configuration directory
+## Add integrations
 
-Declarative Agent Bridge configuration lives in the Workgate config namespace. On Linux the default is:
+Open the Workgate WebUI and find the MCP and Skill management options for Control or a selected Executor. Add an upstream server, enable it and complete authorization if requested.
 
-```text
-${XDG_CONFIG_HOME:-~/.config}/workgate/agent/
-  config.json
-  skills/
-    debugging/
-      SKILL.md
-```
-
-macOS uses its native Workgate config location. Credentials managed by the CLI remain in private durable state rather than this directory. Legacy literal `env` and `headers` values are still accepted in manifests for compatibility, so treat the configuration directory as potentially sensitive and preserve restrictive file permissions. Use managed secret references for new credentials rather than placing tokens or passwords directly in `config.json`.
-
-The bridge also discovers project Skills from `<workdir>/.agents/skills` and user Skills from `$XDG_CONFIG_HOME/agents/skills` when `XDG_CONFIG_HOME` is an absolute path. If `XDG_CONFIG_HOME` is unset or invalid, the user Skill directory falls back to `~/.config/agents/skills`. A project Skill with the same directory name takes priority for that session.
-
-## Minimal configuration
-
-A minimal `config.json` is:
-
-```json
-{
-  "version": 1
-}
-```
-
-Example with one upstream MCP server and managed Skills:
-
-```json
-{
-  "version": 1,
-  "mcpServers": {
-    "docs": {
-      "integrationId": "docs",
-      "type": "http",
-      "url": "https://docs.example.com/mcp",
-      "auth": {
-        "mode": "oauth",
-        "scopes": ["tools.read"]
-      },
-      "enabled": true
-    }
-  },
-  "skills": {
-    "enabled": true,
-    "directory": "skills"
-  }
-}
-```
-
-Supported upstream types are `stdio` and `http` (Streamable HTTP). Review every command, URL, tool description, and requested scope before enabling a server.
-
-Credential-bearing servers use `integrationId` as their stable private identity. Set it when using OAuth, structured secret references, or credential-like literal headers/environment values. It must be unique within the manifest and must stay unchanged if you later rename the `mcpServers` key. For an existing configuration, using the current server key as the initial `integrationId` preserves the natural credential-store identity. Servers with only ordinary non-sensitive literals do not require one.
-
-Enabled `stdio` tools run in a fresh subprocess for each discovery or call, bound to the selected Workgate Session workdir. In-process state is not preserved between calls; use a network MCP server if long-lived server state is required.
+A Control-owned integration uses Control's network. An Executor-owned integration uses that Executor's environment and session workspace.
 
 ## Add a Skill
 
-Create a directory containing `SKILL.md`:
+A Skill is a directory containing a **SKILL.md** file. Project Skills can live under:
 
-```text
-<Workgate config>/agent/skills/debugging/SKILL.md
-```
+~~~text
+project/.agents/skills/my-skill/SKILL.md
+~~~
 
-```markdown
-# Debugging
+Workgate also supports user-level and managed Skill directories. See the [Configuration reference](../reference/configuration.md) for options.
 
-Reproduce the failure first, inspect the smallest relevant code path, and verify a minimal fix with focused tests.
-```
+## Authorize from CLI
 
-Use `list_agent_skills` to see discovered names and sources, then `activate_agent_skill` to load one. Related files returned by a Skill can be read with `read_agent_skill_file`.
+For a configured upstream OAuth server, use:
 
-Skill trees may use normal filesystem symlinks for the Skill directory, `SKILL.md`, and related files or directories. Workgate follows those links under the same file-size and scan budgets while keeping the configured Skill/source path and Skill-relative related paths in tool output. Broken links and directory loops are skipped or reported without unbounded traversal.
-
-## Manage MCP integrations at runtime
-
-Use `manage_agent_mcp_server` to `list`, `get`, `register`, `update`, `enable`, `disable`, `refresh`, or `remove` an upstream MCP server. For example, register a network server with `action="register"`, `name="docs"`, and `config={"type":"http","url":"https://docs.example.com/mcp"}`. Use `action="refresh"` and `name="docs"` to immediately re-probe that server's tools; the result is also available to `search_agent_mcp_tools` and `inspect_agent_mcp_tool` without waiting for the normal 60-second discovery cache to expire.
-
-For `stdio` integrations, pass a Workgate `session_id`: configuration and execution belong to its bound executor, not Control. Network integrations remain Control-owned. `list` without a session shows network integrations; with one it also includes that executor's stdio integrations. `get` returns a safe summary rather than replaying potentially secret-bearing legacy command arguments or URLs. `update` replaces the complete server connection entry, preserving its existing `integrationId`, and never silently changes transport ownership. Credential-bearing integrations cannot be redirected to a new URL or command via model-facing management, nor can a removed integration's private credentials be reused during model-facing registration; these changes require an owner-private configuration flow. `remove` deletes the manifest entry but does not erase any existing private credentials.
-
-Runtime changes are written atomically to the owner's **existing `config.json`**; they do not create a second integration registry. In model-facing `config`, `env` and `headers` only accept secret references such as `{"X-API-Key":{"secret":"api_key"}}`, not literal values. URLs may not contain embedded credentials or query strings. Set the actual secret and authorize OAuth only through the private CLI/UI flows described below; never put tokens in connection arguments or URLs. Manual edits of the same manifest remain supported.
-
-## Store a static secret
-
-Secret references are valid only when the same server uses `auth.mode="secret"`. For example, this complete entry configures a server named `github` with a managed API-key header:
-
-```json
-{
-  "version": 1,
-  "mcpServers": {
-    "github": {
-      "integrationId": "github",
-      "type": "http",
-      "url": "https://github.example.com/mcp",
-      "headers": {
-        "X-API-Key": {"secret": "github_token"}
-      },
-      "auth": {"mode": "secret"},
-      "enabled": true
-    }
-  }
-}
-```
-
-Set the referenced value through standard input so it does not appear in the command arguments. For a configured integration, use its `mcpServers` display name:
-
-```bash
-printf '%s\n' "$GITHUB_TOKEN" | workgate mcp secret set github github_token --stdin
-workgate mcp secret list github
-workgate mcp secret delete github github_token
-```
-
-The CLI resolves that display name to the entry's stable `integrationId` before reading or changing private credentials. Therefore a later rename from `github` to another `mcpServers` key does not reset credential or redaction history as long as `integrationId` remains `github`. Keeping that explicit `integrationId` also preserves retired-value redaction history if the integration is later reconfigured without credentials.
-
-`secret set` always requires a currently configured server. `secret list` and `secret delete` also support cleanup after an integration has been removed: `workgate mcp secret list` shows stored integration identities, and a detached `integrationId` can be supplied in the normal server position to inspect or delete its stored secret names. If a live display name is present, it is resolved to its stable identity unless that exact argument already names a stored secret bucket.
-
-Literal `env` and `headers` are still accepted for compatibility. Credential-like literal keys such as `Authorization`, `Cookie`, `TOKEN`, `PASSWORD`, or API-key fields participate in durable retired-value redaction and therefore also require `integrationId`. Ordinary literal values such as `MODE=production`, `LOG_LEVEL=info`, or `X-Mode: 1` are redacted only for the current server snapshot and are not persisted as a global substring filter. Prefer structured secret references for credentials, especially when the application uses an unusual key name.
-
-## Authorize an OAuth server
-
-```bash
+~~~sh
 workgate mcp auth docs
 workgate mcp auth docs --status
-workgate mcp auth docs --logout
-```
+~~~
 
-Use `--no-open` when the CLI should print the authorization URL instead of opening a browser.
+Replace **docs** with its configured name. The WebUI also provides authorization.
 
-`--logout` is also the local cleanup path for retired OAuth identities. If the argument names stored OAuth state that no currently configured OAuth server owns, Workgate clears that local state without attempting network revocation and reports `remote_revocation: "unavailable"`. If a renamed live OAuth server still owns the same stable `integrationId`, supplying that identity resolves back to the live server so remote revocation can still be attempted. An exact detached OAuth identity takes precedence over a reused display name, preventing stale cleanup from touching a different live integration.
+## Use an integration
 
-## Use bridge capabilities
+Try asking your client:
 
-Start by asking the client to show what is available:
+> Use Workgate to show my available Skills and MCP integrations, then find a tool for searching our docs.
 
-```text
-Use workgate to check Agent Bridge status, list available Skills and upstream MCP servers, and summarize the extra capabilities.
-```
+The generated [Tools reference](../reference/tools.md) describes the available tool contracts.
 
-Use `search_agent_mcp_tools` with keywords and an optional `session_id` to discover external tool summaries (without schemas). Set `server` to probe only that configured MCP server. Then call `inspect_agent_mcp_tool` with the chosen `server` and `tool` to fetch its input schema. Finally use `call_agent_mcp_tool` to invoke it. These are fixed Workgate tools: upstream tool counts never expand the public tool list.
+## Credentials
 
-Discovery keeps a bounded in-memory snapshot for up to 60 seconds; pass `refresh=true` to search again after changing a server's configuration or tools. Session workdir changes invalidate that session's cache. Searches are limited to 50 matches, with a default of 20; each selected schema is returned on demand, not in the search result. Credentials and sensitive descriptor values remain redacted.
+Store API keys and OAuth tokens in managed credentials rather than in project files. Review each upstream server and its access before enabling it.
 
-## Security notes
-
-- Stdio servers run on the executor selected by `session_id`, using that session's current workdir. Explicit server/tool discovery opens short-lived MCP subprocesses to inspect their live status or schemas. Ordinary calls only read configured server ownership and start the selected MCP subprocess once; process-local state is not retained between calls or shared between Workgate sessions.
-- HTTP servers use the server's network access, not the MCP client's.
-- An upstream server can use any secret or OAuth scope granted to it. Configure only trusted servers and use the narrowest credentials possible.
-- Keep the entire service state directory private and back it up only through a secure process.
-
-See [Configuration](../reference/configuration.md) for settings and [Tool reference](../reference/tools.md) for exact bridge tools.
+For advanced manifests, inspect the [Agent Bridge source](https://github.com/rijuyuezhu/workgate/tree/main/src/workgate/agent_bridge).

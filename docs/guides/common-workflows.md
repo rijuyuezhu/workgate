@@ -1,113 +1,45 @@
 # Common workflows
 
-The safest workflow is: choose a workspace, inspect it, make a small change, and verify the result. Exact argument schemas live in the generated [Tool reference](../reference/tools.md).
+Choose a computer and a project directory. Workgate runs workspace operations in a **Session** on that Executor.
 
-## Start with an explicit session
+## Inspect a project
 
-Ask the client to start a session in the project directory before doing any work:
+> Start a Workgate session in my project directory, read the project's instructions, and show the Git status.
 
-```text
-Use workgate in /path/to/project. Start a session, inspect the returned workspace and Git state, and read any instruction files before changing anything.
-```
+## Edit and test
 
-Keep using the returned `session_id`. Use `session_change_workdir` when the task moves to another directory instead of starting unrelated operations from an assumed path.
+> Find the implementation of this feature, make the smallest useful change, and run its relevant tests.
 
-## Inspect before editing
+Review the diff and test results before committing.
 
-Use directory and search tools to locate the smallest relevant area. Then read
-the exact files you plan to change.
+## Run a longer job
 
-```text
-Find where the HTTP timeout is configured, show me the relevant files and tests, and propose a minimal change. Do not edit yet.
-```
+> Start the build as a Workgate Job and show its status and recent output.
 
-Useful tools include `tree_view`, `list_files`, `glob_search`, `search`, `read`,
-and `view_image`. Call `read` once per targeted file; selectors can retrieve
-multiple ordered ranges from the same file. Prefer targeted reads over dumping
-an entire repository.
+Use persistent shells for interactive programs or long-running terminals.
 
-## Edit with current file context
+## Automate a browser
 
-Choose the editing tool that matches the change:
+> Open the project dashboard in a Workgate browser session, inspect its visible controls, and report what you find.
 
-- `hashline_edit` for precise text changes based on recently read hashline rows;
-- `edit_lines` for an exact, structured line-range replacement;
-- `apply_patch` when you already have a portable unified diff;
-- `write_file` for a new file or a deliberate full replacement.
+Browser sessions run on the selected Executor.
 
-After editing, reread the changed area or inspect `git diff` before running validation.
+## Copy between workspaces
 
-```text
-Apply the smallest fix, show the diff, then run the focused tests. Do not make unrelated formatting changes.
-```
+> Copy the generated report from the session on my build machine into the reports directory in my workstation session.
 
-## Run commands and tests
-
-Use `bash` for bounded, non-interactive commands such as formatting, tests, builds, or Git inspection.
-
-```text
-Run the narrowest relevant test first. If it passes, run the project's normal validation command and summarize any failures.
-```
-
-For a long-running non-interactive command, set `async_=true` and manage the returned job with `job`. Use `pty=true` when the execution session needs an interactive terminal, server process, or REPL; persistent shells remain owned by that same `session_id`.
-
-## Automate a web page
-
-When the bound executor advertises browser support, use `browser_session` to start an isolated Chromium context, `browser_snapshot` to obtain bounded visible text, recent network response metadata (page, method, status and URL), and short interactive-element refs such as `e1`, and `browser_act` for high-level navigation and interaction. Prefer fresh snapshot refs; `browser_act` also accepts a CSS selector when a ref is unavailable, and requires it to match exactly one element. Re-snapshot after navigation or substantial DOM replacement before reusing refs. Snapshots save a managed PNG screenshot by default; set `screenshot=false` to skip it. The managed path is executor-local, valid for `view_image` or file links through the same session/executor, and is deleted when its browser session closes. A `screenshot_path` instead saves a user-owned non-overwriting PNG in the session workdir (if relative) and is not automatically deleted.
-
-For full Python Playwright automation beyond structured actions, `browser_run_script` runs a separate bounded process on the session's bound executor, using that session's workdir and the Workgate runtime Python interpreter. It requires both `browser:use` and shell execution scopes. The script launches its own Chromium context and cannot attach to an existing `browser_session`; use `browser_act` for routine navigation and interaction. Script source, execution results, and exceptions receive ordinary Audit recording; do not place credentials or private data in script output unless you intend it to be retained.
-
-Live browser sessions are session-owned and do not silently reuse a person's normal browser profile or credentials. Reusable authentication is explicit: start with a case-insensitive named `profile_id` to reuse executor-local Chromium state, or close with `save_storage_state_path` and later start with `storage_state_path` to round-trip Playwright storage state inside the owning session workdir. Workgate permits `http://`, `https://`, and `about:blank` navigation on this surface; local `file:` navigation remains blocked in structured actions; the separate script tool has full Python authority.
-
-## Copy between sessions
-
-Use `session_copy` to move files or directories between two existing executor-backed sessions. Start both sessions first and name the source and destination clearly; they may be bound to the same executor or different executors. Existing destinations are preserved by default; request `overwrite=true` explicitly when replacement is intended. A copy starts as a durable managed job by default; poll, cancel, or retry its returned `job_id` with `job(session_id=src_session_id, ...)`. Use `background=false` explicitly only when a small copy should complete synchronously under the normal tool timeout.
-
-```text
-Copy artifacts/report.json from the build session on gpu1 into reports/latest.json in my workstation session, then verify the destination file.
-```
-
-The service chooses the supported transfer route. Users normally do not select one. Operators may configure an S3-compatible object store for cross-executor copies; byte-route unavailability can fall back to the durable control relay, while configuration or destination errors remain visible.
+Choose the source and destination Sessions explicitly.
 
 ## Share a file
 
-Use `create_file_link` with the owning `session_id` and a regular file path
-to publish a snapshot download URL. Set a short TTL and, for a one-time
-handoff, `max_downloads=1`. Share the returned URL privately: it is a bearer
-secret, so anyone with the URL can download the snapshot within its limits.
+> Create a short-lived download link for the report from this Workgate session.
 
-Use `list_file_links` to inspect active link metadata, and `revoke_file_link`
-with the returned `link_id` to end access early. The listing does **not**
-recover the original bearer URL. See [Security](../security.md#file-links-and-transfers)
-for the access boundary.
+Workgate creates a snapshot for the link. Treat the link as a secret: anyone with it can download the file until its access expires or is revoked.
 
-## Work on another executor
+## Keep task progress
 
-Pair or select the intended executor, then start a session with its stable executor id and workdir:
+> Create a task for this work, record the current plan and update the completed steps as you go.
 
-```text
-Start a session in /home/me/project on executor gpu1, inspect the repository, and run git status without editing files.
-```
+Tasks can outlive their individual execution sessions. Use the WebUI to inspect progress and Audit history.
 
-File, search, shell, job, browser, transfer, and other machine-facing tools route through the executor bound to that execution session. Task state is control-owned under a separate `task_id`. Pass that id to `session_start` when creating a session for the task; it does not select or rebind an executor/workdir. See [Executors](executors.md) for pairing, reconnect, and trust management.
-
-## Keep durable task progress
-
-For substantial multi-step work, create or resume a task before starting its execution sessions. Use `task(action="get", task_id=...)` for handoff, `task(action="report", ...)` for progress, and `task_plan` for plan steps. `read_todos` and `write_todos` project the same plan.
-
-`session_end` releases only one execution context. The semantic task remains independently readable and mutable by `task_id`, including when it has zero active sessions.
-
-## Review activity
-
-Use the WebUI Audit panel or `audit_tail` to review recent tool activity. Request a full retained payload only for a specific entry and only when the client has the required scope.
-
-Audit data is not redacted: it may contain project content, credentials, and command output. Treat it as private. See [Audit log](audit-log.md).
-
-## Finish cleanly
-
-Before reporting completion:
-
-1. inspect the final diff or generated output;
-2. run the relevant formatter, type checker, tests, or build;
-3. report what changed and what was not verified;
-4. leave unrelated files untouched.
+For exact tool arguments, see the generated [Tools reference](../reference/tools.md).

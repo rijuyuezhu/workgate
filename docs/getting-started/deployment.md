@@ -1,49 +1,15 @@
 # Choose a deployment
 
-Workgate has two runtime roles:
+**Control** serves the MCP endpoint and WebUI. **Executors** provide access to the computers and projects where work happens.
 
-- **control** exposes MCP, OAuth, the WebUI, pairing, and orchestration;
-- **executor** owns working directories, files, shells, processes, PTYs, and machine-local integrations.
-
-Choose where those roles run. The protocol and trust model stay the same.
-
-| Deployment | Use it when | Start here |
+| Your setup | What to install | Guide |
 | --- | --- | --- |
-| Colocated local | one machine, two ordinary processes managed together | [Quickstart](quickstart.md) |
-| Separate local processes | you want to run and debug each role yourself | [Run the roles separately](#run-the-roles-separately) |
-| VPS control + executors | you want one stable public control endpoint | [VPS deployment](vps.md) |
+| One computer | Colocate | [Quickstart](quickstart.md) |
+| Several computers | Control on one host; Executor on each workspace host | [Install Workgate](install-options.md), then [Executors](../guides/executors.md) |
+| Public Control on a VPS | Control on the VPS; Executors on your computers | [VPS deployment](vps.md) |
 
-## Configuration
+Once Control is running, connect ChatGPT or another client using the Control URL ending in /mcp. Open /ui to manage and approve Executors.
 
-YAML is the normal durable configuration surface. On Linux the default files are:
+Choose an OS account for each Executor whose file and command permissions match the work you want it to perform. See [Security](../security.md).
 
-```text
-~/.config/workgate/config.yaml           # control/general config
-~/.config/workgate/executor/config.yaml  # executor config
-```
-
-Environment variables and CLI flags are overrides. Control and executor also
-use separate state defaults even when they run as the same OS user. See
-[Configuration](../reference/configuration.md) for precedence, platform paths,
-and role ownership.
-
-## Run the roles separately
-
-For a same-host setup without the colocate launcher, start control first:
-
-```bash
-workgate control
-```
-
-Pair the executor once against that control, approve it in `/ui`, then run it:
-
-```bash
-workgate executor connect http://127.0.0.1:8765 --name local-executor
-workgate executor run
-```
-
-Use [Colocated local mode](colocate.md) when you want one command to manage
-both processes. For another machine, follow [Executors](../guides/executors.md).
-Each long-running CLI command has one stable Parent and one runtime Child;
-`colocate` has one Parent and two Children. Service managers supervise the
-Parent, whose shutdown also stops its Children.
+For config options, consult the [Configuration reference](../reference/configuration.md). For shell-based development, see [Development](../development.md).
