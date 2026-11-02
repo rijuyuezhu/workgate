@@ -60,7 +60,6 @@ def _executor_store():
 
 
 def test_bounded_runner_uses_trusted_absolute_script():
-
     argv = shell_ops._bounded_runner_argv("/bin/sh", "echo hi")
 
     assert argv[0] == sys.executable

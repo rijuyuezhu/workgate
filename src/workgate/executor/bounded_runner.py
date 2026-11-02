@@ -47,7 +47,7 @@ def bounded_runner_argv(
     command: str,
     *extra_arguments: str,
 ) -> list[str]:
-    """Build one trusted invocation of the private bounded-runner CLI."""
+    """Build a trusted Python invocation of the bounded-runner script."""
     arguments = [
         "--shell",
         shell,
