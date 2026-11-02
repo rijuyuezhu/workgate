@@ -1,5 +1,6 @@
 """Published release pinning and non-activating source preparation."""
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -172,17 +173,22 @@ def checkout(tmp_path: Path) -> tuple[Path, Path, Path]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("system", ["Linux", "Darwin", "Windows"])
 async def test_stage_passes_exact_commit_and_never_activates(
-    checkout: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch
+    checkout: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    system: str,
 ) -> None:
     worktree, python, launcher = checkout
+    if system == "Windows":
+        python = worktree / ".venv/Scripts/python.exe"
+        python.parent.mkdir(parents=True)
+        python.write_text("not called")
     monkeypatch.setattr(
         source_stage,
         "verified_source_checkout",
         lambda p, *, version, system: (
-            worktree
-            if p == python and version == __version__ and system == "Linux"
-            else None
+            worktree if p == python and version == __version__ else None
         ),
     )
 
@@ -209,14 +215,28 @@ async def test_stage_passes_exact_commit_and_never_activates(
         assert kw["cwd"] == worktree
         assert kw["timeout"] == 3600
         assert kw["include_stderr"] is True
+        assert kw["env"]["HTTPS_PROXY"] == "http://127.0.0.1:7890"
+        paths = kw["env"]["PATH"].split(os.pathsep)
+        if system == "Windows":
+            assert kw["env"]["PATH"] == os.environ["PATH"]
+        else:
+            assert paths[: len(os.environ["PATH"].split(os.pathsep))] == (
+                os.environ["PATH"].split(os.pathsep)
+            )
+            assert paths[-1 if system == "Linux" else -2] == str(
+                Path.home() / ".local/bin"
+            )
+            if system == "Darwin":
+                assert paths[-1] == "/opt/homebrew/bin"
         destination = worktree.parent / SHA / ".venv"
         destination.mkdir(parents=True)
         return 0, ""
 
     monkeypatch.setattr(source_stage, "run_bounded_capture", fake_run)
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:7890")
     original = launcher.read_bytes()
     staged = await source_stage.prepare_managed_source(
-        worktree, version="6.0.0a1", system="Linux"
+        worktree, version="6.0.0a1", system=system
     )
     assert staged == worktree.parent / SHA
     assert launcher.read_bytes() == original
