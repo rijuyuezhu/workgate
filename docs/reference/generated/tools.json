@@ -1,11 +1,11 @@
 {
-  "count": 60,
+  "count": 61,
   "sections": [
     {
       "body": [
         "Generated tool count: ",
         {
-          "code": "60"
+          "code": "61"
         },
         "."
       ],
@@ -2304,6 +2304,23 @@
             ]
           },
           "Atomically save role-owned configuration file changes using a revision from config_inspect. Saves file only; does NOT restart or apply."
+        ],
+        [
+          {
+            "code": "image_show"
+          },
+          {
+            "items": [
+              {
+                "description": null,
+                "head": {
+                  "code": "url"
+                },
+                "note": "(string, required)"
+              }
+            ]
+          },
+          "Show an existing create_file_link(inline=true) JPEG or PNG URL from this Workgate Control directly in the ChatGPT conversation. The image link remains expiring and independently revocable."
         ],
         [
           {
@@ -6781,6 +6798,54 @@
           "hunks"
         ],
         "title": "HashlineEditOutput",
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
+        "openai/outputTemplate": "ui://workgate/image-preview-df88d27787f70c28.html",
+        "openai/toolInvocation/invoked": "Image preview ready",
+        "openai/toolInvocation/invoking": "Opening image preview",
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "file:share"
+            ],
+            "type": "oauth2"
+          }
+        ],
+        "ui": {
+          "resourceUri": "ui://workgate/image-preview-df88d27787f70c28.html"
+        },
+        "ui/resourceUri": "ui://workgate/image-preview-df88d27787f70c28.html"
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Show an existing create_file_link(inline=true) JPEG or PNG URL from this Workgate Control directly in the ChatGPT conversation. The image link remains expiring and independently revocable.",
+      "inputSchema": {
+        "properties": {
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "image_showArguments",
+        "type": "object"
+      },
+      "name": "image_show",
+      "outputSchema": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "title": "image_showDictOutput",
         "type": "object"
       }
     },

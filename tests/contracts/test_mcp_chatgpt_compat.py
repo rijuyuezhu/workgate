@@ -690,6 +690,7 @@ async def test_read_only_tools_are_annotated(tmp_path, monkeypatch):
         "config_inspect",
         "fetch",
         "glob_search",
+        "image_show",
         "list_file_links",
         "list_files",
         "list_persistent_shells",

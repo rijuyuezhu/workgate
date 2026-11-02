@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Workgate Image Preview</title>
+  <style>
+    :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+    body { margin: 0; padding: 12px; color: CanvasText; background: Canvas; }
+    figure { margin: 0; display: grid; gap: 10px; }
+    img { max-width: 100%; max-height: 540px; object-fit: contain; border-radius: 8px; }
+    p { margin: 0; font-size: .9rem; opacity: .75; }
+    a { font-size: .9rem; color: LinkText; }
+  </style>
+</head>
+<body>
+  <figure>
+    <img id="preview" alt="Shared Workgate image" referrerpolicy="no-referrer" hidden>
+    <p id="status" role="status">Waiting for image preview…</p>
+    <a id="open" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" hidden>Open image</a>
+  </figure>
+  <script>
+  (() => {
+    const img = document.getElementById("preview");
+    const status = document.getElementById("status");
+    const link = document.getElementById("open");
+
+    function show(result) {
+      const data = result?.structuredContent || result;
+      if (!data || typeof data.url !== "string") return;
+      let parsed;
+      try { parsed = new URL(data.url); } catch { parsed = null; }
+      if (!parsed || !["https:", "http:"].includes(parsed.protocol) ||
+          !/(?:^|\/)download\/[A-Za-z0-9_-]{43}$/.test(parsed.pathname) ||
+          parsed.search || parsed.hash || parsed.username || parsed.password) {
+        img.hidden = true;
+        link.hidden = true;
+        status.hidden = false;
+        status.textContent = "Invalid image link.";
+        return;
+      }
+      img.hidden = true;
+      link.href = data.url;
+      link.hidden = false;
+      status.hidden = false;
+      status.textContent = "Loading shared image…";
+      img.onload = () => { img.hidden = false; status.hidden = true; };
+      img.onerror = () => {
+        img.hidden = true;
+        status.hidden = false;
+        status.textContent = "Image unavailable or expired. Try opening the link.";
+      };
+      img.src = data.url;
+    }
+
+    window.addEventListener("openai:set_globals", (event) => {
+      show(event.detail?.globals?.toolOutput);
+    });
+    show(window.openai?.toolOutput);
+
+    // Standard MCP Apps host: the HTML resource receives the tool result from
+    // its host after initialization. ChatGPT's window.openai path works too.
+    const requestId = 1;
+    window.addEventListener("message", (event) => {
+      if (event.source !== window.parent && event.source !== window) return;
+      const message = event.data;
+      if (!message || message.jsonrpc !== "2.0") return;
+      if (message.id === requestId && message.result && !message.method) {
+        window.parent.postMessage({
+          jsonrpc: "2.0", method: "ui/notifications/initialized", params: {}
+        }, "*");
+      }
+      if (message.method === "ui/notifications/tool-result") show(message.params);
+      if (message.method === "ping" || message.method === "ui/resource-teardown") {
+        if (message.id !== undefined) {
+          window.parent.postMessage({ jsonrpc: "2.0", id: message.id, result: {} }, "*");
+        }
+      }
+    });
+    window.parent.postMessage({
+      jsonrpc: "2.0", id: requestId, method: "ui/initialize",
+      params: {
+        appInfo: { name: "workgate-image-preview", version: "1.0.0" },
+        appCapabilities: {}, protocolVersion: "2026-01-26"
+      }
+    }, "*");
+  })();
+  </script>
+</body>
+</html>

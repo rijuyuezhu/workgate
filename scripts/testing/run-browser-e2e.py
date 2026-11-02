@@ -35,6 +35,7 @@ def main() -> int:
         "-m",
         "browser",
         "tests/e2e/browser/test_human_ui_e2e.py",
+        "tests/e2e/browser/test_image_preview.py",
     ]
     return subprocess.run(command, env=env, check=False).returncode
 
