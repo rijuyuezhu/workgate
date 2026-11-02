@@ -35,9 +35,20 @@ from workgate.platform.windows_task import WindowsUserTask  # noqa: E402
 
 
 def _powershell(argv: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        argv, capture_output=True, text=True, timeout=30, check=True
+    # PowerShell progress can fail to access a console buffer over SSH.
+    if argv[-2] == "-Command":
+        argv = [
+            *argv[:-1],
+            "$ProgressPreference = 'SilentlyContinue'; " + argv[-1],
+        ]
+    result = subprocess.run(
+        argv, capture_output=True, text=True, errors="replace", timeout=30
     )
+    if result.returncode:
+        raise RuntimeError(
+            f"PowerShell failed ({result.returncode}): {result.stderr.strip()}"
+        )
+    return result
 
 
 def _task_last_run(task_name: str) -> str:
@@ -74,9 +85,17 @@ async def main(*, outage_only: bool = False) -> None:
         # An elevated test launcher (e.g. WSL interop) creates Admin-owned
         # private state. The real Scheduler task uses a *limited* user token.
         # Grant only this same account access to disposable test paths.
-        account = f"{os.environ['USERDOMAIN']}\\{os.environ['USERNAME']}"
+        sid = _powershell(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "[Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
+            ]
+        ).stdout.strip()
         subprocess.run(
-            ["icacls.exe", str(root), "/grant", f"{account}:(OI)(CI)F", "/T"],
+            ["icacls.exe", str(root), "/grant", f"*{sid}:(OI)(CI)F", "/T"],
             check=True,
             capture_output=True,
             timeout=20,
