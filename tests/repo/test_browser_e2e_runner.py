@@ -48,6 +48,7 @@ def test_browser_e2e_runner_forwards_contract_and_exit_status(
         "-m",
         "browser",
         "tests/e2e/browser/test_human_ui_e2e.py",
+        "tests/e2e/browser/test_image_preview.py",
     ]
     assert observed["check"] is False
     artifacts = tmp_path / "relative-artifacts"

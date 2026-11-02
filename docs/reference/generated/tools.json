@@ -6806,7 +6806,6 @@
         "openai/outputTemplate": "ui://workgate/image-preview-df88d27787f70c28.html",
         "openai/toolInvocation/invoked": "Image preview ready",
         "openai/toolInvocation/invoking": "Opening image preview",
-        "openai/widgetAccessible": true,
         "securitySchemes": [
           {
             "scopes": [

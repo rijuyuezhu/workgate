@@ -115,7 +115,6 @@ def register_image_preview(
             "ui": {"resourceUri": resource_uri},
             "ui/resourceUri": resource_uri,
             "openai/outputTemplate": resource_uri,
-            "openai/widgetAccessible": True,
             "openai/toolInvocation/invoking": "Opening image preview",
             "openai/toolInvocation/invoked": "Image preview ready",
         },

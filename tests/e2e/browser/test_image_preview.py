@@ -46,6 +46,18 @@ def test_image_preview_card_renders_and_falls_back(
         assert page.locator("#open").get_attribute("href") == _URL
         expect(page.locator("#status")).to_be_hidden()
 
+        # Replaying a tool result must not leave the already-loaded card stuck
+        # in a loading state.
+        page.evaluate(
+            """(url) => window.postMessage({
+                jsonrpc: "2.0", method: "ui/notifications/tool-result",
+                params: { structuredContent: { url } }
+            }, "*")""",
+            _URL,
+        )
+        expect(page.locator("#preview")).to_be_visible()
+        expect(page.locator("#status")).to_be_hidden()
+
         page.route(
             "https://files.example.test/download/**",
             lambda route: route.fulfill(

@@ -8,14 +8,17 @@ from mcp.types import CallToolResult
 
 from workgate.config.control import resolve_control_config
 from workgate.config.settings import clear_settings_cache, get_settings
+from workgate.control import downloads
 from workgate.control.download_snapshot import (
     DownloadSnapshot,
     new_staging_path,
     open_private_staging,
 )
+from workgate.control.download_store import ClaimedDownload, release_claim
 from workgate.control.downloads import (
     _register_snapshot,
     _revoke_file_link_owned,
+    claim_download,
 )
 from workgate.control.mcp.app import build_mcp
 from workgate.persistence import FileStateStore, use_state_store
@@ -54,9 +57,7 @@ def _image_link(settings, tmp_path, *, suffix=".png", inline=True):
         max_downloads=0,
         inline=inline,
         session_id=None,
-        settings=__import__(
-            "workgate.config.control", fromlist=["resolve_control_config"]
-        ).resolve_control_config(settings),
+        settings=resolve_control_config(settings),
     )
 
 
@@ -70,6 +71,8 @@ async def test_image_preview_mcp_app_metadata_and_asset(image_settings):
     assert show.meta["ui"]["resourceUri"].startswith(
         "ui://workgate/image-preview-"
     )
+    # Display-only widgets do not need permission to call other MCP tools.
+    assert "openai/widgetAccessible" not in show.meta
     assert (
         show.annotations is not None and show.annotations.read_only_hint is True
     )
@@ -141,18 +144,10 @@ async def test_image_preview_accepts_only_live_inline_image_links(
             await mcp.call_tool("image_show", {"url": png.url})
 
         # The preview tool checks validity without consuming the bearer URL.
-        from workgate.control.download_store import (
-            ClaimedDownload,
-            release_claim,
-        )
-        from workgate.control.downloads import claim_download
-
         checked = claim_download(jpg.token, consume=False, settings=config)
         assert isinstance(checked, ClaimedDownload)
         assert checked.link["downloads"] == 0
         release_claim(checked)
-
-        from workgate.control import downloads
 
         assert jpg.created_at is not None
         expired_now = jpg.created_at + 61
