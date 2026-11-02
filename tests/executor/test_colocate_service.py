@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 
 from workgate.colocate import service
+from workgate.config.control import CONTROL_SETTING_NAMES
+from workgate.config.executor import EXECUTOR_SETTING_NAMES
 from workgate.executor.profile import ExecutorProfile, ExecutorProfileStore
 from workgate.persistence import FileStateStore
 from workgate.protocol.credentials import new_executor_credential
@@ -116,6 +118,27 @@ def test_install_service_creates_unit_and_is_idempotent(installer, monkeypatch):
     service.install_colocate_service(args)
     assert len(commands) == 11
     assert unit.read_text() == content
+
+
+def test_install_service_ignores_imported_systemd_workgate_config(installer):
+    args, _commands, pair, unit = installer
+    pair()
+    service.install_colocate_service(args)
+    lines = [
+        line
+        for line in unit.read_text().splitlines()
+        if line.startswith("UnsetEnvironment=")
+    ]
+    assert len(lines) == 1
+    actual = lines[0].removeprefix("UnsetEnvironment=").split()
+    expected = {
+        "WORKGATE_CONFIG",
+        *(
+            f"WORKGATE_{name.upper()}"
+            for name in CONTROL_SETTING_NAMES | EXECUTOR_SETTING_NAMES
+        ),
+    }
+    assert actual == sorted(expected)
 
 
 def test_install_service_does_not_overwrite_unmanaged_unit(installer):

@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from ..app_paths import app_paths, ensure_private_directory
+from ..config.control import CONTROL_SETTING_NAMES
 from ..config.executor import EXECUTOR_SETTING_NAMES
 from ..config.settings import load_settings
 from ..executor.profile import ExecutorProfileStore
@@ -186,6 +187,13 @@ def install_colocate_service(args: argparse.Namespace) -> None:
         raise RuntimeError(
             "refusing to replace a loaded Colocate unit from another path"
         )
+    blocked_env_names = [
+        "WORKGATE_CONFIG",
+        *(
+            f"WORKGATE_{name.upper()}"
+            for name in CONTROL_SETTING_NAMES | EXECUTOR_SETTING_NAMES
+        ),
+    ]
     content = "\n".join(
         [
             _MANAGED_HEADER,
@@ -201,6 +209,9 @@ def install_colocate_service(args: argparse.Namespace) -> None:
             "Restart=always",
             "RestartSec=5",
             'Environment="PYTHONUNBUFFERED=1"',
+            # Imported systemd --user environment outlives the installing shell.
+            # Role YAML must remain authoritative for both colocated children.
+            "UnsetEnvironment=" + " ".join(sorted(blocked_env_names)),
             "",
             "[Install]",
             "WantedBy=default.target",
