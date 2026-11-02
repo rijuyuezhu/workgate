@@ -297,9 +297,7 @@ def build_executor_tool_dispatcher(
                 "cwd": ".",
                 "timeout_s": args.get("timeout_s", 60),
                 "max_output_bytes": args.get("max_output_bytes"),
-                "python_executable": (
-                    None if getattr(sys, "frozen", False) else sys.executable
-                ),
+                "python_executable": sys.executable,
             }
         )
 

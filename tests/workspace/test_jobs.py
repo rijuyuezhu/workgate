@@ -184,20 +184,12 @@ async def _test_job_retry_execute(
         )
 
 
-def test_lifecycle_helpers_cover_platform_and_bounded_log_paths(
-    tmp_path, monkeypatch
-):
-    monkeypatch.setattr(job_lifecycle.sys, "frozen", True, raising=False)
+def test_lifecycle_helpers_cover_platform_and_bounded_log_paths(tmp_path):
     paths: job_state.JobAttemptPaths = {
         "command": tmp_path / "command.txt",
         "log": tmp_path / "job.log",
         "status": tmp_path / "status.json",
     }
-    argv = job_lifecycle._runner_argv(
-        resolve_executor_config(get_settings()), paths, tmp_path
-    )
-    assert argv[:2] == [job_lifecycle.sys.executable, "job-runner"]
-    monkeypatch.setattr(job_lifecycle.sys, "frozen", False, raising=False)
     argv = job_lifecycle._runner_argv(
         resolve_executor_config(get_settings()), paths, tmp_path
     )

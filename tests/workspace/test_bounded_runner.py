@@ -1769,27 +1769,6 @@ def test_frozen_bounded_runner_restores_system_loader_for_shell(
     assert capfd.readouterr().out == "/usr/lib"
 
 
-def test_bounded_runner_argv_uses_frozen_cli_subcommand(monkeypatch):
-    monkeypatch.setattr(bounded_runner.sys, "executable", "/app/workgate")
-
-    assert bounded_runner.bounded_runner_argv(
-        "/bin/sh",
-        "echo ok",
-        "--launchd-child-status",
-        "/tmp/status.json",
-        frozen=True,
-    ) == [
-        "/app/workgate",
-        "bounded-runner",
-        "--shell",
-        "/bin/sh",
-        "--command",
-        "echo ok",
-        "--launchd-child-status",
-        "/tmp/status.json",
-    ]
-
-
 def test_bounded_runner_argv_uses_platform_native_absolute_script(monkeypatch):
     monkeypatch.setattr(
         bounded_runner.Path,
@@ -1799,9 +1778,7 @@ def test_bounded_runner_argv_uses_platform_native_absolute_script(monkeypatch):
         ),
     )
 
-    argv = bounded_runner.bounded_runner_argv(
-        "/bin/sh", "echo ok", frozen=False
-    )
+    argv = bounded_runner.bounded_runner_argv("/bin/sh", "echo ok")
 
     assert argv[0] == bounded_runner.sys.executable
     assert os.path.isabs(argv[1])
@@ -1814,11 +1791,9 @@ def test_bounded_runner_argv_uses_platform_native_absolute_script(monkeypatch):
     ]
 
 
-def test_launchd_plist_uses_frozen_cli_subcommand(monkeypatch):
+def test_launchd_plist_uses_source_runner_script(monkeypatch):
     _install_fake_launchd_coalitions(monkeypatch)
     program_arguments: list[str] = []
-    monkeypatch.setattr(bounded_runner.sys, "executable", "/app/workgate")
-    monkeypatch.setattr(bounded_runner.sys, "frozen", True, raising=False)
 
     def fake_launchctl(args):
         if args[0] == "bootstrap":
@@ -1835,9 +1810,9 @@ def test_launchd_plist_uses_frozen_cli_subcommand(monkeypatch):
     monkeypatch.setattr(bounded_runner, "LAUNCHD_CLEANUP_GRACE_S", 0.0)
 
     assert bounded_runner._run_launchd_bounded_command("/bin/sh", "true") == 125
-    assert program_arguments[:6] == [
-        "/app/workgate",
-        "bounded-runner",
+    assert program_arguments[0] == sys.executable
+    assert program_arguments[1].endswith("bounded_runner.py")
+    assert program_arguments[2:6] == [
         "--shell",
         "/bin/sh",
         "--command",

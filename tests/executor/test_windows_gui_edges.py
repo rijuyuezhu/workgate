@@ -314,12 +314,13 @@ def test_windows_gui_capture_child_process_success_failure_timeout(
     monkeypatch.setattr(windows.subprocess, "run", timeout)
     with pytest.raises(GuiUnavailableError, match="timed out"):
         windows._capture_window_image(77, destination)
-    monkeypatch.setattr(windows.sys, "frozen", True, raising=False)
+    # Source installs invoke the isolated screenshot module directly.
     monkeypatch.setattr(windows.subprocess, "run", run)
     windows._capture_window_image(77, destination)
     assert called[-1][0] == [
         windows.sys.executable,
-        "--_windows-capture",
+        "-m",
+        "workgate.executor.gui.windows_capture",
         "77",
         str(destination),
     ]
