@@ -620,11 +620,6 @@ def _audit_tasks(record: dict[str, Any]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(tasks))
 
 
-def _audit_task(record: dict[str, Any]) -> str:
-    tasks = _audit_tasks(record)
-    return tasks[0] if tasks else ""
-
-
 def _audit_call_key(record: dict[str, Any]) -> tuple[str, str, str]:
     return (
         str(record.get("tool") or ""),
