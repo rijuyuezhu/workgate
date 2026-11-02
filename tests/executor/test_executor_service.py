@@ -818,6 +818,8 @@ def test_launchd_definition_uses_private_local_paths_without_credentials(
     ) -> subprocess.CompletedProcess[str]:
         calls.append(command)
         if command[:2] == ["launchctl", "print"]:
+            if not any(c[:2] == ["launchctl", "bootstrap"] for c in calls):
+                return _completed(command, returncode=3)
             return _completed(
                 command,
                 stdout="state = running\nlast exit code = 0\n",
@@ -869,6 +871,46 @@ def test_launchd_plist_passes_native_plutil_lint(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr or result.stdout
 
 
+@pytest.mark.parametrize("stuck", [False, True])
+def test_launchd_reinstall_waits_for_native_bootout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stuck: bool
+) -> None:
+    manager, _profile = _paired_manager(tmp_path, system="Darwin")
+    monkeypatch.setattr(
+        service.shutil, "which", lambda _name: "/usr/bin/launchctl"
+    )
+    monkeypatch.setattr(service.time, "sleep", lambda _delay: None)
+    calls: list[list[str]] = []
+    checks = 0
+    bootstrapped = False
+
+    def fake_run(command, **_kwargs):
+        nonlocal checks, bootstrapped
+        calls.append(command)
+        if command[:2] == ["launchctl", "print"]:
+            checks += 1
+            if checks <= 3 or (stuck and not bootstrapped):
+                return _completed(command, stdout="state = SIGTERMed\n")
+            if not bootstrapped:
+                return _completed(command, returncode=3)
+            return _completed(command, stdout="state = running\n")
+        if command[:2] == ["launchctl", "bootstrap"]:
+            bootstrapped = True
+        return _completed(command)
+
+    monkeypatch.setattr(manager, "_run", fake_run)
+    if stuck:
+        with pytest.raises(RuntimeError, match="did not unload"):
+            manager.install()
+        assert checks == 20
+        assert not bootstrapped
+    else:
+        assert manager.install().running
+        assert checks >= 5
+        assert bootstrapped
+    assert calls[0][:2] == ["launchctl", "bootout"]
+
+
 def test_launchd_failed_bootstrap_keeps_previous_runtime_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -886,6 +928,8 @@ def test_launchd_failed_bootstrap_keeps_previous_runtime_metadata(
     def fake_run(
         command: list[str], **_kwargs
     ) -> subprocess.CompletedProcess[str]:
+        if command[:2] == ["launchctl", "print"]:
+            return _completed(command, returncode=3)
         if command[:2] == ["launchctl", "bootstrap"]:
             raise RuntimeError("bootstrap failed")
         return _completed(command)
@@ -1409,3 +1453,67 @@ def test_systemd_install_rejects_foreign_loaded_unit_from_another_path(
     assert not manager.config_path.exists()
     assert ExecutorProfileStore(manager.state_store).load() == profile
     assert not any("restart" in command for command in calls)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "none",
+        "foreign-loaded-path",
+        "foreign-loaded-program",
+        "not-running",
+        "foreign-plist-program",
+        "foreign-plist-label",
+        "symlink-plist",
+        "mismatched-metadata",
+        "launchctl-failure",
+    ],
+)
+def test_macos_auto_update_requires_actual_owned_launchd_action(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    manager, _profile = _paired_manager(tmp_path, system="Darwin")
+    manager._write_service_config()
+    manager._write_launcher()
+    command = manager._runtime_command()
+    plist = manager._write_launchd_plist(command)
+    manager._write_metadata("launchd", command, service_file=plist)
+
+    native_path = (
+        "/foreign/agent.plist" if fault == "foreign-loaded-path" else str(plist)
+    )
+    native_program = (
+        "/foreign/python" if fault == "foreign-loaded-program" else command[0]
+    )
+    native_state = "waiting" if fault == "not-running" else "running"
+
+    def read_native(argv, **_kwargs):
+        assert argv == ["launchctl", "print", manager._launchd_service_target]
+        return _completed(
+            argv,
+            returncode=1 if fault == "launchctl-failure" else 0,
+            stdout=(
+                f"\tpath = {native_path}\n\tprogram = {native_program}\n"
+                f"\tstate = {native_state}\n\t\tstate = active\n"
+            ),
+        )
+
+    monkeypatch.setattr(manager, "_run", read_native)
+    if fault.startswith("foreign-plist"):
+        payload = plistlib.loads(plist.read_bytes())
+        if fault == "foreign-plist-program":
+            payload["ProgramArguments"][0] = "/foreign/python"
+        else:
+            payload["Label"] = "com.foreign.executor"
+        plist.write_bytes(plistlib.dumps(payload))
+    elif fault == "symlink-plist":
+        target = tmp_path / "foreign-agent.plist"
+        plist.rename(target)
+        plist.symlink_to(target)
+    elif fault == "mismatched-metadata":
+        manager._write_metadata(
+            "launchd",
+            ["/foreign/python", str(manager.launcher_path)],
+            service_file=plist,
+        )
+    assert manager._launchd_source_owned() is (fault == "none")

@@ -77,7 +77,7 @@ def source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("host", [HostOS.LINUX, HostOS.WINDOWS])
+@pytest.mark.parametrize("host", [HostOS.LINUX, HostOS.WINDOWS, HostOS.MACOS])
 async def test_managed_source_stages_then_dispatches_once_and_new_hello_clears(
     source, monkeypatch: pytest.MonkeyPatch, host: HostOS
 ) -> None:
@@ -86,6 +86,11 @@ async def test_managed_source_stages_then_dispatches_once_and_new_hello_clears(
     monkeypatch.setattr(
         ExecutorServiceManager,
         "schedule_windows_source_cutover",
+        lambda _self, version: calls.append(("handoff", version)),
+    )
+    monkeypatch.setattr(
+        ExecutorServiceManager,
+        "schedule_macos_source_cutover",
         lambda _self, version: calls.append(("handoff", version)),
     )
     assert (

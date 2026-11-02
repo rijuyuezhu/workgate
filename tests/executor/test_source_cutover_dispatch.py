@@ -53,11 +53,18 @@ def managed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         assert version == TARGET
         events.append("windows")
 
+    def macos(_self, version: str) -> None:
+        assert version == TARGET
+        events.append("macos")
+
     monkeypatch.setattr(
         ExecutorServiceManager, "schedule_linux_source_cutover", linux
     )
     monkeypatch.setattr(
         ExecutorServiceManager, "schedule_windows_source_cutover", windows
+    )
+    monkeypatch.setattr(
+        ExecutorServiceManager, "schedule_macos_source_cutover", macos
     )
     return runtime, events
 
@@ -65,7 +72,11 @@ def managed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("host", "event"),
-    [(HostOS.LINUX, "linux"), (HostOS.WINDOWS, "windows")],
+    [
+        (HostOS.LINUX, "linux"),
+        (HostOS.WINDOWS, "windows"),
+        (HostOS.MACOS, "macos"),
+    ],
 )
 async def test_dispatch_pending_version_through_existing_native_handoff(
     managed, monkeypatch: pytest.MonkeyPatch, host: HostOS, event: str
@@ -157,7 +168,7 @@ async def test_unsupported_host_does_not_schedule(
     managed, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runtime, events = managed
-    monkeypatch.setattr(host_module, "host_os", lambda: HostOS.MACOS)
+    monkeypatch.setattr(host_module, "host_os", lambda: None)
     with pytest.raises(RuntimeError, match="unsupported"):
         await runtime.handoff_prepared_source_update(TARGET)
     assert events == ["idle"]

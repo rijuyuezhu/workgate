@@ -33,7 +33,10 @@ def verified_source_checkout(
     This is only a filesystem/release proof. The caller must *also* verify the
     live native service's owned action before granting update authority.
     """
-    if system not in {"Linux", "Windows"} or not executable.is_absolute():
+    if (
+        system not in {"Linux", "Darwin", "Windows"}
+        or not executable.is_absolute()
+    ):
         return None
     windows = system == "Windows"
     path = executable.absolute()

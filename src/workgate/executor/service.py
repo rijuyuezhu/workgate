@@ -15,6 +15,7 @@ import posixpath
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
@@ -617,6 +618,19 @@ class ExecutorServiceManager:
                 ["launchctl", "bootout", self._launchd_service_target],
                 check=False,
             )
+            # bootout can return while the previous job is still SIGTERMed.
+            # bootstrap during that interval fails with launchctl exit 5.
+            for _ in range(20):
+                if self._run(
+                    ["launchctl", "print", self._launchd_service_target],
+                    check=False,
+                ).returncode:
+                    break
+                time.sleep(0.25)
+            else:
+                raise RuntimeError(
+                    "previous Executor LaunchAgent did not unload"
+                )
             self._run(["launchctl", "bootstrap", domain, str(service_file)])
             self._write_metadata(
                 backend,
@@ -1159,6 +1173,52 @@ class ExecutorServiceManager:
             runtime_update_detail=runtime.update_detail,
         )
 
+    def _launchd_source_owned(self) -> bool:
+        """Verify the loaded macOS native job, not only its saved receipt."""
+        plist = self.launchd_plist_path
+        command = self._runtime_command()
+        metadata = self._read_metadata()
+        if (
+            plist.is_symlink()
+            or not plist.is_file()
+            or self.launcher_path.is_symlink()
+            or metadata is None
+            or metadata.get("backend") != "launchd"
+            or metadata.get("service_file") != str(plist.absolute())
+            or metadata.get("command") != command
+        ):
+            return False
+        try:
+            payload = plistlib.loads(plist.read_bytes())
+            if (
+                not isinstance(payload, dict)
+                or payload.get("Label") != _LAUNCHD_LABEL
+                or payload.get("ProgramArguments") != command
+            ):
+                return False
+            native = self._run(
+                ["launchctl", "print", self._launchd_service_target],
+                check=False,
+            )
+            if native.returncode:
+                return False
+            fields = {}
+            for line in native.stdout.splitlines():
+                # launchctl prints nested state fields; inspect only the job's
+                # top-level fields, never a child service's state.
+                if not line.startswith("\t") or line.startswith("\t\t"):
+                    continue
+                key, sep, value = line.strip().partition("=")
+                if sep and key.strip() in {"path", "program", "state"}:
+                    fields[key.strip()] = value.strip()
+            return (
+                fields.get("path") == str(plist)
+                and fields.get("program") == command[0]
+                and fields.get("state") == "running"
+            )
+        except OSError, ValueError, TypeError, RuntimeError:
+            return False
+
     def verified_source_checkout(self) -> Path | None:
         """Allow future source updates only for an owned, pinned native service."""
         from .source_provenance import verified_source_checkout
@@ -1168,6 +1228,11 @@ class ExecutorServiceManager:
             status.running
             and status.runtime_current
             and status.runtime_ownership is ExecutorRuntimeOwnership.SOURCE
+        ):
+            return None
+        if (
+            host_os(self.system) is HostOS.MACOS
+            and not self._launchd_source_owned()
         ):
             return None
         return verified_source_checkout(
@@ -1224,6 +1289,23 @@ class ExecutorServiceManager:
             version=version,
             config=self.config_path,
             run=self._run,
+        )
+
+    def schedule_macos_source_cutover(self, version: str) -> None:
+        """Hand off a verified native LaunchAgent to an independent launchd job."""
+        if host_os(self.system) is not HostOS.MACOS:
+            raise UnsupportedExecutorServiceError(
+                "source cutover scheduling requires macOS launchd"
+            )
+        checkout = self.verified_source_checkout()
+        if checkout is None:
+            raise RuntimeError(
+                "Executor is not an owned managed source service"
+            )
+        from .source_handoff import schedule_macos_source_cutover
+
+        schedule_macos_source_cutover(
+            checkout, version=version, config=self.config_path
         )
 
     def logs(self, *, lines: int = _DEFAULT_LOG_LINES) -> str:

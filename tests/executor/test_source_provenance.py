@@ -110,6 +110,22 @@ def test_pinned_managed_release_and_stale_initial_receipt(
     assert _verify(python) == checkout
 
 
+def test_macos_managed_source_reuses_posix_release_proof(
+    managed_source: tuple[Path, Path, Path],
+) -> None:
+    _root, checkout, python = managed_source
+    if os.name == "nt":
+        pytest.skip("native Windows paths differ from macOS")
+    assert (
+        verified_source_checkout(python, version=__version__, system="Darwin")
+        == checkout
+    )
+    assert (
+        verified_source_checkout(python, version=__version__, system="FreeBSD")
+        is None
+    )
+
+
 def test_windowless_windows_executor_matches_the_pinned_python(
     managed_source: tuple[Path, Path, Path],
 ) -> None:
@@ -364,3 +380,28 @@ def test_native_service_must_be_unchanged_and_owned(
         ),
     )
     assert (manager.verified_source_checkout() == checkout) is approved
+
+
+def test_macos_verified_source_requires_live_native_binding(
+    managed_source: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _root, checkout, python = managed_source
+    if os.name == "nt":
+        pytest.skip("macOS source fixture uses POSIX executable layout")
+    config = resolve_executor_config(
+        Settings(default_workdir=checkout, state_dir=checkout / "state")
+    )
+    manager = ExecutorServiceManager(config, system="Darwin", executable=python)
+    monkeypatch.setattr(
+        manager,
+        "status",
+        lambda: SimpleNamespace(
+            running=True,
+            runtime_current=True,
+            runtime_ownership=ExecutorRuntimeOwnership.SOURCE,
+        ),
+    )
+    monkeypatch.setattr(manager, "_launchd_source_owned", lambda: False)
+    assert manager.verified_source_checkout() is None
+    monkeypatch.setattr(manager, "_launchd_source_owned", lambda: True)
+    assert manager.verified_source_checkout() == checkout
