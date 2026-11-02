@@ -35,6 +35,12 @@ from workgate.platform.windows_task import WindowsUserTask  # noqa: E402
 
 
 def _powershell(argv: list[str]) -> subprocess.CompletedProcess[str]:
+    # PowerShell progress can fail to access a console buffer over SSH.
+    if argv[-2] == "-Command":
+        argv = [
+            *argv[:-1],
+            "$ProgressPreference = 'SilentlyContinue'; " + argv[-1],
+        ]
     result = subprocess.run(
         argv, capture_output=True, text=True, errors="replace", timeout=30
     )
