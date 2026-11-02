@@ -31,7 +31,7 @@
       let parsed;
       try { parsed = new URL(data.url); } catch { parsed = null; }
       if (!parsed || !["https:", "http:"].includes(parsed.protocol) ||
-          !/^\/download\/[A-Za-z0-9_-]{43}$/.test(parsed.pathname) ||
+          !/(?:^|\/)download\/[A-Za-z0-9_-]{43}$/.test(parsed.pathname) ||
           parsed.search || parsed.hash || parsed.username || parsed.password) {
         img.hidden = true;
         link.hidden = true;

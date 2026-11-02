@@ -4,6 +4,7 @@ import hashlib
 
 import pytest
 from mcp.server.mcpserver.exceptions import ResourceError, ToolError
+from mcp.types import CallToolResult
 
 from workgate.config.control import resolve_control_config
 from workgate.config.settings import clear_settings_cache, get_settings
@@ -108,6 +109,7 @@ async def test_image_preview_accepts_only_live_inline_image_links(
 
         for link, mime in ((png, "image/png"), (jpg, "image/jpeg")):
             result = await mcp.call_tool("image_show", {"url": link.url})
+            assert isinstance(result, CallToolResult)
             assert result.structured_content == {
                 "url": link.url,
                 "media_type": mime,
@@ -152,11 +154,35 @@ async def test_image_preview_accepts_only_live_inline_image_links(
 
         from workgate.control import downloads
 
-        monkeypatch.setattr(
-            downloads, "_now_s", lambda: float(jpg.created_at) + 61
-        )
+        assert jpg.created_at is not None
+        expired_now = jpg.created_at + 61
+        monkeypatch.setattr(downloads, "_now_s", lambda: expired_now)
         with pytest.raises(ToolError, match="unavailable or expired"):
             await mcp.call_tool("image_show", {"url": jpg.url})
+
+
+@pytest.mark.asyncio
+async def test_image_preview_uses_configured_public_path_prefix(
+    image_settings, tmp_path, monkeypatch
+):
+    monkeypatch.setenv(
+        "WORKGATE_BASE_URL", "https://files.example.test/workgate"
+    )
+    clear_settings_cache()
+    settings = get_settings()
+    config = resolve_control_config(settings)
+    with use_state_store(FileStateStore(lambda: config.state_dir)):
+        image = _image_link(settings, tmp_path)
+        assert image.url.startswith(
+            "https://files.example.test/workgate/download/"
+        )
+        mcp = build_mcp()
+        result = await mcp.call_tool("image_show", {"url": image.url})
+        assert isinstance(result, CallToolResult)
+        assert result.structured_content == {
+            "url": image.url,
+            "media_type": "image/png",
+        }
 
 
 @pytest.mark.asyncio

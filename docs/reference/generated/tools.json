@@ -6803,7 +6803,7 @@
     },
     {
       "_meta": {
-        "openai/outputTemplate": "ui://workgate/image-preview-ee48afefb6698404.html",
+        "openai/outputTemplate": "ui://workgate/image-preview-df88d27787f70c28.html",
         "openai/toolInvocation/invoked": "Image preview ready",
         "openai/toolInvocation/invoking": "Opening image preview",
         "openai/widgetAccessible": true,
@@ -6817,9 +6817,9 @@
           }
         ],
         "ui": {
-          "resourceUri": "ui://workgate/image-preview-ee48afefb6698404.html"
+          "resourceUri": "ui://workgate/image-preview-df88d27787f70c28.html"
         },
-        "ui/resourceUri": "ui://workgate/image-preview-ee48afefb6698404.html"
+        "ui/resourceUri": "ui://workgate/image-preview-df88d27787f70c28.html"
       },
       "annotations": {
         "destructiveHint": false,
