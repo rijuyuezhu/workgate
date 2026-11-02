@@ -4,7 +4,7 @@ Use a VPS for a public **Control** endpoint. Keep Executors on the computers whe
 
 ## 1. Install Control
 
-Create or choose a regular Linux user to own Workgate. Install the **Control** role using [Install Workgate](install-options.md#control-on-a-server).
+Create or choose a regular Linux user to own Workgate. Install the **Control** role using [Install Workgate](install-options.md#other-roles).
 
 Use your public HTTPS hostname in the Control install command's **--base-url** setting, for example:
 

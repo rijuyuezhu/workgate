@@ -498,3 +498,195 @@ def test_mismatched_release_does_not_bootstrap_uv(
     assert "expected commit differ" in result.stderr
     assert not capture.exists()
     assert not curl_args.exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shell bootstrap")
+@pytest.mark.parametrize("via_pipe", [False, True])
+@pytest.mark.parametrize("annotated", [False, True])
+@pytest.mark.parametrize(
+    ("channel", "api_url"),
+    [
+        (
+            "--latest",
+            "https://api.github.com/repos/rijuyuezhu/workgate/releases?per_page=1",
+        ),
+        (
+            "--stable",
+            "https://api.github.com/repos/rijuyuezhu/workgate/releases/latest",
+        ),
+    ],
+)
+def test_public_channel_bootstrap_resolves_verified_release(
+    pinned_release, tmp_path, via_pipe, annotated, channel, api_url
+):
+    script, sha = pinned_release
+    if annotated:
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(tmp_path / "origin"),
+                "tag",
+                "-fa",
+                "v5.0.0a6",
+                "-m",
+                "annotated",
+            ],
+            check=True,
+        )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    curl = bin_dir / "curl"
+    curl.write_text(
+        "#!/bin/sh\n"
+        'test "$1" = -fsSL || exit 9\n'
+        f"test \"$2\" = '{api_url}' || exit 9\n"
+        "printf '%s\\n' '{\"tag_name\": \"v5.0.0a6\"}'\n"
+    )
+    curl.chmod(0o755)
+    capture = tmp_path / "latest-arguments"
+    env = os.environ | {
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "WORKGATE_BOOTSTRAP_TEST_OUTPUT": str(capture),
+    }
+    invocation = ["sh", "-s", "--"] if via_pipe else ["sh", str(script)]
+    result = subprocess.run(
+        [*invocation, channel, "--role", "executor", "--name", "test node"],
+        input=script.read_text() if via_pipe else None,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=35,
+    )
+    assert result.returncode == 0, result.stderr
+    assert capture.read_text().splitlines() == [
+        "--tag",
+        "v5.0.0a6",
+        "--expected-commit",
+        sha,
+        "--role",
+        "executor",
+        "--name",
+        "test node",
+    ]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX shell bootstrap")
+@pytest.mark.parametrize("tag", ["main", "v5.0.0a999", ""])
+@pytest.mark.parametrize("channel", ["--latest", "--stable"])
+def test_public_channel_bootstrap_fails_closed_for_bad_release(
+    pinned_release, tmp_path, tag, channel
+):
+    script, _sha = pinned_release
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    curl = bin_dir / "curl"
+    curl.write_text(
+        "#!/bin/sh\nprintf '%s\\n' '{\"tag_name\": \"" + tag + "\"}'\n"
+    )
+    curl.chmod(0o755)
+    capture = tmp_path / "should-not-install"
+    result = subprocess.run(
+        ["sh", str(script), channel, "--role", "control"],
+        env=os.environ
+        | {
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "WORKGATE_BOOTSTRAP_TEST_OUTPUT": str(capture),
+        },
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode != 0
+    assert not capture.exists()
+
+
+@pytest.mark.skipif(
+    os.name != "nt", reason="Native Windows PowerShell bootstrap"
+)
+@pytest.mark.parametrize(
+    ("channel", "expected_url"),
+    [
+        (
+            "-Latest",
+            "https://api.github.com/repos/rijuyuezhu/workgate/releases?per_page=1",
+        ),
+        (
+            "-Stable",
+            "https://api.github.com/repos/rijuyuezhu/workgate/releases/latest",
+        ),
+    ],
+)
+def test_windows_channel_bootstrap_resolves_verified_release(
+    pinned_release, tmp_path, channel, expected_url
+):
+    _shell, sha = pinned_release
+    original = (tmp_path / "bootstrap.ps1").read_text()
+    needle = "$ErrorActionPreference = 'Stop'\n"
+    assert original.count(needle) == 1
+    stub = (
+        "$ErrorActionPreference = 'Stop'\n"
+        "function Invoke-RestMethod { param($Uri) "
+        f"if ($Uri -cne '{expected_url}') {{ throw 'wrong release API' }} "
+        "[pscustomobject]@{tag_name='v5.0.0a6'} }\n"
+    )
+    script = tmp_path / "latest-bootstrap.ps1"
+    script.write_text(original.replace(needle, stub))
+    capture = tmp_path / "latest-capture.txt"
+    result = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script),
+            "-Role",
+            "executor",
+            channel,
+            "-Name",
+            "test node",
+        ],
+        env=os.environ | {"WORKGATE_BOOTSTRAP_TEST_OUTPUT": str(capture)},
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=45,
+    )
+    assert result.returncode == 0, result.stderr
+    assert capture.read_text().splitlines()[:3] == ["executor", "v5.0.0a6", sha]
+
+
+@pytest.mark.skipif(
+    os.name != "nt", reason="Native Windows PowerShell bootstrap"
+)
+@pytest.mark.parametrize("channel", ["-Latest", "-Stable"])
+def test_windows_channel_rejects_combining_manual_pin(
+    pinned_release, tmp_path, channel
+):
+    _shell, sha = pinned_release
+    capture = tmp_path / "must-not-install"
+    result = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(tmp_path / "bootstrap.ps1"),
+            "-Role",
+            "control",
+            channel,
+            "-Tag",
+            "v5.0.0a6",
+            "-Commit",
+            sha,
+        ],
+        env=os.environ | {"WORKGATE_BOOTSTRAP_TEST_OUTPUT": str(capture)},
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode != 0
+    assert not capture.exists()
