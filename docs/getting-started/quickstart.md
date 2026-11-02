@@ -6,6 +6,11 @@ protocol whether on one host or two.
 
 ## 1. Install
 
+For a managed, version-pinned user service on Linux or native Windows,
+use the [published-release installer](install-options.md#published-release-source-install-recommended-for-first-time-setup)
+instead. The checkout workflow below is for running or developing Workgate
+from source directly.
+
 ```bash
 git clone https://github.com/rijuyuezhu/workgate.git
 cd workgate

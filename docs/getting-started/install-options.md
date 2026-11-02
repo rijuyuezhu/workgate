@@ -8,23 +8,26 @@ runtime roles.
 
 The source installer is the normal method for Linux and native Windows;
 it installs locked Python 3.14, GUI/S3 extras, browser assets and the selected
-native user service. The published **v5.0.0a12 prerelease** has a
-commit-verified bootstrap (`ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775`).
+native user service. The published
+[**v5.0.0a13 prerelease**](https://github.com/rijuyuezhu/workgate/releases/tag/v5.0.0a13)
+uses a commit-verified bootstrap. These copy-paste commands already include
+the correct version and commit; **you do not need to look up or enter a SHA**.
+The bootstrap verifies both before running the installer.
 
 Linux, paste **one** of these commands (exactly one role):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775/deploy/source/bootstrap.sh | sh -s -- v5.0.0a12 ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775 --role control
-curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775/deploy/source/bootstrap.sh | sh -s -- v5.0.0a12 ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775 --role executor --control-url https://control.example.com --name workstation
-curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775/deploy/source/bootstrap.sh | sh -s -- v5.0.0a12 ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775 --role colocate --name workstation
+curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/1424b9e9d84d5ae1405d28c2ea9a7d3d94e193be/deploy/source/bootstrap.sh | sh -s -- v5.0.0a13 1424b9e9d84d5ae1405d28c2ea9a7d3d94e193be --role control
+curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/1424b9e9d84d5ae1405d28c2ea9a7d3d94e193be/deploy/source/bootstrap.sh | sh -s -- v5.0.0a13 1424b9e9d84d5ae1405d28c2ea9a7d3d94e193be --role executor --control-url https://control.example.com --name workstation
+curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/1424b9e9d84d5ae1405d28c2ea9a7d3d94e193be/deploy/source/bootstrap.sh | sh -s -- v5.0.0a13 1424b9e9d84d5ae1405d28c2ea9a7d3d94e193be --role colocate --name workstation
 ```
 
 Native Windows PowerShell (choose one role line; the execution-policy
 override is only for that PowerShell process):
 
 ```powershell
-$tag = 'v5.0.0a12'
-$sha = 'ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775'
+$tag = 'v5.0.0a13'
+$sha = '1424b9e9d84d5ae1405d28c2ea9a7d3d94e193be'
 $script = Join-Path $env:TEMP ("workgate-bootstrap-" + [guid]::NewGuid().ToString('N') + '.ps1')
 try {
     Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/rijuyuezhu/workgate/$sha/deploy/source/bootstrap.ps1" -OutFile $script
@@ -47,7 +50,13 @@ existing installed services: use explicit `prepare` and `switch` for that.
 For detailed prerequisites, identity-preserving upgrade/rollback instructions
 and limits of real-machine acceptance, see the
 [source installer guide](https://github.com/rijuyuezhu/workgate/blob/main/deploy/source/README.md).
-The prerelease examples are not a claim of a supported stable production release.
+These are prerelease examples, not a claim of stable production support.
+For a different release, use its corresponding Git tag and **full commit**
+from the [official releases](https://github.com/rijuyuezhu/workgate/releases);
+replace both the URL revision and bootstrap arguments together. Never use
+`main`, `latest`, or a floating branch. The pinned SHA in the examples
+is a Git commit identity, **not** a user-supplied package checksum or an
+independent publisher signature.
 
 ## Source checkout (development)
 

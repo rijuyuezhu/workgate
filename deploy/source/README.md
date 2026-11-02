@@ -1,68 +1,31 @@
 # Versioned source runtime and role setup (#456)
 
-## Published v5.0.0a12 bootstrap (Linux and native Windows)
+## First-time published installation
 
-The **published** [v5.0.0a12 prerelease](https://github.com/rijuyuezhu/workgate/releases/tag/v5.0.0a12)
-contains both source bootstraps at commit `ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775`. These
-commands pin the **same** tag and full commit in the fetched script and the
-installed source. They are first-install commands, **not** upgrade commands.
-Run as the normal logged-in user with Git available; the bootstrap provisions
-missing `uv` in the user account. Choose **one** role per machine.
+Use the [one canonical published-release install guide](../../docs/getting-started/install-options.md#published-release-source-install-recommended-for-first-time-setup)
+for ready-to-copy Linux and native Windows bootstrap commands for Control,
+Executor or Colocate. They are **first-install**, not upgrade, commands.
+The example pins the published **v5.0.0a13** tag and commit in the downloaded
+script and installed source, with no SHA lookup required from the user.
 
-Linux (paste **one** complete line):
+Run as the normal user with Git; the bootstrap installs missing `uv` into the
+user account. An Executor needs a trusted HTTPS Control endpoint and interactive
+owner pairing approval. New installations use locked Python 3.14, GUI/S3
+extras and Chromium. Native ARM64 Windows uses a verified release Wheel when
+available, or the documented development toolchain fallback below. The
+installer refuses to implicitly replace an existing native role service.
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775/deploy/source/bootstrap.sh | sh -s -- v5.0.0a12 ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775 --role control
-curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775/deploy/source/bootstrap.sh | sh -s -- v5.0.0a12 ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775 --role executor --control-url https://control.example.com --name workstation
-curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775/deploy/source/bootstrap.sh | sh -s -- v5.0.0a12 ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775 --role colocate --name workstation
-```
-
-For Executor-only, replace the example URL with an **actual trusted HTTPS
-Control endpoint**. Control-only initializes a private OAuth-enabled config
-and prints instructions for its owner; Executor and Colocate require interactive
-owner approval during first-time pairing. Do not pipe these commands from
-an unattended job expecting approval to be automatic.
-
-Native Windows PowerShell (download and run a pinned script; choose one
-`-Role` command, using process-local execution-policy override without
-changing machine settings):
-
-```powershell
-$tag = 'v5.0.0a12'
-$sha = 'ffdb695ba41bdaf3e76dd9c9b20dc228f2c7c775'
-$bootstrap = Join-Path $env:TEMP ("workgate-bootstrap-" + [guid]::NewGuid().ToString('N') + '.ps1')
-try {
-    Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/rijuyuezhu/workgate/$sha/deploy/source/bootstrap.ps1" -OutFile $bootstrap
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bootstrap -Role control -Tag $tag -Commit $sha
-    # Instead of the preceding line, choose one:
-    # powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bootstrap -Role executor -Tag $tag -Commit $sha -ControlUrl 'https://control.example.com' -Name 'workstation'
-    # powershell.exe -NoProfile -ExecutionPolicy Bypass -File $bootstrap -Role colocate -Tag $tag -Commit $sha -Name 'workstation'
-} finally {
-    Remove-Item -LiteralPath $bootstrap -ErrorAction SilentlyContinue
-}
-```
-
-The native ARM64 Windows preparer may require its documented verified
-cryptography Wheel or ARM64 toolchain; neither bootstrap silently substitutes
-x64 binaries. All hosts prepare locked Python 3.14 with GUI/S3 extras and the
-Chromium runtime; native GUI permissions and desktop/system tools are separate
-host prerequisites. See the ARM64 section below.
-
-**Acceptance:** Published bootstrap first-run setup and real Control-owner
-OAuth approval have been exercised for Executor and Colocate on Linux and
-Windows x64/ARM64. The original published a12 Windows x64 and native ARM64 Colocate bootstraps
-completed owner approval, native scheduled-task startup, and HTTP readiness
-without patching release code. ARM64 used the verified a12 release Wheel. Linux and Windows application-level upgrade and rollback
-were also tested with isolated services. Windows tests used disposable task-name
-mappings to avoid colliding with installed production roles; an untouched new
-Windows account with the original global task names remains a separate
-acceptance case. See #456 for the detailed evidence and remaining checks.
+**Acceptance:** Published a12 first-time Executor/Colocate pairing and native
+service startup, including Windows x64/ARM64, and isolated source cutover and
+rollback were exercised (see [#456](https://github.com/rijuyuezhu/workgate/issues/456)).
+The a13 release has identical public bootstrap scripts. These tests do **not**
+assert full live-production upgrades or a stable release.
 
 ## Local one-command install (requires an existing Git checkout)
 
 If you already have a local checkout and prefer its scripts, specify
 the **actual published tag** and exactly one role. These generic examples
-use `vRELEASE` as a placeholder; see the verified a12 bootstrap above
+use `vRELEASE` as a placeholder; see the [published installation guide](../../docs/getting-started/install-options.md#published-release-source-install-recommended-for-first-time-setup)
 for commands requiring no checkout. Do not use older tags lacking `setup`.
 Git is required. The public bootstraps install missing uv with Astral's
 official user-local installer; local checkout scripts still require uv on PATH.
@@ -280,60 +243,21 @@ Executor is connected to Control. Independently verify online health and
 command execution after adoption. Do not use this procedure on a live
 machine without a planned maintenance window and rollback approval.
 
-## Public GitHub bootstrap, pinned to a release commit
+## Published bootstrap identity and trust
 
-For releases **other than the published a12 example above**, obtain the full
-40-character release commit SHA from the official GitHub release's Git tag.
-Use the same SHA in both the raw GitHub URL and the bootstrap arguments.
-Replace `FULL_SHA` and `vRELEASE` together; the older `v5.0.0a5`
-release **does not contain this bootstrap**. Never replace `FULL_SHA` with
-`main`, `latest` or a floating branch.
+For first-time installation use the [published commands](../../docs/getting-started/install-options.md#published-release-source-install-recommended-for-first-time-setup),
+not a second set of manually filled `FULL_SHA` placeholders. For a different
+release use the **matching** published tag and complete 40-character commit in
+both the raw GitHub URL and bootstrap arguments. Never use `main`, `latest`,
+or a floating branch. Older releases such as a5 lack this bootstrap.
 
-Linux (choose exactly one role):
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/FULL_SHA/deploy/source/bootstrap.sh | sh -s -- vRELEASE FULL_SHA --role control
-curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/FULL_SHA/deploy/source/bootstrap.sh | sh -s -- vRELEASE FULL_SHA --role executor --control-url https://control.example.com --name workstation
-curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/FULL_SHA/deploy/source/bootstrap.sh | sh -s -- vRELEASE FULL_SHA --role colocate --name workstation
-```
-
-Native Windows PowerShell (download first, then execute with explicit role):
-
-```powershell
-$sha = 'FULL_SHA'
-$tag = 'vRELEASE'
-$bootstrap = Join-Path $env:TEMP ("workgate-bootstrap-" + [guid]::NewGuid().ToString('N') + ".ps1")
-try {
-    Invoke-WebRequest -Uri "https://raw.githubusercontent.com/rijuyuezhu/workgate/$sha/deploy/source/bootstrap.ps1" -OutFile $bootstrap
-    & $bootstrap -Role executor -Tag $tag -Commit $sha -ControlUrl 'https://control.example.com' -Name 'workstation'
-} finally {
-    Remove-Item -LiteralPath $bootstrap -ErrorAction SilentlyContinue
-}
-```
-
-Select `-Role control` or `-Role colocate` instead of `executor` when
-appropriate, omitting the Executor-only `-ControlUrl`. Both bootstraps use
-the official GitHub repository and a **full, explicitly provided commit**;
-they reject tag retargeting before executing checked-out scripts. The source
-installer clones the release once more and checks the same SHA before
-synchronizing dependencies or touching the managed launcher. The temporary
-bootstrap checkout is removed after installation or failure.
-
-**Trust boundary:** the first script is downloaded over HTTPS from a
-commit-addressed GitHub raw URL and the clone content is checked against the
-commit that the operator pinned. This is *not* a cryptographic publisher
-signature or an independent audit of the release contents. Obtain the
-tag/commit SHA from a trusted channel and inspect the pinned bootstrap before
-executing it. Git must already be installed; the public bootstrap provisions
-uv under the user's executable directory if missing, without modifying shell
-profiles.
-The official uv installer is fetched over HTTPS from Astral, independently
-of the pinned WorkGate source; an absent Git/curl or failed installer is
-reported. No running Control is needed to fetch the installer.
-
-The public bootstrap is published in a12. Role setup, owner pairing,
-upgrade, and rollback have isolated-host acceptance; clean-account installation
-with unmodified Windows global task names is still tracked in #456.
+The bootstrap clones the selected Git tag and checks both its checked-out
+commit and tag against the expected commit before executing role setup. The
+installer independently checks the pinned source before activating the CLI.
+The HTTPS commit-addressed script and Git identity check do **not** constitute
+an independent publisher signature. Inspect downloaded scripts if your trust
+policy requires it. Git must be present; missing `uv` is installed from
+Astral's official HTTPS installer without modifying shell profiles.
 
 ## Windows ARM64 native cryptography prerequisite
 
@@ -454,13 +378,13 @@ From a checked-out copy of this repository, with Git and uv installed:
 **Linux:**
 
 ```sh
-sh deploy/source/prepare.sh --role control --tag v5.0.0a12
+sh deploy/source/prepare.sh --role control --tag v5.0.0a13
 ```
 
 **Windows PowerShell:**
 
 ```powershell
-& .\deploy\source\prepare.ps1 -Role executor -Tag v5.0.0a12
+& .\deploy\source\prepare.ps1 -Role executor -Tag v5.0.0a13
 ```
 
 The role is mandatory, never silently selected. Replace the tag with the
@@ -483,8 +407,8 @@ modified/untracked source files in an already managed release checkout.
 Place that `bin` directory on PATH if desired. Old checkouts and running
 services remain unchanged so an upgrade can be rolled back. The tag/commit
 check establishes consistency with the Git repository, not a separately
-verified publisher signature. For a published, commit-pinned bootstrap, use
-the release installation examples at the top of this guide.
+verified publisher signature. For a published, commit-pinned bootstrap, see
+the [published installation examples](../../docs/getting-started/install-options.md#published-release-source-install-recommended-for-first-time-setup).
 
 ## Executor-only: pairing and native service
 
@@ -537,9 +461,10 @@ service (including stopped ones); it never stops unrelated user services.
 When running over SSH, forward the target localhost port to open the WebUI.
 Custom YAMLs are selected with --control-config and --executor-config.
 
-For first-time installation, use the published, pinned source bootstrap at
-the top of this guide. The manual commands above remain useful for explicit
-preparation and native service operations, not as a second default installer.
+For first-time installation, use the pinned source bootstrap in the
+[published installation guide](../../docs/getting-started/install-options.md#published-release-source-install-recommended-for-first-time-setup).
+The manual commands above remain useful for explicit preparation and native
+service operations, not as a second default installer.
 Never advertise a prepared but unpaired Executor as a completed installation.
 
 ## Explicitly register an already-running Linux managed Colocate
