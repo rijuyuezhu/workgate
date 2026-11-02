@@ -2,6 +2,7 @@ import asyncio
 import logging
 import threading
 
+import httpx
 import pytest
 
 from workgate import __version__
@@ -12,11 +13,17 @@ from workgate.executor.connection import (
     RuntimePolicyAction,
     executor_retry_delay,
 )
-from workgate.executor.control_client import ExecutorControlError
+from workgate.executor.control_client import (
+    ExecutorControlClient,
+    ExecutorControlError,
+)
 from workgate.executor.errors import ExecutorResourceInventoryUnavailable
+from workgate.executor.profile import ExecutorProfile
 from workgate.executor.runtime import build_executor_runtime
+from workgate.protocol.credentials import new_executor_credential
 from workgate.protocol.errors import ProtocolError, ProtocolErrorCode
 from workgate.protocol.executor import (
+    EXECUTOR_RESULT_PATH,
     ExecutorCommand,
     ExecutorHeartbeatResponse,
     ExecutorHelloRequest,
@@ -24,7 +31,7 @@ from workgate.protocol.executor import (
     ExecutorResult,
     ExecutorRuntimeSummary,
 )
-from workgate.protocol.ids import new_command_id
+from workgate.protocol.ids import new_command_id, new_executor_id
 
 
 def _hello() -> ExecutorHelloRequest:
@@ -133,6 +140,66 @@ async def _exercise_reconnect(
         return client, retry_sleeps
     finally:
         await connection.aclose()
+
+
+@pytest.mark.asyncio
+async def test_result_http_413_returns_small_failure_without_owner_action() -> (
+    None
+):
+    """A rejected result must resolve the offered command and not strand the fleet."""
+    received: list[ExecutorResult] = []
+    requests: list[int] = []
+
+    def proxy(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == EXECUTOR_RESULT_PATH
+        requests.append(len(request.content))
+        if len(request.content) > 1024 * 1024:
+            return httpx.Response(413)
+        received.append(ExecutorResult.model_validate_json(request.content))
+        return httpx.Response(204)
+
+    profile = ExecutorProfile(
+        control_url="https://control.example",
+        executor_id=new_executor_id(),
+        credential=new_executor_credential(),
+    )
+    http = httpx.AsyncClient(
+        base_url=profile.control_url, transport=httpx.MockTransport(proxy)
+    )
+    client = ExecutorControlClient(profile, client=http)
+    connection = ExecutorConnection(
+        client,
+        hello_factory=_hello,
+        execute=lambda command: None,
+        max_concurrent_commands=1,
+    )
+    command_id = new_command_id()
+    try:
+        assert await connection._submit_result_until_terminal(
+            ExecutorResult(
+                id=command_id, ok=True, result={"data_b64": "A" * (1024 * 1024)}
+            )
+        )
+        assert requests[0] > 1024 * 1024
+        assert requests[1] < 1024 * 1024
+        assert len(requests) == 2
+        assert len(received) == 1
+        assert received[0].id == command_id
+        assert not received[0].ok
+        assert received[0].error is not None
+        assert received[0].error.code == "result_upload_rejected"
+        assert "HTTP 413" in received[0].error.message
+        assert "client_max_body_size" in received[0].error.message
+        assert connection.owner_action_error is None
+        # Ordinary commands still upload normally after the rejected result.
+        assert await connection._submit_result_until_terminal(
+            ExecutorResult(id=new_command_id(), ok=True, result={"ok": True})
+        )
+        assert received[-1].ok
+        assert connection.owner_action_error is None
+    finally:
+        await client.aclose()
+        await http.aclose()
 
 
 @pytest.mark.asyncio

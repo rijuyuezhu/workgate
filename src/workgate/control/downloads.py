@@ -49,6 +49,10 @@ from .state import ControlSessionRecord
 DOWNLOAD_PREFIX = "/download"
 
 
+class _ResultUploadRejected(RuntimeError):
+    """A proxy rejected an Executor result before Control received it."""
+
+
 def download_token_fingerprint(token: str) -> str:
     """Return a short non-secret fingerprint for a download token."""
     return download_token_sha256(token)[:16]
@@ -456,25 +460,31 @@ class ControlDownloadService:
         staging = new_staging_path(data_dir=self._settings.data_dir)
         digest = hashlib.sha256()
         offset = 0
+        chunk_size = DEFAULT_TRANSFER_CHUNK_BYTES
         try:
             with open_private_staging(
                 staging, data_dir=self._settings.data_dir
             ) as destination:
                 while offset < expected_size:
-                    chunk = TransferReadChunkOutput.model_validate(
-                        await self._call(
+                    requested = min(chunk_size, expected_size - offset)
+                    try:
+                        response = await self._call(
                             record,
                             "transfer_read_chunk",
                             {
                                 "path": path,
                                 "offset": offset,
-                                "chunk_size": min(
-                                    DEFAULT_TRANSFER_CHUNK_BYTES,
-                                    expected_size - offset,
-                                ),
+                                "chunk_size": requested,
                             },
                         )
-                    )
+                    except _ResultUploadRejected:
+                        if requested <= 1:
+                            raise
+                        # Retry this offset with smaller chunks; keep the
+                        # successful size for all subsequent requests.
+                        chunk_size = max(1, requested // 2)
+                        continue
+                    chunk = TransferReadChunkOutput.model_validate(response)
                     decoded = self._decode_chunk(
                         chunk,
                         expected_offset=offset,
@@ -534,6 +544,8 @@ class ControlDownloadService:
             return result.result
         await self._sessions.reconcile_session_activity_after_error(record)
         assert result.error is not None
+        if result.error.code == "result_upload_rejected":
+            raise _ResultUploadRejected(result.error.message)
         if result.error.data is not None:
             raise exception_from_tool_error(dict(result.error.data))
         raise RuntimeError(

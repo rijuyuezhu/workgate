@@ -557,6 +557,7 @@ class ExecutorConnection:
         self, result: ExecutorResult
     ) -> bool:
         attempt = 0
+        reported_oversize = False
         while not self._stop.is_set() and self._owner_action_error is None:
             try:
                 await self._client.submit_result(result)
@@ -564,6 +565,24 @@ class ExecutorConnection:
             except ExecutorControlError as exc:
                 if exc.code is ProtocolErrorCode.UNKNOWN_COMMAND:
                     return False
+                if exc.status_code == 413 and not reported_oversize:
+                    # A proxy rejected the large result before Control saw it.
+                    # Deliver a small failure for the *same* command instead
+                    # of stranding its caller and the entire Executor.
+                    result = ExecutorResult(
+                        id=result.id,
+                        ok=False,
+                        error=OperationError(
+                            code="result_upload_rejected",
+                            message=(
+                                "Executor result upload rejected (HTTP 413); "
+                                "check reverse-proxy request body size "
+                                "(nginx client_max_body_size)"
+                            ),
+                        ),
+                    )
+                    reported_oversize = True
+                    continue
                 if not exc.retryable:
                     self._require_owner_action(exc)
                     return False

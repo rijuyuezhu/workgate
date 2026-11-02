@@ -4,6 +4,7 @@ import json
 import time
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient as FastAPITestClient
 from starlette.applications import Starlette
@@ -30,7 +31,18 @@ from workgate.control.downloads import (
     download_token_fingerprint,
 )
 from workgate.control.mcp.app import build_mcp
+from workgate.executor.connection import ExecutorConnection
+from workgate.executor.control_client import ExecutorControlClient
+from workgate.executor.profile import ExecutorProfile
 from workgate.http.downloads import _token_fingerprint, download_routes
+from workgate.protocol.credentials import new_executor_credential
+from workgate.protocol.executor import (
+    EXECUTOR_RESULT_PATH,
+    ExecutorHelloRequest,
+    ExecutorResult,
+    OperationError,
+)
+from workgate.protocol.ids import new_command_id, new_executor_id
 
 
 def _reset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -532,6 +544,183 @@ async def test_invalid_executor_chunk_removes_staging_snapshot(
     assert (
         list(snapshot_directory(data_dir=_control_config().data_dir).iterdir())
         == []
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("size", "limit"),
+    [
+        (400 * 1024, 1024 * 1024),
+        (850 * 1024, 1024 * 1024),
+        (1024 * 1024, 1024 * 1024),
+        (1024 * 1024 + 1, 1024 * 1024),
+        (3 * 1024 * 1024 + 31, 1024 * 1024),
+        (850 * 1024, 240 * 1024),
+        (3 * 1024 * 1024 + 31, 240 * 1024),
+    ],
+)
+async def test_file_link_halves_chunks_after_real_serialized_http_413(
+    tmp_path, monkeypatch, size: int, limit: int
+) -> None:
+    """Run actual HTTP-serialized result uploads through a size-limited proxy."""
+    _reset(tmp_path, monkeypatch)
+    data = (bytes(range(256)) * ((size + 255) // 256))[:size]
+    digest = hashlib.sha256(data).hexdigest()
+    _app, harness = build_paired_http_app(get_settings())
+    session = await harness.control.session_coordinator.start_session(
+        workdir="."
+    )
+    assert isinstance(session, dict)
+    record = harness.control.control_state.snapshot_sessions()[
+        str(session["session_id"])
+    ]
+    bodies: list[int] = []
+    accepted: list[ExecutorResult] = []
+    requests: list[tuple[int, int]] = []
+
+    def proxy(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == EXECUTOR_RESULT_PATH
+        bodies.append(len(request.content))
+        if len(request.content) > limit:
+            return httpx.Response(413)
+        accepted.append(ExecutorResult.model_validate_json(request.content))
+        return httpx.Response(204)
+
+    profile = ExecutorProfile(
+        control_url="https://control.example",
+        executor_id=new_executor_id(),
+        credential=new_executor_credential(),
+    )
+    http = httpx.AsyncClient(
+        base_url=profile.control_url, transport=httpx.MockTransport(proxy)
+    )
+    client = ExecutorControlClient(profile, client=http)
+
+    def unused_hello() -> ExecutorHelloRequest:
+        raise AssertionError("no hello expected in result upload test")
+
+    connection = ExecutorConnection(
+        client,
+        hello_factory=unused_hello,
+        execute=lambda command: None,
+        max_concurrent_commands=1,
+    )
+
+    async def call(_executor_id, op: str, args: dict, **_kwargs):
+        if op == "transfer_stat":
+            result = {
+                "path": "artifact.bin",
+                "type": "file",
+                "size": size,
+                "modified": 0.0,
+                "sha256": digest,
+            }
+        else:
+            assert op == "transfer_read_chunk"
+            start = int(args["offset"])
+            length = int(args["chunk_size"])
+            requests.append((start, length))
+            chunk = data[start : start + length]
+            result = {
+                "path": "artifact.bin",
+                "offset": start,
+                "bytes": len(chunk),
+                "size": size,
+                "eof": start + len(chunk) >= size,
+                "sha256": hashlib.sha256(chunk).hexdigest(),
+                "data_b64": base64.b64encode(chunk).decode("ascii"),
+            }
+        assert await connection._submit_result_until_terminal(
+            ExecutorResult(id=new_command_id(), ok=True, result=result)
+        )
+        return accepted.pop()
+
+    monkeypatch.setattr(
+        harness.control.download_service._transport, "call", call
+    )
+    try:
+        snapshot = await harness.control.download_service._export_snapshot(
+            record, "artifact.bin"
+        )
+        try:
+            assert snapshot.staging_path.read_bytes() == data
+            assert snapshot.sha256 == digest
+            assert snapshot.size == size
+        finally:
+            snapshot.staging_path.unlink(missing_ok=True)
+    finally:
+        await client.aclose()
+        await http.aclose()
+
+    assert not accepted
+    assert bodies
+    assert any(body <= limit for body in bodies)
+    assert connection.owner_action_error is None
+    assert requests[0] == (0, min(size, 1024 * 1024))
+    if size * 4 // 3 > limit:
+        assert max(bodies) > limit
+        assert requests[1] == (0, requests[0][1] // 2)
+    if limit == 240 * 1024:
+        first = min(size, 1024 * 1024)
+        assert [length for _, length in requests[:4]] == [
+            first,
+            first // 2,
+            first // 4,
+            first // 8,
+        ]
+        assert [offset for offset, _ in requests[:4]] == [0] * 4
+
+
+@pytest.mark.asyncio
+async def test_file_link_stops_halving_at_one_byte(
+    tmp_path, monkeypatch
+) -> None:
+    _reset(tmp_path, monkeypatch)
+    _app, harness = build_paired_http_app(get_settings())
+    session = await harness.control.session_coordinator.start_session(
+        workdir="."
+    )
+    assert isinstance(session, dict)
+    record = harness.control.control_state.snapshot_sessions()[
+        str(session["session_id"])
+    ]
+    requests: list[int] = []
+
+    async def rejected_result(_executor_id, op: str, args: dict, **_kwargs):
+        if op == "transfer_stat":
+            return ExecutorResult(
+                id=new_command_id(),
+                ok=True,
+                result={
+                    "path": "artifact.bin",
+                    "type": "file",
+                    "size": 8,
+                    "modified": 0.0,
+                    "sha256": hashlib.sha256(b"01234567").hexdigest(),
+                },
+            )
+        assert op == "transfer_read_chunk"
+        requests.append(args["chunk_size"])
+        return ExecutorResult(
+            id=new_command_id(),
+            ok=False,
+            error=OperationError(
+                code="result_upload_rejected",
+                message="Executor result upload rejected (HTTP 413); check nginx client_max_body_size",
+            ),
+        )
+
+    monkeypatch.setattr(
+        harness.control.download_service._transport, "call", rejected_result
+    )
+    with pytest.raises(RuntimeError, match="HTTP 413.*client_max_body_size"):
+        await harness.control.download_service._export_snapshot(
+            record, "artifact.bin"
+        )
+    assert requests == [8, 4, 2, 1]
+    assert not list(
+        snapshot_directory(data_dir=_control_config().data_dir).iterdir()
     )
 
 

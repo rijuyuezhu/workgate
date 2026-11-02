@@ -107,6 +107,7 @@ server {
     server_name control.example.com;
 
     # Configure ssl_certificate / ssl_certificate_key normally.
+    client_max_body_size 8m;
 
     location / {
         proxy_pass http://127.0.0.1:8765;
@@ -122,7 +123,12 @@ server {
 ```
 
 Avoid short proxy read timeouts: executor delivery uses long polling and
-terminal attachments use WebSockets.
+terminal attachments use WebSockets. Nginx defaults to a **1 MiB request-body
+limit**; `client_max_body_size 8m` leaves room for JSON/Base64 Executor results
+and other tool payloads. File-link snapshot reads start at 1 MiB raw and
+halve the chunk size after a result-upload HTTP 413. Other operations can still
+require a larger proxy limit. An HTTP 413 means the proxy rejected a result
+body, not that the source file is corrupt.
 
 ### Cloudflare Tunnel
 
