@@ -103,6 +103,13 @@ async def prepare_managed_source(
         raise RuntimeError("managed release has no trusted source preparer")
     commit = await resolve_published_commit(version)
     root = checkout.parent.parent
+    # Native services do not inherit the login shell's uv installation path.
+    env = os.environ.copy()
+    if system != "Windows":
+        user_bins = [str(Path.home() / ".local/bin")]
+        if system == "Darwin":
+            user_bins.append("/opt/homebrew/bin")
+        env["PATH"] = os.pathsep.join((env.get("PATH", os.defpath), *user_bins))
     code, _output = await asyncio.to_thread(
         run_bounded_capture,
         [
@@ -121,6 +128,7 @@ async def prepare_managed_source(
         timeout=3600,
         cwd=checkout,
         include_stderr=True,
+        env=env,
     )
     if code:
         raise RuntimeError(f"source preparation failed (exit {code})")
