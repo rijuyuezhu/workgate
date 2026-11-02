@@ -3,10 +3,10 @@ param(
     [Parameter(Mandatory = $true)]
     [ValidateSet('control', 'executor', 'colocate')]
     [string]$Role,
-    [Parameter(Mandatory = $true)]
     [string]$Tag,
-    [Parameter(Mandatory = $true)]
     [string]$Commit,
+    [switch]$Latest,
+    [switch]$Stable,
     [string]$InstallRoot,
     [string]$ControlUrl,
     [string]$Name,
@@ -19,6 +19,37 @@ param(
     [string]$Arm64WheelSha256
 )
 $ErrorActionPreference = 'Stop'
+if ($Latest -or $Stable) {
+    if (($Latest -and $Stable) -or $Tag -or $Commit) {
+        throw "Select one of -Latest, -Stable, or -Tag/-Commit"
+    }
+    # GitHub's /releases/latest excludes prereleases; the list includes them.
+    $url = if ($Stable) {
+        'https://api.github.com/repos/rijuyuezhu/workgate/releases/latest'
+    } else {
+        'https://api.github.com/repos/rijuyuezhu/workgate/releases?per_page=1'
+    }
+    $releases = @(Invoke-RestMethod -Uri $url)
+    if ($releases.Count -eq 0) { throw "No published Workgate release found" }
+    $Tag = [string]$releases[0].tag_name
+    if ($Tag -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+([abrc][0-9]+)?$') {
+        throw "Invalid published Workgate release tag"
+    }
+    $refs = @(& git ls-remote --tags 'https://github.com/rijuyuezhu/workgate.git' "refs/tags/$Tag" "refs/tags/$Tag^{}")
+    if ($LASTEXITCODE -ne 0) { throw "Failed to resolve published Workgate tag" }
+    $direct = $null
+    $peeled = $null
+    foreach ($line in $refs) {
+        $fields = $line -split '\s+'
+        if ($fields.Count -ne 2) { continue }
+        if ($fields[1] -ceq "refs/tags/$Tag") { $direct = $fields[0] }
+        if ($fields[1] -ceq "refs/tags/$Tag^{}") { $peeled = $fields[0] }
+    }
+    $Commit = if ($peeled) { $peeled } else { $direct }
+    if (-not $Commit) { throw "Published Workgate tag has no commit" }
+} elseif (-not $Tag -or -not $Commit) {
+    throw "Provide -Latest, -Stable or both -Tag and -Commit"
+}
 if ($Tag -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+([abrc][0-9]+)?$') {
     throw "A versioned Workgate release tag is required"
 }

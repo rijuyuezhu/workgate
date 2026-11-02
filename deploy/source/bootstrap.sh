@@ -1,15 +1,44 @@
 #!/bin/sh
-# Public bootstrap. URL must itself use this same full commit SHA.
-# curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/SHA/deploy/source/bootstrap.sh |
-#     sh -s -- vRELEASE SHA --role control
+# Bootstrap a published release, keeping the final checkout pinned to tag + SHA.
 set -eu
-tag=${1-}
-expected=${2-}
-if [ "$#" -lt 4 ]; then
-    echo "usage: bootstrap.sh vRELEASE FULL_COMMIT_SHA --role control|executor|colocate [options]" >&2
-    exit 2
+if [ "${1-}" = "--latest" ] || [ "${1-}" = "--stable" ]; then
+    channel=$1
+    shift
+    if ! command -v curl >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
+        echo "curl and git are required to resolve the latest published release" >&2
+        exit 1
+    fi
+    # GitHub's /releases/latest excludes prereleases. The list includes them.
+    if [ "$channel" = "--stable" ]; then
+        url=https://api.github.com/repos/rijuyuezhu/workgate/releases/latest
+    else
+        url='https://api.github.com/repos/rijuyuezhu/workgate/releases?per_page=1'
+    fi
+    release=$(curl -fsSL "$url") || exit 1
+    tag=$(printf '%s\n' "$release" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\(v[^"]*\)".*/\1/p' | sed -n '1p')
+    if [ -z "$tag" ]; then
+        echo "no published Workgate release found for $channel" >&2
+        exit 1
+    fi
+    refs=$(git ls-remote --tags https://github.com/rijuyuezhu/workgate.git "refs/tags/$tag" "refs/tags/$tag^{}") || exit 1
+    expected=$(printf '%s\n' "$refs" | awk -v ref="refs/tags/$tag" '
+        $2 == ref { direct=$1 }
+        $2 == ref "^{}" { peeled=$1 }
+        END { if (peeled) print peeled; else print direct }
+    ')
+    if [ -z "$expected" ]; then
+        echo "published Workgate release tag does not resolve to a commit" >&2
+        exit 1
+    fi
+else
+    if [ "$#" -lt 4 ]; then
+        echo "usage: bootstrap.sh --latest|--stable --role ROLE [options], or vRELEASE FULL_COMMIT_SHA --role ROLE [options]" >&2
+        exit 2
+    fi
+    tag=$1
+    expected=$2
+    shift 2
 fi
-shift 2
 if ! printf '%s\n' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([abrc][0-9]+)?$'; then
     echo "invalid release tag (floating branches are not supported)" >&2
     exit 2

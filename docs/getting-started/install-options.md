@@ -1,72 +1,104 @@
 # Install Workgate
 
-Choose a role for each computer:
+Choose a role: **Colocate** (Control and Executor together), **Control** (MCP endpoint and WebUI), or **Executor** (workspace machine).
 
-- **Colocate** — start with one computer running both Control and Executor.
-- **Control** — host the MCP endpoint and WebUI, typically on a server.
-- **Executor** — let Control access another computer's workspaces.
+## Choose a channel
 
-Use the published **v5.0.0a13** source installer. Install Git first, and run the command as the user who will operate Workgate.
+| Channel | What you get | Recommended for |
+| --- | --- | --- |
+| **Latest** | Newest published GitHub Release, including Alpha/Beta/RC | Trying current Workgate features |
+| **Stable** | Newest non-prerelease GitHub Release | Production, once a compatible source+uv stable release exists |
+| **Dev** | Current `main` source checkout | Development and local experimentation |
+
+Install Git first. **Latest** and **Stable** use the same source installer: only release selection differs. It resolves the chosen Git tag to a full commit SHA and verifies the pinned checkout before installing.
+
+**Current compatibility:** Stable currently resolves to v4.3.1, which predates the source+uv installer. The source bootstrap will reject it; use Latest for a source+uv installation until a compatible stable release is published. Dev does not install a managed service.
 
 ## Linux
 
-### One computer: Colocate
+### Colocate on one computer
 
-Follow the [Quickstart](quickstart.md): it has the published Linux Colocate one-line command and first-use instructions.
-
-### Control on a server
+Latest (includes prereleases):
 
 ~~~sh
-curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/1424b9e9d84d5ae1405d28c2ea9a7d3d94e193be/deploy/source/bootstrap.sh | sh -s -- v5.0.0a13 1424b9e9d84d5ae1405d28c2ea9a7d3d94e193be --role control --base-url https://control.example.com
+curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/main/deploy/source/bootstrap.sh | sh -s -- --latest --role colocate --name workstation
 ~~~
 
-Replace control.example.com with your own public HTTPS hostname and follow [VPS deployment](vps.md) to publish it.
-
-### Executor on another computer
-
-Replace the Control URL before running:
+Stable (only non-prereleases):
 
 ~~~sh
-curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/1424b9e9d84d5ae1405d28c2ea9a7d3d94e193be/deploy/source/bootstrap.sh | sh -s -- v5.0.0a13 1424b9e9d84d5ae1405d28c2ea9a7d3d94e193be --role executor --control-url https://control.example.com --name workstation
+curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/main/deploy/source/bootstrap.sh | sh -s -- --stable --role colocate --name workstation
 ~~~
 
-Approve the pairing request in Control's WebUI.
+### Other roles
+
+Replace the options after `--latest` (or `--stable`) with:
+
+- **Control:** `--role control --base-url https://control.example.com`
+- **Executor:** `--role executor --control-url https://control.example.com --name workstation`
+
+For remote Control, configure its public HTTPS endpoint as described in [VPS deployment](vps.md). Approve a new Executor's pairing request in the Control WebUI.
 
 ## Windows PowerShell
 
-Run this block in PowerShell to install **Colocate**:
+Latest (includes prereleases):
 
 ~~~powershell
-$tag = 'v5.0.0a13'
-$sha = '1424b9e9d84d5ae1405d28c2ea9a7d3d94e193be'
-$script = Join-Path $env:TEMP ("workgate-bootstrap-" + [guid]::NewGuid().ToString('N') + '.ps1')
-try {
-    Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/rijuyuezhu/workgate/$sha/deploy/source/bootstrap.ps1" -OutFile $script
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -Role colocate -Tag $tag -Commit $sha -Name workstation
-} finally {
-    Remove-Item -LiteralPath $script -ErrorAction SilentlyContinue
-}
+& ([scriptblock]::Create((Invoke-RestMethod 'https://raw.githubusercontent.com/rijuyuezhu/workgate/main/deploy/source/bootstrap.ps1'))) -Role colocate -Latest -Name workstation
 ~~~
 
-For a different role, change the PowerShell invocation inside the block:
+Stable (only non-prereleases):
 
-- **Control:** use \`-Role control -Tag $tag -Commit $sha\`.
-- **Executor:** use \`-Role executor -Tag $tag -Commit $sha -ControlUrl 'https://control.example.com' -Name workstation\`.
+~~~powershell
+& ([scriptblock]::Create((Invoke-RestMethod 'https://raw.githubusercontent.com/rijuyuezhu/workgate/main/deploy/source/bootstrap.ps1'))) -Role colocate -Stable -Name workstation
+~~~
 
-Windows ARM64 uses the release's native dependency package automatically.
+For Control, use `-Role control -Latest -BaseUrl 'https://control.example.com'`. For Executor, use `-Role executor -Latest -ControlUrl 'https://control.example.com' -Name workstation`. Substitute `-Stable` to select the stable channel.
+
+Windows ARM64 uses the native dependency wheel attached to the selected source+uv release.
+
+## Dev: run from current main
+
+Dev is a **development checkout**, not a tagged release or managed service installation. It uses the checked-out source directly, without replacing an existing Workgate service or pairing.
+
+On Linux or macOS:
+
+~~~sh
+git clone https://github.com/rijuyuezhu/workgate.git
+cd workgate
+uv sync --locked
+uv run workgate control init-config
+uv run workgate colocate
+~~~
+
+On Windows PowerShell:
+
+~~~powershell
+git clone https://github.com/rijuyuezhu/workgate.git
+Set-Location workgate
+uv sync --locked
+uv run workgate control init-config
+uv run workgate colocate
+~~~
+
+To develop a different role or contribute code, see [Development](../development.md). Run Dev on a separate port/configuration if an existing Workgate service already uses the defaults.
+
+## Pin a specific published release
+
+Latest and Stable change as new releases appear. For a repeatable installation, pin a specific tag **and full commit SHA**. On Linux:
+
+~~~sh
+curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/FULL_COMMIT_SHA/deploy/source/bootstrap.sh | sh -s -- vRELEASE FULL_COMMIT_SHA --role colocate --name workstation
+~~~
+
+On Windows, download `bootstrap.ps1` from that same commit and invoke it with `-Role colocate -Tag vRELEASE -Commit FULL_COMMIT_SHA`.
+
+Select a matching tag and SHA from [GitHub Releases](https://github.com/rijuyuezhu/workgate/releases). All published-release installers use a versioned source checkout, never an unpinned `main` runtime.
 
 ## After installation
 
-Open the WebUI at \`http://127.0.0.1:8765/ui\` for a local Control. Connect your MCP client to:
+Open the WebUI at `http://127.0.0.1:8765/ui` for a local Control and connect the MCP client to `http://127.0.0.1:8765/mcp`. Remote clients must use your public HTTPS origin followed by `/mcp`.
 
-~~~text
-http://127.0.0.1:8765/mcp
-~~~
+See [Quickstart](quickstart.md) and [Connect ChatGPT](chatgpt-connector.md) for the next steps.
 
-For a remote Control, use the public HTTPS origin followed by \`/mcp\`. Continue with [Quickstart](quickstart.md) or [Connect ChatGPT](chatgpt-connector.md).
-
-## Already running Workgate?
-
-Use the [upgrade and rollback guide](https://github.com/rijuyuezhu/workgate/blob/main/deploy/source/README.md) for an existing managed source installation, or [migrate an older installation](../guides/migrate-frozen.md). First-time install commands are intended for a new role installation.
-
-For an alternative release, choose the matching tag and commit from [GitHub Releases](https://github.com/rijuyuezhu/workgate/releases). The examples above already contain the published release identity. You can inspect the [source installer](https://github.com/rijuyuezhu/workgate/tree/main/deploy/source) if needed.
+**Already running Workgate?** Use the [upgrade and rollback guide](https://github.com/rijuyuezhu/workgate/blob/main/deploy/source/README.md) rather than rerunning a first-time installer. For old frozen installations, see [Migration](../guides/migrate-frozen.md).
