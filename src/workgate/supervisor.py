@@ -43,9 +43,7 @@ def _borrow_child_socket(fd: int) -> socket.socket:
 
 
 def child_command(*args: str) -> list[str]:
-    """Relaunch the same installed CLI, including frozen installations."""
-    if getattr(sys, "frozen", False):
-        return [sys.executable, *args]
+    """Relaunch the same source-installed CLI."""
     return [sys.executable, "-m", "workgate.main", *args]
 
 

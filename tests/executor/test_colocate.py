@@ -69,11 +69,6 @@ def test_colocate_defaults_to_existing_role_commands(monkeypatch):
     ]
 
 
-def test_colocate_frozen_executable_launches_same_binary(monkeypatch):
-    monkeypatch.setattr(supervisor.sys, "frozen", True, raising=False)
-    assert colocate._child_command("control") == [sys.executable, "control"]
-
-
 def test_colocate_does_not_accept_duplicate_role_commands():
     with pytest.raises(ValueError, match="unique"):
         supervisor.supervise(

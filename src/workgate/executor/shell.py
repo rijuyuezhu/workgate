@@ -294,11 +294,7 @@ def _command_with_env(
 
 def _bounded_runner_argv(shell: str, command: str) -> list[str]:
     """Use the gated internal runner on all platforms."""
-    return bounded_runner_argv(
-        shell,
-        command,
-        frozen=_is_frozen_app(),
-    )
+    return bounded_runner_argv(shell, command)
 
 
 async def _spawn_process(

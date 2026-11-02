@@ -69,8 +69,6 @@ def _runner_argv(
         arguments.extend(["--blocked-env-name", name])
     for prefix in config.subprocess_env_blocked_prefixes:
         arguments.extend(["--blocked-env-prefix", prefix])
-    if getattr(sys, "frozen", False):
-        return [sys.executable, "job-runner", *arguments]
     return [
         sys.executable,
         str(Path(__file__).resolve().with_name("runner_bootstrap.py")),

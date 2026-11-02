@@ -86,14 +86,6 @@ def test_default_shell_and_python_follow_host(monkeypatch) -> None:
     assert dialect.default_python() == "python3"
 
 
-def test_frozen_windows_python_default_does_not_invoke_workgate_executable(
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(dialect, "host_os", lambda: HostOS.WINDOWS)
-    monkeypatch.setattr(dialect.sys, "frozen", True, raising=False)
-    assert dialect.default_python() == "python"
-
-
 def test_windows_interactive_shell_argv_requires_powershell() -> None:
     assert dialect.interactive_shell_argv(
         "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"

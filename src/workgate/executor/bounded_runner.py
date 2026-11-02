@@ -46,9 +46,8 @@ def bounded_runner_argv(
     shell: str,
     command: str,
     *extra_arguments: str,
-    frozen: bool | None = None,
 ) -> list[str]:
-    """Build one trusted invocation of the private bounded-runner CLI."""
+    """Build a trusted Python invocation of the bounded-runner script."""
     arguments = [
         "--shell",
         shell,
@@ -56,10 +55,6 @@ def bounded_runner_argv(
         command,
         *extra_arguments,
     ]
-    if frozen is None:
-        frozen = bool(getattr(sys, "frozen", False))
-    if frozen:
-        return [sys.executable, "bounded-runner", *arguments]
     return [sys.executable, os.path.abspath(__file__), *arguments]
 
 

@@ -59,9 +59,7 @@ def _executor_store():
     return provider()
 
 
-def test_bounded_runner_uses_trusted_absolute_script(monkeypatch):
-    monkeypatch.setattr(shell_ops, "_is_frozen_app", lambda: False)
-
+def test_bounded_runner_uses_trusted_absolute_script():
     argv = shell_ops._bounded_runner_argv("/bin/sh", "echo hi")
 
     assert argv[0] == sys.executable
@@ -70,20 +68,6 @@ def test_bounded_runner_uses_trusted_absolute_script(monkeypatch):
         os.path.join("workgate", "executor", "bounded_runner.py")
     )
     assert "-m" not in argv
-
-
-def test_bounded_runner_uses_frozen_cli_subcommand(monkeypatch):
-    monkeypatch.setattr(shell_ops, "_is_frozen_app", lambda: True)
-    monkeypatch.setattr(shell_ops.sys, "executable", "/app/workgate")
-
-    assert shell_ops._bounded_runner_argv("/bin/sh", "echo hi") == [
-        "/app/workgate",
-        "bounded-runner",
-        "--shell",
-        "/bin/sh",
-        "--command",
-        "echo hi",
-    ]
 
 
 def test_windows_bounded_runner_uses_startup_gate(monkeypatch):
@@ -1605,7 +1589,8 @@ async def test_frozen_bounded_runner_preserves_bundled_loader_path(
 
     monkeypatch.setattr(shell_ops.asyncio, "create_subprocess_exec", fake_spawn)
     await shell_ops._spawn_process(_executor_config(), "pwd", str(tmp_path))
-    assert seen["argv"][:2] == (sys.executable, "bounded-runner")
+    assert seen["argv"][0] == sys.executable
+    assert seen["argv"][1].endswith("bounded_runner.py")
     assert seen["env"]["LD_LIBRARY_PATH"] == "/tmp/bundled"
     assert seen["env"]["LD_LIBRARY_PATH_ORIG"] == "/usr/lib"
     assert _subprocess_env(_executor_config())["LD_LIBRARY_PATH"] == "/usr/lib"
