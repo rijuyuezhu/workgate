@@ -72,7 +72,7 @@ def test_windows_handoff_uses_separate_one_time_task(
     assert "Start-ScheduledTask" not in script  # Avoid a second trigger run.
     assert "-StartWhenAvailable" in script
     assert "AddSeconds(15)" in script
-    assert "Workgate Executor Source Cutover" in script
+    assert f"Workgate Executor Source Cutover v{VERSION}" in script
     assert "Workgate Executor', " not in script
     assert "Workgate Executor Source Cutover" != "Workgate Executor"
     assert "-LogonType Interactive -RunLevel Limited" in script
@@ -176,6 +176,51 @@ def test_scheduler_does_not_replace_existing_one_shot_task(
         )
     assert len(commands) == 1
     assert "Register-ScheduledTask" not in commands[0][-1]
+
+
+def test_following_release_can_schedule_while_previous_task_awaits_expiry(
+    prepared,
+) -> None:
+    checkout, config, _launcher = prepared
+    scripts: list[str] = []
+    registered: set[str] = set()
+
+    def run(argv: list[str]):
+        script = argv[-1]
+        scripts.append(script)
+        version = "v5.0.0a78" if "v5.0.0a78" in script else f"v{VERSION}"
+        name = f"Workgate Executor Source Cutover {version}"
+        if "[Console]::Out.Write" in script:
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                '{"state":"Ready","last_result":0}'
+                if name in registered
+                else "null",
+                "",
+            )
+        assert "Register-ScheduledTask" in script
+        assert name not in registered
+        registered.add(name)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    source_handoff.schedule_windows_source_cutover(
+        checkout, version=VERSION, config=config, run=run
+    )
+    # Simulate a successful a77 native switch with the old one-shot still
+    # registered as Ready until its Task Scheduler expiration boundary.
+    source_handoff.schedule_windows_source_cutover(
+        checkout, version="5.0.0a78", config=config, run=run
+    )
+    assert registered == {
+        f"Workgate Executor Source Cutover v{VERSION}",
+        "Workgate Executor Source Cutover v5.0.0a78",
+    }
+    with pytest.raises(RuntimeError, match="already registered"):
+        source_handoff.schedule_windows_source_cutover(
+            checkout, version="5.0.0a78", config=config, run=run
+        )
+    assert sum("Register-ScheduledTask" in script for script in scripts) == 2
 
 
 def test_scheduler_creation_failure_propagates(
