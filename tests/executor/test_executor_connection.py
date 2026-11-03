@@ -1255,6 +1255,71 @@ def test_connection_logging_deduplicates_heartbeats_and_redacts_raw_errors(
     assert "bearer hidden" not in caplog.text
 
 
+@pytest.mark.asyncio
+async def test_reconnect_warning_identifies_safe_request_status_and_code(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    failure = ExecutorControlError(
+        "private response body / Authorization: secret",
+        request_kind="poll",
+        status_code=429,
+        protocol_error=ProtocolError(
+            code=ProtocolErrorCode.EXECUTOR_OVERLOADED,
+            message="private protocol body",
+        ),
+    )
+    client = _ScriptedReconnectClient((failure, None))
+    connection = ExecutorConnection(
+        client,
+        hello_factory=_hello,
+        execute=lambda _command: None,
+        max_concurrent_commands=1,
+        sleep=lambda _delay: asyncio.sleep(0),
+    )
+    with caplog.at_level(logging.INFO, logger="workgate.executor.connection"):
+        connection.start()
+        try:
+            await asyncio.wait_for(client.recovered.wait(), timeout=2)
+        finally:
+            await connection.aclose()
+    lines = [r.getMessage() for r in caplog.records]
+    assert (
+        "executor reconnecting: ExecutorControlError "
+        "request=poll http=429 code=executor_overloaded"
+    ) in lines
+    assert "private" not in caplog.text
+    assert "Authorization" not in caplog.text
+    assert "secret" not in caplog.text
+    assert sum("request=poll" in line for line in lines) == 1
+
+
+def test_reconnect_warning_rejects_untrusted_request_kind(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    connection = ExecutorConnection(
+        _ScriptedReconnectClient(()),
+        hello_factory=_hello,
+        execute=lambda _command: None,
+        max_concurrent_commands=1,
+    )
+    with caplog.at_level(
+        logging.WARNING, logger="workgate.executor.connection"
+    ):
+        connection._report_status(
+            "reconnecting",
+            "ExecutorControlError",
+            control_error=ExecutorControlError(
+                "private body",
+                request_kind="secret\nAuthorization",
+            ),
+        )
+    assert caplog.records[-1].getMessage() == (
+        "executor reconnecting: ExecutorControlError "
+        "request=unknown http=transport code=none"
+    )
+    assert "Authorization" not in caplog.text
+
+
 def test_connection_logging_failure_does_not_block_status_callback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

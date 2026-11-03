@@ -327,7 +327,9 @@ class ExecutorConnection:
                 if exc.requires_owner_action or not reconnectable:
                     self._require_owner_action(exc)
                     break
-                self._report_status("reconnecting", type(exc).__name__)
+                self._report_status(
+                    "reconnecting", type(exc).__name__, control_error=exc
+                )
                 # A duplicate-poll 409 is request-level non-retryable but can be a
                 # transient reconnect overlap while control's previous poll unwinds.
                 if delivery_progress.is_set():
@@ -405,7 +407,9 @@ class ExecutorConnection:
                 if not exc.retryable:
                     self._require_owner_action(exc)
                     return
-                self._report_status("reconnecting", type(exc).__name__)
+                self._report_status(
+                    "reconnecting", type(exc).__name__, control_error=exc
+                )
                 await self._sleep(self._retry_delay(attempt))
                 attempt += 1
 
@@ -616,7 +620,11 @@ class ExecutorConnection:
         self._owner_action.set()
 
     def _report_status(
-        self, phase: ConnectionPhase, error_class: str | None = None
+        self,
+        phase: ConnectionPhase,
+        error_class: str | None = None,
+        *,
+        control_error: ExecutorControlError | None = None,
     ) -> None:
         # Log each connection phase once, even if retry error classes change.
         state = (
@@ -645,7 +653,29 @@ class ExecutorConnection:
                 elif phase == "action-required":
                     logger.error("executor requires owner action: %s", reason)
                 elif error_class is not None or self._was_connected:
-                    logger.warning("executor reconnecting: %s", reason)
+                    if control_error is None:
+                        logger.warning("executor reconnecting: %s", reason)
+                    else:
+                        kind = control_error.request_kind
+                        if kind not in {
+                            "hello",
+                            "heartbeat",
+                            "poll",
+                            "result",
+                            "validate",
+                        }:
+                            kind = "unknown"
+                        logger.warning(
+                            "executor reconnecting: %s request=%s http=%s code=%s",
+                            reason,
+                            kind,
+                            control_error.status_code
+                            if control_error.status_code is not None
+                            else "transport",
+                            control_error.code.value
+                            if control_error.code
+                            else "none",
+                        )
                 else:
                     logger.info("executor connecting")
             if phase == "connected":
