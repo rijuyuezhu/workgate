@@ -204,6 +204,36 @@ def test_lifecycle_helpers_cover_platform_and_bounded_log_paths(tmp_path):
     )
 
 
+@pytest.mark.parametrize(
+    ("platform", "interpreter", "expected"),
+    [
+        ("win32", "pythonw.exe", "python.exe"),
+        ("win32", "python.exe", "python.exe"),
+        ("linux", "pythonw.exe", "pythonw.exe"),
+    ],
+)
+def test_conpty_job_runner_uses_console_python(
+    tmp_path, monkeypatch, platform, interpreter, expected
+):
+    monkeypatch.setattr(
+        job_lifecycle,
+        "sys",
+        SimpleNamespace(
+            executable=str(tmp_path / interpreter),
+            platform=platform,
+        ),
+    )
+    paths: job_state.JobAttemptPaths = {
+        "command": tmp_path / "command.txt",
+        "log": tmp_path / "job.log",
+        "status": tmp_path / "status.json",
+    }
+    argv = job_lifecycle._runner_argv(
+        resolve_executor_config(get_settings()), paths, tmp_path
+    )
+    assert argv[0] == str(tmp_path / expected)
+
+
 def test_windows_job_runner_command_uses_powershell_quoting(
     tmp_path, monkeypatch
 ):

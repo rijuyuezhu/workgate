@@ -69,8 +69,12 @@ def _runner_argv(
         arguments.extend(["--blocked-env-name", name])
     for prefix in config.subprocess_env_blocked_prefixes:
         arguments.extend(["--blocked-env-prefix", prefix])
+    python = sys.executable
+    # PowerShell inside ConPTY does not wait for windowless pythonw.exe.
+    if sys.platform == "win32" and Path(python).name.lower() == "pythonw.exe":
+        python = str(Path(python).with_name("python.exe"))
     return [
-        sys.executable,
+        python,
         str(Path(__file__).resolve().with_name("runner_bootstrap.py")),
         *arguments,
     ]
