@@ -551,6 +551,26 @@ class ToolSessionStore:
                     reverse=True,
                 )
 
+    def list_sessions_with_job_protection(
+        self,
+    ) -> list[tuple[AgentSession, bool]]:
+        """One current Job-protection snapshot for a complete reconnect inventory."""
+        with self._lock:
+            sessions = self.list_sessions()
+            with self._state_store.transaction(
+                self._state_store.layout.jobs_lock_path
+            ):
+                active_jobs = self._active_job_session_ids_locked()
+            return [
+                (
+                    session,
+                    self._session_has_active_jobs(
+                        session.session_id, active_jobs
+                    ),
+                )
+                for session in sessions
+            ]
+
     def record_file_snapshot(
         self,
         *,

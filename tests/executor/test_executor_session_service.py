@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -74,6 +75,98 @@ def test_executor_runtime_freezes_default_anchor_but_allows_external_workdirs(
         workdir=other_workspace,
     )
     assert Path(second.workdir) == other_workspace
+
+
+def test_reconnect_inventory_reads_job_protection_once_and_lookup_stays_fresh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = _real_service(tmp_path)
+    store = service._store
+    ids = ("sess_0000000000000000000001", "sess_0000000000000000000002")
+    for session_id in ids:
+        store.create_session(
+            session_id=session_id, workdir=service._config.default_workdir
+        )
+    jobs_path = store.state_store.layout.jobs_store_path
+    jobs_path.parent.mkdir(parents=True, exist_ok=True)
+    jobs_path.write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "job_id": "job_0000000000000000000001",
+                        "session_id": ids[0],
+                        "kind": "shell",
+                        "status": "running",
+                    }
+                ]
+            }
+        )
+    )
+    calls = 0
+    original = store._active_job_session_ids_locked
+
+    def observed_protection() -> set[str] | None:
+        nonlocal calls
+        calls += 1
+        return original()
+
+    monkeypatch.setattr(
+        store, "_active_job_session_ids_locked", observed_protection
+    )
+    rows = {str(row.session_id): row for row in service.inventory()}
+    assert calls == 1
+    assert rows[ids[0]].has_active_jobs is True
+    assert rows[ids[1]].has_active_jobs is False
+    store.touch_session(ids[1])
+    summary = service.lookup(ids[1])
+    assert summary is not None
+    assert summary.last_active_at == store.require_session(ids[1]).updated_at
+    assert calls == 2  # Single-session lookup never reuses old inventory state.
+
+
+@pytest.mark.parametrize(
+    ("job_backing_shells", "expected_persistent_shells"),
+    ((frozenset({"shell-backed-by-job"}), False), (frozenset(), True)),
+)
+def test_reconnect_inventory_keeps_nonjob_persistent_shell_semantics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    job_backing_shells: frozenset[str],
+    expected_persistent_shells: bool,
+) -> None:
+    service = _real_service(tmp_path)
+    session_id = "sess_0000000000000000000001"
+    service._store.create_session(
+        session_id=session_id, workdir=service._config.default_workdir
+    )
+    service._store.register_persistent_shell(session_id, "shell-backed-by-job")
+    monkeypatch.setattr(
+        service._shell.jobs,
+        "backing_shell_ids",
+        lambda _ids: job_backing_shells,
+    )
+    rows = service.inventory()
+    assert len(rows) == 1
+    assert rows[0].has_persistent_shells is expected_persistent_shells
+
+
+def test_reconnect_inventory_preserves_uncertain_job_fail_closed(
+    tmp_path: Path,
+) -> None:
+    service = _real_service(tmp_path)
+    store = service._store
+    for index in (1, 2):
+        store.create_session(
+            session_id=f"sess_{index:022d}",
+            workdir=service._config.default_workdir,
+        )
+    jobs_path = store.state_store.layout.jobs_store_path
+    jobs_path.parent.mkdir(parents=True, exist_ok=True)
+    jobs_path.write_text("{corrupted}")
+    rows = service.inventory()
+    assert len(rows) == 2
+    assert all(row.has_active_jobs for row in rows)
 
 
 def test_executor_session_lookup_absence_and_non_directory_workdir(
