@@ -11,7 +11,10 @@ from tests.support.paired import (
     build_paired_http_app,
 )
 from workgate.config.settings import clear_settings_cache, get_settings
-from workgate.control.executor_transport import ExecutorTransportError
+from workgate.control.executor_transport import (
+    ExecutorTransport,
+    ExecutorTransportError,
+)
 from workgate.control.state import ControlSessionRecord
 from workgate.oauth.core.context import bind_oauth_claims, reset_oauth_claims
 from workgate.protocol.errors import ProtocolErrorCode
@@ -283,25 +286,11 @@ async def test_retired_executor_requires_explicit_force_release_preserving_task_
     )
     assert isinstance(live, dict)
 
-    # The paired test transport raises a generic RuntimeError for unknown IDs;
-    # the real Control transport raises UNAUTHORIZED_EXECUTOR instead.
-    original_call = harness.control.executor_transport.call
-
-    async def call_with_retired_id(
-        executor_id, op, args=None, *, session_id=None, timeout_s=None
-    ):
-        if executor_id == str(attached.executor_id):
-            raise ExecutorTransportError(
-                ProtocolErrorCode.UNAUTHORIZED_EXECUTOR,
-                "executor is not trusted",
-            )
-        return await original_call(
-            executor_id, op, args, session_id=session_id, timeout_s=timeout_s
-        )
-
-    monkeypatch.setattr(
-        harness.control.executor_transport, "call", call_with_retired_id
-    )
+    # Use the real native Control transport: an untrusted Executor ID is
+    # rejected as UNAUTHORIZED_EXECUTOR before any remote command is queued.
+    transport = ExecutorTransport(state, max_pending_commands=4)
+    transport.start()
+    monkeypatch.setattr(coordinator, "_transport", transport)
 
     # Mere age/retirement never constitutes authoritative remote absence.
     with pytest.raises(ExecutorTransportError, match="not trusted"):
@@ -333,6 +322,7 @@ async def test_retired_executor_requires_explicit_force_release_preserving_task_
     # implicit Task look safely idle/completed to the retention sweeper.
     assert await service.sweep_idle_tasks(now=10**10) == 0
     assert (await service.read_task(task_id)).status == "active"
+    await transport.aclose()
 
 
 @pytest.mark.asyncio
