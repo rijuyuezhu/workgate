@@ -81,16 +81,11 @@ def _owned_unit(unit: Path) -> bool:
     )
 
 
-def _require_loaded_unit_owner(unit: Path) -> None:
+def _loaded_unit_is_owned(unit: Path) -> bool:
     fragment = _systemctl(
         "show", _SERVICE_NAME, "--property=FragmentPath", "--value"
     ).stdout.strip()
-    if (fragment and Path(fragment).absolute() != unit.absolute()) or (
-        not fragment and _load_state() != "not-found"
-    ):
-        raise RuntimeError(
-            f"refusing to manage a foreign Colocate unit: {unit}"
-        )
+    return bool(fragment) and Path(fragment).absolute() == unit.absolute()
 
 
 def _windows_service_dir() -> Path:
@@ -297,9 +292,7 @@ def manage_colocate_service(action: str) -> None:
         if not _owned_unit(unit):
             print("Colocate service: unknown")
             return
-        try:
-            _require_loaded_unit_owner(unit)
-        except RuntimeError:
+        if not _loaded_unit_is_owned(unit):
             print("Colocate service: unknown")
             return
         result = subprocess.run(
@@ -322,7 +315,10 @@ def manage_colocate_service(action: str) -> None:
                 raise RuntimeError(
                     f"refusing to remove unmanaged service: {unit}"
                 )
-            _require_loaded_unit_owner(unit)
+            if not _loaded_unit_is_owned(unit):
+                raise RuntimeError(
+                    f"refusing to manage a foreign Colocate unit: {unit}"
+                )
             _systemctl("disable", "--now", _SERVICE_NAME)
             unit.unlink()
             _systemctl("daemon-reload")
@@ -332,6 +328,9 @@ def manage_colocate_service(action: str) -> None:
         raise RuntimeError(
             f"refusing to manage uninstalled or unmanaged service: {unit}"
         )
-    _require_loaded_unit_owner(unit)
+    if not _loaded_unit_is_owned(unit):
+        raise RuntimeError(
+            f"refusing to manage a foreign Colocate unit: {unit}"
+        )
     _systemctl(action, _SERVICE_NAME)
     print(f"Colocate service: {action}")

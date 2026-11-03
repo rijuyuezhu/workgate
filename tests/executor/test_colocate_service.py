@@ -53,6 +53,8 @@ def installer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             "--value",
         ]:
             stdout = f'"{unit_dir}" /etc/systemd/user\n'
+        elif "--property=FragmentPath" in command:
+            stdout = str(unit_path) + "\n" if unit_path.is_file() else "\n"
         elif "--property=LoadState" in command:
             stdout = "not-found\n"
         return subprocess.CompletedProcess(command, 0, stdout, "")
@@ -318,8 +320,6 @@ def test_manage_colocate_refuses_loaded_foreign_native_unit(
                 str(unit.parent / "foreign-unit") if fragment_known else ""
             )
             return subprocess.CompletedProcess(command, 0, fragment + "\n", "")
-        if "--property=LoadState" in command and not fragment_known:
-            return subprocess.CompletedProcess(command, 0, "loaded\n", "")
         return original(command, **kwargs)
 
     monkeypatch.setattr(service.subprocess, "run", run)
@@ -356,6 +356,36 @@ def test_manage_colocate_loaded_own_unit_remains_manageable(
             action,
             "workgate-colocate.service",
         ] in commands
+
+
+@pytest.mark.parametrize(
+    "action", ("status", "start", "stop", "restart", "uninstall")
+)
+def test_owned_colocate_propagates_native_fragment_query_failure(
+    installer, monkeypatch, action
+):
+    args, commands, pair, unit = installer
+    pair()
+    service.install_colocate_service(args)
+    original = service.subprocess.run
+
+    def run(command, **kwargs):
+        if "--property=FragmentPath" in command:
+            return subprocess.CompletedProcess(
+                command, 1, "", "native query failed"
+            )
+        return original(command, **kwargs)
+
+    monkeypatch.setattr(service.subprocess, "run", run)
+    before = len(commands)
+    with pytest.raises(RuntimeError, match="native query failed"):
+        service.manage_colocate_service(action)
+    assert unit.is_file()
+    assert not any(
+        item[:3] == ["systemctl", "--user", action]
+        or item[:4] == ["systemctl", "--user", "disable", "--now"]
+        for item in commands[before:]
+    )
 
 
 def test_unowned_colocate_status_is_unknown(installer, capsys):
