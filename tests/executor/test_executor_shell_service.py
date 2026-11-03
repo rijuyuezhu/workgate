@@ -572,20 +572,29 @@ async def test_shell_service_stop_owned_rejects_still_live_failed_kill(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("windows", "status", "shell_active", "reconcile_expected"),
+    (
+        "windows",
+        "status",
+        "shell_active",
+        "confirmed_absence",
+        "reconcile_expected",
+    ),
     [
-        (True, "lost", False, False),
-        (True, "lost", True, True),
-        (True, "running", False, True),
-        (False, "lost", False, True),
+        (True, "lost", False, False, False),
+        (True, "lost", True, False, True),
+        (True, "running", False, False, True),
+        (False, "lost", False, False, True),
+        (False, "lost", False, True, False),
+        (False, "running", False, True, True),
     ],
 )
-async def test_reconnect_skips_terminal_lost_jobs_only_for_empty_windows_conpty(
+async def test_reconnect_handles_lost_jobs_with_durable_absence_proof(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     windows: bool,
     status: str,
     shell_active: bool,
+    confirmed_absence: bool,
     reconcile_expected: bool,
 ) -> None:
     from workgate.executor import jobs as job_service_module
@@ -609,7 +618,11 @@ async def test_reconnect_skips_terminal_lost_jobs_only_for_empty_windows_conpty(
 
     def snapshot(_ids):
         calls.append("snapshot")
-        return (SimpleNamespace(status=status),), frozenset({"shell-id"})
+        return (
+            SimpleNamespace(
+                status=status, _shell_absence_confirmed=confirmed_absence
+            ),
+        ), frozenset({"shell-id"})
 
     async def reconcile():
         calls.append("reconcile")
@@ -627,6 +640,7 @@ async def test_reconnect_skips_terminal_lost_jobs_only_for_empty_windows_conpty(
     assert calls.count("reconcile") == int(reconcile_expected)
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("status", "confirmed", "completed", "operation", "pending", "expected"),
     [
@@ -641,7 +655,8 @@ async def test_reconnect_skips_terminal_lost_jobs_only_for_empty_windows_conpty(
         ("running", True, 123.0, None, None, False),
     ],
 )
-def test_lost_job_cutover_evidence_requires_durable_confirmed_absence(
+async def test_lost_job_cutover_evidence_requires_durable_confirmed_absence(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     status: str,
     confirmed: object,
@@ -679,3 +694,18 @@ def test_lost_job_cutover_evidence_requires_durable_confirmed_absence(
     assert len(jobs) == 1
     assert jobs[0].status == status
     assert jobs[0]._shell_absence_confirmed is expected
+
+    from workgate.executor import jobs as job_service_module
+    from workgate.platform.host import HostOS
+
+    service, _store = _service(tmp_path)
+    reconcile_calls = []
+
+    async def reconcile():
+        reconcile_calls.append("reconcile")
+        return True
+
+    monkeypatch.setattr(job_service_module, "host_os", lambda: HostOS.LINUX)
+    monkeypatch.setattr(service.jobs, "reconcile", reconcile)
+    await service.jobs.reconnect_inventory(frozenset({sid}))
+    assert len(reconcile_calls) == (0 if expected else 1)

@@ -111,9 +111,13 @@ class ExecutorJobService:
     ) -> tuple[tuple[JobInventorySummary, ...], frozenset[str]]:
         """Return authoritative retained jobs plus their private backing shells."""
         jobs, shell_ids = shell_jobs.shell_job_inventory_snapshot(session_ids)
-        if not any(
-            row.status not in CONFIRMED_TERMINAL_STATUSES for row in jobs
+        if all(
+            row.status in CONFIRMED_TERMINAL_STATUSES
+            or (row.status == "lost" and row._shell_absence_confirmed)
+            for row in jobs
         ):
+            # Already-proven missing shells need no repeated full job inventory.
+            # Keep unconfirmed lost rows on the authoritative recheck path.
             return jobs, shell_ids
         # Windows ConPTY shells are process-owned: after service restart no
         # old shell can survive. Do not lock every historical session merely
