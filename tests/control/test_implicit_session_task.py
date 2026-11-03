@@ -12,6 +12,7 @@ from tests.support.paired import (
 )
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.executor_transport import ExecutorTransportError
+from workgate.control.state import ControlSessionRecord
 from workgate.oauth.core.context import bind_oauth_claims, reset_oauth_claims
 from workgate.protocol.errors import ProtocolErrorCode
 from workgate.protocol.executor import (
@@ -19,7 +20,11 @@ from workgate.protocol.executor import (
     ExecutorResult,
     OperationError,
 )
-from workgate.protocol.ids import new_command_id
+from workgate.protocol.ids import (
+    new_command_id,
+    new_executor_id,
+    new_session_id,
+)
 
 
 def setup(monkeypatch, tmp_path):
@@ -249,6 +254,85 @@ async def test_ambiguous_create_retains_attached_task_and_retry_has_new_identity
     assert retried["task_id"] != first.task_id
     assert retried["session_id"] != first.session_id
     assert len(await harness.control.task_service.list_tasks()) == 2
+
+
+@pytest.mark.asyncio
+async def test_retired_executor_requires_explicit_force_release_preserving_task_history(
+    tmp_path, monkeypatch
+):
+    harness = setup(monkeypatch, tmp_path)
+    coordinator = harness.control.session_coordinator
+    service = harness.control.task_service
+    state = harness.control.control_state
+
+    # The retired ID is no longer trusted, but an old offered create and its
+    # automatically attached Task are intentionally still durable.
+    retired = ControlSessionRecord(
+        session_id=new_session_id(),
+        executor_id=new_executor_id(),
+        status="creating",
+        created_at=1,
+        updated_at=1,
+    )
+    attached = service.create_for_session(retired)
+    assert attached.task_id is not None
+    session_id = str(attached.session_id)
+    task_id = str(attached.task_id)
+    live = await coordinator.start_session(
+        workdir="project", executor_id=harness.executor_id
+    )
+    assert isinstance(live, dict)
+
+    # The paired test transport raises a generic RuntimeError for unknown IDs;
+    # the real Control transport raises UNAUTHORIZED_EXECUTOR instead.
+    original_call = harness.control.executor_transport.call
+
+    async def call_with_retired_id(
+        executor_id, op, args=None, *, session_id=None, timeout_s=None
+    ):
+        if executor_id == str(attached.executor_id):
+            raise ExecutorTransportError(
+                ProtocolErrorCode.UNAUTHORIZED_EXECUTOR,
+                "executor is not trusted",
+            )
+        return await original_call(
+            executor_id, op, args, session_id=session_id, timeout_s=timeout_s
+        )
+
+    monkeypatch.setattr(
+        harness.control.executor_transport, "call", call_with_retired_id
+    )
+
+    # Mere age/retirement never constitutes authoritative remote absence.
+    with pytest.raises(ExecutorTransportError, match="not trusted"):
+        await coordinator.end_session(session_id)
+    assert state.snapshot_sessions()[session_id].status == "terminating"
+    assert not state.snapshot_sessions()[session_id].executor_absence_confirmed
+
+    result = await coordinator.end_session(session_id, force=True)
+    assert result["ended"] is True
+    assert result["force_released"] is True
+    assert result["stopped_jobs"] == []
+    assert state.snapshot_sessions()[session_id].status == "ended"
+    assert not state.snapshot_sessions()[session_id].executor_absence_confirmed
+    assert state.snapshot_sessions()[str(live["session_id"])].status == "active"
+
+    # Ending is not deleting: historical Session IDs and the original Task
+    # attachment count must survive, including repeated owner attempts.
+    assert (await service.read_task(task_id)).session_ids == [session_id]
+    with service._store.transaction(service._path(task_id)):
+        stored = service._store.read_json(service._path(task_id))
+    assert stored is not None and stored["session_count"] == 1
+    with pytest.raises(ValueError, match="operation requires"):
+        await coordinator.end_session(session_id, force=True)
+    assert (await service.read_task(task_id)).session_ids == [session_id]
+    with service._store.transaction(service._path(task_id)):
+        after = service._store.read_json(service._path(task_id))
+    assert after is not None and after["session_count"] == 1
+    # A forced release without remote absence proof must not make an old
+    # implicit Task look safely idle/completed to the retention sweeper.
+    assert await service.sweep_idle_tasks(now=10**10) == 0
+    assert (await service.read_task(task_id)).status == "active"
 
 
 @pytest.mark.asyncio
