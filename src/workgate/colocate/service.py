@@ -66,6 +66,33 @@ def _load_state() -> str:
     ).stdout.strip()
 
 
+def _unit() -> Path:
+    return systemd_user_unit_path(
+        _systemctl("show", "--property=UnitPath", "--value").stdout,
+        _SERVICE_NAME,
+    )
+
+
+def _owned_unit(unit: Path) -> bool:
+    return (
+        unit.is_file()
+        and not unit.is_symlink()
+        and unit.read_text().startswith(_MANAGED_HEADER)
+    )
+
+
+def _require_loaded_unit_owner(unit: Path) -> None:
+    fragment = _systemctl(
+        "show", _SERVICE_NAME, "--property=FragmentPath", "--value"
+    ).stdout.strip()
+    if (fragment and Path(fragment).absolute() != unit.absolute()) or (
+        not fragment and _load_state() != "not-found"
+    ):
+        raise RuntimeError(
+            f"refusing to manage a foreign Colocate unit: {unit}"
+        )
+
+
 def _windows_service_dir() -> Path:
     return app_paths().state_dir / "colocate" / "service"
 
@@ -257,11 +284,8 @@ def manage_colocate_service(action: str) -> None:
         raise RuntimeError(
             "Colocate service requires Linux systemd or Windows Task Scheduler"
         )
+    unit = _unit()
     if action == "status":
-        unit = systemd_user_unit_path(
-            _systemctl("show", "--property=UnitPath", "--value").stdout,
-            _SERVICE_NAME,
-        )
         if not unit.exists() and not unit.is_symlink():
             # Don't mistake a loaded unit from another search path for absence.
             load = _load_state()
@@ -269,6 +293,14 @@ def manage_colocate_service(action: str) -> None:
                 "Colocate service: "
                 + ("not-installed" if load == "not-found" else "unknown")
             )
+            return
+        if not _owned_unit(unit):
+            print("Colocate service: unknown")
+            return
+        try:
+            _require_loaded_unit_owner(unit)
+        except RuntimeError:
+            print("Colocate service: unknown")
             return
         result = subprocess.run(
             ["systemctl", "--user", "is-active", _SERVICE_NAME],
@@ -285,19 +317,21 @@ def manage_colocate_service(action: str) -> None:
         print(f"Colocate service: {native_status}")
         return
     if action == "uninstall":
-        unit = systemd_user_unit_path(
-            _systemctl("show", "--property=UnitPath", "--value").stdout,
-            _SERVICE_NAME,
-        )
-        if unit.is_symlink() or (
-            unit.is_file() and not unit.read_text().startswith(_MANAGED_HEADER)
-        ):
-            raise RuntimeError(f"refusing to remove unmanaged service: {unit}")
-        if unit.exists():
+        if unit.exists() or unit.is_symlink():
+            if not _owned_unit(unit):
+                raise RuntimeError(
+                    f"refusing to remove unmanaged service: {unit}"
+                )
+            _require_loaded_unit_owner(unit)
             _systemctl("disable", "--now", _SERVICE_NAME)
             unit.unlink()
             _systemctl("daemon-reload")
         print("Uninstalled Workgate Colocate service")
         return
+    if not _owned_unit(unit):
+        raise RuntimeError(
+            f"refusing to manage uninstalled or unmanaged service: {unit}"
+        )
+    _require_loaded_unit_owner(unit)
     _systemctl(action, _SERVICE_NAME)
     print(f"Colocate service: {action}")
