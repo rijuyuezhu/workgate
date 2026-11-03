@@ -56,9 +56,11 @@ def _role(root: Path, name: str) -> None:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    (root / f"{name}.{os.getpid()}.pids").write_text(
-        f"{os.getpid()} {descendant.pid}", encoding="ascii"
-    )
+    # Publish a complete PID pair atomically: the supervisor may read at once.
+    pid_record = root / f"{name}.{os.getpid()}.pids"
+    pending = pid_record.with_suffix(".pending")
+    pending.write_text(f"{os.getpid()} {descendant.pid}", encoding="ascii")
+    pending.replace(pid_record)
     config = root / "config.yaml"
     digest = (
         hashlib.sha256(config.read_bytes()).hexdigest()
@@ -214,9 +216,15 @@ def run() -> None:
     assert refused.closed, "failed Job Object not closed"
 
     with tempfile.TemporaryDirectory(prefix="workgate-supervisor-win-") as temp:
+        root = Path(temp).resolve()
+        pending = root / "control.1.pending"
+        pending.write_text("123 456", encoding="ascii")
+        assert _rows(root, "control") == []
+        pending.replace(root / "control.1.pids")
+        assert _rows(root, "control") == [(123, 456)]
+        (root / "control.1.pids").unlink()
         # CI Windows temp roots can be junction aliases; Parent config file
         # snapshots require the canonical, non-aliased path.
-        root = Path(temp).resolve()
         _test(root / "restart", forced=False)
         _test(root / "apply", forced=False, apply=True)
         _test(root / "crash", forced=True)
