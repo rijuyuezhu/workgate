@@ -105,6 +105,51 @@ async def test_untrusted_or_missing_published_tag_fails_closed(
         await source_stage.resolve_published_commit("6.0.0a1")
 
 
+def _clear_proxy_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in os.environ:
+        if key.lower() in {"http_proxy", "https_proxy"}:
+            monkeypatch.delenv(key)
+
+
+def test_macos_source_stage_uses_configured_system_proxy_without_overriding_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_proxy_env(monkeypatch)
+    proxy = "http://127.0.0.1:7890"
+    monkeypatch.setattr(
+        source_stage, "getproxies", lambda: {"http": proxy, "https": proxy}
+    )
+    assert source_stage._source_proxy_env("Darwin")["HTTPS_PROXY"] == proxy
+    assert source_stage._source_proxy_env("Darwin")["HTTP_PROXY"] == proxy
+    assert "HTTPS_PROXY" not in source_stage._source_proxy_env("Linux")
+    monkeypatch.setenv("https_proxy", "http://owner-configured:1234")
+    selected = source_stage._source_proxy_env("Darwin")
+    assert selected["https_proxy"] == "http://owner-configured:1234"
+    assert "HTTPS_PROXY" not in selected
+
+
+@pytest.mark.asyncio
+async def test_macos_published_tag_resolves_with_system_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_proxy_env(monkeypatch)
+    proxy = "http://127.0.0.1:7890"
+    monkeypatch.setattr(source_stage.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(source_stage, "getproxies", lambda: {"https": proxy})
+    _api(
+        monkeypatch, {"tag_name": TAG, "draft": False, "published_at": "today"}
+    )
+
+    def fake_run(args: list[str], **kw):
+        assert args[1] == "ls-remote"
+        assert kw["env"]["HTTPS_PROXY"] == proxy
+        assert kw["env"]["GIT_TERMINAL_PROMPT"] == "0"
+        return 0, f"{SHA}\trefs/tags/{TAG}\n"
+
+    monkeypatch.setattr(source_stage, "run_bounded_capture", fake_run)
+    assert await source_stage.resolve_published_commit("6.0.0a1") == SHA
+
+
 @pytest.mark.asyncio
 async def test_official_git_lookup_failure_is_not_an_update_target(
     monkeypatch: pytest.MonkeyPatch,
@@ -237,6 +282,39 @@ async def test_stage_passes_exact_commit_and_never_activates(
     original = launcher.read_bytes()
     staged = await source_stage.prepare_managed_source(
         worktree, version="6.0.0a1", system=system
+    )
+    assert staged == worktree.parent / SHA
+    assert launcher.read_bytes() == original
+
+
+@pytest.mark.asyncio
+async def test_macos_preparer_inherits_system_proxy_for_git_clone(
+    checkout: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_proxy_env(monkeypatch)
+    worktree, python, launcher = checkout
+    proxy = "http://127.0.0.1:7890"
+    monkeypatch.setattr(source_stage, "getproxies", lambda: {"https": proxy})
+    monkeypatch.setattr(
+        source_stage, "verified_source_checkout", lambda *_args, **_kw: worktree
+    )
+
+    async def resolve(_version: str) -> str:
+        return SHA
+
+    monkeypatch.setattr(source_stage, "resolve_published_commit", resolve)
+
+    def fake_run(args: list[str], **kw):
+        assert args[0] == str(python)
+        assert kw["env"]["HTTPS_PROXY"] == proxy
+        assert kw["env"]["PATH"].endswith("/opt/homebrew/bin")
+        (worktree.parent / SHA / ".venv").mkdir(parents=True)
+        return 0, ""
+
+    monkeypatch.setattr(source_stage, "run_bounded_capture", fake_run)
+    original = launcher.read_bytes()
+    staged = await source_stage.prepare_managed_source(
+        worktree, version="6.0.0a1", system="Darwin"
     )
     assert staged == worktree.parent / SHA
     assert launcher.read_bytes() == original

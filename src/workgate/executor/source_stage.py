@@ -2,8 +2,10 @@
 
 import asyncio
 import os
+import platform
 import re
 from pathlib import Path
+from urllib.request import getproxies
 
 import httpx
 
@@ -17,6 +19,20 @@ _RELEASES_API = (
 )
 _TAG = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+(?:[abrc][0-9]+)?\Z")
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
+
+
+def _source_proxy_env(system: str) -> dict[str, str]:
+    env = os.environ.copy()
+    if system == "Darwin":
+        # LaunchAgents lack login-shell proxy variables, but macOS exposes
+        # the user's selected network proxy through the standard library.
+        proxies = getproxies()
+        for scheme in ("http", "https"):
+            if (proxy := proxies.get(scheme)) and not any(
+                key.lower() == f"{scheme}_proxy" for key in env
+            ):
+                env[f"{scheme.upper()}_PROXY"] = proxy
+    return env
 
 
 async def resolve_published_commit(version: str) -> str:
@@ -52,7 +68,10 @@ async def resolve_published_commit(version: str) -> str:
             f"refs/tags/{tag}^{{}}",
         ],
         timeout=25,
-        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        env={
+            **_source_proxy_env(platform.system()),
+            "GIT_TERMINAL_PROMPT": "0",
+        },
     )
     if code:
         # Nonzero git transport failures (including offline) may recover.
@@ -104,7 +123,7 @@ async def prepare_managed_source(
     commit = await resolve_published_commit(version)
     root = checkout.parent.parent
     # Native services do not inherit the login shell's uv installation path.
-    env = os.environ.copy()
+    env = _source_proxy_env(system)
     if system != "Windows":
         user_bins = [str(Path.home() / ".local/bin")]
         if system == "Darwin":
