@@ -16,7 +16,6 @@ from ...audit import (
     summarize_audit_entry,
 )
 from ...config.control import get_control_config
-from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
 from ...oauth.core.scopes import (
     SCOPE_AUDIT_FULL,
     SCOPE_AUDIT_READ,
@@ -37,6 +36,7 @@ from .common import (
     json_error as _json_error,
 )
 from .common import json_ok as _json_ok
+from .common import require_scopes as _require_scopes
 
 UI_AUDIT_ENTRY_ID_MAX_BYTES = 512
 UI_AUDIT_FILTER_MAX_BYTES = 1_024
@@ -63,13 +63,6 @@ _AUDIT_EXECUTE_TOOLS = frozenset(
         "session_start",
     }
 )
-
-
-def _require_scopes(*required: str) -> None:
-    try:
-        require_oauth_scopes(tuple(dict.fromkeys(required)))
-    except MissingOAuthScopeError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 def _bounded_float(value: Any, *, field: str) -> float | None:

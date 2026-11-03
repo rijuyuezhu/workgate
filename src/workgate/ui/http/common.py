@@ -3,7 +3,18 @@
 from collections.abc import Callable
 from typing import Any
 
+from fastapi import HTTPException
 from starlette.responses import JSONResponse
+
+from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
+
+
+def require_scopes(*required: str) -> None:
+    """Map a missing WebUI OAuth scope to the same HTTP 403 response."""
+    try:
+        require_oauth_scopes(tuple(dict.fromkeys(required)))
+    except MissingOAuthScopeError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 def json_ok(data: Any = None, message: str = "") -> JSONResponse:
