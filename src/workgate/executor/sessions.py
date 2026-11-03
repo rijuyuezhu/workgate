@@ -39,8 +39,16 @@ class ExecutorSessionService:
     def inventory(self) -> tuple[SessionInventorySummary, ...]:
         """Return the complete final-session inventory for hello reconciliation."""
         return tuple(
-            self._summary(session.session_id, session.workdir)
-            for session in self._store.list_sessions()
+            self._summary(
+                session.session_id,
+                session.workdir,
+                cleanup_metadata=(
+                    session.updated_at,
+                    bool(session.persistent_shell_ids),
+                    has_jobs,
+                ),
+            )
+            for session, has_jobs in self._store.list_sessions_with_job_protection()
             if session.session_id.startswith("sess_")
         )
 
@@ -170,10 +178,16 @@ class ExecutorSessionService:
         return False
 
     def _summary(
-        self, session_id: str, workdir: str
+        self,
+        session_id: str,
+        workdir: str,
+        *,
+        cleanup_metadata: tuple[float, bool, bool] | None = None,
     ) -> SessionInventorySummary:
         last_active_at, has_shells, has_jobs = (
             self._store.session_cleanup_metadata(session_id)
+            if cleanup_metadata is None
+            else cleanup_metadata
         )
         if has_shells:
             session = self._store.require_session(session_id)
