@@ -627,6 +627,14 @@ class ControlSessionCoordinator:
                         updated_at=self._clock(),
                     )
                 continue
+            if (
+                record.status == "creating"
+                and record.updated_at <= observed_at - _ACTIVE_SESSION_WINDOW_S
+            ):
+                # A complete authenticated Hello is an Executor-side barrier
+                # for earlier offered session.create mutations. Confirm absence
+                # again via termination; never discard a possibly live create.
+                self._schedule_termination(record, only_if_creating=True)
             if record.status == "active":
                 previous_observation = previous_missing.get(session_id)
                 missing_on_executor[session_id] = (
@@ -821,18 +829,34 @@ class ControlSessionCoordinator:
             str(record.session_id), item.last_active_at
         )
 
-    def _schedule_termination(self, record: ControlSessionRecord) -> None:
+    def _schedule_termination(
+        self, record: ControlSessionRecord, *, only_if_creating: bool = False
+    ) -> None:
         task = asyncio.create_task(
-            self._continue_termination(record),
+            self._continue_termination(
+                record, only_if_creating=only_if_creating
+            ),
             name=f"workgate-session-reconcile-{record.session_id}",
         )
         self._reconcile_tasks.add(task)
         task.add_done_callback(self._reconcile_tasks.discard)
 
-    async def _continue_termination(self, record: ControlSessionRecord) -> None:
+    async def _continue_termination(
+        self, record: ControlSessionRecord, *, only_if_creating: bool
+    ) -> None:
         await asyncio.sleep(0)
         try:
-            await self.end_session(str(record.session_id))
+            session_id = str(record.session_id)
+            async with self._lock(session_id):
+                current = self._state.snapshot_sessions().get(session_id)
+                if current is None or current.status == "ended":
+                    return
+                # The original create may have completed after the Hello
+                # snapshot. Never terminate a newly active Session because of
+                # an earlier observation of absence.
+                if only_if_creating and current.status != "creating":
+                    return
+                await self._end_record_locked(current, force=False)
         except Exception:
             return
 
