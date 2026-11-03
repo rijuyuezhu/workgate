@@ -1,7 +1,7 @@
 """Small authenticated HTTP client for executor protocol v1."""
 
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import httpx
 from pydantic import ValidationError
@@ -26,6 +26,13 @@ from ..protocol.executor import (
 from .profile import ExecutorProfile
 
 _RETRYABLE_STATUS_CODES = {408, 425, 429}
+_REQUEST_KINDS = {
+    EXECUTOR_HELLO_PATH: "hello",
+    EXECUTOR_VALIDATE_PATH: "validate",
+    EXECUTOR_HEARTBEAT_PATH: "heartbeat",
+    EXECUTOR_POLL_PATH: "poll",
+    EXECUTOR_RESULT_PATH: "result",
+}
 _OWNER_ACTION_CODES = {
     ProtocolErrorCode.UNAUTHORIZED_EXECUTOR,
     ProtocolErrorCode.EXECUTOR_REVOKED,
@@ -39,6 +46,7 @@ class ExecutorControlError(RuntimeError):
     message: str
     status_code: int | None = None
     protocol_error: ProtocolError | None = None
+    request_kind: str | None = None
 
     def __str__(self) -> str:
         return self.message
@@ -97,7 +105,8 @@ class ExecutorControlClient:
             return ExecutorHelloResponse.model_validate(response.json())
         except (ValueError, ValidationError) as exc:
             raise ExecutorControlError(
-                "control returned an invalid hello response"
+                "control returned an invalid hello response",
+                request_kind="hello",
             ) from exc
 
     async def validate(self) -> None:
@@ -113,7 +122,8 @@ class ExecutorControlClient:
             return ExecutorHeartbeatResponse.model_validate(response.json())
         except (ValueError, ValidationError) as exc:
             raise ExecutorControlError(
-                "control returned an invalid heartbeat response"
+                "control returned an invalid heartbeat response",
+                request_kind="heartbeat",
             ) from exc
 
     async def poll(self, *, timeout_s: float) -> ExecutorCommand | None:
@@ -128,7 +138,7 @@ class ExecutorControlClient:
             return ExecutorCommand.model_validate(response.json())
         except (ValueError, ValidationError) as exc:
             raise ExecutorControlError(
-                "control returned an invalid command"
+                "control returned an invalid command", request_kind="poll"
             ) from exc
 
     async def submit_result(self, result: ExecutorResult) -> None:
@@ -149,11 +159,14 @@ class ExecutorControlClient:
             response = await self._client.post(path, json=json, timeout=timeout)
         except httpx.HTTPError as exc:
             raise ExecutorControlError(
-                f"control request failed: {type(exc).__name__}"
+                f"control request failed: {type(exc).__name__}",
+                request_kind=_REQUEST_KINDS.get(path),
             ) from exc
         if response.status_code < 400:
             return response
-        raise _response_error(response)
+        raise replace(
+            _response_error(response), request_kind=_REQUEST_KINDS.get(path)
+        )
 
 
 def _response_error(response: httpx.Response) -> ExecutorControlError:

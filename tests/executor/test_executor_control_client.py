@@ -202,6 +202,85 @@ async def test_executor_control_client_parses_terminal_protocol_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_executor_control_errors_keep_only_fixed_request_kind_and_status() -> (
+    None
+):
+    profile = _profile()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == EXECUTOR_POLL_PATH:
+            return httpx.Response(
+                429,
+                json={
+                    "error": {
+                        "code": "executor_overloaded",
+                        "message": "private server message must not be logged",
+                    }
+                },
+            )
+        return httpx.Response(503, json={"detail": "private upstream response"})
+
+    client, http = _client(profile, handler)
+    try:
+        with pytest.raises(ExecutorControlError) as hello:
+            await client.hello(_hello())
+        assert (hello.value.request_kind, hello.value.status_code) == (
+            "hello",
+            503,
+        )
+        with pytest.raises(ExecutorControlError) as poll:
+            await client.poll(timeout_s=1)
+        assert (poll.value.request_kind, poll.value.status_code) == (
+            "poll",
+            429,
+        )
+        assert poll.value.code is ProtocolErrorCode.EXECUTOR_OVERLOADED
+    finally:
+        await client.aclose()
+        await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_invalid_successful_control_response_keeps_retryable_semantics() -> (
+    None
+):
+    client, http = _client(
+        _profile(), lambda _request: httpx.Response(200, json={"invalid": True})
+    )
+    try:
+        with pytest.raises(ExecutorControlError) as failed:
+            await client.hello(_hello())
+    finally:
+        await client.aclose()
+        await http.aclose()
+    assert failed.value.request_kind == "hello"
+    assert failed.value.status_code is None
+    assert failed.value.retryable
+
+
+@pytest.mark.asyncio
+async def test_executor_transport_error_reports_kind_without_sensitive_message() -> (
+    None
+):
+    profile = _profile()
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("private bearer-like diagnostic")
+
+    client, http = _client(profile, handler)
+    try:
+        with pytest.raises(ExecutorControlError) as failed:
+            await client.heartbeat()
+    finally:
+        await client.aclose()
+        await http.aclose()
+    assert failed.value.request_kind == "heartbeat"
+    assert failed.value.status_code is None
+    assert failed.value.retryable
+    assert "private" not in str(failed.value)
+
+
+@pytest.mark.asyncio
 async def test_executor_control_client_marks_server_error_retryable() -> None:
     profile = _profile()
 
