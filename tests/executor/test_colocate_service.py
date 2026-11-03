@@ -53,6 +53,8 @@ def installer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             "--value",
         ]:
             stdout = f'"{unit_dir}" /etc/systemd/user\n'
+        elif "--property=FragmentPath" in command:
+            stdout = str(unit_path) + "\n" if unit_path.is_file() else "\n"
         elif "--property=LoadState" in command:
             stdout = "not-found\n"
         return subprocess.CompletedProcess(command, 0, stdout, "")
@@ -271,6 +273,128 @@ def test_manage_colocate_user_unit_lifecycle(installer):
         "--now",
         "workgate-colocate.service",
     ] in commands
+
+
+@pytest.mark.parametrize("action", ("start", "stop", "restart"))
+@pytest.mark.parametrize(
+    "kind",
+    (
+        "missing",
+        "foreign",
+        pytest.param(
+            "symlink",
+            marks=pytest.mark.skipif(os.name == "nt", reason="POSIX symlink"),
+        ),
+        "directory",
+    ),
+)
+def test_manage_colocate_refuses_unowned_linux_unit(installer, action, kind):
+    _args, commands, _pair, unit = installer
+    unit.parent.mkdir(parents=True, exist_ok=True)
+    if kind == "foreign":
+        unit.write_text("[Service]\nExecStart=/bin/true\n")
+    elif kind == "symlink":
+        unit.symlink_to(unit.parent / "foreign-target")
+    elif kind == "directory":
+        unit.mkdir()
+    with pytest.raises(RuntimeError, match="uninstalled or unmanaged"):
+        service.manage_colocate_service(action)
+    assert not any(
+        item[:3] == ["systemctl", "--user", action] for item in commands
+    )
+
+
+@pytest.mark.parametrize("action", ("start", "stop", "restart", "uninstall"))
+@pytest.mark.parametrize("fragment_known", (True, False))
+def test_manage_colocate_refuses_loaded_foreign_native_unit(
+    installer, monkeypatch, action, fragment_known
+):
+    args, commands, pair, unit = installer
+    pair()
+    service.install_colocate_service(args)
+    original = service.subprocess.run
+
+    def run(command, **kwargs):
+        if "--property=FragmentPath" in command:
+            fragment = (
+                str(unit.parent / "foreign-unit") if fragment_known else ""
+            )
+            return subprocess.CompletedProcess(command, 0, fragment + "\n", "")
+        return original(command, **kwargs)
+
+    monkeypatch.setattr(service.subprocess, "run", run)
+    before = len(commands)
+    with pytest.raises(RuntimeError, match="foreign Colocate"):
+        service.manage_colocate_service(action)
+    assert unit.is_file()
+    assert not any(
+        item[:3] == ["systemctl", "--user", action]
+        or item[:4] == ["systemctl", "--user", "disable", "--now"]
+        for item in commands[before:]
+    )
+
+
+def test_manage_colocate_loaded_own_unit_remains_manageable(
+    installer, monkeypatch
+):
+    args, commands, pair, unit = installer
+    pair()
+    service.install_colocate_service(args)
+    original = service.subprocess.run
+
+    def run(command, **kwargs):
+        if "--property=FragmentPath" in command:
+            return subprocess.CompletedProcess(command, 0, str(unit) + "\n", "")
+        return original(command, **kwargs)
+
+    monkeypatch.setattr(service.subprocess, "run", run)
+    for action in ("stop", "start", "restart"):
+        service.manage_colocate_service(action)
+        assert [
+            "systemctl",
+            "--user",
+            action,
+            "workgate-colocate.service",
+        ] in commands
+
+
+@pytest.mark.parametrize(
+    "action", ("status", "start", "stop", "restart", "uninstall")
+)
+def test_owned_colocate_propagates_native_fragment_query_failure(
+    installer, monkeypatch, action
+):
+    args, commands, pair, unit = installer
+    pair()
+    service.install_colocate_service(args)
+    original = service.subprocess.run
+
+    def run(command, **kwargs):
+        if "--property=FragmentPath" in command:
+            return subprocess.CompletedProcess(
+                command, 1, "", "native query failed"
+            )
+        return original(command, **kwargs)
+
+    monkeypatch.setattr(service.subprocess, "run", run)
+    before = len(commands)
+    with pytest.raises(RuntimeError, match="native query failed"):
+        service.manage_colocate_service(action)
+    assert unit.is_file()
+    assert not any(
+        item[:3] == ["systemctl", "--user", action]
+        or item[:4] == ["systemctl", "--user", "disable", "--now"]
+        for item in commands[before:]
+    )
+
+
+def test_unowned_colocate_status_is_unknown(installer, capsys):
+    _args, commands, _pair, unit = installer
+    unit.parent.mkdir(parents=True)
+    unit.write_text("[Service]\nExecStart=/bin/true\n")
+    service.manage_colocate_service("status")
+    assert capsys.readouterr().out.strip() == "Colocate service: unknown"
+    assert not any("is-active" in cmd for cmd in commands)
 
 
 def test_status_distinguishes_absent_from_inactive_user_unit(installer, capsys):
