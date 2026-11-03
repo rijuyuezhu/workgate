@@ -8,7 +8,6 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from ...control.ui_executor import call_ui_executor
-from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
 from ...oauth.core.scopes import SCOPE_SHELL_EXECUTE, SCOPE_SHELL_READ
 from ...protocol.terminal import (
     PERSISTENT_SHELL_MAX_COLUMNS,
@@ -19,6 +18,7 @@ from ...protocol.terminal import (
 from .common import bounded_text as _bounded_text
 from .common import json_error as _json_error
 from .common import json_ok as _json_ok
+from .common import require_scopes as _require_scopes
 from .terminal_protocol import (
     UI_TERMINAL_DEFAULT_LINES,
     UI_TERMINAL_METADATA_MAX_BYTES,
@@ -43,13 +43,6 @@ def _terminal_error(exc: Exception) -> JSONResponse:
     if isinstance(exc, RuntimeError):
         return _json_error(exc, status_code=502)
     return _json_error(exc)
-
-
-def _require_scopes(*required: str) -> None:
-    try:
-        require_oauth_scopes(tuple(dict.fromkeys(required)))
-    except MissingOAuthScopeError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 def _require_terminal_scopes(*, execute: bool = False) -> None:

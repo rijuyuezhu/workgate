@@ -8,25 +8,18 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from ...config.control import get_control_config
-from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
 from ...oauth.core.scopes import SCOPE_SHELL_READ, SCOPE_SHELL_WRITE
 from ...protocol.ids import TaskId
 from ...schemas.result_models.task import TaskOutput
 from ...schemas.result_models.todo import ReadTodosOutput, WriteTodosOutput
 from .common import json_error as _json_error
 from .common import json_ok as _json_ok
+from .common import require_scopes as _require_scopes
 
 UI_TODO_ID_MAX_BYTES = 256
 UI_TODO_CONTENT_MAX_BYTES = 16_384
 UI_TODO_LABEL_MAX_BYTES = 64
 _FINAL_TASK_ID_ADAPTER = TypeAdapter(TaskId)
-
-
-def _require_scopes(*required: str) -> None:
-    try:
-        require_oauth_scopes(tuple(required))
-    except MissingOAuthScopeError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 def _task_id_arg(value: Any) -> str:
