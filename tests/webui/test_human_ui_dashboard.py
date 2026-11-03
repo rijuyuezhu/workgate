@@ -215,8 +215,12 @@ def test_dashboard_handles_executor_unavailable_and_malformed_snapshot(
 def test_dashboard_snapshot_rejects_out_of_range_and_oversized_executor_values():
     cases: list[tuple[str, Any, str]] = [
         ("cpu_percent", -1.0, "cpu_percent"),
+        ("cpu_percent", True, "cpu_percent"),
+        ("cpu_percent", float("nan"), "cpu_percent"),
         ("memory_percent", 101.0, "memory_percent"),
         ("network_rx_bps", -1.0, "network_rx_bps"),
+        ("cpu_count", 0, "cpu_count"),
+        ("cpu_count", 1.5, "cpu_count"),
     ]
     for field, value, message in cases:
         snapshot = copy.deepcopy(_full_snapshot())
