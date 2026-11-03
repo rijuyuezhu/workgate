@@ -48,6 +48,8 @@ elif argv == ["show", "workgate-control.service", "--property=LoadState", "--val
     print("loaded" if unit.is_file() else "not-found")
 elif argv == ["show", "workgate-colocate.service", "--property=LoadState", "--value"]:
     print("loaded" if colocate.is_file() else "not-found")
+elif argv == ["show", "workgate-colocate.service", "--property=FragmentPath", "--value"]:
+    print(str(colocate) if colocate.is_file() else "")
 elif argv == ["show", "workgate-executor.service",
               "--property=LoadState", "--property=ActiveState",
               "--property=SubState", "--property=FragmentPath",
@@ -404,6 +406,11 @@ def test_real_colocate_cli_does_not_overwrite_foreign_unit_or_pairing(
     unit.write_text(foreign)
     assert "unmanaged service" in run(*args, success=False).stderr
     assert "unmanaged service" in run("uninstall-service", success=False).stderr
+    for action in ("start", "stop", "restart"):
+        assert (
+            "uninstalled or unmanaged"
+            in run(f"{action}-service", success=False).stderr
+        )
     assert unit.read_text() == foreign
     assert profile.read_bytes() == identity
     commands = [
@@ -411,7 +418,7 @@ def test_real_colocate_cli_does_not_overwrite_foreign_unit_or_pairing(
         for line in (native / "calls.jsonl").read_text().splitlines()
     ]
     assert not any(
-        item[0] in {"enable", "restart", "disable"}
+        item[0] in {"enable", "start", "stop", "restart", "disable"}
         and item[-1] == "workgate-colocate.service"
         for item in commands
     )
