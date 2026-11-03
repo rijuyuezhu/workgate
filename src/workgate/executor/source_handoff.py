@@ -115,8 +115,10 @@ def schedule_windows_source_cutover(
             "managed Windows source cutover inputs are unavailable"
         )
 
+    # A successful older one-shot remains registered until expiry. Keep the
+    # duplicate-handoff guard per target release without blocking the next one.
     task = WindowsUserTask(
-        "Workgate Executor Source Cutover",
+        f"Workgate Executor Source Cutover {tag}",
         description="Managed by Workgate: executor source cutover",
         run=run,
     )
