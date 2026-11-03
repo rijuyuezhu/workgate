@@ -241,6 +241,24 @@ async def test_executor_control_errors_keep_only_fixed_request_kind_and_status()
 
 
 @pytest.mark.asyncio
+async def test_invalid_successful_control_response_keeps_retryable_semantics() -> (
+    None
+):
+    client, http = _client(
+        _profile(), lambda _request: httpx.Response(200, json={"invalid": True})
+    )
+    try:
+        with pytest.raises(ExecutorControlError) as failed:
+            await client.hello(_hello())
+    finally:
+        await client.aclose()
+        await http.aclose()
+    assert failed.value.request_kind == "hello"
+    assert failed.value.status_code is None
+    assert failed.value.retryable
+
+
+@pytest.mark.asyncio
 async def test_executor_transport_error_reports_kind_without_sensitive_message() -> (
     None
 ):

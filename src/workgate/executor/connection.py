@@ -671,7 +671,7 @@ class ExecutorConnection:
                             kind,
                             control_error.status_code
                             if control_error.status_code is not None
-                            else "transport",
+                            else "unknown",
                             control_error.code.value
                             if control_error.code
                             else "none",

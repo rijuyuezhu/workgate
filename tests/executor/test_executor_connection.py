@@ -1315,7 +1315,7 @@ def test_reconnect_warning_rejects_untrusted_request_kind(
         )
     assert caplog.records[-1].getMessage() == (
         "executor reconnecting: ExecutorControlError "
-        "request=unknown http=transport code=none"
+        "request=unknown http=unknown code=none"
     )
     assert "Authorization" not in caplog.text
 
