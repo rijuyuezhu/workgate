@@ -609,10 +609,11 @@ async def test_transient_poll_failure_reconnects_with_fresh_hello_without_replay
         await connection.aclose()
 
 
+@pytest.mark.parametrize("operation", ("job", "session.create"))
 @pytest.mark.asyncio
-async def test_reconnect_waits_for_offered_inventory_mutation_execution() -> (
-    None
-):
+async def test_reconnect_waits_for_offered_inventory_mutation_execution(
+    operation: str,
+) -> None:
     command_started = asyncio.Event()
     release_command = asyncio.Event()
     reconnected = asyncio.Event()
@@ -637,9 +638,11 @@ async def test_reconnect_waits_for_offered_inventory_mutation_execution() -> (
             if self.poll_calls == 1:
                 return ExecutorCommand(
                     id=new_command_id(),
-                    op="job",
+                    op=operation,
                     session_id="sess_0000000000000000000001",
-                    args={"list_jobs": True},
+                    args={"list_jobs": True}
+                    if operation == "job"
+                    else {"workdir": None},
                 )
             if self.poll_calls == 2:
                 await command_started.wait()

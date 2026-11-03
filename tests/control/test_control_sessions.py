@@ -362,6 +362,131 @@ async def test_hello_reconciles_creating_and_terminating_with_derived_missing(
 
 
 @pytest.mark.asyncio
+async def test_complete_hello_reaps_only_old_absent_creating_session(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    executor_id = new_executor_id()
+    _trust(state, executor_id)
+    old, fresh = new_session_id(), new_session_id()
+    implicit_task = new_task_id()
+    for session_id, updated_at in ((old, 1), (fresh, 19_999)):
+        state.put_session(
+            ControlSessionRecord(
+                session_id=session_id,
+                executor_id=executor_id,
+                task_id=implicit_task if session_id == old else None,
+                task_created=session_id == old,
+                status="creating",
+                created_at=1,
+                updated_at=updated_at,
+            )
+        )
+    transport = FakeTransport()
+    transport.online.add(executor_id)
+    transport.hellos[executor_id] = _hello()
+
+    async def terminate(_executor_id, op, _args, session_id, _timeout):
+        assert op == "session.terminate" and session_id == old
+        assert state.snapshot_sessions()[old].status == "terminating"
+        return _ok({"session_id": old, "absent": True})
+
+    transport.call_impl = terminate
+    coordinator = _coordinator(state, transport, clock=lambda: 20_000.0)
+    await coordinator.reconcile_hello(executor_id)
+    # Repeated authenticated Hello must not cause multiple finalizations.
+    await coordinator.reconcile_hello(executor_id)
+    await asyncio.gather(*tuple(coordinator._reconcile_tasks))
+    assert state.snapshot_sessions()[old].status == "ended"
+    assert state.snapshot_sessions()[old].executor_absence_confirmed is True
+    assert state.snapshot_sessions()[old].task_id == implicit_task
+    assert state.snapshot_sessions()[old].task_created is True
+    assert state.snapshot_sessions()[fresh].status == "creating"
+    assert [call[1:] for call in transport.calls] == [
+        ("session.terminate", {}, old)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stale_creating_recovered_after_hello_is_not_terminated(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    executor_id = new_executor_id()
+    session_id = new_session_id()
+    _trust(state, executor_id)
+    state.put_session(
+        ControlSessionRecord(
+            session_id=session_id,
+            executor_id=executor_id,
+            status="creating",
+            created_at=1,
+            updated_at=1,
+        )
+    )
+    transport = FakeTransport()
+    transport.hellos[executor_id] = _hello()
+    coordinator = _coordinator(state, transport, clock=lambda: 20_000.0)
+    await coordinator.reconcile_hello(executor_id)
+    # The original start may have returned successfully while the cleanup task
+    # was waiting for this Session's admission lock.
+    state.update_session(
+        session_id,
+        status="active",
+        workdir="/workspace/recovered",
+        updated_at=20_000,
+    )
+    await asyncio.gather(*tuple(coordinator._reconcile_tasks))
+    assert state.snapshot_sessions()[session_id].status == "active"
+    assert transport.calls == []
+
+
+@pytest.mark.asyncio
+async def test_stale_creating_cleanup_requires_complete_inventory_and_absence_receipt(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    executor_id = new_executor_id()
+    session_id = new_session_id()
+    _trust(state, executor_id)
+    state.put_session(
+        ControlSessionRecord(
+            session_id=session_id,
+            executor_id=executor_id,
+            status="creating",
+            created_at=1,
+            updated_at=1,
+        )
+    )
+    transport = FakeTransport()
+    transport.hellos[executor_id] = _hello(capabilities=())
+    coordinator = _coordinator(state, transport, clock=lambda: 20_000.0)
+    await coordinator.reconcile_hello(executor_id)
+    assert state.snapshot_sessions()[session_id].status == "creating"
+    assert transport.calls == []
+
+    async def unconfirmed(_executor_id, op, _args, _session_id, _timeout):
+        assert op == "session.terminate"
+        return _ok({"session_id": session_id, "absent": False})
+
+    transport.call_impl = unconfirmed
+    transport.hellos[executor_id] = _hello()
+    await coordinator.reconcile_hello(executor_id)
+    await asyncio.gather(*tuple(coordinator._reconcile_tasks))
+    assert state.snapshot_sessions()[session_id].status == "terminating"
+    assert (
+        state.snapshot_sessions()[session_id].executor_absence_confirmed
+        is False
+    )
+    # Only a subsequent complete authenticated inventory can finalize it.
+    await coordinator.reconcile_hello(executor_id)
+    assert state.snapshot_sessions()[session_id].status == "ended"
+    assert (
+        state.snapshot_sessions()[session_id].executor_absence_confirmed is True
+    )
+
+
+@pytest.mark.asyncio
 async def test_hello_merges_activity_monotonically(tmp_path: Path) -> None:
     state = _state(tmp_path)
     executor_id = new_executor_id()
