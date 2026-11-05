@@ -15,6 +15,7 @@ from typing import Any
 from ...errors import GuiStaleStateError, GuiUnavailableError
 from .base import (
     GUI_MAX_CAPTURE_DIMENSION,
+    GUI_MAX_CAPTURE_PIXELS,
     GUI_MAX_WINDOW_TEXT_BYTES,
     GUI_MAX_WINDOWS,
 )
@@ -22,9 +23,11 @@ from .base import (
 
 def is_kde_wayland(env: dict[str, str]) -> bool:
     desktop = str(env.get("XDG_CURRENT_DESKTOP") or "").upper()
-    return bool(
-        env.get("WAYLAND_DISPLAY") or env.get("XDG_SESSION_TYPE") == "wayland"
-    ) and ("KDE" in desktop.split(":") or "KDE" in desktop)
+    session = str(env.get("XDG_SESSION_TYPE") or "").lower()
+    wayland = session == "wayland" or (
+        session != "x11" and bool(env.get("WAYLAND_DISPLAY"))
+    )
+    return wayland and "KDE" in desktop
 
 
 def _bounds(value: Any) -> tuple[int, int, int, int] | None:
@@ -39,6 +42,7 @@ def _bounds(value: Any) -> tuple[int, int, int, int] | None:
         or height <= 0
         or width > GUI_MAX_CAPTURE_DIMENSION
         or height > GUI_MAX_CAPTURE_DIMENSION
+        or width * height > GUI_MAX_CAPTURE_PIXELS
     ):
         return None
     return x, y, width, height

@@ -50,6 +50,14 @@ KWIN = {
             False,
         ),
         (
+            {
+                "XDG_CURRENT_DESKTOP": "KDE",
+                "XDG_SESSION_TYPE": "x11",
+                "WAYLAND_DISPLAY": "wayland-0",
+            },
+            False,
+        ),
+        (
             {"XDG_CURRENT_DESKTOP": "GNOME:KDE", "XDG_SESSION_TYPE": "wayland"},
             True,
         ),
