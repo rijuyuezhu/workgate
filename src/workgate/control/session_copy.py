@@ -1476,6 +1476,7 @@ class ControlSessionCopyService:
                     "chunk_size": chunk_size,
                     "capability_path": lease.path,
                     "capability_token": lease.token,
+                    "http_chunked": True,
                     "_workgate_unbound_temp": source_unbound_temp,
                 },
             )
@@ -1516,12 +1517,33 @@ class ControlSessionCopyService:
                 payload_size=payload_size,
                 payload_sha256=payload_sha256,
             )
+            http_chunks = (
+                uploaded.get("http_chunks")
+                if isinstance(uploaded, dict)
+                else None
+            )
+            http_chunk_bytes = (
+                uploaded.get("http_chunk_size")
+                if isinstance(uploaded, dict)
+                else None
+            )
+            report_chunk_size = (
+                http_chunk_bytes
+                if type(http_chunk_bytes) is int and http_chunk_bytes > 0
+                else chunk_size
+            )
+            report_chunks = (
+                http_chunks
+                if type(http_chunks) is int and http_chunks >= 0
+                else (payload_size + report_chunk_size - 1) // report_chunk_size
+            )
             await self._report(
                 progress,
                 phase="exported",
                 bytes_transferred=payload_size,
                 total_bytes=payload_size,
-                chunk_size=chunk_size,
+                chunks=report_chunks,
+                chunk_size=report_chunk_size,
             )
             return checkpoint
         finally:

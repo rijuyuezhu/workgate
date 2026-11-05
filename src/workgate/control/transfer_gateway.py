@@ -4,13 +4,15 @@ import asyncio
 import hashlib
 import hmac
 import os
+import re
 import secrets
+import stat
 import threading
 import time
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
@@ -20,11 +22,16 @@ from ..protocol.executor import (
     EXECUTOR_TRANSFER_PREFIX,
     EXECUTOR_TRANSFER_TOKEN_HEADER,
 )
-from ..protocol.transfer import DEFAULT_TRANSFER_CHUNK_BYTES
+from ..protocol.transfer import (
+    DEFAULT_TRANSFER_CHUNK_BYTES,
+    MAX_HTTP_TRANSFER_CHUNK_BYTES,
+)
 from .executor_transport import ExecutorTransport, ExecutorTransportError
 from .payload_store import PayloadStore
 
 _TRANSFER_CAPABILITY_TTL_S = 300.0
+_HTTP_CONTENT_RANGE_RE = re.compile(r"bytes (\d+)-(\d+)/(\d+)")
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
 
 @dataclass(frozen=True)
@@ -51,6 +58,17 @@ class _TransferCapability:
     payload_id: str | None = None
 
 
+@dataclass
+class _ChunkUpload:
+    """Short-lived, single-writer transfer state; the session-copy checkpoint owns durability."""
+
+    offset: int = 0
+    digest: Any = field(default_factory=hashlib.sha256)
+    last_ack: tuple[int, int, str] | None = None
+    complete: bool = False
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
 class ControlTransferGateway:
     """Own short-lived executor-bound capabilities for raw transfer bytes."""
 
@@ -68,6 +86,7 @@ class ControlTransferGateway:
         self._clock = clock
         self._lock = threading.Lock()
         self._capabilities: dict[str, _TransferCapability] = {}
+        self._chunk_uploads: dict[str, _ChunkUpload] = {}
 
     @staticmethod
     def _new_capability_id() -> str:
@@ -110,6 +129,8 @@ class ControlTransferGateway:
         )
         with self._lock:
             self._capabilities[capability_id] = record
+            if direction == "upload":
+                self._chunk_uploads[capability_id] = _ChunkUpload()
         return TransferCapabilityLease(
             capability_id=capability_id,
             token=token,
@@ -163,11 +184,13 @@ class ControlTransferGateway:
         """Drop one unclaimed process-local capability."""
         with self._lock:
             self._capabilities.pop(str(capability_id), None)
+            self._chunk_uploads.pop(str(capability_id), None)
 
     def close(self) -> None:
         """Drop all process-local transport credentials."""
         with self._lock:
             self._capabilities.clear()
+            self._chunk_uploads.clear()
 
     def _claim(
         self,
@@ -184,6 +207,7 @@ class ControlTransferGateway:
                 return None
             if record.expires_at <= now:
                 self._capabilities.pop(capability_id, None)
+                self._chunk_uploads.pop(capability_id, None)
                 return None
             if (
                 record.executor_id != executor_id
@@ -194,6 +218,7 @@ class ControlTransferGateway:
             ):
                 return None
             self._capabilities.pop(capability_id, None)
+            self._chunk_uploads.pop(capability_id, None)
             return record
 
     @staticmethod
@@ -219,6 +244,185 @@ class ControlTransferGateway:
             status_code=404,
             headers={"Cache-Control": "no-store"},
         )
+
+    def _chunk_claim(
+        self, capability_id: str, token: str, executor_id: str
+    ) -> tuple[_TransferCapability, _ChunkUpload] | None:
+        with self._lock:
+            record = self._capabilities.get(capability_id)
+            if record is None:
+                return None
+            if record.expires_at <= self._clock():
+                self._capabilities.pop(capability_id, None)
+                self._chunk_uploads.pop(capability_id, None)
+                return None
+            if (
+                record.direction != "upload"
+                or record.executor_id != executor_id
+                or not hmac.compare_digest(
+                    record.token_sha256, self._token_sha256(token)
+                )
+            ):
+                return None
+            progress = self._chunk_uploads.get(capability_id)
+            return (record, progress) if progress is not None else None
+
+    @staticmethod
+    def _chunk_ack(
+        record: _TransferCapability, progress: _ChunkUpload
+    ) -> JSONResponse:
+        return JSONResponse(
+            {
+                "offset": progress.offset,
+                "bytes": progress.offset,
+                "completed": progress.complete,
+                "sha256": record.expected_sha256 if progress.complete else "",
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    async def _upload_chunk(
+        self,
+        request: Request,
+        record: _TransferCapability,
+        progress: _ChunkUpload,
+    ) -> Response:
+        """Accept bounded, resumable HTTP ranges under one Executor-bound lease."""
+        staging = record.staging_path
+        if staging is None:
+            return self._missing()
+        raw_range = request.headers.get("content-range", "")
+        match = _HTTP_CONTENT_RANGE_RE.fullmatch(raw_range)
+        if match is None:
+            return JSONResponse(
+                {"error": "transfer_range_invalid"}, status_code=409
+            )
+        start, last, total = (int(value) for value in match.groups())
+        size = last - start + 1
+        if total != record.expected_bytes or size <= 0 or last >= total:
+            return JSONResponse(
+                {"error": "transfer_range_invalid"}, status_code=409
+            )
+        if size > MAX_HTTP_TRANSFER_CHUNK_BYTES:
+            return JSONResponse(
+                {"error": "transfer_chunk_too_large"}, status_code=413
+            )
+        chunk_sha = request.headers.get("x-chunk-sha256", "").lower()
+        if _SHA256_RE.fullmatch(chunk_sha) is None:
+            return JSONResponse(
+                {"error": "transfer_chunk_digest_invalid"}, status_code=409
+            )
+        declared = request.headers.get("content-length")
+        if declared is not None and declared != str(size):
+            return JSONResponse(
+                {"error": "transfer_size_mismatch"}, status_code=409
+            )
+
+        async with progress.lock:
+            # Recheck replay bytes without reapplying the already-committed range.
+            if progress.last_ack == (start, last + 1, chunk_sha):
+                replay_digest = hashlib.sha256()
+                replay_bytes = 0
+                async for chunk in request.stream():
+                    replay_bytes += len(chunk)
+                    if replay_bytes > size:
+                        break
+                    replay_digest.update(chunk)
+                if (
+                    replay_bytes != size
+                    or replay_digest.hexdigest() != chunk_sha
+                ):
+                    return JSONResponse(
+                        {"error": "transfer_chunk_integrity_mismatch"},
+                        status_code=409,
+                    )
+                return self._chunk_ack(record, progress)
+            if progress.complete or start != progress.offset:
+                return JSONResponse(
+                    {
+                        "error": "transfer_offset_mismatch",
+                        "offset": progress.offset,
+                    },
+                    status_code=409,
+                )
+            next_digest = progress.digest.copy()
+            chunk_digest = hashlib.sha256()
+            received = 0
+            try:
+                if progress.offset == 0 and not staging.exists():
+                    handle = self._payloads.open_private_staging(
+                        staging, namespace="transfer"
+                    )
+                else:
+                    flags = os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+                    descriptor = os.open(staging, flags)
+                    handle = os.fdopen(descriptor, "wb")
+                with handle:
+                    stage_stat = os.fstat(handle.fileno())
+                    if (
+                        not stat.S_ISREG(stage_stat.st_mode)
+                        or stage_stat.st_size != progress.offset
+                    ):
+                        raise ValueError(
+                            "transfer staging changed between chunks"
+                        )
+                    handle.seek(progress.offset)
+                    committed = False
+                    try:
+                        async for chunk in request.stream():
+                            if not chunk:
+                                continue
+                            received += len(chunk)
+                            if received > size:
+                                break
+                            chunk_digest.update(chunk)
+                            next_digest.update(chunk)
+                            await asyncio.to_thread(handle.write, chunk)
+                        if (
+                            received != size
+                            or chunk_digest.hexdigest() != chunk_sha
+                        ):
+                            return JSONResponse(
+                                {"error": "transfer_chunk_integrity_mismatch"},
+                                status_code=409,
+                            )
+                        await asyncio.to_thread(handle.flush)
+                        await asyncio.to_thread(os.fsync, handle.fileno())
+                        committed = True
+                    finally:
+                        # A failed/interrupted request never commits a partial chunk.
+                        if not committed:
+                            handle.truncate(progress.offset)
+            except OSError, ValueError:
+                # A compromised or removed staging file cannot be resumed.
+                self.revoke(record.capability_id)
+                staging.unlink(missing_ok=True)
+                return JSONResponse(
+                    {"error": "transfer_staging_unavailable"}, status_code=409
+                )
+
+            if (
+                last + 1 == record.expected_bytes
+                and next_digest.hexdigest() != record.expected_sha256
+            ):
+                self.revoke(record.capability_id)
+                staging.unlink(missing_ok=True)
+                return JSONResponse(
+                    {"error": "transfer_integrity_mismatch"}, status_code=409
+                )
+            progress.offset = last + 1
+            progress.digest = next_digest
+            progress.last_ack = (start, last + 1, chunk_sha)
+            progress.complete = progress.offset == record.expected_bytes
+            with self._lock:
+                # Never resurrect a capability revoked by its parent copy job.
+                current = self._capabilities.get(record.capability_id)
+                if current is not None:
+                    self._capabilities[record.capability_id] = replace(
+                        current,
+                        expires_at=self._clock() + self._capability_ttl_s,
+                    )
+            return self._chunk_ack(record, progress)
 
     async def _upload(
         self, request: Request, record: _TransferCapability
@@ -339,6 +543,14 @@ class ControlTransferGateway:
         direction: Literal["upload", "download"] = (
             "upload" if request.method.upper() == "PUT" else "download"
         )
+        if (
+            direction == "upload"
+            and request.headers.get("content-range") is not None
+        ):
+            claimed = self._chunk_claim(capability_id, token, executor_id)
+            if claimed is None:
+                return self._missing()
+            return await self._upload_chunk(request, *claimed)
         record = self._claim(
             capability_id=capability_id,
             token=token,
