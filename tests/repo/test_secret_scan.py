@@ -1,7 +1,10 @@
+from pathlib import Path
+
 import pytest
 
 from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings, clear_settings_cache
+from workgate.executor import secret_scan as secret_scan_module
 from workgate.executor.files import files_config_from_executor_config
 from workgate.executor.files_service import FilesService
 from workgate.executor.secret_scan import (
@@ -41,6 +44,7 @@ async def testsecret_scan(tmp_path, monkeypatch):
     result = await scan.scan(session_id)
 
     assert result.findings
+    assert result.skipped_files == 0
 
 
 @pytest.mark.asyncio
@@ -62,6 +66,37 @@ async def test_secret_scan_respects_gitignore(tmp_path, monkeypatch):
     paths = {finding.path for finding in result.findings}
     assert "visible.txt" in paths
     assert "ignored.txt" not in paths
+
+
+@pytest.mark.asyncio
+async def test_secret_scan_reports_failed_reads_without_hiding_other_findings(
+    tmp_path, monkeypatch
+):
+    session_id, files, scan = _services(tmp_path, monkeypatch)
+    await files.write_file(
+        session_id, "readable.txt", 'password = "realistic-value-123"'
+    )
+    await files.write_file(session_id, "unreadable.txt", "no secrets here")
+
+    original_read = secret_scan_module._read_file_local
+
+    def read_or_fail(*args):
+        if Path(args[-1]).name == "unreadable.txt":
+            raise PermissionError("simulated unreadable file")
+        return original_read(*args)
+
+    monkeypatch.setattr(secret_scan_module, "_read_file_local", read_or_fail)
+
+    result = await scan.scan(session_id, glob="*.txt")
+    assert [finding.path for finding in result.findings] == ["readable.txt"]
+    assert result.skipped_files == 1
+    assert result.truncated_files == 0
+    assert not result.truncated
+
+    unreadable_only = await scan.scan(session_id, glob="unreadable.txt")
+    assert unreadable_only.findings == []
+    assert unreadable_only.skipped_files == 1
+    assert not unreadable_only.truncated
 
 
 def test_secret_scan_ignores_obvious_placeholder_assignments():

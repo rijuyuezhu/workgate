@@ -156,12 +156,14 @@ class SecretScanService:
         limit = max(1, min(max_results, self.max_findings))
         findings: list[SecretFinding] = []
         truncated_files = 0
+        skipped_files = 0
         for path in _iter_candidate_paths(base, glob, self.rg_bin):
             try:
                 data = _read_file_local(
                     self.files, self.store, binding, str(path)
                 )
             except Exception:
+                skipped_files += 1
                 continue
             if data.truncated:
                 truncated_files += 1
@@ -183,11 +185,13 @@ class SecretScanService:
                             findings=findings,
                             truncated=True,
                             truncated_files=truncated_files,
+                            skipped_files=skipped_files,
                         )
         return SecretScanOutput(
             findings=findings,
             truncated=False,
             truncated_files=truncated_files,
+            skipped_files=skipped_files,
         )
 
     async def scan(
