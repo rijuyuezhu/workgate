@@ -90,11 +90,34 @@ class WindowsUserTask:
             raise RuntimeError("invalid Windows Task Scheduler state")
         return data
 
-    def install(self, command: list[str], *, cwd: str) -> None:
+    def install(
+        self,
+        command: list[str],
+        *,
+        cwd: str,
+        private_state_dir: str | None = None,
+    ) -> None:
         """Register an interactive, non-elevated task for the current login."""
         if not command:
             raise ValueError("scheduled task command must not be empty")
         self.stop()
+        if private_state_dir is not None:
+            # Elevated installation may create Administrator-owned files. The
+            # scheduled task runs with a filtered token for this same user.
+            self._powershell(
+                "\n".join(
+                    [
+                        "$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
+                        f"$dir = {_literal(private_state_dir)}",
+                        "if (-not (Test-Path -LiteralPath $dir -PathType Container)) { "
+                        "throw 'private service state directory is missing' }",
+                        "& icacls.exe $dir /grant:r ('*' + $sid + ':(OI)(CI)F') /T "
+                        "| Out-Null",
+                        "if ($LASTEXITCODE -ne 0) { "
+                        "throw 'cannot grant the limited task owner access to service state' }",
+                    ]
+                )
+            )
         arguments = subprocess.list2cmdline(command[1:])
         script = "\n".join(
             [
