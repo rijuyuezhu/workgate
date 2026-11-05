@@ -90,10 +90,10 @@ def test_windows_executor_install_uninstall_retains_profile(
                 else None
             )
 
-        def install(self, command, *, cwd):
+        def install(self, command, *, cwd, private_state_dir=None):
             nonlocal installed
             installed = True
-            commands.append(("install", (command, cwd)))
+            commands.append(("install", (command, cwd, private_state_dir)))
 
         def start(self):
             nonlocal active
@@ -126,6 +126,11 @@ def test_windows_executor_install_uninstall_retains_profile(
     assert manager.launcher_path.is_file()
     assert manager.metadata_path.is_file()
     assert commands[0][0] == "install"
+    assert commands[0][1] == (
+        manager._runtime_command(),
+        str(manager.service_dir.resolve()),
+        str(manager.service_dir.parent.resolve()),
+    )
     manager.restart()
     assert [item[0] for item in commands[-3:]] == [
         "cancel-restart",
@@ -339,6 +344,71 @@ def test_windows_colocate_frozen_requires_windowless_build(
     with pytest.raises(RuntimeError, match="windowless"):
         colocate_service.install_colocate_service(args)
     assert not target.exists()
+
+
+def test_windows_task_grants_only_owner_access_to_private_state(monkeypatch):
+    monkeypatch.setattr(
+        "workgate.platform.windows_task.shutil.which",
+        lambda _: "powershell.exe",
+    )
+    scripts = []
+
+    def run(argv):
+        script = argv[-1]
+        scripts.append(script)
+        return subprocess.CompletedProcess(
+            argv, 0, "null" if "Get-ScheduledTask" in script else "", ""
+        )
+
+    task = WindowsUserTask(
+        "Workgate Test", description="Managed by Workgate: test", run=run
+    )
+    state = r"C:\Private Workgate\executor"
+    task.install(
+        [r"C:\pythonw.exe", r"C:\launcher.py"],
+        cwd=state + r"\service",
+        private_state_dir=state,
+    )
+    assert len(scripts) == 3
+    grant = scripts[1]
+    assert (
+        "[Security.Principal.WindowsIdentity]::GetCurrent().User.Value" in grant
+    )
+    assert "icacls.exe $dir /grant:r" in grant
+    assert ":(OI)(CI)F" in grant
+    assert "/T" in grant
+    assert "C:\\Private Workgate\\executor" in grant
+    assert "Everyone" not in grant and "Users" not in grant
+    assert "Register-ScheduledTask" not in grant
+    assert "Register-ScheduledTask" in scripts[2]
+
+
+def test_windows_task_denies_install_when_owner_acl_cannot_be_set(monkeypatch):
+    monkeypatch.setattr(
+        "workgate.platform.windows_task.shutil.which",
+        lambda _: "powershell.exe",
+    )
+    scripts = []
+
+    def run(argv):
+        script = argv[-1]
+        scripts.append(script)
+        if "icacls.exe" in script:
+            raise subprocess.CalledProcessError(1, argv)
+        return subprocess.CompletedProcess(
+            argv, 0, "null" if "Get-ScheduledTask" in script else "", ""
+        )
+
+    task = WindowsUserTask(
+        "Workgate Test", description="Managed by Workgate: test", run=run
+    )
+    with pytest.raises(subprocess.CalledProcessError):
+        task.install(
+            [r"C:\pythonw.exe", r"C:\launcher.py"],
+            cwd=r"C:\Workgate\executor\service",
+            private_state_dir=r"C:\Workgate\executor",
+        )
+    assert all("Register-ScheduledTask" not in script for script in scripts)
 
 
 def test_windows_task_lifecycle_and_idempotent_uninstall(monkeypatch):

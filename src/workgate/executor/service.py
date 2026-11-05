@@ -640,7 +640,11 @@ class ExecutorServiceManager:
 
         elif backend == "scheduled-task":
             task = self._windows_task()
-            task.install(command, cwd=str(self.service_dir.resolve()))
+            task.install(
+                command,
+                cwd=str(self.service_dir.resolve()),
+                private_state_dir=str(self.service_dir.parent.resolve()),
+            )
             self._write_metadata(backend, command)
             task.start()
 
