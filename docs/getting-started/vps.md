@@ -66,7 +66,7 @@ server {
 }
 ~~~
 
-The nginx request-body limit gives file transfers and other tool results room to pass through the proxy.
+The nginx request-body limit gives file transfers and other tool results room to pass through the proxy. Control Relay uploads use separate bounded HTTP requests (up to 64 MiB), reducing request size after HTTP 413; the proxy no longer needs to accept an entire large file in one request. Presigned Object Store uploads are a separate path and still use a single PUT.
 
 Alternatively, publish Control with a [Cloudflare Tunnel](https://github.com/rijuyuezhu/workgate/tree/main/deploy/cloudflared).
 
