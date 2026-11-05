@@ -319,30 +319,47 @@ def _window_is_visible(window: Any) -> bool:
     return True
 
 
-def _window_signature(window: Any) -> str | None:
+def _bounded_identity(value: Any, limit: int) -> str | None:
+    text = value if isinstance(value, str) else str(value or "")
+    if not text or len(text) > limit or len(text.encode("utf-8")) > limit:
+        return None
+    return text
+
+
+def _provider_identity(obj: Any, limit: int) -> str | None:
+    """Prefer AT-SPI's ID; fall back only to a stable D-Bus provider address."""
     try:
-        raw_accessible_id = window.get_accessible_id()
+        accessible_id = _bounded_identity(obj.get_accessible_id(), limit)
     except Exception:
-        raw_accessible_id = ""
-    accessible_id = (
-        raw_accessible_id
-        if isinstance(raw_accessible_id, str)
-        else str(raw_accessible_id or "")
-    )
-    if (
-        not accessible_id
-        or len(accessible_id) > GUI_MAX_WINDOW_TEXT_BYTES
-        or len(accessible_id.encode("utf-8")) > GUI_MAX_WINDOW_TEXT_BYTES
-    ):
+        accessible_id = None
+    if accessible_id is not None:
+        return f"id\0{accessible_id}"
+    try:
+        application = getattr(obj, "app", None)
+        bus_name = _bounded_identity(
+            getattr(application, "bus_name", ""), limit
+        )
+        path = _bounded_identity(getattr(obj, "path", ""), limit)
+    except Exception:
+        return None
+    if bus_name is None or path is None:
+        return None
+    return f"object\0{bus_name}\0{path}"
+
+
+def _window_signature(window: Any) -> str | None:
+    identity = _provider_identity(window, GUI_MAX_WINDOW_TEXT_BYTES)
+    if identity is None:
         return None
     try:
-        role = _truncate_text(
-            window.get_role_name(),
-            GUI_MAX_WINDOW_TEXT_BYTES,
-        )
+        role = _truncate_text(window.get_role_name(), GUI_MAX_WINDOW_TEXT_BYTES)
     except Exception:
         role = ""
-    fingerprint = f"id\0{role}\0{accessible_id}"
+    # Preserve stable IDs already issued for providers with accessible IDs.
+    if identity.startswith("id\0"):
+        fingerprint = f"id\0{role}\0{identity[3:]}"
+    else:
+        fingerprint = f"{identity}\0{role}"
     return hashlib.sha256(fingerprint.encode()).hexdigest()[:12]
 
 
@@ -366,8 +383,8 @@ def _accessible_id(obj: Any) -> str | None:
 
 
 def _element_signature(obj: Any) -> str | None:
-    accessible_id = _accessible_id(obj)
-    if accessible_id is None:
+    identity = _provider_identity(obj, GUI_MAX_ELEMENT_TEXT_BYTES)
+    if identity is None:
         return None
     try:
         role = _truncate_text(
@@ -384,8 +401,10 @@ def _element_signature(obj: Any) -> str | None:
     except Exception:
         name = ""
     bounds = _bounds(obj)
+    # Keep existing fingerprint values for accessible-ID based elements.
+    stable = identity[3:] if identity.startswith("id\0") else identity
     fingerprint = (
-        f"{accessible_id}\0{role}\0{name}\0{bounds['x']}\0{bounds['y']}\0"
+        f"{stable}\0{role}\0{name}\0{bounds['x']}\0{bounds['y']}\0"
         f"{bounds['width']}\0{bounds['height']}"
     )
     return hashlib.sha256(fingerprint.encode()).hexdigest()[:16]
@@ -397,7 +416,7 @@ def _record(app: Any, window: Any, index: int) -> dict[str, Any]:
     signature = _window_signature(window)
     if not signature:
         raise LookupError(
-            "AT-SPI window does not expose a stable accessible id"
+            "AT-SPI window does not expose a stable provider identity"
         )
     return {
         "id": f"atspi:{pid}:{signature}",
@@ -535,6 +554,9 @@ def _snapshot(payload: dict[str, Any]) -> dict[str, Any]:
             if signature is not None:
                 locators[element_id] = {
                     "path": path,
+                    "identity": _provider_identity(
+                        obj, GUI_MAX_ELEMENT_TEXT_BYTES
+                    ),
                     "accessible_id": _accessible_id(obj),
                     "fingerprint": signature,
                 }
@@ -559,25 +581,42 @@ def _snapshot(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _validate_locator_identity(
+    obj: Any, expected_identity: str, expected_accessible_id: str
+) -> None:
+    if expected_identity:
+        valid = (
+            _provider_identity(obj, GUI_MAX_ELEMENT_TEXT_BYTES)
+            == expected_identity
+        )
+    else:
+        # Older observation locators carry only accessible_id.
+        valid = (
+            bool(expected_accessible_id)
+            and _accessible_id(obj) == expected_accessible_id
+        )
+    if not valid:
+        raise LookupError("AT-SPI target element changed since observation")
+
+
 def _resolve_locator(payload: dict[str, Any]) -> dict[str, Any]:
     _app, window, _window_index = _resolve_window(str(payload["window_id"]))
     raw_locator = payload.get("locator", {})
     if isinstance(raw_locator, dict):
         locator = [int(value) for value in raw_locator.get("path", [])]
         expected_accessible_id = str(raw_locator.get("accessible_id") or "")
+        expected_identity = str(raw_locator.get("identity") or "")
         expected_fingerprint = str(raw_locator.get("fingerprint") or "")
     else:
         locator = [int(value) for value in raw_locator]
         expected_accessible_id = ""
+        expected_identity = ""
         expected_fingerprint = ""
     obj = _resolve_path(window, locator)
     if isinstance(raw_locator, dict):
-        current_accessible_id = _accessible_id(obj)
-        if (
-            not expected_accessible_id
-            or current_accessible_id != expected_accessible_id
-        ):
-            raise LookupError("AT-SPI target element changed since observation")
+        _validate_locator_identity(
+            obj, expected_identity, expected_accessible_id
+        )
     if expected_fingerprint and _element_signature(obj) != expected_fingerprint:
         raise LookupError("AT-SPI target element changed since observation")
     return {"bounds": _bounds(obj)}
@@ -621,19 +660,18 @@ def _semantic_action(payload: dict[str, Any]) -> dict[str, Any]:
     if isinstance(raw_locator, dict):
         locator = [int(value) for value in raw_locator.get("path", [])]
         expected_accessible_id = str(raw_locator.get("accessible_id") or "")
+        expected_identity = str(raw_locator.get("identity") or "")
         expected_fingerprint = str(raw_locator.get("fingerprint") or "")
     else:
         locator = [int(value) for value in raw_locator]
         expected_accessible_id = ""
+        expected_identity = ""
         expected_fingerprint = ""
     obj = _resolve_path(window, locator)
     if isinstance(raw_locator, dict):
-        current_accessible_id = _accessible_id(obj)
-        if (
-            not expected_accessible_id
-            or current_accessible_id != expected_accessible_id
-        ):
-            raise LookupError("AT-SPI target element changed since observation")
+        _validate_locator_identity(
+            obj, expected_identity, expected_accessible_id
+        )
     if expected_fingerprint and _element_signature(obj) != expected_fingerprint:
         raise LookupError("AT-SPI target element changed since observation")
     action = payload["action"]
@@ -716,14 +754,14 @@ def _focus_keyboard_target(payload: dict[str, Any]) -> None:
         locator = [int(value) for value in raw_locator.get("path", [])]
         obj = _resolve_path(window, locator)
         expected_accessible_id = str(raw_locator.get("accessible_id") or "")
+        expected_identity = str(raw_locator.get("identity") or "")
         expected_fingerprint = str(raw_locator.get("fingerprint") or "")
+        _validate_locator_identity(
+            obj, expected_identity, expected_accessible_id
+        )
         if (
-            not expected_accessible_id
-            or _accessible_id(obj) != expected_accessible_id
-            or (
-                expected_fingerprint
-                and _element_signature(obj) != expected_fingerprint
-            )
+            expected_fingerprint
+            and _element_signature(obj) != expected_fingerprint
         ):
             raise LookupError("AT-SPI target element changed since observation")
     else:
@@ -772,14 +810,14 @@ def _prepare_pointer_target(payload: dict[str, Any]) -> dict[str, int]:
         locator = [int(value) for value in raw_locator.get("path", [])]
         obj = _resolve_path(window, locator)
         expected_accessible_id = str(raw_locator.get("accessible_id") or "")
+        expected_identity = str(raw_locator.get("identity") or "")
         expected_fingerprint = str(raw_locator.get("fingerprint") or "")
+        _validate_locator_identity(
+            obj, expected_identity, expected_accessible_id
+        )
         if (
-            not expected_accessible_id
-            or _accessible_id(obj) != expected_accessible_id
-            or (
-                expected_fingerprint
-                and _element_signature(obj) != expected_fingerprint
-            )
+            expected_fingerprint
+            and _element_signature(obj) != expected_fingerprint
         ):
             raise LookupError("AT-SPI target element changed since observation")
     _assert_fresh(payload)
