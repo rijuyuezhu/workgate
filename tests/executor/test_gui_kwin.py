@@ -336,3 +336,76 @@ async def test_non_kde_capture_does_not_query_kwin(monkeypatch, tmp_path):
         )
         == "xdg-desktop-portal"
     )
+
+
+def test_kwin_missing_scripting_tool_fails_before_running(monkeypatch):
+    monkeypatch.setattr(linux_kwin.shutil, "which", lambda _tool: None)
+    with pytest.raises(GuiUnavailableError, match="requires qdbus"):
+        linux_kwin._script_results("console.info('unused')", KDE)
+
+
+def test_kwin_script_start_failure_unloads_and_removes_ephemeral_file(
+    monkeypatch,
+):
+    calls = []
+    source_paths = []
+    monkeypatch.setattr(
+        linux_kwin.shutil, "which", lambda tool: "/usr/bin/" + tool
+    )
+
+    def run(argv, **_kwargs):
+        calls.append(argv)
+        if any("loadScript" in part for part in argv):
+            source_paths.append(Path(argv[-2]))
+            return SimpleNamespace(returncode=0, stdout="17", stderr="")
+        if any("Scripting.start" in part for part in argv):
+            return SimpleNamespace(
+                returncode=1, stdout="", stderr="unavailable"
+            )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(linux_kwin.subprocess, "run", run)
+    with pytest.raises(GuiUnavailableError, match="did not start"):
+        linux_kwin._script_results("console.info('unused')", KDE)
+    assert source_paths and all(not path.exists() for path in source_paths)
+    assert any(any("unloadScript" in part for part in argv) for argv in calls)
+
+
+def test_invalid_kwin_rows_and_changed_pid_fail_safely(monkeypatch):
+    monkeypatch.setattr(
+        linux_kwin,
+        "_script_results",
+        lambda _script, _env: [
+            {"pid": "not-an-integer", "bounds": KWIN["bounds"]},
+            {
+                "pid": 47,
+                "internal_id": "invalid-uuid",
+                "bounds": KWIN["bounds"],
+            },
+        ],
+    )
+    rows = linux_kwin.query_windows(KDE)
+    assert len(rows) == 1 and rows[0]["id"] is None
+    with pytest.raises(GuiStaleStateError, match="process changed"):
+        linux_kwin.refresh_window(KWIN, [{**KWIN, "pid": 48}])
+
+
+def test_kwin_focus_rejects_unselected_and_never_active_windows(monkeypatch):
+    monkeypatch.setattr(linux_kwin, "query_windows", lambda _env: [KWIN])
+    monkeypatch.setattr(linux_kwin, "_script_results", lambda _script, _env: [])
+    with pytest.raises(GuiStaleStateError, match="uniquely activate"):
+        linux_kwin.focus(KWIN, KDE)
+
+    monkeypatch.setattr(
+        linux_kwin,
+        "query_windows",
+        lambda _env: [{**KWIN, "active": False}],
+    )
+    monkeypatch.setattr(
+        linux_kwin,
+        "_script_results",
+        lambda _script, _env: [{"selected": True}],
+    )
+    monkeypatch.setattr(linux_kwin.time, "sleep", lambda _seconds: None)
+    with pytest.raises(GuiStaleStateError, match="did not become active"):
+        linux_kwin.focus(KWIN, KDE)
