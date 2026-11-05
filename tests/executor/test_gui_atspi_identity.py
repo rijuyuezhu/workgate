@@ -192,3 +192,67 @@ def test_snapshot_locator_allows_provider_only_semantic_click(monkeypatch):
     )
     assert result["semantic"] is True
     assert clicked == [0]
+
+
+@pytest.mark.asyncio
+async def test_linux_backend_preserves_provider_identity_from_helper(
+    monkeypatch,
+):
+    from workgate.executor.gui import linux
+
+    async def environ():
+        return {"DISPLAY": ":12", "XDG_SESSION_TYPE": "x11"}
+
+    async def devices(_env):
+        return 0
+
+    identity = "object\0:1.57\0/org/a11y/atspi/accessible/42"
+    record = {
+        "id": "atspi:42:abc",
+        "title": "Test",
+        "pid": 42,
+        "bounds": {"x": 0, "y": 0, "width": 20, "height": 20},
+    }
+    backend = linux.LinuxGuiBackend()
+    monkeypatch.setattr(backend, "_ensure_env", environ)
+    monkeypatch.setattr(
+        backend,
+        "_helper",
+        lambda _command, _env: {
+            "window": record,
+            "elements": [
+                {
+                    "id": "e1",
+                    "role": "button",
+                    "name": "Apply",
+                    "bounds": record["bounds"],
+                }
+            ],
+            "locators": {
+                "e1": {
+                    "path": [0],
+                    "identity": identity,
+                    "accessible_id": None,
+                    "fingerprint": "abc123",
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        backend,
+        "_desktop_operations",
+        lambda _env: SimpleNamespace(input_devices=devices),
+    )
+    snapshot = await backend.snapshot(
+        record["id"],
+        screenshot_path=None,
+        include_elements=True,
+        max_elements=5,
+        max_depth=2,
+    )
+    assert snapshot.locators["e1"]["semantic"] == {
+        "path": [0],
+        "identity": identity,
+        "accessible_id": "",
+        "fingerprint": "abc123",
+    }

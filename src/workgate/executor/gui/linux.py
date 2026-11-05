@@ -1704,6 +1704,7 @@ class LinuxGuiBackend:
             if isinstance(raw_locator, dict):
                 semantic_locator = {
                     "path": list(raw_locator.get("path", [])),
+                    "identity": str(raw_locator.get("identity") or ""),
                     "accessible_id": str(
                         raw_locator.get("accessible_id") or ""
                     ),
