@@ -7,12 +7,12 @@ Choose a role: **Colocate** (Control and Executor together), **Control** (MCP en
 | Channel | What you get | Recommended for |
 | --- | --- | --- |
 | **Latest** | Newest published GitHub Release, including Alpha/Beta/RC | Trying current Workgate features |
-| **Stable** | Newest non-prerelease GitHub Release | Production, once a compatible source+uv stable release exists |
+| **Stable** | Newest non-prerelease GitHub Release | Production (v5.0.0 and newer) |
 | **Dev** | Current `main` source checkout | Development and local experimentation |
 
 Install Git first. **Latest** and **Stable** use the same source installer: only release selection differs. It resolves the chosen Git tag to a full commit SHA and verifies the pinned checkout before installing.
 
-**Current compatibility:** Stable currently resolves to v4.3.1, which predates the source+uv installer. The source bootstrap will reject it; use Latest for a source+uv installation until a compatible stable release is published. Dev does not install a managed service.
+Stable requires a v5.0.0-or-newer source+uv release. Dev does not install a managed service.
 
 ## Linux
 

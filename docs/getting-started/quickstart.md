@@ -4,10 +4,10 @@ Start with Workgate on one computer, then connect your MCP client.
 
 ## 1. Install
 
-On **Linux**, install **Colocate** (Control and Executor together) from the latest published release (including prereleases):
+On **Linux**, install **Colocate** (Control and Executor together) from the latest stable release:
 
 ~~~sh
-curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/main/deploy/source/bootstrap.sh | sh -s -- --latest --role colocate --name workstation
+curl -fsSL https://raw.githubusercontent.com/rijuyuezhu/workgate/main/deploy/source/bootstrap.sh | sh -s -- --stable --role colocate --name workstation
 ~~~
 
 You need Git, curl and an interactive terminal. The installer sets up the runtime and shows you how to approve the local Executor in the WebUI.
