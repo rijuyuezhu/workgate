@@ -282,3 +282,25 @@ async def test_empty_upload_preserves_legacy_single_put(tmp_path, monkeypatch):
     }
     assert transport.sent == [(None, 0)]
     assert staging.read_bytes() == b""
+
+
+@pytest.mark.asyncio
+async def test_large_relay_upload_stays_under_simulated_proxy_body_cap(
+    tmp_path, monkeypatch
+):
+    _workspace, config, store, profile, _gateway, app, staging, args, data = (
+        _source(tmp_path, size=10 * 1024 * 1024 + 37)
+    )
+    limit = 4 * 1024 * 1024
+    transport = _patch(
+        monkeypatch, app, _Intercept(app, max_request_bytes=limit)
+    )
+    result = await transfer_http.upload_to_control(profile, config, store, args)
+    assert result["bytes"] == len(data)
+    assert result["sha256"] == hashlib.sha256(data).hexdigest()
+    assert transport.rejected
+    assert all(
+        size <= limit for _, size in transport.sent[len(transport.rejected) :]
+    )
+    assert isinstance(result["http_chunks"], int) and result["http_chunks"] > 1
+    assert staging.read_bytes() == data
