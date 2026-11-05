@@ -25,3 +25,8 @@ class SecretScanOutput(BaseModel):
     truncated_files: int = Field(
         description="Number of scanned files whose text was truncated before scanning."
     )
+    skipped_files: int = Field(
+        default=0,
+        ge=0,
+        description="Number of candidate files skipped because reading failed; findings may be incomplete.",
+    )

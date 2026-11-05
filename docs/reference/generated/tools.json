@@ -10035,6 +10035,13 @@
             "title": "Findings",
             "type": "array"
           },
+          "skipped_files": {
+            "default": 0,
+            "description": "Number of candidate files skipped because reading failed; findings may be incomplete.",
+            "minimum": 0,
+            "title": "Skipped Files",
+            "type": "integer"
+          },
           "truncated": {
             "description": "Whether the finding list was truncated by the result limit.",
             "title": "Truncated",
