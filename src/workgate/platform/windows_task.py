@@ -177,25 +177,52 @@ class WindowsUserTask:
         self._powershell(script)
 
     def schedule_once(self, command: list[str], *, cwd: str) -> None:
-        """Schedule one bounded user task without replacing any existing task.
+        """Schedule a bounded user task, reusing only a verified completed slot.
 
         Task Scheduler owns its process tree independently from a managed
         Executor task. An expiration boundary cleans up even after a crash.
         """
         if not command:
             raise ValueError("scheduled task command must not be empty")
-        if self.status() is not None:
-            raise RuntimeError("source cutover task is already registered")
         arguments = subprocess.list2cmdline(command[1:])
         script = "\n".join(
             [
+                "$identity = [Security.Principal.WindowsIdentity]::GetCurrent()",
+                "$user = $identity.Name",
+                f"$exe = {_literal(command[0])}",
+                f"$args = {_literal(arguments)}",
+                f"$cwd = {_literal(cwd)}",
+                f"$existing = Get-ScheduledTask {self._task} -ErrorAction SilentlyContinue",
+                "if ($null -ne $existing) {",
+                f"  if ($existing.Description -cne {_literal(self.description)}) {{ "
+                "throw 'refusing to replace an unmanaged task' }",
+                "  $userId = [string]$existing.Principal.UserId",
+                "  $taskSid = if ($userId -like 'S-1-*') { $userId } else { "
+                "([Security.Principal.NTAccount]::new($userId)).Translate("
+                "[Security.Principal.SecurityIdentifier]).Value }",
+                "  if ($taskSid -ne $identity.User.Value -or "
+                "$existing.Principal.RunLevel.ToString() -ne 'Limited' -or "
+                "$existing.Principal.LogonType.ToString() -ne 'Interactive') { "
+                "throw 'refusing to replace a task with different ownership' }",
+                "  $info = Get-ScheduledTaskInfo -InputObject $existing",
+                "  if ($existing.State.ToString() -ne 'Ready' -or "
+                "$info.LastTaskResult -ne 0 -or $info.LastRunTime.Year -lt 2000) { "
+                "throw 'source cutover task is already registered' }",
+                "  if (@($existing.Actions).Count -ne 1 -or "
+                "@($existing.Triggers).Count -ne 1 -or "
+                "$existing.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskTimeTrigger') { "
+                "throw 'refusing to replace an unexpected cutover task' }",
+                "  $previous = $existing.Actions[0]",
+                "  if ([string]$previous.Execute -ine $exe -or "
+                "[string]$previous.Arguments -cne $args -or "
+                "[string]$previous.WorkingDirectory -ine $cwd) { "
+                "throw 'refusing to replace a different cutover' }",
+                f"  Unregister-ScheduledTask {self._task} -Confirm:$false -ErrorAction Stop",
+                "}",
                 f"if (Get-ScheduledTask {self._task} -ErrorAction SilentlyContinue) {{ "
                 "throw 'refusing to replace a scheduled task' }",
-                "$user = [Security.Principal.WindowsIdentity]::GetCurrent().Name",
                 "$action = New-ScheduledTaskAction "
-                f"-Execute {_literal(command[0])} "
-                f"-Argument {_literal(arguments)} "
-                f"-WorkingDirectory {_literal(cwd)}",
+                "-Execute $exe -Argument $args -WorkingDirectory $cwd",
                 "$trigger = New-ScheduledTaskTrigger -Once "
                 "-At ((Get-Date).AddSeconds(15))",
                 "$trigger.EndBoundary = (Get-Date).AddMinutes(30).ToString('s')",

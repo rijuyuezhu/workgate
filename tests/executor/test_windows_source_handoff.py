@@ -59,13 +59,12 @@ def test_windows_handoff_uses_separate_one_time_task(
 
     def capture(argv: list[str]):
         commands.append(argv)
-        # The first status lookup reports that no owned one-off task exists.
-        return subprocess.CompletedProcess(argv, 0, "null", "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
 
     source_handoff.schedule_windows_source_cutover(
         checkout, version=VERSION, config=config, run=capture
     )
-    assert len(commands) == 2
+    assert len(commands) == 1
     script = commands[-1][-1]
     assert "Register-ScheduledTask" in script
     assert "New-ScheduledTaskTrigger -Once" in script
@@ -158,7 +157,7 @@ def test_invalid_handoff_never_registers_task(
         )
 
 
-def test_scheduler_does_not_replace_existing_one_shot_task(
+def test_scheduler_checks_completed_task_ownership_before_replacement(
     prepared,
 ) -> None:
     checkout, config, _launcher = prepared
@@ -166,16 +165,24 @@ def test_scheduler_does_not_replace_existing_one_shot_task(
 
     def run(argv: list[str]):
         commands.append(argv)
-        return subprocess.CompletedProcess(
-            argv, 0, '{"state":"Running","last_result":0}', ""
-        )
+        return subprocess.CompletedProcess(argv, 0, "", "")
 
-    with pytest.raises(RuntimeError, match="already registered"):
-        source_handoff.schedule_windows_source_cutover(
-            checkout, version=VERSION, config=config, run=run
-        )
+    source_handoff.schedule_windows_source_cutover(
+        checkout, version=VERSION, config=config, run=run
+    )
     assert len(commands) == 1
-    assert "Register-ScheduledTask" not in commands[0][-1]
+    script = commands[0][-1]
+    assert "source cutover task is already registered" in script
+    assert "refusing to replace an unmanaged task" in script
+    assert "refusing to replace a task with different ownership" in script
+    assert "refusing to replace a different cutover" in script
+    assert "$info.LastTaskResult -ne 0" in script
+    assert "$info.LastRunTime.Year -lt 2000" in script
+    assert "MSFT_TaskTimeTrigger" in script
+    assert script.index("Unregister-ScheduledTask") < script.index(
+        "Register-ScheduledTask"
+    )
+    assert "-Force" not in script
 
 
 def test_following_release_can_schedule_while_previous_task_awaits_expiry(
@@ -183,25 +190,11 @@ def test_following_release_can_schedule_while_previous_task_awaits_expiry(
 ) -> None:
     checkout, config, _launcher = prepared
     scripts: list[str] = []
-    registered: set[str] = set()
 
     def run(argv: list[str]):
         script = argv[-1]
         scripts.append(script)
-        version = "v5.0.0a78" if "v5.0.0a78" in script else f"v{VERSION}"
-        name = f"Workgate Executor Source Cutover {version}"
-        if "[Console]::Out.Write" in script:
-            return subprocess.CompletedProcess(
-                argv,
-                0,
-                '{"state":"Ready","last_result":0}'
-                if name in registered
-                else "null",
-                "",
-            )
         assert "Register-ScheduledTask" in script
-        assert name not in registered
-        registered.add(name)
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     source_handoff.schedule_windows_source_cutover(
@@ -212,15 +205,14 @@ def test_following_release_can_schedule_while_previous_task_awaits_expiry(
     source_handoff.schedule_windows_source_cutover(
         checkout, version="5.0.0a78", config=config, run=run
     )
-    assert registered == {
-        f"Workgate Executor Source Cutover v{VERSION}",
-        "Workgate Executor Source Cutover v5.0.0a78",
-    }
-    with pytest.raises(RuntimeError, match="already registered"):
-        source_handoff.schedule_windows_source_cutover(
-            checkout, version="5.0.0a78", config=config, run=run
-        )
-    assert sum("Register-ScheduledTask" in script for script in scripts) == 2
+    assert len(scripts) == 2
+    assert f"Workgate Executor Source Cutover v{VERSION}" in scripts[0]
+    assert "Workgate Executor Source Cutover v5.0.0a78" in scripts[1]
+    # If the same target is needed again after a rollback, the native script
+    # verifies a completed owner-matching task before removing its stale slot.
+    assert "Unregister-ScheduledTask" in scripts[1]
+    assert "$previous.Arguments -cne $args" in scripts[1]
+    assert "-Force" not in scripts[1]
 
 
 def test_scheduler_creation_failure_propagates(
@@ -232,15 +224,13 @@ def test_scheduler_creation_failure_propagates(
 
     def run(argv: list[str]):
         calls.append(argv)
-        if len(calls) == 1:
-            return subprocess.CompletedProcess(argv, 0, "null", "")
         raise subprocess.CalledProcessError(1, argv)
 
     with pytest.raises(subprocess.CalledProcessError):
         source_handoff.schedule_windows_source_cutover(
             checkout, version=VERSION, config=config, run=run
         )
-    assert len(calls) == 2
+    assert len(calls) == 1
     assert launcher.read_bytes() == original
 
 
