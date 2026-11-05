@@ -12,7 +12,10 @@ from pydantic import JsonValue
 
 from ..config.executor import ExecutorConfig
 from ..protocol.executor import EXECUTOR_TRANSFER_TOKEN_HEADER
-from ..protocol.transfer import normalize_chunk_size
+from ..protocol.transfer import (
+    DEFAULT_HTTP_TRANSFER_CHUNK_BYTES,
+    normalize_chunk_size,
+)
 from .errors import ExecutorOperationFailure
 from .profile import ExecutorProfile
 from .tool_session.store import ToolSessionStore
@@ -199,6 +202,113 @@ async def _write_response(
     return {"offset": current, "bytes": current - offset}
 
 
+async def _upload_control_chunks(
+    client: httpx.AsyncClient,
+    handle: Any,
+    initial_stat: os.stat_result,
+    *,
+    capability_path: str,
+    capability_token: str,
+    expected_bytes: int,
+    expected_sha256: str,
+) -> dict[str, JsonValue]:
+    """Upload independent HTTP requests with durable offset ACKs on Control."""
+    offset = 0
+    chunk_size = DEFAULT_HTTP_TRANSFER_CHUNK_BYTES
+    source_digest = hashlib.sha256()
+    http_chunks = 0
+    max_http_chunk_bytes = 0
+    try:
+        while offset < expected_bytes:
+            requested = min(chunk_size, expected_bytes - offset)
+            data = await asyncio.to_thread(handle.read, requested)
+            if len(data) != requested:
+                raise ValueError(
+                    "transfer upload source ended before expected size"
+                )
+            chunk_sha = hashlib.sha256(data).hexdigest()
+            headers = {
+                EXECUTOR_TRANSFER_TOKEN_HEADER: capability_token,
+                "Content-Type": "application/octet-stream",
+                "Content-Length": str(len(data)),
+                "Content-Range": f"bytes {offset}-{offset + len(data) - 1}/{expected_bytes}",
+                "X-Chunk-Sha256": chunk_sha,
+            }
+            for attempt in range(4):
+                try:
+                    response = await client.put(
+                        capability_path, headers=headers, content=data
+                    )
+                except httpx.HTTPError as exc:
+                    if attempt == 3:
+                        raise RuntimeError(
+                            f"control transfer chunk upload failed: {type(exc).__name__}"
+                        ) from exc
+                    await asyncio.sleep(min(0.25 * (attempt + 1), 1.0))
+                    continue
+                if response.status_code == 413:
+                    if requested <= 1:
+                        raise RuntimeError(
+                            "control transfer chunk rejected with HTTP 413"
+                        )
+                    chunk_size = max(1, requested // 2)
+                    await asyncio.to_thread(handle.seek, offset)
+                    break
+                if (
+                    response.status_code in {408, 429}
+                    or response.status_code >= 500
+                ) and attempt < 3:
+                    await asyncio.sleep(min(0.25 * (attempt + 1), 1.0))
+                    continue
+                if response.status_code != 200:
+                    raise RuntimeError(
+                        f"control transfer chunk rejected with HTTP {response.status_code}"
+                    )
+                try:
+                    ack = response.json()
+                except ValueError as exc:
+                    raise RuntimeError(
+                        "control transfer chunk acknowledgement is invalid"
+                    ) from exc
+                next_offset = offset + len(data)
+                if (
+                    not isinstance(ack, dict)
+                    or type(ack.get("offset")) is not int
+                    or ack["offset"] != next_offset
+                    or type(ack.get("bytes")) is not int
+                    or ack["bytes"] != next_offset
+                    or ack.get("completed")
+                    is not (next_offset == expected_bytes)
+                    or (
+                        next_offset == expected_bytes
+                        and ack.get("sha256") != expected_sha256
+                    )
+                ):
+                    raise RuntimeError(
+                        "control transfer chunk acknowledgement is invalid"
+                    )
+                offset = next_offset
+                source_digest.update(data)
+                http_chunks += 1
+                max_http_chunk_bytes = max(max_http_chunk_bytes, len(data))
+                break
+        final_stat = os.fstat(handle.fileno())
+        if _stable_source_identity(initial_stat) != _stable_source_identity(
+            final_stat
+        ):
+            raise ValueError("transfer upload source changed during streaming")
+        if source_digest.hexdigest() != expected_sha256:
+            raise ValueError("transfer upload source integrity mismatch")
+        return {
+            "bytes": offset,
+            "sha256": expected_sha256,
+            "http_chunks": http_chunks,
+            "http_chunk_size": max_http_chunk_bytes,
+        }
+    finally:
+        handle.close()
+
+
 async def upload_to_control(
     profile: ExecutorProfile,
     config: ExecutorConfig,
@@ -217,6 +327,16 @@ async def upload_to_control(
     capability_token = str(args["capability_token"])
 
     async with _control_client(profile) as client:
+        if args.get("http_chunked", False) and expected_bytes > 0:
+            return await _upload_control_chunks(
+                client,
+                handle,
+                initial_stat,
+                capability_path=capability_path,
+                capability_token=capability_token,
+                expected_bytes=expected_bytes,
+                expected_sha256=expected_sha256,
+            )
         try:
             response = await client.put(
                 capability_path,
