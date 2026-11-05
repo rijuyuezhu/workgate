@@ -15,8 +15,9 @@ from typing import Any, cast
 
 from PIL import Image
 
+import workgate.executor.gui.linux_kwin as linux_kwin
+
 from ...errors import GuiStaleStateError, GuiUnavailableError
-from . import linux_kwin
 from .base import (
     GUI_MAX_CAPTURE_DIMENSION,
     GUI_MAX_CAPTURE_PIXELS,
