@@ -9,11 +9,12 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Protocol
 
 from mcp.types import CallToolResult, ContentBlock, ImageContent, TextContent
-from PIL import Image
+from PIL import Image, features
 
 from ...config.executor import ExecutorConfig
 from ...errors import GuiStaleStateError, GuiUnavailableError
@@ -35,6 +36,8 @@ GUI_MAX_WINDOW_TEXT_BYTES = 1024
 GUI_MAX_WINDOWS_TOTAL_BYTES = 128 * 1024
 GUI_MAX_CAPTURE_DIMENSION = 16_384
 GUI_MAX_CAPTURE_PIXELS = 64_000_000
+GUI_SCREENSHOT_COMPRESS_MIN_BYTES = 128 * 1024
+GUI_SCREENSHOT_COMPRESS_MAX_PIXELS = 16_000_000
 GUI_MAX_ELEMENT_TEXT_BYTES = 1024
 GUI_MAX_ELEMENT_VALUE_BYTES = 2048
 GUI_MAX_ELEMENTS_TOTAL_BYTES = 64 * 1024
@@ -291,6 +294,38 @@ def _bounds_tuple(value: Any) -> tuple[int, int, int, int] | None:
         return None
 
 
+def _compress_gui_screenshot(data: bytes) -> bytes:
+    """Shrink large opaque PNG captures for remote MCP without changing metadata."""
+    if len(data) < GUI_SCREENSHOT_COMPRESS_MIN_BYTES:
+        return data
+    try:
+        with Image.open(BytesIO(data)) as original:
+            width, height = original.size
+            if (
+                original.format != "PNG"
+                or width <= 0
+                or height <= 0
+                or width * height > GUI_SCREENSHOT_COMPRESS_MAX_PIXELS
+            ):
+                return data
+            original.load()
+            if "transparency" in original.info or (
+                "A" in original.getbands()
+                and original.getchannel("A").getextrema() != (255, 255)
+            ):
+                return data
+            with BytesIO() as output:
+                frame = original.convert("RGB")
+                if features.check("webp"):
+                    frame.save(output, format="WEBP", quality=82, method=4)
+                else:
+                    frame.save(output, format="JPEG", quality=85, optimize=True)
+                compressed = output.getvalue()
+    except OSError, ValueError:
+        return data
+    return compressed if 0 < len(compressed) < len(data) else data
+
+
 def _prepare_gui_screenshot_path(prefix: str) -> Path:
     fd, raw_path = tempfile.mkstemp(prefix=f"workgate-{prefix}-", suffix=".png")
     os.close(fd)
@@ -542,6 +577,10 @@ class GuiService:
                         raise GuiUnavailableError(
                             "GUI screenshot changed while it was being read"
                         )
+                    image_data = await asyncio.to_thread(
+                        _compress_gui_screenshot, image_data
+                    )
+                    image_size = len(image_data)
                     _image_format, mime_type = detect_image_type(
                         image_data[:16]
                     )
