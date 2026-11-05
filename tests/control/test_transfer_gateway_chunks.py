@@ -176,8 +176,11 @@ def test_failed_range_body_and_expired_capability_are_not_accepted(tmp_path):
     current = [10.0]
     payloads = PayloadStore(tmp_path / "control")
     gateway = ControlTransferGateway(
-        _Transport(), payloads, capability_ttl_s=5, clock=lambda: current[0]
-    )  # type: ignore[arg-type]
+        _Transport(),  # type: ignore[arg-type]
+        payloads,
+        capability_ttl_s=5,
+        clock=lambda: current[0],
+    )
     data = b"123456"
     staging = payloads.new_staging_path("transfer")
     lease = gateway.issue_upload(
