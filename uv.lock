@@ -1981,7 +1981,7 @@ wheels = [
 
 [[package]]
 name = "workgate"
-version = "5.0.0a21"
+version = "5.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
