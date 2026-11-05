@@ -139,6 +139,39 @@ class WindowsUserTask:
                 "-Settings $settings -Principal $principal "
                 f"-Description {_literal(self.description)} "
                 "-Force | Out-Null",
+                # A task registered by an elevated installer can grant the
+                # ordinary user only read access. The task's Limited token
+                # must still be able to update it on the next source cutover.
+                "$scheduler = New-Object -ComObject Schedule.Service",
+                "$scheduler.Connect()",
+                f"$registered = $scheduler.GetFolder('\\').GetTask({_literal(self.name)})",
+                "$acl = New-Object "
+                "System.Security.AccessControl.RawSecurityDescriptor("
+                "$registered.GetSecurityDescriptor(4))",
+                "$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User",
+                "$ownerFull = @($acl.DiscretionaryAcl | Where-Object { "
+                "$_.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed "
+                "-and $_.SecurityIdentifier.Value -eq $sid.Value "
+                "-and ($_.AccessMask -band 0x1F01FF) -eq 0x1F01FF })",
+                "if ($ownerFull.Count -eq 0) {",
+                # Task Scheduler's default DACL is not always canonical.
+                "$ace = [Security.AccessControl.CommonAce]::new("
+                "[Security.AccessControl.AceFlags]::None, "
+                "[Security.AccessControl.AceQualifier]::AccessAllowed, "
+                "0x1F01FF, $sid, $false, $null)",
+                "$acl.DiscretionaryAcl.InsertAce($acl.DiscretionaryAcl.Count, $ace)",
+                "$registered.SetSecurityDescriptor("
+                "$acl.GetSddlForm([Security.AccessControl.AccessControlSections]::Access), 0)",
+                "}",
+                "$updated = New-Object "
+                "System.Security.AccessControl.RawSecurityDescriptor("
+                "$registered.GetSecurityDescriptor(4))",
+                "$ownerFull = @($updated.DiscretionaryAcl | Where-Object { "
+                "$_.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed "
+                "-and $_.SecurityIdentifier.Value -eq $sid.Value "
+                "-and ($_.AccessMask -band 0x1F01FF) -eq 0x1F01FF })",
+                "if ($ownerFull.Count -eq 0) { "
+                "throw 'scheduled task owner lacks update access' }",
             ]
         )
         self._powershell(script)
