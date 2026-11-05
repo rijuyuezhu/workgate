@@ -346,6 +346,37 @@ def test_windows_colocate_frozen_requires_windowless_build(
     assert not target.exists()
 
 
+def test_windows_task_install_grants_owner_task_write_access(monkeypatch):
+    monkeypatch.setattr(
+        "workgate.platform.windows_task.shutil.which",
+        lambda _: "powershell.exe",
+    )
+    scripts = []
+
+    def run(argv):
+        script = argv[-1]
+        scripts.append(script)
+        return subprocess.CompletedProcess(
+            argv, 0, "null" if "Get-ScheduledTask" in script else "", ""
+        )
+
+    task = WindowsUserTask(
+        "Workgate Test", description="Managed by Workgate: test", run=run
+    )
+    task.install([r"C:\pythonw.exe", r"C:\launcher.py"], cwd=r"C:\Workgate")
+    script = scripts[-1]
+    assert "Register-ScheduledTask" in script
+    assert "New-Object -ComObject Schedule.Service" in script
+    assert "GetSecurityDescriptor(4)" in script
+    assert "SetSecurityDescriptor(" in script
+    assert "RawSecurityDescriptor" in script
+    assert "DiscretionaryAcl.InsertAce" in script
+    assert "if ($ownerFull.Count -eq 0)" in script
+    assert "0x1F01FF" in script
+    assert "[Security.Principal.WindowsIdentity]::GetCurrent().User" in script
+    assert "Everyone" not in script
+
+
 def test_windows_task_grants_only_owner_access_to_private_state(monkeypatch):
     monkeypatch.setattr(
         "workgate.platform.windows_task.shutil.which",
