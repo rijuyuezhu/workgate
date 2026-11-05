@@ -14,6 +14,7 @@ from pydantic import JsonValue, TypeAdapter
 from ..errors import tool_error_payload
 from ..protocol.errors import ProtocolErrorCode
 from ..protocol.executor import (
+    EXECUTOR_CAPABILITY_GUI,
     ExecutorCommand,
     ExecutorHeartbeatResponse,
     ExecutorHelloRequest,
@@ -28,6 +29,7 @@ from .errors import (
     ExecutorOperationFailure,
     ExecutorResourceInventoryUnavailable,
 )
+from .gui import gui_capability_available
 
 logger = logging.getLogger(__name__)
 
@@ -303,7 +305,7 @@ class ExecutorConnection:
                 self._report_status("connected")
                 self._first_hello.set()
                 await self._run_connected(
-                    policy, delivery_progress=delivery_progress
+                    policy, hello=hello, delivery_progress=delivery_progress
                 )
             except ExecutorResourceInventoryUnavailable as exc:
                 self._report_status("reconnecting", type(exc).__name__)
@@ -363,10 +365,12 @@ class ExecutorConnection:
         self,
         policy: ExecutorHelloResponse,
         *,
+        hello: ExecutorHelloRequest,
         delivery_progress: asyncio.Event,
     ) -> None:
         heartbeat = asyncio.create_task(
-            self._heartbeat_loop(policy), name="workgate-executor-heartbeat"
+            self._heartbeat_loop(policy, hello),
+            name="workgate-executor-heartbeat",
         )
         poll = asyncio.create_task(
             self._poll_loop(policy, delivery_progress=delivery_progress),
@@ -389,7 +393,9 @@ class ExecutorConnection:
                     task.cancel()
             await asyncio.gather(*watched, return_exceptions=True)
 
-    async def _heartbeat_loop(self, policy: ExecutorHelloResponse) -> None:
+    async def _heartbeat_loop(
+        self, policy: ExecutorHelloResponse, hello: ExecutorHelloRequest
+    ) -> None:
         attempt = 0
         while not self._stop.is_set() and self._owner_action_error is None:
             await self._sleep(float(policy.heartbeat_interval_s))
@@ -399,6 +405,13 @@ class ExecutorConnection:
                 if await self._client.heartbeat() is not None:
                     # Leave the connected loop so existing hello/runtime policy
                     # handles upgrades after draining previously offered work.
+                    return
+                if hello.runtime.platform == "Windows" and (
+                    gui_capability_available()
+                    != (EXECUTOR_CAPABILITY_GUI in hello.capabilities)
+                ):
+                    # A locked/unlocked desktop can change after the initial
+                    # Hello; refresh the published capability via normal Hello.
                     return
                 if self._owner_action_error is None:
                     self._report_status("connected")

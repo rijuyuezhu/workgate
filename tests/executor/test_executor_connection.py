@@ -23,6 +23,7 @@ from workgate.executor.runtime import build_executor_runtime
 from workgate.protocol.credentials import new_executor_credential
 from workgate.protocol.errors import ProtocolError, ProtocolErrorCode
 from workgate.protocol.executor import (
+    EXECUTOR_CAPABILITY_GUI,
     EXECUTOR_RESULT_PATH,
     ExecutorCommand,
     ExecutorHeartbeatResponse,
@@ -1006,6 +1007,84 @@ def test_reconnect_backoff_is_exponential_jittered_and_bounded() -> None:
     assert executor_retry_delay(0, 0.5) == 0.5
     assert executor_retry_delay(1, 0.5) == 1.0
     assert executor_retry_delay(20, 0.5) == 30.0
+
+
+@pytest.mark.asyncio
+async def test_windows_gui_capability_changes_rehello_on_heartbeat(
+    monkeypatch,
+) -> None:
+    import workgate.executor.connection as connection_module
+
+    available = False
+    monkeypatch.setattr(
+        connection_module, "gui_capability_available", lambda: available
+    )
+    hello_messages: asyncio.Queue[ExecutorHelloRequest] = asyncio.Queue()
+    heartbeats: asyncio.Queue[None] = asyncio.Queue()
+    tick = asyncio.Event()
+
+    class Client(_BaseFakeClient):
+        async def hello(
+            self, message: ExecutorHelloRequest
+        ) -> ExecutorHelloResponse:
+            await hello_messages.put(message)
+            return _policy()
+
+        async def heartbeat(self) -> None:
+            await heartbeats.put(None)
+            return None
+
+        async def poll(self, *, timeout_s: float) -> ExecutorCommand | None:
+            await asyncio.Event().wait()
+            return None
+
+        async def submit_result(self, result: ExecutorResult) -> None:
+            raise AssertionError("no result expected")
+
+    def hello() -> ExecutorHelloRequest:
+        return _hello().model_copy(
+            update={
+                "runtime": ExecutorRuntimeSummary(
+                    workgate_version="test", platform="Windows"
+                ),
+                "capabilities": (EXECUTOR_CAPABILITY_GUI,) if available else (),
+            }
+        )
+
+    async def sleep(_delay: float) -> None:
+        await tick.wait()
+        tick.clear()
+
+    connection = ExecutorConnection(
+        Client(),
+        hello_factory=hello,
+        execute=lambda command: None,
+        max_concurrent_commands=1,
+        sleep=sleep,
+    )
+    connection.start()
+    try:
+        first = await asyncio.wait_for(hello_messages.get(), timeout=1)
+        assert EXECUTOR_CAPABILITY_GUI not in first.capabilities
+
+        available = True
+        tick.set()
+        second = await asyncio.wait_for(hello_messages.get(), timeout=1)
+        assert EXECUTOR_CAPABILITY_GUI in second.capabilities
+
+        # Stable desktop availability should not trigger another Hello.
+        await asyncio.wait_for(heartbeats.get(), timeout=1)
+        tick.set()
+        await asyncio.wait_for(heartbeats.get(), timeout=1)
+        await asyncio.sleep(0)
+        assert hello_messages.empty()
+
+        available = False
+        tick.set()
+        third = await asyncio.wait_for(hello_messages.get(), timeout=1)
+        assert EXECUTOR_CAPABILITY_GUI not in third.capabilities
+    finally:
+        await connection.aclose()
 
 
 @pytest.mark.asyncio
