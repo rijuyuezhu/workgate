@@ -46,8 +46,9 @@ class PairedControlHarness:
         *,
         session_id: str | None = None,
         timeout_s: float | None = None,
+        queue_timeout_s: float | None = None,
     ) -> ExecutorResult:
-        _ = timeout_s
+        _ = timeout_s, queue_timeout_s
         if executor_id != self.executor_id:
             raise RuntimeError(f"executor {executor_id!r} is offline")
         command = ExecutorCommand(

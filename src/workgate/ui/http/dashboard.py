@@ -1,6 +1,10 @@
 """Authenticated WebUI API for executor Dashboard telemetry."""
 
+import asyncio
+import contextlib
+import logging
 import math
+import time
 from typing import Any
 
 from fastapi import HTTPException
@@ -20,6 +24,9 @@ from .common import json_ok as _json_ok
 from .common import require_scopes as _require_scopes
 
 UI_DASHBOARD_EXECUTOR_MAX_BYTES = 255
+_FLEET_RESOURCE_CONCURRENCY = 4
+_FLEET_RESOURCE_BUDGET_S = 8.0
+logger = logging.getLogger(__name__)
 UI_DASHBOARD_TEXT_MAX_BYTES = 4_096
 UI_DASHBOARD_MAX_ALERTS = 12
 UI_DASHBOARD_MAX_ACTIVITY = 12
@@ -300,3 +307,89 @@ async def api_dashboard(request: Request) -> Response:
         return _json_error(exc, status_code=502)
     except Exception as exc:
         return _json_error(exc)
+
+
+async def _fleet_resources(request: Request) -> dict[str, Any]:
+    """Read current online Executor metrics without admitting new sessions."""
+    runtime = getattr(request.app.state, "control_runtime", None)
+    if runtime is None:
+        raise RuntimeError("WebUI resources require the control runtime")
+    transport = runtime.executor_transport
+    records = runtime.control_state.snapshot_executors().values()
+    trusted = sorted(
+        str(row.executor_id) for row in records if row.revoked_at is None
+    )
+    online = [
+        executor_id
+        for executor_id in trusted
+        if await transport.is_online(executor_id)
+    ]
+    limit = asyncio.Semaphore(_FLEET_RESOURCE_CONCURRENCY)
+
+    async def sample(executor_id: str) -> dict[str, Any]:
+        row: dict[str, Any] = {
+            "executor_id": executor_id,
+            "cpu_percent": None,
+            "memory_percent": None,
+        }
+        async with limit:
+            try:
+                result = await transport.call(
+                    executor_id,
+                    "dashboard_snapshot",
+                    {},
+                    queue_timeout_s=1.0,
+                    timeout_s=5.0,
+                )
+                data = result.result if result.ok else None
+                if not isinstance(data, dict) or not isinstance(
+                    data.get("system"), dict
+                ):
+                    return row
+                system = data["system"]
+                for field in ("cpu_percent", "memory_percent"):
+                    # One malformed metric should not hide the other.
+                    with contextlib.suppress(RuntimeError):
+                        row[field] = _finite_number(
+                            system.get(field),
+                            field=field,
+                            minimum=0.0,
+                            maximum=100.0,
+                        )
+                row["sampled_at"] = time.time()
+            except Exception:
+                logger.debug(
+                    "Fleet resource sample unavailable for %s",
+                    executor_id,
+                    exc_info=True,
+                )
+        return row
+
+    tasks = [asyncio.create_task(sample(executor_id)) for executor_id in online]
+    if tasks:
+        try:
+            await asyncio.wait(tasks, timeout=_FLEET_RESOURCE_BUDGET_S)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+    resources = []
+    for executor_id, task in zip(online, tasks, strict=True):
+        if task.cancelled() or task.exception() is not None:
+            resources.append(
+                {
+                    "executor_id": executor_id,
+                    "cpu_percent": None,
+                    "memory_percent": None,
+                }
+            )
+        else:
+            resources.append(task.result())
+    return {"resources": resources}
+
+
+async def api_executor_resources(request: Request) -> Response:
+    """Authenticated, bounded best-effort all-Executor CPU/RAM overview."""
+    _require_scopes(SCOPE_SHELL_READ)
+    return _json_ok(await _fleet_resources(request))

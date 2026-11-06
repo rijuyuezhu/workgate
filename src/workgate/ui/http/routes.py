@@ -32,7 +32,7 @@ from ..session import (
 )
 from .audit import api_audit, api_audit_detail
 from .common import json_ok as _json_ok
-from .dashboard import api_dashboard
+from .dashboard import api_dashboard, api_executor_resources
 from .files import (
     api_file_action,
     api_file_content,
@@ -326,6 +326,11 @@ def human_ui_routes(
     protected_routes: list[BaseRoute] = [
         Route(UI_API_PREFIX + "/bootstrap", api_bootstrap, methods=["GET"]),
         Route(UI_API_PREFIX + "/dashboard", api_dashboard, methods=["GET"]),
+        Route(
+            UI_API_PREFIX + "/executors/resources",
+            api_executor_resources,
+            methods=["GET"],
+        ),
         Route(UI_API_PREFIX + "/tasks", api_tasks, methods=["GET"]),
         Route(
             UI_API_PREFIX + "/tasks/detail", api_task_detail, methods=["GET"]

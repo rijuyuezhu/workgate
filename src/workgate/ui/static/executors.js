@@ -5,6 +5,8 @@ import { createConfigurationView } from "./config_inspector.js";
 
 // A UI selection, not an Executor ID; never send it to executor-scoped APIs.
 const CONTROL_SELECTION = "__control__";
+const FLEET_RESOURCE_REFRESH_MS = 20000;
+const FLEET_RESOURCE_STALE_MS = 60000;
 
 export function createExecutorsController({
   elements,
@@ -32,6 +34,12 @@ export function createExecutorsController({
     metricGeneration: 0,
     metricInFlightId: "",
     metricOnline: false,
+    fleetResources: new Map(),
+    fleetReceivedAt: 0,
+    fleetLastRequestedAt: 0,
+    fleetPending: false,
+    fleetDenied: false,
+    fleetGeneration: 0,
     detailTabs: new Map(),
     management: null,
     managementId: "",
@@ -144,6 +152,51 @@ export function createExecutorsController({
     elements.executorReset.closest(".executor-detail-actions").hidden = isControlSelected();
   }
 
+  function fleetVisible() {
+    return !document.hidden && !document.getElementById("executors-panel")?.hidden
+      && (authMode !== "oauth" || isAuthenticated()) && !state.inventoryStale;
+  }
+
+  function resourceLabel(executor) {
+    if (!executor.online || executor.revoked_at || !state.fleetReceivedAt
+      || state.inventoryStale || Date.now() - state.fleetReceivedAt > FLEET_RESOURCE_STALE_MS) return "";
+    const data = state.fleetResources.get(executor.executor_id);
+    if (!data) return "";
+    const percent = (value) => typeof value === "number" && Number.isFinite(value)
+      && value >= 0 && value <= 100 ? `${Math.round(value)}%` : "—";
+    return `CPU ${percent(data.cpu_percent)} · MEM ${percent(data.memory_percent)}`;
+  }
+
+  async function refreshFleetResources() {
+    if (!fleetVisible() || state.fleetPending || state.fleetDenied
+      || !state.executors.some((item) => item.online && !item.revoked_at)) return;
+    const now = Date.now();
+    if (now - state.fleetLastRequestedAt < FLEET_RESOURCE_REFRESH_MS) return;
+    const generation = state.fleetGeneration;
+    state.fleetLastRequestedAt = now;
+    state.fleetPending = true;
+    try {
+      const payload = await request("/executors/resources");
+      if (generation !== state.fleetGeneration || !fleetVisible()) return;
+      const onlineIds = new Set(state.executors.filter((item) => item.online && !item.revoked_at)
+        .map((item) => item.executor_id));
+      state.fleetResources = new Map((Array.isArray(payload?.resources) ? payload.resources : [])
+        .filter((item) => item && onlineIds.has(item.executor_id))
+        .map((item) => [item.executor_id, item]));
+      state.fleetReceivedAt = Date.now();
+      renderList();
+    } catch (error) {
+      if (generation !== state.fleetGeneration) return;
+      if (error.authenticationRequired) { void reloadApp(); return; }
+      if (error.status === 403) state.fleetDenied = true;
+      state.fleetResources.clear();
+      state.fleetReceivedAt = 0;
+      renderList();
+    } finally {
+      if (generation === state.fleetGeneration) state.fleetPending = false;
+    }
+  }
+
   function renderList() {
     // Preserve card DOM/focus through the 4-second inventory refresh.
     const entries = [
@@ -153,6 +206,7 @@ export function createExecutorsController({
         key: executor.executor_id,
         name: executor.name || executor.executor_id,
         label: executor.runtime?.workgate_version || "Executor",
+        resources: resourceLabel(executor),
         status: executor.revoked_at ? "revoked" : executor.draining ? "draining" : executor.online ? "online" : "offline",
       })),
     ];
@@ -179,7 +233,9 @@ export function createExecutorsController({
         name.className = "executor-band-name";
         const meta = document.createElement("span");
         meta.className = "executor-band-meta";
-        main.append(name, meta);
+        const resources = document.createElement("span");
+        resources.className = "executor-band-resources";
+        main.append(name, meta, resources);
         const status = document.createElement("span");
         status.className = "executor-band-state";
         button.append(indicator, main, status);
@@ -201,6 +257,8 @@ export function createExecutorsController({
       if (name.textContent !== entry.name) name.textContent = entry.name;
       const meta = button.querySelector(".executor-band-meta");
       if (meta.textContent !== entry.label) meta.textContent = entry.label;
+      const resources = button.querySelector(".executor-band-resources");
+      if (resources.textContent !== (entry.resources || "")) resources.textContent = entry.resources || "";
       const status = button.querySelector(".executor-band-state");
       if (status.textContent !== entry.status) status.textContent = entry.status;
       const statusKind = entry.status === "available" ? "online"
@@ -1144,11 +1202,24 @@ export function createExecutorsController({
   function render(payload) {
     const previousId = state.selectedId;
     const wasStale = state.inventoryStale;
+    const previouslyOnline = new Map(state.executors.map((item) => [item.executor_id, Boolean(item.online && !item.revoked_at)]));
     state.inventoryStale = false;
     state.inventoryUpdatedAt = Date.now();
     state.executors = Array.isArray(payload?.executors) ? payload.executors : [];
     const recovered = !state.controlAvailable;
     state.controlAvailable = true;
+    if (wasStale || recovered) {
+      state.fleetResources.clear();
+      state.fleetReceivedAt = 0;
+      state.fleetLastRequestedAt = 0;
+    }
+    for (const executor of state.executors) {
+      const online = executor.online && !executor.revoked_at;
+      if (!online || previouslyOnline.get(executor.executor_id) === false) {
+        state.fleetResources.delete(executor.executor_id);
+        if (online) state.fleetLastRequestedAt = 0;
+      }
+    }
     topology.update(state.executors);
     if (state.selectedId !== CONTROL_SELECTION && !state.executors.some((item) => item.executor_id === state.selectedId)) {
       state.selectedId = CONTROL_SELECTION;
@@ -1162,6 +1233,7 @@ export function createExecutorsController({
     notice(elements.executorState, `Updated ${new Date().toLocaleTimeString()}`);
     renderList();
     renderDetails();
+    void refreshFleetResources();
     if (state.selectedId !== previousId) {
       // Inventory can remove an Executor while its integration editor is open.
       // Close stale, non-applying editors just as manual selection does.
@@ -1269,10 +1341,12 @@ export function createExecutorsController({
 
   function startPolling() {
     stopPolling();
+    state.fleetDenied = false;
     state.timer = globalThis.setInterval(() => {
       if (!document.hidden && (authMode !== "oauth" || isAuthenticated())) {
         refreshInBackground();
         if (selectedExecutor()?.online) void refreshMetrics();
+        void refreshFleetResources();
       }
     }, 4000);
   }
@@ -1342,6 +1416,12 @@ export function createExecutorsController({
     state.generation += 1;
     state.loading = false;
     state.executors = [];
+    state.fleetGeneration += 1;
+    state.fleetResources.clear();
+    state.fleetReceivedAt = 0;
+    state.fleetLastRequestedAt = 0;
+    state.fleetPending = false;
+    state.fleetDenied = false;
     state.selectedId = CONTROL_SELECTION;
     state.controlAvailable = false;
     state.inventoryStale = false;
@@ -1619,6 +1699,7 @@ export function createExecutorsController({
   }
 
   function activate() {
+    void refreshFleetResources();
     if (!selectedExecutor()) return;
     void loadSkillSources(true);
     void refreshMetrics();

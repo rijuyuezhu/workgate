@@ -9,6 +9,9 @@ from tests.e2e.browser.scenario_background_polling import run_background_polling
 from tests.e2e.browser.scenario_executor_diagnostics import (
     run_executor_diagnostics_ui,
 )
+from tests.e2e.browser.scenario_executor_resources import (
+    run_executor_resource_overview,
+)
 from tests.e2e.browser.scenario_executors import (
     run_browser_approved_cli_pairing,
     run_executor_admin,
@@ -49,6 +52,12 @@ def test_human_ui_real_chromium(browser_harness: BrowserHarness) -> None:
     run_mobile_drilldown(browser_harness)
     run_native_gui_manual(browser_harness)
     browser_harness.assert_clean_browser()
+
+
+def test_executor_fleet_resource_overview(
+    browser_harness: BrowserHarness,
+) -> None:
+    run_executor_resource_overview(browser_harness)
 
 
 def test_browser_oauth_approves_and_denies_real_executor_cli(

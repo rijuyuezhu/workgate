@@ -259,3 +259,131 @@ async def test_executor_dashboard_dispatch_is_native_and_sessionless(
 
     assert result["health"] == "healthy"
     assert result["system"]["cpu_count"] == 8
+
+
+def test_fleet_resources_draining_does_not_require_session_admission(
+    monkeypatch, tmp_path
+):
+    client, harness = _client(monkeypatch, tmp_path)
+    monkeypatch.setattr(executor_composition, "dashboard_snapshot", _snapshot)
+    harness.control.control_state.set_executor_draining(
+        harness.executor_id, draining=True
+    )
+    monkeypatch.setattr(
+        harness.control.session_coordinator,
+        "select_executor",
+        lambda *_args: pytest.fail("Unexpected session selection"),
+    )
+    response = client.get("/api/ui/executors/resources")
+    assert response.status_code == 200
+    values = response.json()["data"]["resources"]
+    assert len(values) == 1
+    assert values[0]["executor_id"] == harness.executor_id
+    assert values[0]["cpu_percent"] == 12.5
+    assert values[0]["memory_percent"] == 45.0
+    assert values[0]["sampled_at"] > 0
+    assert "alerts" not in response.text and "audit" not in response.text
+
+
+def test_fleet_resources_scope_checked_first(monkeypatch, tmp_path):
+    client, harness = _client(monkeypatch, tmp_path, auth_mode="oauth")
+
+    async def unexpected(*_args, **_kwargs):
+        pytest.fail("Unauthorized request attempted a machine call")
+
+    monkeypatch.setattr(harness.control.executor_transport, "call", unexpected)
+    denied = client.get(
+        "/api/ui/executors/resources", headers=_headers("shell:execute")
+    )
+    assert denied.status_code == 403
+    assert SCOPE_SHELL_READ in denied.text
+
+
+def test_fleet_resources_isolate_failures_and_ignore_irrelevant_invalid_metrics(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+
+    from workgate.protocol.ids import new_executor_id
+
+    client, harness = _client(monkeypatch, tmp_path)
+    second, offline, revoked = (str(new_executor_id()) for _ in range(3))
+    template = harness.control.control_state.snapshot_executors()[
+        harness.executor_id
+    ]
+    for identifier in (second, offline, revoked):
+        harness.control.control_state.put_executor(
+            template.model_copy(
+                update={"executor_id": identifier, "name": identifier}
+            )
+        )
+    harness.control.control_state.revoke_executor(revoked, revoked_at=10.0)
+    calls = []
+
+    async def is_online(identifier):
+        return identifier != offline
+
+    async def call(identifier, op, args, *, queue_timeout_s, timeout_s):
+        calls.append((identifier, op, args, queue_timeout_s, timeout_s))
+        if identifier == second:
+            raise TimeoutError("unavailable")
+        snapshot = _snapshot()
+        snapshot["system"].update(
+            {
+                "cpu_percent": float("nan"),
+                "memory_percent": 0,
+                "disk_percent": -5,
+            }
+        )
+        return SimpleNamespace(ok=True, result=snapshot)
+
+    monkeypatch.setattr(
+        harness.control.executor_transport, "is_online", is_online
+    )
+    monkeypatch.setattr(harness.control.executor_transport, "call", call)
+    response = client.get("/api/ui/executors/resources")
+    assert response.status_code == 200
+    rows = {
+        row["executor_id"]: row for row in response.json()["data"]["resources"]
+    }
+    assert set(rows) == {harness.executor_id, second}
+    assert rows[harness.executor_id]["cpu_percent"] is None
+    assert rows[harness.executor_id]["memory_percent"] == 0
+    assert rows[second]["cpu_percent"] is None
+    assert rows[second]["memory_percent"] is None
+    assert len(calls) == 2
+    assert all(
+        op == "dashboard_snapshot" and args == {} for _, op, args, _, _ in calls
+    )
+    assert all(queue <= 1 and timeout <= 5 for _, _, _, queue, timeout in calls)
+
+
+def test_fleet_resources_skips_revoked(monkeypatch, tmp_path):
+    client, harness = _client(monkeypatch, tmp_path)
+    harness.control.control_state.revoke_executor(
+        harness.executor_id, revoked_at=10.0
+    )
+    response = client.get("/api/ui/executors/resources")
+    assert response.status_code == 200
+    assert response.json()["data"] == {"resources": []}
+
+
+def test_fleet_resources_obey_total_wait_budget(monkeypatch, tmp_path):
+    import asyncio
+    import time
+
+    client, harness = _client(monkeypatch, tmp_path)
+    monkeypatch.setattr(ui_dashboard_module, "_FLEET_RESOURCE_BUDGET_S", 0.03)
+
+    async def slow(*_args, **_kwargs):
+        await asyncio.sleep(2)
+
+    monkeypatch.setattr(harness.control.executor_transport, "call", slow)
+    started = time.monotonic()
+    response = client.get("/api/ui/executors/resources")
+    assert response.status_code == 200
+    assert time.monotonic() - started < 0.5
+    resources = response.json()["data"]["resources"]
+    assert len(resources) == 1
+    assert resources[0]["cpu_percent"] is None
+    assert resources[0]["memory_percent"] is None
