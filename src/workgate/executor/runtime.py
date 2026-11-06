@@ -488,12 +488,16 @@ class ExecutorRuntime:
                 )
                 client = ExecutorControlClient(profile)
                 from .connection_status import ExecutorConnectionStatusStore
+                from .result_outbox import ExecutorResultOutbox
 
                 connection = ExecutorConnection.from_client(
                     client,
                     hello_factory=self._build_reconnect_hello,
                     execute=self._execute_protocol_command,
                     max_concurrent_commands=self.config.max_concurrent_commands,
+                    result_outbox=ExecutorResultOutbox(
+                        self.config.state_dir, profile
+                    ),
                     runtime_policy_handler=self._handle_runtime_policy,
                     status_callback=ExecutorConnectionStatusStore(
                         self.services.state_store

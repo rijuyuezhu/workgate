@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import logging
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
@@ -22,6 +23,8 @@ from ..protocol.executor import (
 )
 from ..protocol.ids import new_command_id
 from .state import ControlState, ExecutorTrustRecord
+
+logger = logging.getLogger(__name__)
 
 
 class ExecutorTransportError(RuntimeError):
@@ -56,6 +59,9 @@ class _PendingCommand:
     command: ExecutorCommand
     future: asyncio.Future[ExecutorResult]
     state: Literal["queued", "offered"] = "queued"
+    enqueued_at: float = 0.0
+    offered_at: float | None = None
+    offered: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 @dataclass
@@ -376,6 +382,12 @@ class ExecutorTransport:
             if pending is None or pending.state != "queued":
                 continue
             pending.state = "offered"
+            pending.offered_at = self._clock()
+            pending.offered.set()
+            logger.debug(
+                "Executor RPC dequeued (queue_wait_s=%.3f)",
+                max(0.0, pending.offered_at - pending.enqueued_at),
+            )
             return pending.command
         return None
 
@@ -387,8 +399,9 @@ class ExecutorTransport:
         *,
         session_id: str | None = None,
         timeout_s: float | None = None,
+        queue_timeout_s: float | None = None,
     ) -> ExecutorResult:
-        """Queue one ordinary command and await its live, non-durable result."""
+        """Queue an ordinary command; optional queue budget excludes execution/ACK."""
         self._require_running()
         channel = self._channel(executor_id)
         async with channel.lock:
@@ -411,12 +424,17 @@ class ExecutorTransport:
                 args=dict(args or {}),
             )
             future = asyncio.get_running_loop().create_future()
-            pending = _PendingCommand(command=command, future=future)
+            pending = _PendingCommand(
+                command=command, future=future, enqueued_at=self._clock()
+            )
             channel.pending[command.id] = pending
             channel.queue.append(command.id)
             channel.wake.set()
 
         try:
+            if queue_timeout_s is not None:
+                async with asyncio.timeout(queue_timeout_s):
+                    await pending.offered.wait()
             waiter = asyncio.shield(future)
             if timeout_s is None:
                 return await waiter
@@ -462,6 +480,30 @@ class ExecutorTransport:
                     "command is not awaiting a result",
                 )
             channel.pending.pop(result.id, None)
+            now = self._clock()
+            logger.debug(
+                "Executor RPC result accepted (queue_wait_s=%.3f, "
+                "offered_to_result_s=%.3f, end_to_end_s=%.3f)",
+                max(
+                    0.0,
+                    (
+                        pending.offered_at
+                        if pending.offered_at is not None
+                        else now
+                    )
+                    - pending.enqueued_at,
+                ),
+                max(
+                    0.0,
+                    now
+                    - (
+                        pending.offered_at
+                        if pending.offered_at is not None
+                        else now
+                    ),
+                ),
+                max(0.0, now - pending.enqueued_at),
+            )
             if not pending.future.done():
                 pending.future.set_result(result)
 

@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import logging
 import random
+import time
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from enum import StrEnum
@@ -30,6 +31,7 @@ from .errors import (
     ExecutorResourceInventoryUnavailable,
 )
 from .gui import gui_capability_available
+from .result_outbox import ExecutorResultOutbox, ResultOutboxFullError
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +179,7 @@ class ExecutorConnection:
         sleep: Sleep = asyncio.sleep,
         random_value: Callable[[], float] = random.random,
         status_callback: ConnectionStatusCallback | None = None,
+        result_outbox: ExecutorResultOutbox | None = None,
     ) -> None:
         if max_concurrent_commands < 1:
             raise ValueError("max_concurrent_commands must be at least one")
@@ -188,6 +191,8 @@ class ExecutorConnection:
         self._sleep = sleep
         self._random_value = random_value
         self._status_callback = status_callback
+        self._result_outbox = result_outbox
+        self._outbox_wake = asyncio.Event()
         self._stop = asyncio.Event()
         self._owner_action = asyncio.Event()
         self._first_hello = asyncio.Event()
@@ -212,6 +217,7 @@ class ExecutorConnection:
         max_concurrent_commands: int,
         runtime_policy_handler: RuntimePolicyHandler | None = None,
         status_callback: ConnectionStatusCallback | None = None,
+        result_outbox: ExecutorResultOutbox | None = None,
     ) -> ExecutorConnection:
         """Construct the normal production connection without extra abstractions."""
         return cls(
@@ -221,6 +227,7 @@ class ExecutorConnection:
             max_concurrent_commands=max_concurrent_commands,
             runtime_policy_handler=runtime_policy_handler,
             status_callback=status_callback,
+            result_outbox=result_outbox,
         )
 
     @property
@@ -379,6 +386,13 @@ class ExecutorConnection:
         owner_action = asyncio.create_task(self._owner_action.wait())
         stop = asyncio.create_task(self._stop.wait())
         watched: set[asyncio.Task[Any]] = {heartbeat, poll, owner_action, stop}
+        if self._result_outbox is not None:
+            watched.add(
+                asyncio.create_task(
+                    self._result_outbox_sender(),
+                    name="workgate-executor-result-outbox-sender",
+                )
+            )
         try:
             done, _ = await asyncio.wait(
                 watched, return_when=asyncio.FIRST_COMPLETED
@@ -526,6 +540,7 @@ class ExecutorConnection:
         *,
         inventory_completion: asyncio.Future[None] | None,
     ) -> None:
+        started_at = time.monotonic()
         try:
             try:
                 value = await self._execute_command(command)
@@ -549,6 +564,28 @@ class ExecutorConnection:
             ):
                 inventory_completion.set_result(None)
                 self._inventory_mutations.discard(inventory_completion)
+        execution_s = time.monotonic() - started_at
+        # Config apply restarts its own runtime only after result submission ACK;
+        # never send its result asynchronously ahead of that restart handshake.
+        if self._result_outbox is not None and command.op != "ui.config.apply":
+            save = asyncio.create_task(
+                asyncio.to_thread(self._result_outbox.enqueue, result)
+            )
+            # A cancelled command must not cancel an already running disk write.
+            save.add_done_callback(self._outbox_saved)
+            try:
+                await asyncio.shield(save)
+            except OSError, ResultOutboxFullError:
+                # Disk full / outbox at capacity: retain existing blocking delivery
+                # semantics rather than discarding an executed operation's result.
+                logger.warning(
+                    "Executor result outbox unavailable; using direct delivery"
+                )
+            else:
+                logger.debug(
+                    "Executor result spooled (execution_s=%.3f)", execution_s
+                )
+                return
         delivered = await self._submit_result_until_terminal(result)
         revision = command.args.get("revision")
         if (
@@ -561,6 +598,49 @@ class ExecutorConnection:
             from ..supervisor import request_restart
 
             await asyncio.to_thread(request_restart, revision)
+
+    def _outbox_saved(self, task: asyncio.Task[object]) -> None:
+        try:
+            task.result()
+        except Exception:
+            return  # The awaiting command handles persistence failures.
+        self._outbox_wake.set()
+
+    async def _result_outbox_sender(self) -> None:
+        """Replay durable results independently of the command execution slots."""
+        store = self._result_outbox
+        if store is None:
+            return
+        while not self._stop.is_set() and self._owner_action_error is None:
+            # Clear before examining disk, so enqueue cannot lose a wake-up.
+            self._outbox_wake.clear()
+            try:
+                path = await asyncio.to_thread(store.oldest)
+            except OSError:
+                logger.warning("Executor result outbox listing failed")
+                await self._sleep(1.0)
+                continue
+            if path is None:
+                await self._outbox_wake.wait()
+                continue
+            try:
+                result = await asyncio.to_thread(store.read, path)
+            except OSError, ValueError:
+                # Quarantine corrupted entries, keeping their private contents
+                # available for repair without blocking every later result.
+                logger.warning("Executor result outbox entry unreadable")
+                try:
+                    await asyncio.to_thread(store.quarantine, path)
+                except OSError:
+                    await self._sleep(1.0)
+                continue
+            delivered = await self._submit_result_until_terminal(result)
+            if delivered or (
+                not self._stop.is_set() and self._owner_action_error is None
+            ):
+                # UNKNOWN_COMMAND means the old Control request expired/restarted.
+                # It is terminal and must not block all subsequent results.
+                await asyncio.to_thread(store.remove, path)
 
     async def _execute_command(self, command: ExecutorCommand) -> Any:
         if inspect.iscoroutinefunction(self._execute):
