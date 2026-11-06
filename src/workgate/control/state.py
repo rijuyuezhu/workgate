@@ -1,5 +1,6 @@
 """Restart-critical durable state owned by the control runtime."""
 
+import math
 from collections.abc import Mapping
 from threading import RLock
 from typing import Annotated, Any, Literal, Protocol
@@ -38,6 +39,10 @@ class ExecutorTrustRecord(BaseModel):
     created_at: Timestamp
     revoked_at: Timestamp | None = None
     draining: bool = False
+    # Optional for existing version-1 registry records. Presence stays ephemeral.
+    last_seen_at: Timestamp | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def validate_revocation_time(self) -> ExecutorTrustRecord:
@@ -127,6 +132,35 @@ class ControlState:
             candidate = {**self._executors, record.executor_id: record}
             self._write_executors(candidate)
             self._executors = candidate
+
+    def record_executor_last_seen(
+        self, executor_id: str, *, seen_at: float
+    ) -> float:
+        """Durably advance an authenticated executor's last contact timestamp."""
+        if not math.isfinite(seen_at) or seen_at < 0:
+            raise ValueError(
+                "last-seen timestamp must be finite and nonnegative"
+            )
+        with self._lock:
+            self._require_started()
+            current = self._executors[executor_id]
+            if current.revoked_at is not None:
+                raise ValueError("cannot update a revoked executor's last-seen")
+            timestamp = max(current.last_seen_at or 0.0, seen_at)
+            if (
+                current.last_seen_at is not None
+                and timestamp == current.last_seen_at
+            ):
+                return timestamp
+            updated = ExecutorTrustRecord.model_validate(
+                current.model_copy(
+                    update={"last_seen_at": timestamp}
+                ).model_dump()
+            )
+            candidate = {**self._executors, executor_id: updated}
+            self._write_executors(candidate)
+            self._executors = candidate
+            return timestamp
 
     def revoke_executor(
         self, executor_id: str, *, revoked_at: float
@@ -267,10 +301,25 @@ class ControlState:
     def _parse_executors(self, payload: Any) -> dict[str, ExecutorTrustRecord]:
         path = self.state_store.layout.control_executors_path
         rows = self._registry_rows(payload, field="executors", path=path)
+        # Kept outside each executor row so older frozen Controls (which use
+        # extra="forbid" on trust records) can read the same registry on rollback.
+        last_seen = (
+            payload.get("last_seen", {}) if isinstance(payload, dict) else {}
+        )
         records: dict[str, ExecutorTrustRecord] = {}
         try:
+            if not isinstance(last_seen, dict):
+                raise ValueError("last_seen must be a mapping")
             for row in rows:
-                record = ExecutorTrustRecord.model_validate(row)
+                if not isinstance(row, dict):
+                    raise ValueError("invalid executor record")
+                seen = last_seen.get(row.get("executor_id"))
+                record = ExecutorTrustRecord.model_validate(
+                    {
+                        **row,
+                        **({"last_seen_at": seen} if seen is not None else {}),
+                    }
+                )
                 if record.executor_id in records:
                     raise ValueError(
                         f"duplicate executor_id: {record.executor_id}"
@@ -325,12 +374,22 @@ class ControlState:
         self, records: Mapping[str, ExecutorTrustRecord]
     ) -> None:
         path = self.state_store.layout.control_executors_path
-        payload = {
+        payload: dict[str, Any] = {
             "version": _REGISTRY_VERSION,
             "executors": [
-                records[key].model_dump(mode="json") for key in sorted(records)
+                records[key].model_dump(mode="json", exclude={"last_seen_at"})
+                for key in sorted(records)
             ],
         }
+        last_seen = {
+            key: records[key].last_seen_at
+            for key in sorted(records)
+            if records[key].last_seen_at is not None
+        }
+        if last_seen:
+            payload["last_seen"] = (
+                last_seen  # Ignored by older registry readers.
+            )
         with self.state_store.transaction(path):
             write_registry(self.state_store, path, payload)
 

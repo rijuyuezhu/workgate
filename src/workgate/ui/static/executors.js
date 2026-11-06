@@ -1136,7 +1136,8 @@ export function createExecutorsController({
     elements.executorDetailCapabilities.textContent =
       (executor.capabilities || []).join(", ") || "None reported";
     elements.executorDetailCreated.textContent = timestamp(executor.created_at, "Unknown");
-    elements.executorDetailLastSeen.textContent = timestamp(executor.last_seen_at);
+    elements.executorDetailLastSeen.textContent = executor.online
+      ? "Now" : timestamp(executor.last_seen_at);
     setControls();
   }
 
