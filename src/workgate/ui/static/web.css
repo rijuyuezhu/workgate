@@ -3203,6 +3203,8 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 #executors-panel .executor-band-meta { font-size: 10px; color: #8b93a3; }
+#executors-panel .executor-band-resources { display: block; font-size: 10px; color: #69758a; }
+#executors-panel .executor-band-resources:empty { display: none; }
 #executors-panel .executor-band-state { padding: 0; border-radius: 0; background: transparent; font-size: 0; gap: 0; }
 #executors-panel .executor-band-state::before { height: 8px; width: 8px; }
 #executors-panel .executor-band:hover:not([aria-pressed="true"]) { border-color: #e5e5f2; background: #f5f5fb; }
