@@ -496,3 +496,68 @@ async def test_revoke_and_replace_close_executor_stream_hub_slots(
     )
     await transport.replace_executor(replacement)
     assert hub.active_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_explicit_queue_timeout_is_separate_from_offered_result_timeout(
+    tmp_path: Path,
+) -> None:
+    transport, _, executor_id, credential = _running_transport(tmp_path)
+    await _mark_online(transport, credential)
+    call = asyncio.create_task(
+        transport.call(
+            executor_id, "shell.run", timeout_s=0.2, queue_timeout_s=0.2
+        )
+    )
+    await asyncio.sleep(0.12)
+    command = await transport.poll(credential)
+    assert command is not None
+    await asyncio.sleep(0.12)
+    result = ExecutorResult(id=command.id, ok=True, result={"ok": True})
+    await transport.submit_result(credential, result)
+    assert (
+        await call == result
+    )  # Combined wait >0.2s, per-phase budgets satisfied.
+
+
+@pytest.mark.asyncio
+async def test_explicit_queue_timeout_abandons_unoffered_work(
+    tmp_path: Path,
+) -> None:
+    transport, _, executor_id, credential = _running_transport(tmp_path)
+    await _mark_online(transport, credential)
+    with pytest.raises(TimeoutError):
+        await transport.call(
+            executor_id, "shell.run", timeout_s=10, queue_timeout_s=0.01
+        )
+    assert await transport.pending_count(executor_id) == 0
+    assert await transport.poll(credential) is None
+
+
+@pytest.mark.asyncio
+async def test_executor_lifecycle_logging_separates_queue_and_result_wait(
+    tmp_path: Path, caplog
+) -> None:
+    import logging
+
+    clock = _Clock(value=100)
+    transport, _, executor_id, credential = _running_transport(
+        tmp_path, clock=clock
+    )
+    await _mark_online(transport, credential)
+    with caplog.at_level(
+        logging.DEBUG, logger="workgate.control.executor_transport"
+    ):
+        waiting = asyncio.create_task(transport.call(executor_id, "shell.run"))
+        await asyncio.sleep(0)
+        clock.value += 3
+        command = await transport.poll(credential)
+        assert command is not None
+        clock.value += 5
+        outcome = ExecutorResult(id=command.id, ok=True, result={"ok": True})
+        await transport.submit_result(credential, outcome)
+        assert await waiting == outcome
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert "queue_wait_s=3.000" in messages
+    assert "offered_to_result_s=5.000" in messages
+    assert "end_to_end_s=8.000" in messages

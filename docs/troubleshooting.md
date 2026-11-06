@@ -32,6 +32,8 @@ Check the session's selected Executor and whether the requested tool is availabl
 
 For a **413** result-upload error behind a reverse proxy, inspect the proxy's request-body size setting. See [VPS deployment](getting-started/vps.md).
 
+If the command finishes but its result is delayed while Control is unreachable, the Executor saves pending results privately and retries them after reconnecting. Check **workgate executor logs** for result delivery errors. A result for an expired Control request cannot be reattached to a new caller; retry that operation only after confirming whether it already took effect.
+
 ## Browser or desktop tools are unavailable
 
 Check Chromium and the relevant desktop environment on the **Executor machine**. GUI automation requires a logged-in accessible graphical session and OS permissions.
