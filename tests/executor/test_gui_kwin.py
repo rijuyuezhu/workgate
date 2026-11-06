@@ -108,6 +108,17 @@ def test_kwin_merge_prefers_unique_atspi_and_keeps_unmatched_native():
     )
 
 
+def test_kwin_partial_inventory_preserves_independent_atspi_windows():
+    other = {
+        **AT_SPI,
+        "id": "atspi:88:other",
+        "pid": 88,
+        "title": "Accessibility-only dialog",
+    }
+    merged = linux_kwin.merge_windows([AT_SPI, other], [KWIN])
+    assert [item["id"] for item in merged] == [AT_SPI["id"], other["id"]]
+
+
 def test_kwin_refresh_requires_unique_live_identity():
     assert linux_kwin.refresh_window(AT_SPI, [KWIN])["bounds"] == KWIN["bounds"]
     with pytest.raises(GuiStaleStateError, match="ambiguous"):
@@ -234,6 +245,59 @@ async def test_backend_native_kwin_snapshot_skips_missing_atspi(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_native_kwin_capture_does_not_require_atspi_list(
+    monkeypatch, tmp_path
+):
+    from workgate.executor.gui import linux_atspi_helper
+
+    backend = linux.LinuxGuiBackend()
+    backend._env = dict(KDE)
+
+    async def env():
+        return KDE
+
+    async def kwin(_env):
+        return [KWIN]
+
+    async def focus(_window, _env, **_kwargs):
+        return None
+
+    async def devices(_env):
+        return 3
+
+    observed = {}
+    monitors = [{"x": 0, "y": 0, "width": 800, "height": 600}]
+
+    async def capture(_path, _bounds, actual_monitors, _env):
+        observed["monitors"] = actual_monitors
+        return "xdg-desktop-portal"
+
+    def no_atspi(_env):
+        raise GuiUnavailableError("AT-SPI bindings unavailable")
+
+    monkeypatch.setattr(backend, "_ensure_env", env)
+    monkeypatch.setattr(backend, "_kde_windows", kwin)
+    monkeypatch.setattr(backend, "_focus_window", focus)
+    monkeypatch.setattr(backend, "_list_data", no_atspi)
+    monkeypatch.setattr(linux, "portal_available_devices", devices)
+    monkeypatch.setattr(linux, "_capture_wayland", capture)
+    monkeypatch.setattr(linux_kwin, "query_windows", lambda _env: [KWIN])
+    monkeypatch.setattr(
+        linux_atspi_helper, "_kscreen_monitors", lambda _env: monitors
+    )
+
+    snapshot = await backend.snapshot(
+        KWIN["id"],
+        screenshot_path=tmp_path / "capture.png",
+        include_elements=False,
+        max_elements=1,
+        max_depth=1,
+    )
+    assert snapshot.capabilities["capture_backend"] == "xdg-desktop-portal"
+    assert observed["monitors"] == monitors
+
+
+@pytest.mark.asyncio
 async def test_backend_corrects_kde_atspi_geometry_and_element_coordinates(
     monkeypatch,
 ):
@@ -294,6 +358,43 @@ async def test_kwin_unavailable_keeps_existing_atspi_activation_but_not_native(
     with pytest.raises(GuiUnavailableError, match="KWin scripting unavailable"):
         await backend._activate_kde(KWIN, KDE, None)
     assert calls == [AT_SPI["id"]]
+
+
+@pytest.mark.asyncio
+async def test_partial_kwin_inventory_keeps_atspi_focus_and_capture(
+    monkeypatch, tmp_path
+):
+    backend = linux.LinuxGuiBackend()
+    other = {
+        **AT_SPI,
+        "id": "atspi:88:other",
+        "pid": 88,
+        "title": "Accessibility-only dialog",
+    }
+    focused = []
+
+    async def atspi(window, _env, _deadline):
+        focused.append(window["id"])
+
+    async def capture(_path, _bounds, _monitors, _env):
+        return "xdg-desktop-portal"
+
+    monkeypatch.setattr(backend, "_activate_atspi", atspi)
+    monkeypatch.setattr(linux_kwin, "query_windows", lambda _env: [KWIN])
+    monkeypatch.setattr(
+        linux_kwin,
+        "_script_results",
+        lambda *_: pytest.fail("Wrong KWin target"),
+    )
+    monkeypatch.setattr(linux, "_capture_wayland", capture)
+    await backend._activate_kde(other, KDE, None)
+    assert focused == [other["id"]]
+    assert (
+        await linux._capture_portal_desktop(
+            tmp_path / "capture.png", other, [], KDE
+        )
+        == "xdg-desktop-portal"
+    )
 
 
 @pytest.mark.asyncio

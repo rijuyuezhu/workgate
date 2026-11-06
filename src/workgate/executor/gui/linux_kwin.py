@@ -224,6 +224,10 @@ def _matches(atspi: dict[str, Any], kwin: dict[str, Any]) -> bool:
     )
 
 
+def has_atspi_match(window: dict[str, Any], kwin: list[dict[str, Any]]) -> bool:
+    return any(_matches(window, native) for native in kwin)
+
+
 def _matched_atspi(
     kwin: dict[str, Any],
     atspi: list[dict[str, Any]],
@@ -261,6 +265,16 @@ def merge_windows(
             result.append(dict(native))
         if len(result) >= GUI_MAX_WINDOWS:
             break
+    # A partial KWin inventory must not hide independently accessible windows.
+    # Do not add an AT-SPI alias for a KWin candidate with ambiguous identity.
+    for observed in atspi:
+        if len(result) >= GUI_MAX_WINDOWS:
+            break
+        if str(observed.get("id") or "") in used or any(
+            _matches(observed, native) for native in kwin
+        ):
+            continue
+        result.append(dict(observed))
     return result
 
 
@@ -287,7 +301,12 @@ def refresh_window(
 
 def focus(window: dict[str, Any], env: dict[str, str]) -> None:
     """Activate only a uniquely identified KWin window and check its active state."""
-    current = refresh_window(window, query_windows(env))
+    live = query_windows(env)
+    if not str(window.get("id") or "").startswith(
+        "kwin:"
+    ) and not has_atspi_match(window, live):
+        raise GuiUnavailableError("KWin does not expose this AT-SPI window")
+    current = refresh_window(window, live)
     observed_bounds = _bounds(window.get("bounds"))
     current_bounds = _bounds(current.get("bounds"))
     if observed_bounds != current_bounds:

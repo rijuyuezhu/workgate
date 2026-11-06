@@ -1256,7 +1256,10 @@ async def _capture_portal_desktop(
             live = await asyncio.to_thread(linux_kwin.query_windows, env)
         except GuiUnavailableError:
             live = []  # Preserve the preexisting portal-only capture fallback.
-        if live:
+        if live and (
+            str(record.get("id") or "").startswith("kwin:")
+            or linux_kwin.has_atspi_match(record, live)
+        ):
             current = linux_kwin.refresh_window(record, live)
             if not current.get("active") or _bounds_tuple(
                 current.get("bounds")
@@ -1843,8 +1846,20 @@ class LinuxGuiBackend:
         session_type = _session_type(env)
         if screenshot_path is not None:
             desktop = self._desktop_operations(env)
-            list_data = await asyncio.to_thread(self._list_data, env)
+            try:
+                list_data = await asyncio.to_thread(self._list_data, env)
+            except GuiUnavailableError:
+                if not (
+                    linux_kwin.is_kde_wayland(env)
+                    and str(record.get("id") or "").startswith("kwin:")
+                ):
+                    raise
+                list_data = {}
             monitors = list_data.get("monitors", [])
+            if linux_kwin.is_kde_wayland(env) and not monitors:
+                from .linux_atspi_helper import _kscreen_monitors
+
+                monitors = await asyncio.to_thread(_kscreen_monitors, env)
             if session_type == "wayland":
                 if desktop.capture_requires_focus:
                     await self._focus_window(record, env)
