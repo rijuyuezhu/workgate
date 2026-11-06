@@ -2,7 +2,10 @@
 
 import contextlib
 import os
+import re
 import shutil
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -30,7 +33,10 @@ def _read_linux_cpu_times() -> tuple[int, int] | None:
         return None
     if len(values) < 4:
         return None
-    total = sum(values)
+    # Guest ticks are already included in user/nice time.
+    total = sum(
+        value for index, value in enumerate(values) if index not in {8, 9}
+    )
     idle = values[3] + (values[4] if len(values) > 4 else 0)
     return total, idle
 
@@ -52,6 +58,153 @@ def _read_linux_memory() -> tuple[int, int] | None:
     except OSError, ValueError, KeyError, IndexError:
         return None
     return total, max(0, total - available)
+
+
+def _read_windows_cpu_times() -> tuple[int, int] | None:
+    import ctypes
+    from ctypes import wintypes
+
+    idle = wintypes.FILETIME()
+    kernel = wintypes.FILETIME()
+    user = wintypes.FILETIME()
+    try:
+        if not ctypes.windll.kernel32.GetSystemTimes(  # type: ignore[attr-defined]
+            ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)
+        ):
+            return None
+    except AttributeError, OSError, ValueError:
+        return None
+
+    def ticks(value: wintypes.FILETIME) -> int:
+        return (int(value.dwHighDateTime) << 32) | int(value.dwLowDateTime)
+
+    return ticks(kernel) + ticks(user), ticks(idle)
+
+
+def _read_macos_cpu_times() -> tuple[int, int] | None:
+    import ctypes
+
+    class HostCpuLoadInfo(ctypes.Structure):
+        _fields_ = [("cpu_ticks", ctypes.c_uint32 * 4)]
+
+    try:
+        library = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+        library.mach_host_self.restype = ctypes.c_uint32
+        library.host_statistics.argtypes = [
+            ctypes.c_uint32,
+            ctypes.c_int,
+            ctypes.POINTER(ctypes.c_int),
+            ctypes.POINTER(ctypes.c_uint32),
+        ]
+        library.host_statistics.restype = ctypes.c_int
+        info = HostCpuLoadInfo()
+        count = ctypes.c_uint32(4)
+        status = library.host_statistics(
+            library.mach_host_self(),
+            3,  # HOST_CPU_LOAD_INFO
+            ctypes.cast(ctypes.byref(info), ctypes.POINTER(ctypes.c_int)),
+            ctypes.byref(count),
+        )
+        if status != 0 or count.value != 4:
+            return None
+        ticks = [int(value) for value in info.cpu_ticks]
+        return sum(ticks), ticks[2]  # CPU_STATE_IDLE
+    except OSError, AttributeError, TypeError, ValueError:
+        return None
+
+
+def _read_cpu_times() -> tuple[int, int] | None:
+    if sys.platform.startswith("linux"):
+        return _read_linux_cpu_times()
+    if sys.platform == "win32":
+        return _read_windows_cpu_times()
+    if sys.platform == "darwin":
+        return _read_macos_cpu_times()
+    return None
+
+
+def _read_windows_memory() -> tuple[int, int] | None:
+    import ctypes
+    from ctypes import wintypes
+
+    class MemoryStatusEx(ctypes.Structure):
+        _fields_ = [
+            ("dwLength", wintypes.DWORD),
+            ("dwMemoryLoad", wintypes.DWORD),
+            ("ullTotalPhys", ctypes.c_ulonglong),
+            ("ullAvailPhys", ctypes.c_ulonglong),
+            ("ullTotalPageFile", ctypes.c_ulonglong),
+            ("ullAvailPageFile", ctypes.c_ulonglong),
+            ("ullTotalVirtual", ctypes.c_ulonglong),
+            ("ullAvailVirtual", ctypes.c_ulonglong),
+            ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+        ]
+
+    status = MemoryStatusEx()
+    status.dwLength = ctypes.sizeof(status)
+    try:
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(  # type: ignore[attr-defined]
+            ctypes.byref(status)
+        ):
+            return None
+    except AttributeError, OSError, ValueError:
+        return None
+    total, available = int(status.ullTotalPhys), int(status.ullAvailPhys)
+    if total <= 0 or not 0 <= available <= total:
+        return None
+    return total, total - available
+
+
+def _read_macos_memory() -> tuple[int, int] | None:
+    try:
+        total_result = subprocess.run(
+            ["sysctl", "-n", "hw.memsize"],
+            capture_output=True,
+            text=True,
+            timeout=1,
+            check=True,
+        )
+        vm_result = subprocess.run(
+            ["vm_stat"],
+            capture_output=True,
+            text=True,
+            timeout=1,
+            check=True,
+        )
+        total = int(total_result.stdout.strip())
+        lines = vm_result.stdout.splitlines()
+        match = re.search(
+            r"page size of (\d+) bytes", lines[0] if lines else ""
+        )
+        if match is None:
+            return None
+        page_size = int(match.group(1))
+        pages: dict[str, int] = {}
+        for line in lines[1:]:
+            match = re.fullmatch(r"\s*([^:]+):\s*(\d+)\.?(?:\s*)", line)
+            if match:
+                pages[match.group(1)] = int(match.group(2))
+        free_keys = ("Pages free", "Pages inactive", "Pages speculative")
+        if (
+            total <= 0
+            or page_size <= 0
+            or not any(k in pages for k in free_keys)
+        ):
+            return None
+        available_pages = sum(pages.get(key, 0) for key in free_keys)
+        return total, total - min(total, available_pages * page_size)
+    except OSError, ValueError, subprocess.SubprocessError:
+        return None
+
+
+def _read_memory() -> tuple[int, int] | None:
+    if sys.platform.startswith("linux"):
+        return _read_linux_memory()
+    if sys.platform == "win32":
+        return _read_windows_memory()
+    if sys.platform == "darwin":
+        return _read_macos_memory()
+    return None
 
 
 def _read_linux_network() -> tuple[int, int] | None:
@@ -97,7 +250,7 @@ def local_system_snapshot(disk_path: Path) -> dict[str, Any]:
     with contextlib.suppress(OSError, AttributeError):
         load_1m = round(float(os.getloadavg()[0]), 2)
 
-    cpu_times = _read_linux_cpu_times()
+    cpu_times = _read_cpu_times()
     cpu_percent: float | None = None
     network = _read_linux_network()
     network_rx_bps: float | None = None
@@ -107,7 +260,7 @@ def local_system_snapshot(disk_path: Path) -> dict[str, Any]:
             if _CPU_SAMPLE is not None:
                 total_delta = cpu_times[0] - _CPU_SAMPLE[0]
                 idle_delta = cpu_times[1] - _CPU_SAMPLE[1]
-                if total_delta > 0:
+                if total_delta > 0 and 0 <= idle_delta <= total_delta:
                     cpu_percent = round(
                         max(
                             0.0,
@@ -139,7 +292,7 @@ def local_system_snapshot(disk_path: Path) -> dict[str, Any]:
             max(0.0, min(100.0, load_1m * 100.0 / cpu_count)), 1
         )
 
-    memory = _read_linux_memory()
+    memory = _read_memory()
     memory_total = memory[0] if memory else None
     memory_used = memory[1] if memory else None
     try:
