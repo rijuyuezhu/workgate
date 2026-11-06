@@ -4,7 +4,7 @@ import argparse
 import sys
 
 from .agent_bridge.cli import register_mcp_cli
-from .cli.call import register_call_cli
+from .cli import register_call_cli
 from .colocate.cli import register_colocate_cli
 from .control.cli import register_control_cli
 from .executor.cli import register_executor_cli
