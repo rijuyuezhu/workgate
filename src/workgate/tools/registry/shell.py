@@ -14,6 +14,7 @@ from ...schemas.input_models.shell import (
     ShellIdArg,
     ShellMaxOutputBytesArg,
     ShellNameArg,
+    ShellPersistOnTimeoutArg,
     ShellPtyArg,
     ShellRowsArg,
     ShellTimeoutArg,
@@ -62,6 +63,7 @@ async def bash(
     pty: ShellPtyArg = False,
     name: ShellNameArg = None,
     purpose: ToolPurposeArg = None,
+    persist_on_timeout: ShellPersistOnTimeoutArg = False,
 ) -> ShellExecutionOutput:
     """Run a shell command via bounded, job, or PTY mode."""
     del (
@@ -75,6 +77,7 @@ async def bash(
         pty,
         name,
         purpose,
+        persist_on_timeout,
     )
     raise RuntimeError("bash requires control routing")
 
@@ -99,6 +102,7 @@ async def run_python_code(
     pty: ShellPtyArg = False,
     name: ShellNameArg = None,
     purpose: ToolPurposeArg = None,
+    persist_on_timeout: ShellPersistOnTimeoutArg = False,
 ) -> RunPythonCodeOutput:
     """Write Python code to a temporary file and execute it through shell modes."""
     del (
@@ -112,6 +116,7 @@ async def run_python_code(
         pty,
         name,
         purpose,
+        persist_on_timeout,
     )
     raise RuntimeError("run_python_code requires control routing")
 

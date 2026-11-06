@@ -188,6 +188,18 @@ def prune_store(store: MutableJobStore, *, max_jobs: int | None = None) -> None:
     store["jobs"] = [row for row in jobs if id(row) in keep_objects]
     for row in removed:
         remove_attempt_files(str(row.get("job_id") or ""))
+        script = row.get("script_path")
+        if script:
+            path = Path(script)
+            root = job_runtime_dir()
+            # Never unlink arbitrary paths from corrupted durable metadata.
+            if (
+                path.parent == root
+                and path.name.startswith("python-script-")
+                and path.suffix == ".py"
+            ):
+                with contextlib.suppress(OSError):
+                    path.unlink()
 
 
 def save_store(store: MutableJobStore) -> None:

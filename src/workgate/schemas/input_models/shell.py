@@ -19,7 +19,7 @@ ShellCwdArg = Annotated[
 ShellTimeoutArg = Annotated[
     int | None,
     Field(
-        description="Optional timeout in seconds for bounded command mode. For long-running work, prefer async_=true and manage the returned job_id with job."
+        description="Optional bounded wait in seconds. Without persist_on_timeout, reaching the timeout terminates the command; with it, the same tracked Job continues. For immediately backgrounded work use async_=true."
     ),
 ]
 ShellMaxOutputBytesArg = Annotated[
@@ -38,6 +38,12 @@ ShellAsyncArg = Annotated[
     bool,
     Field(
         description="Whether to start long-running non-interactive work as a tracked background job owned by this session. Returns job_id for the job tool, not shell_id."
+    ),
+]
+ShellPersistOnTimeoutArg = Annotated[
+    bool,
+    Field(
+        description="When true in bounded mode, start one tracked job and wait up to timeout_s. If still running, return the same job_id for job poll/cancel; stdout and stderr are combined. Default false preserves timeout termination. async_=true and pty=true take precedence."
     ),
 ]
 ShellPtyArg = Annotated[

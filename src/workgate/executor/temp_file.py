@@ -4,6 +4,8 @@ import asyncio
 import uuid
 from pathlib import Path
 
+from ..jobs.persistence import job_runtime_dir
+from ..utils.private_files import atomic_write_private_text
 from .path import assert_text_input_size, prune_temp_dir, temp_dir
 
 
@@ -37,4 +39,12 @@ async def write_temp_text_file(
         encoding="utf-8",
         newline="",
     )
+    return path
+
+
+def write_durable_python_script(content: str, *, max_input_bytes: int) -> Path:
+    """Keep a Job's Python source outside the prunable transient scratch dir."""
+    assert_text_input_size("Python script", content, max_input_bytes)
+    path = job_runtime_dir() / f"python-script-{uuid.uuid4().hex}.py"
+    atomic_write_private_text(path, content)
     return path

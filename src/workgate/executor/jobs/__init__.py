@@ -1,10 +1,13 @@
 """Executor-owned shell-job orchestration."""
 
+import asyncio
+import time
 from typing import Any
 
 from ...config.executor import ExecutorConfig
-from ...jobs.persistence import TERMINAL_STATUSES
+from ...jobs.persistence import TERMINAL_STATUSES, attempt_paths
 from ...jobs.state import CONFIRMED_TERMINAL_STATUSES
+from ...jobs.status import _read_status_path
 from ...platform.host import HostOS, host_os
 from ...protocol.executor import JobInventorySummary
 from ...schemas.result_models.jobs import (
@@ -34,10 +37,12 @@ class ExecutorJobService:
         command: str,
         cwd: str = ".",
         name: str | None = None,
+        *,
+        script_path: str | None = None,
     ) -> JobStartOutput:
         async with session_lifecycle_lock(session_id):
             return await self.start_unlocked(
-                session_id, command, cwd=cwd, name=name
+                session_id, command, cwd=cwd, name=name, script_path=script_path
             )
 
     async def start_unlocked(
@@ -46,6 +51,8 @@ class ExecutorJobService:
         command: str,
         cwd: str = ".",
         name: str | None = None,
+        *,
+        script_path: str | None = None,
     ) -> JobStartOutput:
         return await shell_jobs.start_shell_job_unlocked(
             self.config,
@@ -54,6 +61,7 @@ class ExecutorJobService:
             command,
             cwd=cwd,
             name=name,
+            script_path=script_path,
         )
 
     async def list(
@@ -83,6 +91,22 @@ class ExecutorJobService:
                 job_id,
                 lines,
             )
+
+    async def wait(
+        self, session_id: str, job_id: str, timeout_s: float
+    ) -> JobTailOutput:
+        """Wait for a job's completion receipt; the job itself is never cancelled."""
+        snapshot = await self.tail(session_id, job_id, lines=0)
+        if snapshot.job.status in TERMINAL_STATUSES:
+            return snapshot
+        receipt = attempt_paths(job_id, snapshot.job.attempts)["status"]
+        deadline = time.monotonic() + timeout_s
+        while _read_status_path(receipt) is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(0.2, remaining))
+        return await self.tail(session_id, job_id, lines=0)
 
     async def stop(self, session_id: str, job_id: str) -> JobStopOutput:
         async with session_lifecycle_lock(session_id):

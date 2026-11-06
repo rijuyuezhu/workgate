@@ -240,6 +240,8 @@ async def start_shell_job_unlocked(
     command: str,
     cwd: str = ".",
     name: str | None = None,
+    *,
+    script_path: str | None = None,
 ) -> JobStartOutput:
     """Start one durable shell-backed job while its session lock is held."""
     session = session_store.touch_session(session_id)
@@ -279,6 +281,8 @@ async def start_shell_job_unlocked(
         "output_bytes": 0,
         "attempts": 1,
     }
+    if script_path is not None:
+        job["script_path"] = script_path
     operation_id = _begin_job_operation(job, "start")
     try:
         with _store_transaction() as store:
