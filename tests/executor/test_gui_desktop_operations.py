@@ -37,7 +37,7 @@ WINDOW = {
         (
             {"XDG_SESSION_TYPE": "wayland", "XDG_CURRENT_DESKTOP": "KDE"},
             "_capture_portal_desktop",
-            "_activate_atspi",
+            "_activate_kde",
             "_perform_wayland",
             False,
             True,

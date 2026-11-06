@@ -15,6 +15,8 @@ from typing import Any, cast
 
 from PIL import Image
 
+import workgate.executor.gui.linux_kwin as linux_kwin
+
 from ...errors import GuiStaleStateError, GuiUnavailableError
 from .base import (
     GUI_MAX_CAPTURE_DIMENSION,
@@ -1249,6 +1251,22 @@ async def _capture_portal_desktop(
     monitors: list[dict[str, Any]],
     env: dict[str, str],
 ) -> str:
+    if linux_kwin.is_kde_wayland(env):
+        try:
+            live = await asyncio.to_thread(linux_kwin.query_windows, env)
+        except GuiUnavailableError:
+            live = []  # Preserve the preexisting portal-only capture fallback.
+        if live and (
+            str(record.get("id") or "").startswith("kwin:")
+            or linux_kwin.has_atspi_match(record, live)
+        ):
+            current = linux_kwin.refresh_window(record, live)
+            if not current.get("active") or _bounds_tuple(
+                current.get("bounds")
+            ) != _bounds_tuple(record.get("bounds")):
+                raise GuiStaleStateError(
+                    "KWin target lost focus or moved before capture"
+                )
     return await _capture_wayland(path, record["bounds"], monitors, env)
 
 
@@ -1625,16 +1643,103 @@ class LinuxGuiBackend:
                 )
             return _DesktopOperations(
                 _capture_portal_desktop,
-                self._activate_atspi,
+                self._activate_kde
+                if linux_kwin.is_kde_wayland(env)
+                else self._activate_atspi,
                 self._perform_wayland,
                 input_devices=portal_available_devices,
                 input_transports=("xdg-desktop-portal", "xdg-desktop-portal"),
-                capture_available=False,
+                capture_available=linux_kwin.is_kde_wayland(env)
+                and bool(shutil.which("qdbus6") or shutil.which("qdbus")),
                 capture_requires_focus=True,
             )
         raise GuiUnavailableError(
             "No graphical Linux session was found; DISPLAY/WAYLAND_DISPLAY are unavailable"
         )
+
+    async def _kde_windows(self, env: dict[str, str]) -> list[dict[str, Any]]:
+        try:
+            return await asyncio.to_thread(linux_kwin.query_windows, env)
+        except GuiUnavailableError:
+            return []
+
+    async def _activate_kde(
+        self, window: dict[str, Any], env: dict[str, str], deadline: Any | None
+    ) -> None:
+        if deadline is not None:
+            _assert_action_fresh({"_observation_deadline": deadline})
+        try:
+            await asyncio.to_thread(linux_kwin.focus, window, env)
+        except GuiUnavailableError:
+            # Keep the existing AT-SPI route usable on KDE systems lacking
+            # KWin scripting; native KWin IDs cannot use this fallback.
+            if str(window.get("id") or "").startswith("kwin:"):
+                raise
+            await self._activate_atspi(window, env, deadline)
+        if deadline is not None:
+            _assert_action_fresh({"_observation_deadline": deadline})
+
+    async def _snapshot_data(
+        self,
+        window_id: str,
+        env: dict[str, str],
+        *,
+        include_elements: bool,
+        max_elements: int,
+        max_depth: int,
+    ) -> dict[str, Any]:
+        kde = linux_kwin.is_kde_wayland(env)
+        if kde and window_id.startswith("kwin:"):
+            windows = await self._kde_windows(env)
+            matches = [item for item in windows if item.get("id") == window_id]
+            if len(matches) != 1:
+                raise GuiStaleStateError(
+                    "KWin window disappeared; refresh gui_list"
+                )
+            return {"window": matches[0], "elements": [], "locators": {}}
+        data = await asyncio.to_thread(
+            self._helper,
+            {
+                "command": "snapshot",
+                "window_id": window_id,
+                "include_elements": include_elements,
+                "max_elements": max_elements,
+                "max_depth": max_depth,
+            },
+            env,
+        )
+        if not kde:
+            return data
+        windows = await self._kde_windows(env)
+        if not windows:
+            return data
+        original = data.get("window")
+        if not isinstance(original, dict):
+            return data
+        try:
+            corrected = linux_kwin.refresh_window(original, windows)
+        except GuiStaleStateError:
+            return data
+        old_bounds = _bounds_tuple(original.get("bounds"))
+        new_bounds = _bounds_tuple(corrected.get("bounds"))
+        updated = {**data, "window": corrected}
+        if old_bounds and new_bounds:
+            dx = new_bounds[0] - old_bounds[0]
+            dy = new_bounds[1] - old_bounds[1]
+            if dx or dy:
+                elements = []
+                for element in data.get("elements", []):
+                    record = dict(element)
+                    bounds = record.get("bounds")
+                    if isinstance(bounds, dict):
+                        record["bounds"] = {
+                            **bounds,
+                            "x": int(bounds["x"]) + dx,
+                            "y": int(bounds["y"]) + dy,
+                        }
+                    elements.append(record)
+                updated["elements"] = elements
+        return updated
 
     async def list_windows(self) -> dict[str, Any]:
         env = await self._ensure_env()
@@ -1644,7 +1749,27 @@ class LinuxGuiBackend:
                 "No graphical Linux session was found; DISPLAY/WAYLAND_DISPLAY are unavailable"
             )
         desktop = self._desktop_operations(env)
-        data = await asyncio.to_thread(self._list_data, env)
+        try:
+            data = await asyncio.to_thread(self._list_data, env)
+        except GuiUnavailableError:
+            if not linux_kwin.is_kde_wayland(env):
+                raise
+            data = {"windows": [], "monitors": []}
+        if linux_kwin.is_kde_wayland(env):
+            if not data.get("monitors"):
+                from .linux_atspi_helper import _kscreen_monitors
+
+                data["monitors"] = await asyncio.to_thread(
+                    _kscreen_monitors, env
+                )
+            native = await self._kde_windows(env)
+            if native:
+                data = {
+                    **data,
+                    "windows": linux_kwin.merge_windows(
+                        data.get("windows", []), native
+                    ),
+                }
         devices = await desktop.input_devices(env)
         input_transports = dict.fromkeys(
             transport
@@ -1682,16 +1807,12 @@ class LinuxGuiBackend:
         max_depth: int,
     ) -> GuiSnapshot:
         env = await self._ensure_env()
-        data = await asyncio.to_thread(
-            self._helper,
-            {
-                "command": "snapshot",
-                "window_id": window_id,
-                "include_elements": include_elements,
-                "max_elements": max_elements,
-                "max_depth": max_depth,
-            },
+        data = await self._snapshot_data(
+            window_id,
             env,
+            include_elements=include_elements,
+            max_elements=max_elements,
+            max_depth=max_depth,
         )
         record = data["window"]
         locators: dict[str, Any] = {}
@@ -1725,21 +1846,29 @@ class LinuxGuiBackend:
         session_type = _session_type(env)
         if screenshot_path is not None:
             desktop = self._desktop_operations(env)
-            list_data = await asyncio.to_thread(self._list_data, env)
+            try:
+                list_data = await asyncio.to_thread(self._list_data, env)
+            except GuiUnavailableError:
+                if not (
+                    linux_kwin.is_kde_wayland(env)
+                    and str(record.get("id") or "").startswith("kwin:")
+                ):
+                    raise
+                list_data = {}
             monitors = list_data.get("monitors", [])
+            if linux_kwin.is_kde_wayland(env) and not monitors:
+                from .linux_atspi_helper import _kscreen_monitors
+
+                monitors = await asyncio.to_thread(_kscreen_monitors, env)
             if session_type == "wayland":
                 if desktop.capture_requires_focus:
                     await self._focus_window(record, env)
-                refreshed = await asyncio.to_thread(
-                    self._helper,
-                    {
-                        "command": "snapshot",
-                        "window_id": window_id,
-                        "include_elements": False,
-                        "max_elements": 1,
-                        "max_depth": 1,
-                    },
+                refreshed = await self._snapshot_data(
+                    window_id,
                     env,
+                    include_elements=False,
+                    max_elements=1,
+                    max_depth=1,
                 )
                 refreshed_record = refreshed.get("window")
                 if not isinstance(refreshed_record, dict) or _bounds_tuple(
@@ -1752,16 +1881,12 @@ class LinuxGuiBackend:
                 capture_backend = await desktop.capture(
                     screenshot_path, record, monitors, env
                 )
-                post_capture = await asyncio.to_thread(
-                    self._helper,
-                    {
-                        "command": "snapshot",
-                        "window_id": window_id,
-                        "include_elements": False,
-                        "max_elements": 1,
-                        "max_depth": 1,
-                    },
+                post_capture = await self._snapshot_data(
+                    window_id,
                     env,
+                    include_elements=False,
+                    max_elements=1,
+                    max_depth=1,
                 )
                 post_capture_record = post_capture.get("window")
                 if not isinstance(post_capture_record, dict) or _bounds_tuple(
@@ -1775,16 +1900,12 @@ class LinuxGuiBackend:
                 capture_backend = await desktop.capture(
                     screenshot_path, record, monitors, env
                 )
-                post_capture = await asyncio.to_thread(
-                    self._helper,
-                    {
-                        "command": "snapshot",
-                        "window_id": window_id,
-                        "include_elements": False,
-                        "max_elements": 1,
-                        "max_depth": 1,
-                    },
+                post_capture = await self._snapshot_data(
+                    window_id,
                     env,
+                    include_elements=False,
+                    max_elements=1,
+                    max_depth=1,
                 )
                 post_capture_record = post_capture.get("window")
                 if (
@@ -2223,16 +2344,12 @@ class LinuxGuiBackend:
 
         if action.get("_focus_prepared"):
             await self._focus_window(window, env, deadline=deadline)
-            refreshed = await asyncio.to_thread(
-                self._helper,
-                {
-                    "command": "snapshot",
-                    "window_id": window["id"],
-                    "include_elements": False,
-                    "max_elements": 1,
-                    "max_depth": 1,
-                },
+            refreshed = await self._snapshot_data(
+                window["id"],
                 env,
+                include_elements=False,
+                max_elements=1,
+                max_depth=1,
             )
             refreshed_window = refreshed.get("window")
             if not isinstance(refreshed_window, dict) or _bounds_tuple(

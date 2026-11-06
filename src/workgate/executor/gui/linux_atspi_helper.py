@@ -174,7 +174,9 @@ def _apps() -> list[Any]:
     return apps
 
 
-def _kscreen_monitors() -> list[dict[str, Any]]:
+def _kscreen_monitors(
+    env: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     doctor = shutil.which("kscreen-doctor")
     if not doctor:
         return []
@@ -185,6 +187,7 @@ def _kscreen_monitors() -> list[dict[str, Any]]:
             text=True,
             timeout=3,
             check=False,
+            env=env,
         )
     except Exception:
         return []
