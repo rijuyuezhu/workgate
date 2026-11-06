@@ -640,7 +640,12 @@ class ExecutorConnection:
             ):
                 # UNKNOWN_COMMAND means the old Control request expired/restarted.
                 # It is terminal and must not block all subsequent results.
-                await asyncio.to_thread(store.remove, path)
+                try:
+                    await asyncio.to_thread(store.remove, path)
+                except OSError:
+                    # A failed unlink is retried after reconnect/next iteration.
+                    logger.warning("Executor result outbox cleanup failed")
+                    await self._sleep(1.0)
 
     async def _execute_command(self, command: ExecutorCommand) -> Any:
         if inspect.iscoroutinefunction(self._execute):

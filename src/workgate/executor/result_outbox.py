@@ -35,6 +35,9 @@ class ExecutorResultOutbox:
     def _files(self) -> list[Path]:
         return sorted(self._directory.glob("*.json"))
 
+    def _retained(self) -> list[Path]:
+        return self._files() + list(self._directory.glob("*.invalid"))
+
     def enqueue(self, result: ExecutorResult) -> Path:
         data = json.dumps(
             result.model_dump(mode="json"),
@@ -46,7 +49,7 @@ class ExecutorResultOutbox:
                 "one executor result exceeds outbox byte budget"
             )
         with self._lock:
-            files = self._files()
+            files = self._retained()
             if (
                 len(files) >= _MAX_RESULTS
                 or sum(p.stat().st_size for p in files) + len(data) > _MAX_BYTES

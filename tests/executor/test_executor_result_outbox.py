@@ -367,3 +367,18 @@ async def test_config_apply_keeps_ack_before_restart_path(tmp_path):
     await conn._run_command(command, inventory_completion=None)
     assert [result.id for result in client.accepted] == [command.id]
     assert store.count() == 0
+
+
+def test_quarantined_corrupt_results_remain_inside_total_storage_budget(
+    tmp_path, monkeypatch
+):
+    from workgate.executor import result_outbox
+
+    store = ExecutorResultOutbox(tmp_path, _profile())
+    monkeypatch.setattr(result_outbox, "_MAX_RESULTS", 1)
+    broken = store.enqueue(_result())
+    store.quarantine(broken)
+    assert store.count() == 0
+    assert broken.with_suffix(".invalid").exists()
+    with pytest.raises(ResultOutboxFullError, match="full"):
+        store.enqueue(_result())
