@@ -30,6 +30,20 @@ workgate executor logs
 
 Pairing and remote installation are covered in [Executors](../guides/executors.md). The Executor CLI also provides service install, start, stop, restart and uninstall operations. Use its **--help** output for arguments and platform options.
 
+## Call MCP tools from a script
+
+With an HTTP Control already running on the same computer, call its registered tools directly:
+
+~~~sh
+workgate call session_start --json '{"workdir":"."}'
+workgate call read --session SESSION_ID --json '{"path":"README.md"}'
+printf '%s' '{"session_id":"SESSION_ID","path":"README.md"}' | workgate call read
+~~~
+
+The command returns JSON to stdout and a nonzero exit code if the tool or request fails. The default Control URL uses the configured host and port; use `--url http://127.0.0.1:PORT/mcp` when needed. Only loopback URLs are accepted, and this command never executes tools outside the running Control.
+
+If Control requires OAuth, provide an existing access token through an owner-private file (`workgate call read ... --token-file ~/.config/workgate/call-token`, mode `0600` on Unix) or the `WORKGATE_CALL_TOKEN` environment variable. Tokens are supplied as normal bearer credentials and remain subject to the same Control authorization policies; this command does not create or bypass OAuth credentials. An unauthenticated local Control needs no token. Run `workgate call --help` for the full CLI contract.
+
 ## Control administration
 
 Control provides **init-config** and native service management commands. For an existing development checkout, see [Control service](../getting-started/control-service.md).
