@@ -1,5 +1,6 @@
 """Restart-critical durable state owned by the control runtime."""
 
+import math
 from collections.abc import Mapping
 from threading import RLock
 from typing import Annotated, Any, Literal, Protocol
@@ -38,6 +39,10 @@ class ExecutorTrustRecord(BaseModel):
     created_at: Timestamp
     revoked_at: Timestamp | None = None
     draining: bool = False
+    # Optional for existing version-1 registry records. Presence stays ephemeral.
+    last_seen_at: Timestamp | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def validate_revocation_time(self) -> ExecutorTrustRecord:
@@ -127,6 +132,35 @@ class ControlState:
             candidate = {**self._executors, record.executor_id: record}
             self._write_executors(candidate)
             self._executors = candidate
+
+    def record_executor_last_seen(
+        self, executor_id: str, *, seen_at: float
+    ) -> float:
+        """Durably advance an authenticated executor's last contact timestamp."""
+        if not math.isfinite(seen_at) or seen_at < 0:
+            raise ValueError(
+                "last-seen timestamp must be finite and nonnegative"
+            )
+        with self._lock:
+            self._require_started()
+            current = self._executors[executor_id]
+            if current.revoked_at is not None:
+                raise ValueError("cannot update a revoked executor's last-seen")
+            timestamp = max(current.last_seen_at or 0.0, seen_at)
+            if (
+                current.last_seen_at is not None
+                and timestamp == current.last_seen_at
+            ):
+                return timestamp
+            updated = ExecutorTrustRecord.model_validate(
+                current.model_copy(
+                    update={"last_seen_at": timestamp}
+                ).model_dump()
+            )
+            candidate = {**self._executors, executor_id: updated}
+            self._write_executors(candidate)
+            self._executors = candidate
+            return timestamp
 
     def revoke_executor(
         self, executor_id: str, *, revoked_at: float

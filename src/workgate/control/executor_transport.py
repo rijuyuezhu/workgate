@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import logging
+import math
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
@@ -23,6 +24,8 @@ from ..protocol.executor import (
 )
 from ..protocol.ids import new_command_id
 from .state import ControlState, ExecutorTrustRecord
+
+_LAST_SEEN_PERSIST_INTERVAL_S = 60.0
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +76,8 @@ class _ExecutorChannel:
     poll_token: object | None = None
     last_activity: float | None = None
     last_seen_at: float | None = None
+    last_seen_persisted: float | None = None
+    last_seen_persisted_at: float | None = None
     hello: ExecutorHelloRequest | None = None
 
 
@@ -148,8 +153,9 @@ class ExecutorTransport:
             return
         self._closed = True
         self._started = False
-        for channel in tuple(self._channels.values()):
+        for executor_id, channel in tuple(self._channels.items()):
             async with channel.lock:
+                self._persist_last_seen(executor_id, channel, self._clock())
                 self._interrupt_channel(
                     channel,
                     ExecutorTransportClosedError("executor transport closed"),
@@ -213,9 +219,40 @@ class ExecutorTransport:
                 "executor credential has been revoked",
             )
 
-    def _touch(self, channel: _ExecutorChannel) -> None:
-        channel.last_activity = self._clock()
-        channel.last_seen_at = self._wall_clock()
+    def _persist_last_seen(
+        self, executor_id: str, channel: _ExecutorChannel, now: float
+    ) -> None:
+        seen_at = channel.last_seen_at
+        if seen_at is None or seen_at == channel.last_seen_persisted:
+            return
+        record = self._control_state.snapshot_executors().get(executor_id)
+        if record is None or record.revoked_at is not None:
+            return  # A revoked or replaced bearer cannot mutate durable state.
+        try:
+            channel.last_seen_persisted = (
+                self._control_state.record_executor_last_seen(
+                    executor_id, seen_at=seen_at
+                )
+            )
+            channel.last_seen_persisted_at = now
+        except OSError:
+            # Presence must remain usable even when diagnostic writes fail.
+            # Keep the dirty timestamp to retry on the next authenticated touch.
+            logger.warning("Failed to persist Executor last-seen timestamp")
+
+    def _touch(self, executor_id: str, channel: _ExecutorChannel) -> None:
+        now = self._clock()
+        channel.last_activity = now
+        wall_time = self._wall_clock()
+        if not math.isfinite(wall_time) or wall_time < 0:
+            return  # No invalid wall-clock value ever enters the durable registry.
+        channel.last_seen_at = max(channel.last_seen_at or 0.0, wall_time)
+        if (
+            channel.last_seen_persisted_at is None
+            or now - channel.last_seen_persisted_at
+            >= _LAST_SEEN_PERSIST_INTERVAL_S
+        ):
+            self._persist_last_seen(executor_id, channel, now)
 
     def _is_online(self, channel: _ExecutorChannel) -> bool:
         last_activity = channel.last_activity
@@ -281,7 +318,7 @@ class ExecutorTransport:
             channel.hello = request
             if request.runtime.workgate_version != __version__:
                 self._interrupt_queued_incompatible(channel)
-            self._touch(channel)
+            self._touch(record.executor_id, channel)
         proof_callback = self._authenticated_proof_callback
         if proof_callback is not None:
             await proof_callback(record.executor_id, credential)
@@ -320,7 +357,7 @@ class ExecutorTransport:
         channel = self._channel(record.executor_id)
         async with channel.lock:
             self._reauthenticate(record.executor_id, credential)
-            self._touch(channel)
+            self._touch(record.executor_id, channel)
             if (
                 channel.hello is None
                 or channel.hello.runtime.workgate_version != __version__
@@ -346,7 +383,7 @@ class ExecutorTransport:
                     "executor already has an active delivery poll",
                 )
             channel.poll_token = poll_token
-            self._touch(channel)
+            self._touch(executor_id, channel)
 
         deadline = self._clock() + self._poll_timeout_s
         try:
@@ -356,7 +393,7 @@ class ExecutorTransport:
                         return None
                     self._require_running()
                     self._reauthenticate(executor_id, credential)
-                    self._touch(channel)
+                    self._touch(executor_id, channel)
                     command = self._offer_next(channel)
                     if command is not None:
                         return command
@@ -472,7 +509,7 @@ class ExecutorTransport:
         channel = self._channel(record.executor_id)
         async with channel.lock:
             self._reauthenticate(record.executor_id, credential)
-            self._touch(channel)
+            self._touch(record.executor_id, channel)
             pending = channel.pending.get(result.id)
             if pending is None or pending.state != "offered":
                 raise ExecutorTransportError(
@@ -576,12 +613,18 @@ class ExecutorTransport:
             return channel.hello
 
     async def last_seen_at(self, executor_id: str) -> float | None:
-        """Return process-local wall-clock presence metadata for owner diagnostics."""
+        """Return the latest known contact, even after Control restart."""
+        retained = self._control_state.snapshot_executors().get(executor_id)
+        persisted = retained.last_seen_at if retained is not None else None
         channel = self._channels.get(executor_id)
         if channel is None:
-            return None
+            return persisted
         async with channel.lock:
-            return channel.last_seen_at
+            return (
+                max(persisted or 0.0, channel.last_seen_at or 0.0)
+                if (persisted is not None or channel.last_seen_at is not None)
+                else None
+            )
 
     async def rename_executor(
         self, executor_id: str, *, name: str
@@ -632,6 +675,9 @@ class ExecutorTransport:
             )
             channel.last_activity = None
             channel.hello = None
+            channel.last_seen_at = None
+            channel.last_seen_persisted = None
+            channel.last_seen_persisted_at = None
             channel.wake.set()
         callback = self._executor_invalidated_callback
         if callback is not None:

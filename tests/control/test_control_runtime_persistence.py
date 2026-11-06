@@ -97,6 +97,8 @@ async def test_control_runtime_restores_only_durable_product_facts(
             jobs=(),
         ),
     )
+    first_seen = await first.executor_transport.last_seen_at(executor_id)
+    assert isinstance(first_seen, float)
     pending_call = asyncio.create_task(
         first.executor_transport.call(executor_id, "shell.run")
     )
@@ -115,7 +117,14 @@ async def test_control_runtime_restores_only_durable_product_facts(
     second = build_control_runtime(settings)
     await second.start()
     try:
-        assert second.control_state.snapshot_executors() == {executor_id: trust}
+        restored_trust = second.control_state.snapshot_executors()[executor_id]
+        assert restored_trust == trust.model_copy(
+            update={"last_seen_at": first_seen}
+        )
+        assert (
+            await second.executor_transport.last_seen_at(executor_id)
+            == first_seen
+        )
         assert second.control_state.snapshot_sessions() == {session_id: session}
         assert second.oauth_state.clients == {
             approved_client.client_id: approved_client
@@ -278,6 +287,7 @@ async def test_executor_trust_survives_seven_day_control_shutdown(
     )
 
     first = build_control_runtime(settings)
+    first.executor_transport._wall_clock = lambda: 1_000.0
     await first.start()
     first.control_state.put_executor(
         ExecutorTrustRecord(
@@ -296,6 +306,13 @@ async def test_executor_trust_survives_seven_day_control_shutdown(
     await second.start()
     try:
         assert not await second.executor_transport.is_online(executor_id)
+        assert (
+            await second.executor_transport.last_seen_at(executor_id) == 1_000.0
+        )
+        fleet = await second.executor_fleet.list()
+        assert len(fleet.executors) == 1
+        assert fleet.executors[0].online is False
+        assert fleet.executors[0].last_seen_at == 1_000.0
 
         await second.executor_transport.hello(credential, hello)
 
