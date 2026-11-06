@@ -258,3 +258,110 @@ def test_local_system_snapshot_ignores_nonpositive_sample_intervals(
     assert snapshot["disk_percent"] is None
     assert snapshot["network_rx_bps"] is None
     assert snapshot["network_tx_bps"] is None
+
+
+def test_linux_cpu_excludes_guest_ticks(monkeypatch) -> None:
+    monkeypatch.setattr(
+        telemetry_module.Path,
+        "read_text",
+        lambda _path, encoding="utf-8": "cpu 100 20 60 80 10 4 6 8 15 5\n",
+    )
+    # guest and guest_nice are already included in user/nice.
+    assert telemetry_module._read_linux_cpu_times() == (288, 90)
+
+
+def test_reader_dispatch_uses_current_platform(monkeypatch) -> None:
+    monkeypatch.setattr(
+        telemetry_module, "_read_windows_cpu_times", lambda: (100, 20)
+    )
+    monkeypatch.setattr(
+        telemetry_module, "_read_windows_memory", lambda: (200, 50)
+    )
+    monkeypatch.setattr(
+        telemetry_module, "_read_macos_cpu_times", lambda: (300, 80)
+    )
+    monkeypatch.setattr(
+        telemetry_module, "_read_macos_memory", lambda: (400, 100)
+    )
+    for platform, cpu, memory in (
+        ("win32", (100, 20), (200, 50)),
+        ("darwin", (300, 80), (400, 100)),
+        ("plan9", None, None),
+    ):
+        monkeypatch.setattr(telemetry_module.sys, "platform", platform)
+        assert telemetry_module._read_cpu_times() == cpu
+        assert telemetry_module._read_memory() == memory
+
+
+def test_mac_memory_uses_page_size_and_fails_closed(monkeypatch) -> None:
+    calls = []
+    content = {
+        "sysctl": "65536\n",
+        "vm_stat": (
+            "Mach Virtual Memory Statistics: (page size of 16384 bytes)\n"
+            "Pages free: 1.\n"
+            "Pages inactive: 2.\n"
+            "Pages speculative: 1.\n"
+            "Pages active: 10.\n"
+        ),
+    }
+
+    def run(argv, **_kwargs):
+        calls.append(argv)
+        return SimpleNamespace(stdout=content[argv[0]])
+
+    monkeypatch.setattr(telemetry_module.subprocess, "run", run)
+    assert telemetry_module._read_macos_memory() == (65536, 0)
+    assert calls == [["sysctl", "-n", "hw.memsize"], ["vm_stat"]]
+    content["sysctl"] = "131072\n"
+    assert telemetry_module._read_macos_memory() == (131072, 65536)
+    content["sysctl"] = "garbage"
+    assert telemetry_module._read_macos_memory() is None
+    content["sysctl"] = "131072\n"
+    content["vm_stat"] = "bad header\nPages free: 1.\n"
+    assert telemetry_module._read_macos_memory() is None
+    content["vm_stat"] = (
+        "Mach Virtual Memory Statistics: (page size of 16384 bytes)\n"
+        "Pages active: 10.\n"
+    )
+    assert telemetry_module._read_macos_memory() is None
+
+
+def test_snapshot_rejects_invalid_cpu_time_deltas(
+    monkeypatch, tmp_path
+) -> None:
+    telemetry_module._CPU_SAMPLE = (100, 90)
+    monkeypatch.setattr(telemetry_module, "_read_cpu_times", lambda: (150, 151))
+    monkeypatch.setattr(telemetry_module, "_read_memory", lambda: None)
+    monkeypatch.setattr(
+        telemetry_module.os,
+        "getloadavg",
+        lambda: (_ for _ in ()).throw(OSError("unavailable")),
+        raising=False,
+    )
+    snapshot = telemetry_module.local_system_snapshot(tmp_path)
+    assert snapshot["cpu_percent"] is None
+
+
+def test_native_windows_telemetry_smoke() -> None:
+    import sys
+
+    if sys.platform != "win32":
+        pytest.skip("Windows-only OS API check")
+    cpu = telemetry_module._read_windows_cpu_times()
+    memory = telemetry_module._read_windows_memory()
+    assert cpu is not None and cpu[0] >= cpu[1] >= 0
+    assert memory is not None and 0 <= memory[1] <= memory[0]
+    assert memory[0] > 0
+
+
+def test_native_macos_telemetry_smoke() -> None:
+    import sys
+
+    if sys.platform != "darwin":
+        pytest.skip("macOS-only OS API check")
+    cpu = telemetry_module._read_macos_cpu_times()
+    memory = telemetry_module._read_macos_memory()
+    assert cpu is not None and cpu[0] >= cpu[1] >= 0
+    assert memory is not None and 0 <= memory[1] <= memory[0]
+    assert memory[0] > 0
