@@ -301,10 +301,25 @@ class ControlState:
     def _parse_executors(self, payload: Any) -> dict[str, ExecutorTrustRecord]:
         path = self.state_store.layout.control_executors_path
         rows = self._registry_rows(payload, field="executors", path=path)
+        # Kept outside each executor row so older frozen Controls (which use
+        # extra="forbid" on trust records) can read the same registry on rollback.
+        last_seen = (
+            payload.get("last_seen", {}) if isinstance(payload, dict) else {}
+        )
         records: dict[str, ExecutorTrustRecord] = {}
         try:
+            if not isinstance(last_seen, dict):
+                raise ValueError("last_seen must be a mapping")
             for row in rows:
-                record = ExecutorTrustRecord.model_validate(row)
+                if not isinstance(row, dict):
+                    raise ValueError("invalid executor record")
+                seen = last_seen.get(row.get("executor_id"))
+                record = ExecutorTrustRecord.model_validate(
+                    {
+                        **row,
+                        **({"last_seen_at": seen} if seen is not None else {}),
+                    }
+                )
                 if record.executor_id in records:
                     raise ValueError(
                         f"duplicate executor_id: {record.executor_id}"
@@ -359,12 +374,22 @@ class ControlState:
         self, records: Mapping[str, ExecutorTrustRecord]
     ) -> None:
         path = self.state_store.layout.control_executors_path
-        payload = {
+        payload: dict[str, Any] = {
             "version": _REGISTRY_VERSION,
             "executors": [
-                records[key].model_dump(mode="json") for key in sorted(records)
+                records[key].model_dump(mode="json", exclude={"last_seen_at"})
+                for key in sorted(records)
             ],
         }
+        last_seen = {
+            key: records[key].last_seen_at
+            for key in sorted(records)
+            if records[key].last_seen_at is not None
+        }
+        if last_seen:
+            payload["last_seen"] = (
+                last_seen  # Ignored by older registry readers.
+            )
         with self.state_store.transaction(path):
             write_registry(self.state_store, path, payload)
 

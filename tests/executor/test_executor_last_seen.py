@@ -151,6 +151,18 @@ def test_legacy_missing_last_seen_is_null_and_invalid_values_rejected(tmp_path):
             state.record_executor_last_seen(executor_id, seen_at=bad)
     assert state.record_executor_last_seen(executor_id, seen_at=1_000) == 1_000
     assert state.record_executor_last_seen(executor_id, seen_at=900) == 1_000
+    persisted = store.read_json(store.layout.control_executors_path)
+    assert isinstance(persisted, dict)
+    assert persisted["last_seen"] == {executor_id: 1_000}
+    # The frozen v5.0.0 Control reads each row with extra="forbid". New
+    # metadata must remain entirely outside those rows to keep rollback viable.
+    assert "last_seen_at" not in persisted["executors"][0]
+    assert set(persisted["executors"][0]) == set(raw["executors"][0])
+    state.rename_executor(executor_id, name="renamed")
+    after_rename = store.read_json(store.layout.control_executors_path)
+    assert isinstance(after_rename, dict)
+    assert after_rename["last_seen"] == {executor_id: 1_000}
+    assert "last_seen_at" not in after_rename["executors"][0]
     state.close()
     restored = ControlState(store)
     restored.start()
