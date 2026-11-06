@@ -19,7 +19,7 @@ ShellCwdArg = Annotated[
 ShellTimeoutArg = Annotated[
     int | None,
     Field(
-        description="Optional bounded wait in seconds. Without persist_on_timeout, reaching the timeout terminates the command; with it, the same tracked Job continues. For immediately backgrounded work use async_=true."
+        description="Optional timeout in seconds for bounded command mode. For long-running work, prefer async_=true and manage the returned job_id with job."
     ),
 ]
 ShellMaxOutputBytesArg = Annotated[

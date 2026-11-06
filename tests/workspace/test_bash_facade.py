@@ -256,6 +256,7 @@ async def test_shell_execution_routes_pty_to_persistent_shell(
         "python -i",
         cwd=".",
         pty=True,
+        persist_on_timeout=True,
         name="server",
     )
 

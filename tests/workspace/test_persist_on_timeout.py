@@ -290,3 +290,73 @@ def test_durable_script_cleanup_ignores_unowned_metadata(tmp_path: Path):
         prune_store(rows, max_jobs=0)
     assert unrelated.read_text() == "private content"
     assert job_runtime_dir().is_dir()
+
+
+@pytest.mark.asyncio
+async def test_real_control_dispatches_persisted_bash_and_python(
+    tmp_path: Path, monkeypatch
+):
+    from tests.support.paired import build_paired_control_harness
+    from tests.support.responses import mcp_structured
+    from workgate.control.mcp.app import build_mcp
+
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
+    from workgate.config.settings import clear_settings_cache
+
+    clear_settings_cache()
+    harness = build_paired_control_harness(get_settings())
+    mcp = build_mcp(runtime=harness.control)
+    session = mcp_structured(
+        await mcp.call_tool("session_start", {"workdir": "."})
+    )
+    session_id = session["session_id"]
+    for tool, arguments in (
+        ("bash", {"command": python_shell_command("print('shell ready')")}),
+        ("run_python_code", {"code": "print('python ready')"}),
+    ):
+        value = mcp_structured(
+            await mcp.call_tool(
+                tool,
+                {
+                    "session_id": session_id,
+                    "timeout_s": 10,
+                    "persist_on_timeout": True,
+                    **arguments,
+                },
+            )
+        )
+        assert value["mode"] == "job", value
+        assert value["result"]["timed_out"] is False
+        assert "ready" in value["result"]["stdout"]
+        assert value["result"]["job_id"].startswith("job_")
+
+
+@pytest.mark.asyncio
+async def test_persist_mode_requires_existing_job_service_and_waiter(
+    tmp_path: Path,
+):
+    from workgate.executor.bash import bash_execute
+
+    service, session_id = _setup(tmp_path)
+    with pytest.raises(
+        RuntimeError,
+        match="async shell execution requires executor job service",
+    ):
+        await bash_execute(
+            service.config, service.store, session_id, "true", async_=True
+        )
+
+    async def unexpected_start(*_args, **_kwargs):
+        pytest.fail("A persist call without a waiter must not create a Job")
+
+    with pytest.raises(
+        RuntimeError, match="persist_on_timeout requires the tracked job waiter"
+    ):
+        await bash_execute(
+            service.config,
+            service.store,
+            session_id,
+            "true",
+            persist_on_timeout=True,
+            job_start=unexpected_start,
+        )
