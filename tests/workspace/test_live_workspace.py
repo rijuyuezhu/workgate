@@ -275,6 +275,7 @@ async def test_live_workspace_job_message_does_not_forward_backend_exception_tex
 
     class _JobOutput:
         jobs: list[Any] = []
+        truncated = False
         message = (
             "Executor jobs unavailable: RuntimeError: backend-super-secret"
         )
@@ -292,6 +293,7 @@ async def test_live_workspace_job_message_does_not_forward_backend_exception_tex
 
     assert jobs == []
     assert message == "Some executor job metadata is unavailable."
+    assert calls[0]["limit"] == live._JOB_LIMIT
     assert "backend-super-secret" not in message
 
 
@@ -539,3 +541,40 @@ async def test_live_workspace_missing_scope_is_model_visible():
             _require_mcp_scopes(("shell:read", "audit:read"))
     finally:
         reset_oauth_claims(token)
+
+
+@pytest.mark.asyncio
+async def test_live_workspace_job_projection_uses_page_metadata(
+    tmp_path, monkeypatch
+):
+    settings = _http_settings(tmp_path, monkeypatch)
+    harness = build_paired_control_harness(settings)
+    from types import SimpleNamespace
+
+    jobs = [
+        SimpleNamespace(
+            job_id=f"job_{i}",
+            kind="shell",
+            name=f"Job {i}",
+            status="running",
+            cwd=".",
+            created_at=float(i),
+            updated_at=float(i),
+            completed_at=None,
+            attempts=1,
+        )
+        for i in range(live._JOB_LIMIT)
+    ]
+
+    async def paginated_job_list(**kwargs):
+        assert kwargs["limit"] == live._JOB_LIMIT
+        return SimpleNamespace(jobs=jobs, truncated=True, message=None)
+
+    monkeypatch.setattr(
+        harness.control.job_service, "execute", paginated_job_list
+    )
+    projected, message = await live._job_projection(
+        harness.control, "sess_0000000000000000000001", "active"
+    )
+    assert len(projected) == live._JOB_LIMIT
+    assert message == f"Showing {live._JOB_LIMIT} most recent jobs."

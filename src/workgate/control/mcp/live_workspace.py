@@ -240,12 +240,13 @@ async def _job_projection(
             list_jobs=True,
             include_finished=False,
             lines=1,
+            limit=_JOB_LIMIT,
         )
     except Exception:
         return [], "Job snapshot unavailable."
     rows = output.jobs[:_JOB_LIMIT]
-    if len(output.jobs) > _JOB_LIMIT:
-        message = f"Showing {_JOB_LIMIT} most recent jobs."
+    if output.truncated or len(output.jobs) > _JOB_LIMIT:
+        message = f"Showing {len(rows)} most recent jobs."
     elif output.message and output.message.startswith(
         "Executor jobs unavailable"
     ):
