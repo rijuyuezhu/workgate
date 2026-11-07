@@ -40,6 +40,12 @@ ShellAsyncArg = Annotated[
         description="Whether to start long-running non-interactive work as a tracked background job owned by this session. Returns job_id for the job tool, not shell_id."
     ),
 ]
+ShellPersistOnTimeoutArg = Annotated[
+    bool,
+    Field(
+        description="When true in bounded mode, start one tracked job and wait up to timeout_s. If still running, return the same job_id for job poll/cancel; stdout and stderr are combined. Default false preserves timeout termination. async_=true and pty=true take precedence."
+    ),
+]
 ShellPtyArg = Annotated[
     bool,
     Field(

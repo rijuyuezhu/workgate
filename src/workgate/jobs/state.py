@@ -43,6 +43,8 @@ class JobRow(TypedDict, total=False):
     """Private bounded log path for the active attempt."""
     status_path: str | None
     """Private runner status path for the active attempt."""
+    script_path: str
+    """Optional private Python source retained for durable shell-job retries."""
     created_at: float
     """Unix timestamp when the job was created."""
     updated_at: float

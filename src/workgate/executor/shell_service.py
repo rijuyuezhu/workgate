@@ -44,6 +44,8 @@ class ShellService:
             pty,
             None if args.get("name") is None else str(args["name"]),
             job_start=self.jobs.start,
+            job_wait=self.jobs.wait,
+            persist_on_timeout=args.get("persist_on_timeout", False),
             forbidden_shell_ids=(
                 self.jobs.reserved_shell_ids() if pty else frozenset()
             ),
@@ -64,6 +66,8 @@ class ShellService:
             pty,
             None if args.get("name") is None else str(args["name"]),
             job_start=self.jobs.start,
+            job_wait=self.jobs.wait,
+            persist_on_timeout=args.get("persist_on_timeout", False),
             forbidden_shell_ids=(
                 self.jobs.reserved_shell_ids() if pty else frozenset()
             ),

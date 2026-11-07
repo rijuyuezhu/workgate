@@ -1752,6 +1752,13 @@
                 "note": "(string / null, optional)"
               },
               {
+                "description": "When true in bounded mode, start one tracked job and wait up to timeout_s. If still running, return the same job_id for job poll/cancel; stdout and stderr are combined. Default false preserves timeout termination. async_=true and pty=true take precedence.",
+                "head": {
+                  "code": "persist_on_timeout"
+                },
+                "note": "(boolean, optional)"
+              },
+              {
                 "description": "Whether to start the command in a persistent PTY shell for interactive programs, REPLs, servers, or commands needing later input. PTY mode returns shell_id for persistent-shell companion tools, not job_id.",
                 "head": {
                   "code": "pty"
@@ -1940,6 +1947,13 @@
                   "code": "name"
                 },
                 "note": "(string / null, optional)"
+              },
+              {
+                "description": "When true in bounded mode, start one tracked job and wait up to timeout_s. If still running, return the same job_id for job poll/cancel; stdout and stderr are combined. Default false preserves timeout termination. async_=true and pty=true take precedence.",
+                "head": {
+                  "code": "persist_on_timeout"
+                },
+                "note": "(boolean, optional)"
               },
               {
                 "description": "Whether to start the command in a persistent PTY shell for interactive programs, REPLs, servers, or commands needing later input. PTY mode returns shell_id for persistent-shell companion tools, not job_id.",
@@ -3137,6 +3151,12 @@
             "default": null,
             "description": "Optional name for the tracked async job or persistent PTY shell.",
             "title": "Name"
+          },
+          "persist_on_timeout": {
+            "default": false,
+            "description": "When true in bounded mode, start one tracked job and wait up to timeout_s. If still running, return the same job_id for job poll/cancel; stdout and stderr are combined. Default false preserves timeout termination. async_=true and pty=true take precedence.",
+            "title": "Persist On Timeout",
+            "type": "boolean"
           },
           "pty": {
             "default": false,
@@ -9318,6 +9338,12 @@
             "default": null,
             "description": "Optional name for the tracked async job or persistent PTY shell.",
             "title": "Name"
+          },
+          "persist_on_timeout": {
+            "default": false,
+            "description": "When true in bounded mode, start one tracked job and wait up to timeout_s. If still running, return the same job_id for job poll/cancel; stdout and stderr are combined. Default false preserves timeout termination. async_=true and pty=true take precedence.",
+            "title": "Persist On Timeout",
+            "type": "boolean"
           },
           "pty": {
             "default": false,
