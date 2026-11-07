@@ -1206,6 +1206,13 @@
                 "note": "(boolean, optional)"
               },
               {
+                "description": "Maximum compact Job summaries in a list page, default 25. The total serialized response is also capped at 32 KiB.",
+                "head": {
+                  "code": "limit"
+                },
+                "note": "(integer, optional)"
+              },
+              {
                 "description": "Number of recent bounded log lines to capture for a tracked shell or managed job. Output is retained after completion within the configured durable log limit.",
                 "head": {
                   "code": "lines"
@@ -1218,6 +1225,13 @@
                   "code": "list_jobs"
                 },
                 "note": "(boolean, optional)"
+              },
+              {
+                "description": "Zero-based offset into the newest-first Job list. Use next_offset to fetch the following page.",
+                "head": {
+                  "code": "offset"
+                },
+                "note": "(integer, optional)"
               },
               {
                 "description": "Tracked shell or managed job ids in this session whose latest output, structured progress, result, and status should be inspected.",
@@ -1242,7 +1256,7 @@
               }
             ]
           },
-          "List, poll, cancel, or retry durable jobs by session_id and job_id. Includes bash(async_=true) and managed session_copy jobs; use only one action per call. A lost managed job may restart via retry if its owning sessions remain available."
+          "List compact, paginated Job summaries, or poll, cancel and retry Jobs by session_id and job_id. Use limit/offset for list pages and next_offset for continuation; poll a job_id for its full metadata and log. Includes durable bash(async_=true) and managed session_copy jobs; use only one action per call. A lost managed job may restart via retry if its owning sessions remain available."
         ]
       ]
     },
@@ -6979,7 +6993,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "List, poll, cancel, or retry durable jobs by session_id and job_id. Includes bash(async_=true) and managed session_copy jobs; use only one action per call. A lost managed job may restart via retry if its owning sessions remain available.",
+      "description": "List compact, paginated Job summaries, or poll, cancel and retry Jobs by session_id and job_id. Use limit/offset for list pages and next_offset for continuation; poll a job_id for its full metadata and log. Includes durable bash(async_=true) and managed session_copy jobs; use only one action per call. A lost managed job may restart via retry if its owning sessions remain available.",
       "inputSchema": {
         "properties": {
           "cancel": {
@@ -7004,6 +7018,14 @@
             "title": "Include Finished",
             "type": "boolean"
           },
+          "limit": {
+            "default": 25,
+            "description": "Maximum compact Job summaries in a list page, default 25. The total serialized response is also capped at 32 KiB.",
+            "maximum": 1000,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
           "lines": {
             "default": 200,
             "description": "Number of recent bounded log lines to capture for a tracked shell or managed job. Output is retained after completion within the configured durable log limit.",
@@ -7017,6 +7039,13 @@
             "description": "Whether to return a snapshot of tracked shell and managed jobs owned by this session. Omit all other job actions to list by default.",
             "title": "List Jobs",
             "type": "boolean"
+          },
+          "offset": {
+            "default": 0,
+            "description": "Zero-based offset into the newest-first Job list. Use next_offset to fetch the following page.",
+            "minimum": 0,
+            "title": "Offset",
+            "type": "integer"
           },
           "poll": {
             "anyOf": [
@@ -7510,6 +7539,32 @@
             "description": "Optional diagnostic or usage note.",
             "title": "Message"
           },
+          "next_offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Pass as offset to continue the list, or null when exhausted.",
+            "title": "Next Offset"
+          },
+          "offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Zero-based position of the returned list page.",
+            "title": "Offset"
+          },
           "operation": {
             "description": "Job operation performed by the unified job companion tool.",
             "enum": [
@@ -7536,6 +7591,25 @@
             },
             "title": "Retried",
             "type": "array"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Number of Jobs matching the list filter before pagination; null for non-list operations.",
+            "title": "Total"
+          },
+          "truncated": {
+            "default": false,
+            "description": "Whether more matching Jobs remain after this list page.",
+            "title": "Truncated",
+            "type": "boolean"
           }
         },
         "required": [

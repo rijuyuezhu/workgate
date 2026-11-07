@@ -169,7 +169,11 @@ def _job_text(result: Mapping[str, Any]) -> str:
         case "list":
             jobs = _rows(result["jobs"])
             message = _optional_string(result.get("message"))
+            total = result.get("total")
+            offset = result.get("offset")
             if not jobs:
+                if isinstance(total, int) and total > 0:
+                    return f"{message or 'Job list'}\nNo more jobs at offset {offset} (total {total})."
                 return message or "No tracked jobs."
             rows = "\n".join(
                 "\t".join(
@@ -183,7 +187,14 @@ def _job_text(result: Mapping[str, Any]) -> str:
                 )
                 for job in jobs
             )
-            return f"{message}\n{rows}" if message else rows
+            if not isinstance(total, int) or not isinstance(offset, int):
+                return f"{message}\n{rows}" if message else rows
+            header = message or "Tracked jobs"
+            header += f"\nShowing {offset + 1}–{offset + len(jobs)} of {total}."
+            next_offset = result.get("next_offset")
+            if isinstance(next_offset, int):
+                header += f" Next page: offset={next_offset}."
+            return f"{header}\n{rows}"
         case "cancel":
             lines = []
             for row in _rows(result["cancelled"]):

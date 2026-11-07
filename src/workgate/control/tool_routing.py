@@ -127,6 +127,8 @@ class ControlToolRouter:
                 retry=args.get("retry"),
                 include_finished=bool(args.get("include_finished", True)),
                 lines=int(args.get("lines", 200)),
+                limit=int(args.get("limit", 25)),
+                offset=int(args.get("offset", 0)),
             )
         if tool_name == "task":
             action = str(args["action"])

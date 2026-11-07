@@ -48,6 +48,22 @@ JobTailLinesArg = Annotated[
 ]
 
 
+JobListLimitArg = Annotated[
+    int,
+    Field(
+        ge=1,
+        le=1000,
+        description="Maximum compact Job summaries in a list page, default 25. The total serialized response is also capped at 32 KiB.",
+    ),
+]
+JobListOffsetArg = Annotated[
+    int,
+    Field(
+        ge=0,
+        description="Zero-based offset into the newest-first Job list. Use next_offset to fetch the following page.",
+    ),
+]
+
 JobListSnapshotArg = Annotated[
     bool,
     Field(
