@@ -61,6 +61,7 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --locked --group dev
+      - run: brew install tmux
       - run: uv run pytest -q -m "not topology"
 
   windows-native:
