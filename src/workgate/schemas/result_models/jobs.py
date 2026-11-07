@@ -146,6 +146,22 @@ class JobOutput(BaseModel):
         default_factory=dict,
         description="Tracked job counts by status when a list snapshot was read.",
     )
+    total: int | None = Field(
+        default=None,
+        description="Number of Jobs matching the list filter before pagination; null for non-list operations.",
+    )
+    offset: int | None = Field(
+        default=None,
+        description="Zero-based position of the returned list page.",
+    )
+    next_offset: int | None = Field(
+        default=None,
+        description="Pass as offset to continue the list, or null when exhausted.",
+    )
+    truncated: bool = Field(
+        default=False,
+        description="Whether more matching Jobs remain after this list page.",
+    )
     outputs: list[JobTailOutput] = Field(
         default_factory=list,
         description="Recent output/status entries returned for inspected jobs.",

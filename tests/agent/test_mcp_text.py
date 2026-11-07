@@ -245,3 +245,26 @@ def test_render_tool_text_falls_back_for_unlisted_or_malformed_results():
     assert render_tool_text("version", {"version": "1"}) is None
     assert render_tool_text("bash", {"unexpected": True}) is None
     assert render_tool_text("read", {"content": 1}) is None
+
+
+def test_job_list_page_text_includes_next_offset_and_end_of_list() -> None:
+    page = {
+        "operation": "list",
+        "total": 30,
+        "offset": 25,
+        "next_offset": 27,
+        "jobs": [
+            {"job_id": "job_a", "status": "running", "name": "build"},
+            {"job_id": "job_b", "status": "failed", "name": "test"},
+        ],
+    }
+    text = render_tool_text("job", page)
+    assert text is not None
+    assert "Showing 26–27 of 30." in text
+    assert "Next page: offset=27." in text
+    assert "job_a\trunning\tbuild" in text
+
+    last = {**page, "next_offset": None, "offset": 30, "jobs": []}
+    assert "No more jobs at offset 30 (total 30)" in (
+        render_tool_text("job", last) or ""
+    )

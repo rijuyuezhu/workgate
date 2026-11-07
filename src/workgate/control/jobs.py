@@ -16,7 +16,7 @@ from ..jobs.managed import (
     stop_managed_job_without_session_admission,
     use_managed_jobs_runtime,
 )
-from ..schemas.result_models.jobs import JobOutput
+from ..schemas.result_models.jobs import JobInfo, JobOutput
 from .session_copy import SESSION_COPY_MANAGED_KIND
 from .sessions import ControlSessionCoordinator
 
@@ -45,6 +45,76 @@ def _ordered_rows(
     return [by_id[item] for item in requested if item in by_id]
 
 
+_JOB_LIST_MAX_BYTES = 32 * 1024
+
+
+def _preview(text: str, maximum_bytes: int) -> str:
+    raw = text.encode("utf-8")
+    if len(raw) <= maximum_bytes:
+        return text
+    return raw[: maximum_bytes - 3].decode("utf-8", errors="ignore") + "…"
+
+
+def _compact_job(job: JobInfo) -> JobInfo:
+    """Keep list entries useful without duplicating full Job details from poll."""
+    return job.model_copy(
+        update={
+            "name": _preview(job.name, 80),
+            "command": _preview(job.command, 240),
+            "cwd": _preview(job.cwd, 160),
+            "progress": None,
+            "result": None,
+            "error": None,
+        }
+    )
+
+
+def _list_page(
+    jobs: list[JobInfo],
+    counts: dict[str, int],
+    *,
+    offset: int,
+    limit: int,
+    message: str,
+) -> JobOutput:
+    """Serialize-bounded public page; exact next_offset never skips an entry."""
+    total = len(jobs)
+    page: list[JobInfo] = []
+    message = _preview(message, 320)
+    for job in jobs[offset : offset + limit]:
+        candidate = [*page, _compact_job(job)]
+        next_offset = offset + len(candidate)
+        output = JobOutput(
+            operation="list",
+            jobs=candidate,
+            counts=counts,
+            total=total,
+            offset=offset,
+            next_offset=next_offset if next_offset < total else None,
+            truncated=next_offset < total,
+            message=message,
+        )
+        if len(output.model_dump_json().encode("utf-8")) > _JOB_LIST_MAX_BYTES:
+            break
+        page = candidate
+    next_offset = offset + len(page)
+    result = JobOutput(
+        operation="list",
+        jobs=page,
+        counts=counts,
+        total=total,
+        offset=offset,
+        next_offset=next_offset if next_offset < total else None,
+        truncated=next_offset < total,
+        message=message,
+    )
+    if len(result.model_dump_json().encode("utf-8")) > _JOB_LIST_MAX_BYTES:
+        raise ValueError("Job list metadata exceeds the response byte limit")
+    if total > offset and not page:
+        raise ValueError("One Job summary exceeds the response byte limit")
+    return result
+
+
 class ControlJobService:
     """Merge control-managed jobs with executor-owned background resources."""
 
@@ -70,6 +140,8 @@ class ControlJobService:
         retry: list[str] | None = None,
         include_finished: bool = True,
         lines: int = 200,
+        limit: int = 25,
+        offset: int = 0,
     ) -> JobOutput:
         with use_managed_jobs_runtime(self._managed_jobs_runtime):
             return await self._execute_scoped(
@@ -80,6 +152,8 @@ class ControlJobService:
                 retry=retry,
                 include_finished=include_finished,
                 lines=lines,
+                limit=limit,
+                offset=offset,
             )
 
     async def _execute_scoped(
@@ -92,7 +166,13 @@ class ControlJobService:
         retry: list[str] | None,
         include_finished: bool,
         lines: int,
+        limit: int,
+        offset: int,
     ) -> JobOutput:
+        if not 1 <= limit <= 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
         selected = [poll is not None, cancel is not None, retry is not None]
         if list_jobs and any(selected):
             raise ValueError(
@@ -115,6 +195,8 @@ class ControlJobService:
                 include_finished=include_finished,
                 executor_available=executor_available,
                 lines=lines,
+                limit=limit,
+                offset=offset,
             )
 
         requested = list(poll or cancel or retry or [])
@@ -234,14 +316,17 @@ class ControlJobService:
         include_finished: bool,
         executor_available: bool,
         lines: int,
+        limit: int,
+        offset: int,
     ) -> JobOutput:
         managed = await managed_job_list_execute(session_id, include_finished)
         if not executor_available:
             if managed.jobs:
-                return JobOutput(
-                    operation="list",
-                    jobs=managed.jobs,
-                    counts=managed.counts,
+                return _list_page(
+                    managed.jobs,
+                    managed.counts,
+                    offset=offset,
+                    limit=limit,
                     message="Executor jobs unavailable while the session is not active.",
                 )
             raise RuntimeError(
@@ -265,20 +350,20 @@ class ControlJobService:
         except Exception as exc:
             if not managed.jobs:
                 raise
-            return JobOutput(
-                operation="list",
-                jobs=managed.jobs,
-                counts=managed.counts,
-                message=(
-                    f"Executor jobs unavailable: {type(exc).__name__}: {exc}"
-                ),
+            return _list_page(
+                managed.jobs,
+                managed.counts,
+                offset=offset,
+                limit=limit,
+                message=f"Executor jobs unavailable: {type(exc).__name__}: {exc}",
             )
         jobs = [*executor.jobs, *managed.jobs]
         jobs.sort(key=lambda item: item.created_at, reverse=True)
-        return JobOutput(
-            operation="list",
-            jobs=jobs,
-            counts=_merge_counts(executor.counts, managed.counts),
+        return _list_page(
+            jobs,
+            _merge_counts(executor.counts, managed.counts),
+            offset=offset,
+            limit=limit,
             message=(
                 "No tracked jobs in this session."
                 if not jobs
