@@ -26,7 +26,7 @@ job_tool = JobToolRegistry.get_tool_decorator()
 
 
 def _job_description(_context: object) -> str:
-    return """List compact, paginated Job summaries, or poll, cancel and retry Jobs by session_id and job_id. Use limit/offset for list pages and next_offset for continuation; poll a job_id for its full metadata and log. Includes bash(async_=true) and managed session_copy jobs; use only one action per call."""
+    return """List compact, paginated Job summaries, or poll, cancel and retry Jobs by session_id and job_id. Use limit/offset for list pages and next_offset for continuation; poll a job_id for its full metadata and log. Includes durable bash(async_=true) and managed session_copy jobs; use only one action per call. A lost managed job may restart via retry if its owning sessions remain available."""
 
 
 @job_tool(
