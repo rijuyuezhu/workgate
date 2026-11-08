@@ -1093,3 +1093,25 @@ def test_bootstrap_includes_trusted_offline_executor(monkeypatch, tmp_path):
             "runtime": None,
         }
     ]
+
+
+def test_webui_theme_assets_follow_strict_script_csp(monkeypatch, tmp_path):
+    _configure_ui(monkeypatch, tmp_path)
+    client = TestClient(build_http_app())
+    response = client.get("/ui/")
+    assert response.status_code == 200
+    assert "script-src 'self'" in response.headers["content-security-policy"]
+    html = response.text
+    assert 'id="appearance-mode"' in html
+    assert 'value="auto"' in html
+    assert 'value="light"' in html
+    assert 'value="dark"' in html
+    assert html.index("/assets/theme.js") < html.index("/assets/web.css")
+    theme = client.get("/ui/assets/theme.js")
+    assert theme.status_code == 200
+    assert "document.documentElement.dataset.theme = theme" in theme.text
+    assert "localStorage.setItem(key, theme)" in theme.text
+    css = client.get("/ui/assets/web.css")
+    assert css.status_code == 200
+    assert ':root[data-theme="dark"] { color-scheme: dark; }' in css.text
+    assert "light-dark(" in css.text

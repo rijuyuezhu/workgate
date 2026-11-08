@@ -1026,3 +1026,84 @@ def test_audit_scope_revocation_clears_stale_browser_data(
         ).to_have_count(0)
     finally:
         page.close()
+
+
+def test_browser_webui_auto_light_dark_theme(
+    browser_harness: BrowserHarness,
+) -> None:
+    """Native three-state appearance survives reload and mobile view changes."""
+    browser_harness.login()
+    page = browser_harness.page
+    page.emulate_media(color_scheme="light")
+    page.goto(f"{browser_harness.base_url}/ui#overview")
+    selector = page.locator("#appearance-mode")
+    expect(selector).to_have_value("auto")
+    expect(selector).to_be_visible()
+    assert page.locator("html").get_attribute("data-theme") == "auto"
+
+    def colors() -> tuple[str, str, str]:
+        return page.evaluate(
+            """() => [
+              getComputedStyle(document.body).backgroundColor,
+              getComputedStyle(document.querySelector('.panel')).backgroundColor,
+              getComputedStyle(document.querySelector('h1')).color
+            ]"""
+        )
+
+    light_colors = colors()
+    page.emulate_media(color_scheme="dark")
+    dark_colors = colors()
+    assert all(
+        left != right
+        for left, right in zip(light_colors, dark_colors, strict=True)
+    )
+    assert (
+        page.locator("html").evaluate("el => getComputedStyle(el).colorScheme")
+        == "light dark"
+    )
+
+    selector.select_option("light")
+    assert colors() == light_colors
+    assert page.evaluate('localStorage.getItem("workgate-ui-theme")') == "light"
+    page.reload()
+    expect(page.locator("#appearance-mode")).to_have_value("light")
+    assert colors() == light_colors
+
+    page.locator("#appearance-mode").select_option("dark")
+    assert colors() == dark_colors
+    for surface in (
+        ".dashboard-metric-card",
+        ".audit-searchbar",
+        ".file-preview",
+    ):
+        rgb = page.locator(surface).first.evaluate(
+            "el => getComputedStyle(el).backgroundColor"
+        )
+        assert rgb.startswith("rgb(")
+        assert max(int(value) for value in rgb[4:-1].split(",")) < 100
+
+    other = browser_harness.context.new_page()
+    other.goto(f"{browser_harness.base_url}/ui#overview")
+    expect(other.locator("#appearance-mode")).to_have_value("dark")
+    page.locator("#appearance-mode").select_option("light")
+    expect(other.locator("#appearance-mode")).to_have_value("light")
+    page.locator("#appearance-mode").select_option("dark")
+    other.close()
+    for width in (390, 320):
+        page.set_viewport_size({"width": width, "height": 844})
+        expect(page.locator("#appearance-mode")).to_be_visible()
+        assert page.evaluate(
+            "document.documentElement.scrollWidth <= window.innerWidth + 2"
+        )
+    assert (
+        page.locator(".terminal-xterm").evaluate(
+            "el => getComputedStyle(el).backgroundColor"
+        )
+        == "rgb(8, 13, 24)"
+    )
+
+    page.locator("#appearance-mode").select_option("auto")
+    assert colors() == dark_colors
+    page.emulate_media(color_scheme="light")
+    assert colors() == light_colors
+    browser_harness.assert_clean_browser()
