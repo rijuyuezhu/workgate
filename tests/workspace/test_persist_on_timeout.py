@@ -1,5 +1,6 @@
 """Opt-in wait-then-detach must use one existing session-owned tracked job."""
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -125,7 +126,17 @@ async def test_python_job_keeps_source_for_pruning_and_retry(tmp_path: Path):
     final = await service.jobs.wait(session_id, job_id, 5)
     assert final.job.status == "succeeded"
     assert marker.read_text() == "x"
-    retry = await service.jobs.retry(session_id, job_id)
+    # A completed receipt may precede the backing tmux shell's exit.
+    # Keep the retry liveness guard; wait for cleanup instead of racing it.
+    async with asyncio.timeout(5):
+        while True:
+            try:
+                retry = await service.jobs.retry(session_id, job_id)
+                break
+            except RuntimeError as exc:
+                if "previous attempt shell is still active" not in str(exc):
+                    raise
+                await asyncio.sleep(0.05)
     assert retry.job_id == job_id
     final = await service.jobs.wait(session_id, job_id, 5)
     assert final.job.status == "succeeded"

@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import threading
+from typing import cast
 
 import httpx
 import pytest
@@ -8,6 +9,7 @@ import pytest
 from workgate import __version__
 from workgate.config.executor import resolve_executor_config
 from workgate.config.settings import Settings
+from workgate.executor import control_client as control_client_module
 from workgate.executor.connection import (
     ExecutorConnection,
     RuntimePolicyAction,
@@ -141,6 +143,112 @@ async def _exercise_reconnect(
         return client, retry_sleeps
     finally:
         await connection.aclose()
+
+
+@pytest.mark.asyncio
+async def test_failed_control_request_reloads_proxy_settings_without_restarting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A replacement AsyncClient must use the proxy route selected at creation.
+    real_client = httpx.AsyncClient
+    routes: list[str] = []
+    created: list[httpx.AsyncClient] = []
+    current_route = ["old"]
+
+    def factory(**kwargs: object) -> httpx.AsyncClient:
+        route = current_route[0]
+        routes.append(route)
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            if route == "old":
+                raise httpx.ConnectError(
+                    "private request URL or bearer", request=request
+                )
+            return httpx.Response(204)
+
+        instance = real_client(
+            base_url=cast(str, kwargs["base_url"]),
+            headers=cast(dict[str, str], kwargs["headers"]),
+            transport=httpx.MockTransport(respond),
+        )
+        created.append(instance)
+        return instance
+
+    monkeypatch.setattr(control_client_module.httpx, "AsyncClient", factory)
+    profile = ExecutorProfile(
+        control_url="https://control.example",
+        executor_id=new_executor_id(),
+        credential=new_executor_credential(),
+    )
+    client = ExecutorControlClient(profile)
+    try:
+        with pytest.raises(ExecutorControlError) as caught:
+            await client.heartbeat()
+        assert caught.value.transport_error == "ConnectError"
+        current_route[0] = "new"
+        await client.heartbeat()
+        assert routes == ["old", "new"]
+        assert created[0].is_closed
+        assert not created[1].is_closed
+    finally:
+        await client.aclose()
+    assert created[1].is_closed
+
+
+@pytest.mark.asyncio
+async def test_transport_refresh_keeps_inflight_result_upload_alive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = asyncio.Event()
+    finish = asyncio.Event()
+    created: list[httpx.AsyncClient] = []
+    real_client = httpx.AsyncClient
+
+    def factory(**kwargs: object) -> httpx.AsyncClient:
+        index = len(created)
+
+        async def respond(request: httpx.Request) -> httpx.Response:
+            if index == 0 and request.url.path == EXECUTOR_RESULT_PATH:
+                started.set()
+                await finish.wait()
+                return httpx.Response(204)
+            if index == 0:
+                raise httpx.ReadTimeout("a private URL", request=request)
+            return httpx.Response(204)
+
+        instance = real_client(
+            base_url=cast(str, kwargs["base_url"]),
+            headers=cast(dict[str, str], kwargs["headers"]),
+            transport=httpx.MockTransport(respond),
+        )
+        created.append(instance)
+        return instance
+
+    monkeypatch.setattr(control_client_module.httpx, "AsyncClient", factory)
+    profile = ExecutorProfile(
+        control_url="https://control.example",
+        executor_id=new_executor_id(),
+        credential=new_executor_credential(),
+    )
+    client = ExecutorControlClient(profile)
+    result = ExecutorResult(id=new_command_id(), ok=True, result={"ok": True})
+    upload = asyncio.create_task(client.submit_result(result))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=1)
+        with pytest.raises(ExecutorControlError) as caught:
+            await client.validate()
+        assert caught.value.transport_error == "ReadTimeout"
+        await client.validate()
+        assert len(created) == 2
+        assert not created[0].is_closed
+        finish.set()
+        await asyncio.wait_for(upload, timeout=1)
+        assert created[0].is_closed
+        assert not created[1].is_closed
+    finally:
+        finish.set()
+        await asyncio.gather(upload, return_exceptions=True)
+        await client.aclose()
 
 
 @pytest.mark.asyncio
@@ -1364,12 +1472,59 @@ async def test_reconnect_warning_identifies_safe_request_status_and_code(
     lines = [r.getMessage() for r in caplog.records]
     assert (
         "executor reconnecting: ExecutorControlError "
-        "request=poll http=429 code=executor_overloaded"
+        "request=poll http=429 code=executor_overloaded transport=none"
     ) in lines
     assert "private" not in caplog.text
     assert "Authorization" not in caplog.text
     assert "secret" not in caplog.text
     assert sum("request=poll" in line for line in lines) == 1
+
+
+def test_reconnect_warning_includes_only_allowlisted_transport_type(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    connection = ExecutorConnection(
+        _ScriptedReconnectClient(()),
+        hello_factory=_hello,
+        execute=lambda _command: None,
+        max_concurrent_commands=1,
+    )
+    with caplog.at_level(
+        logging.WARNING, logger="workgate.executor.connection"
+    ):
+        connection._report_status(
+            "reconnecting",
+            "ExecutorControlError",
+            control_error=ExecutorControlError(
+                "private URL: Authorization header must never appear",
+                request_kind="heartbeat",
+                transport_error="ConnectTimeout",
+            ),
+        )
+    assert (
+        caplog.records[-1]
+        .getMessage()
+        .endswith(
+            "request=heartbeat http=unknown code=none transport=ConnectTimeout"
+        )
+    )
+    assert "Authorization" not in caplog.text
+    assert "private" not in caplog.text
+
+    with caplog.at_level(
+        logging.WARNING, logger="workgate.executor.connection"
+    ):
+        connection._report_status("connected")
+        connection._report_status(
+            "reconnecting",
+            "ExecutorControlError",
+            control_error=ExecutorControlError(
+                "private bearer",
+                transport_error="privateBearerOrHeaders",
+            ),
+        )
+    assert caplog.records[-1].getMessage().endswith("transport=none")
+    assert "privateBearerOrHeaders" not in caplog.text
 
 
 def test_reconnect_warning_rejects_untrusted_request_kind(
@@ -1394,7 +1549,7 @@ def test_reconnect_warning_rejects_untrusted_request_kind(
         )
     assert caplog.records[-1].getMessage() == (
         "executor reconnecting: ExecutorControlError "
-        "request=unknown http=unknown code=none"
+        "request=unknown http=unknown code=none transport=none"
     )
     assert "Authorization" not in caplog.text
 

@@ -47,6 +47,7 @@ class ExecutorControlError(RuntimeError):
     status_code: int | None = None
     protocol_error: ProtocolError | None = None
     request_kind: str | None = None
+    transport_error: str | None = None
 
     def __str__(self) -> str:
         return self.message
@@ -80,18 +81,25 @@ class ExecutorControlClient:
     ) -> None:
         self._profile = profile
         self._owns_client = client is None
-        self._client = client or httpx.AsyncClient(
-            base_url=profile.control_url,
-            headers={"Authorization": f"Bearer {profile.credential}"},
+        self._client = client if client is not None else self._new_client()
+        self._refresh_needed = False
+        self._inflight: dict[httpx.AsyncClient, int] = {}
+        self._retired: set[httpx.AsyncClient] = set()
+
+    def _new_client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            base_url=self._profile.control_url,
+            headers={"Authorization": f"Bearer {self._profile.credential}"},
             follow_redirects=False,
             # Plain HTTP is valid only for loopback profiles; never let a
             # process-global HTTP_PROXY route that bearer off the machine.
-            trust_env=profile.control_url.lower().startswith("https://"),
+            trust_env=self._profile.control_url.lower().startswith("https://"),
         )
 
     async def aclose(self) -> None:
         if self._owns_client:
-            await self._client.aclose()
+            for client in (*self._retired, self._client):
+                await client.aclose()
 
     async def hello(
         self, message: ExecutorHelloRequest
@@ -155,18 +163,44 @@ class ExecutorControlClient:
         json: object,
         timeout: float,
     ) -> httpx.Response:
+        # HTTPX snapshots system proxy settings at client construction. Recreate
+        # the transport after a failure so sleep/network/proxy changes can recover.
+        if self._owns_client and self._refresh_needed:
+            old = self._client
+            self._client = self._new_client()
+            self._refresh_needed = False
+            self._retired.add(old)
+            if not self._inflight.get(old):
+                self._retired.remove(old)
+                await old.aclose()
+
+        client = self._client
+        self._inflight[client] = self._inflight.get(client, 0) + 1
         try:
-            response = await self._client.post(path, json=json, timeout=timeout)
-        except httpx.HTTPError as exc:
-            raise ExecutorControlError(
-                f"control request failed: {type(exc).__name__}",
-                request_kind=_REQUEST_KINDS.get(path),
-            ) from exc
-        if response.status_code < 400:
-            return response
-        raise replace(
-            _response_error(response), request_kind=_REQUEST_KINDS.get(path)
-        )
+            try:
+                response = await client.post(path, json=json, timeout=timeout)
+            except httpx.HTTPError as exc:
+                if self._owns_client and client is self._client:
+                    self._refresh_needed = True
+                raise ExecutorControlError(
+                    f"control request failed: {type(exc).__name__}",
+                    request_kind=_REQUEST_KINDS.get(path),
+                    transport_error=type(exc).__name__,
+                ) from exc
+            if response.status_code < 400:
+                return response
+            raise replace(
+                _response_error(response), request_kind=_REQUEST_KINDS.get(path)
+            )
+        finally:
+            count = self._inflight[client] - 1
+            if count:
+                self._inflight[client] = count
+            else:
+                self._inflight.pop(client)
+                if client in self._retired:
+                    self._retired.remove(client)
+                    await client.aclose()
 
 
 def _response_error(response: httpx.Response) -> ExecutorControlError:

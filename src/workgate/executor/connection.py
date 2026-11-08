@@ -763,8 +763,24 @@ class ExecutorConnection:
                             "validate",
                         }:
                             kind = "unknown"
+                        # Exception class is enough to distinguish proxy,
+                        # connect, and read failures without leaking request data.
+                        transport = control_error.transport_error
+                        if transport not in {
+                            "ConnectError",
+                            "ConnectTimeout",
+                            "ReadError",
+                            "ReadTimeout",
+                            "WriteError",
+                            "WriteTimeout",
+                            "PoolTimeout",
+                            "ProxyError",
+                            "RemoteProtocolError",
+                            "LocalProtocolError",
+                        }:
+                            transport = "none"
                         logger.warning(
-                            "executor reconnecting: %s request=%s http=%s code=%s",
+                            "executor reconnecting: %s request=%s http=%s code=%s transport=%s",
                             reason,
                             kind,
                             control_error.status_code
@@ -773,6 +789,7 @@ class ExecutorConnection:
                             control_error.code.value
                             if control_error.code
                             else "none",
+                            transport,
                         )
                 else:
                     logger.info("executor connecting")
