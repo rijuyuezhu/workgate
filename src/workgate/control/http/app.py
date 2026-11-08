@@ -19,6 +19,7 @@ from ...oauth.http.middleware import AuthMiddleware
 from ...persistence import FileStateStore
 from ...protocol.executor import EXECUTOR_TRANSFER_PREFIX
 from ...tools.catalog import ToolCatalog
+from ...ui.http.file_download import BrowserDownloadTickets
 from ..execution_context import ControlExecutionContextMiddleware
 from ..mcp.app import build_mcp
 from ..runtime import ControlRuntime, build_control_runtime
@@ -88,6 +89,7 @@ def build_http_app(
     )
 
     app.state.control_runtime = runtime
+    app.state.browser_download_tickets = BrowserDownloadTickets()
     install_error_handlers(app)
     core_routes, ui_routes, public_routes = control_http_routes(
         settings, runtime

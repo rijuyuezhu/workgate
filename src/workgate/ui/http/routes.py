@@ -33,6 +33,7 @@ from ..session import (
 from .audit import api_audit, api_audit_detail
 from .common import json_ok as _json_ok
 from .dashboard import api_dashboard, api_executor_resources
+from .file_download import api_file_download, api_file_download_ticket
 from .files import (
     api_file_action,
     api_file_content,
@@ -322,6 +323,11 @@ def human_ui_routes(
             api_ui_session_logout,
             methods=["POST"],
         ),
+        Route(
+            UI_API_PREFIX + "/files/download/{ticket}",
+            api_file_download,
+            methods=["GET"],
+        ),
     ]
     protected_routes: list[BaseRoute] = [
         Route(UI_API_PREFIX + "/bootstrap", api_bootstrap, methods=["GET"]),
@@ -352,6 +358,11 @@ def human_ui_routes(
         Route(UI_API_PREFIX + "/gui/state", api_gui_state, methods=["GET"]),
         Route(UI_API_PREFIX + "/gui/action", api_gui_action, methods=["POST"]),
         Route(UI_API_PREFIX + "/files", api_files, methods=["GET"]),
+        Route(
+            UI_API_PREFIX + "/files/download-ticket",
+            api_file_download_ticket,
+            methods=["POST"],
+        ),
         Route(
             UI_API_PREFIX + "/files/preview",
             api_file_preview,

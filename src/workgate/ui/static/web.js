@@ -185,6 +185,7 @@ void (async () => {
     fileUploadInput: document.getElementById("file-upload-input"),
     fileNew: document.getElementById("file-new"),
     fileOpen: document.getElementById("file-open"),
+    fileDownload: document.getElementById("file-download"),
     filePath: document.getElementById("file-path"),
     filePathForm: document.getElementById("file-path-form"),
     filePreviewBody: document.getElementById("file-preview-body"),
