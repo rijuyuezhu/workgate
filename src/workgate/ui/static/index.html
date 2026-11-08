@@ -3,9 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#111827">
   <title>Workgate WebUI</title>
+  <script src="__WORKGATE_UI_PATH__/assets/theme.js?v=__WORKGATE_UI_ASSET_REV__"></script>
   <link rel="stylesheet" href="__WORKGATE_UI_PATH__/assets/xterm.css?v=__WORKGATE_UI_ASSET_REV__">
   <link rel="stylesheet" href="__WORKGATE_UI_PATH__/assets/web.css?v=__WORKGATE_UI_ASSET_REV__">
 </head>
@@ -25,6 +26,14 @@
           <button class="nav-item" type="button" data-view="audit" aria-label="Audit" title="Audit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18V9M10 18V5M16 18v-7M22 18V3"/></svg><span>Audit</span></button>
       </nav>
       <div class="app-global-status">
+        <label class="appearance-control" for="appearance-mode">
+          <span>Theme</span>
+          <select id="appearance-mode" aria-label="Theme preference">
+            <option value="auto">Auto</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </label>
         <span id="connection-state" class="status status-idle">Connecting</span>
         <span class="app-version"><span id="version">—</span> <span id="auth-mode">—</span></span>
         <button id="sign-out" type="button" hidden>Sign out</button>
