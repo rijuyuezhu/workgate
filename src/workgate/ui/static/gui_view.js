@@ -1,4 +1,4 @@
-// Session-owned native GUI observation and explicitly armed one-shot input; no streaming or persistent frames.
+// Session-owned Desktop streaming and explicitly armed, one-use native GUI input.
 export function createGuiViewer({ request, onOpen = () => {} }) {
   const panel = document.getElementById("session-gui");
   const layout = panel.closest(".task-sessions-layout");
@@ -8,6 +8,7 @@ export function createGuiViewer({ request, onOpen = () => {} }) {
   const windows = document.getElementById("session-gui-windows");
   const load = document.getElementById("session-gui-load");
   const capture = document.getElementById("session-gui-capture");
+  const liveButton = document.getElementById("session-gui-live");
   const image = document.getElementById("session-gui-image");
   const manual = document.getElementById("session-gui-manual");
   const manualControls = document.getElementById("session-gui-manual-controls");
@@ -28,6 +29,127 @@ export function createGuiViewer({ request, onOpen = () => {} }) {
   let dragStart = null;
   let pointerAvailable = false;
   let pointerCapableWhileBusy = false;
+  let liveSocket = null;
+  let liveFrame = null;
+  let liveImageUrl = "";
+  let liveAttempt = 0;
+  let pendingAction = null;
+
+  function stopLive() {
+    liveAttempt++;
+    const socket = liveSocket;
+    liveSocket = null;
+    liveFrame = null;
+    setManual(false);
+    invalidateObservation();
+    if (pendingAction) {
+      pendingAction.reject(new Error("Desktop stream closed"));
+      pendingAction = null;
+    }
+    if (socket) {
+      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "stop" }));
+      socket.close();
+    }
+    if (liveImageUrl) URL.revokeObjectURL(liveImageUrl);
+    liveImageUrl = "";
+    liveButton.textContent = "Start live";
+    liveButton.disabled = !sessionId || !windows.value;
+  }
+
+  function applyStreamObservation(meta) {
+    if (!meta || typeof meta.state_id !== "string" || !/^[0-9a-f]{32}$/.test(meta.state_id)) return;
+    const bounds = meta.window?.bounds;
+    if (!Number.isSafeInteger(bounds?.width) || !Number.isSafeInteger(bounds?.height)
+      || bounds.width <= 0 || bounds.height <= 0) return;
+    observation = {
+      id: meta.state_id, width: bounds.width, height: bounds.height,
+      expires: performance.now() + Math.max(0, Number(meta.state_ttl_s || 0) * 1000 - 1500),
+    };
+    pointerAvailable = meta.capabilities?.coordinate_input === true;
+    pointerMode.disabled = !pointerAvailable;
+    scrollUp.disabled = !pointerAvailable;
+    scrollDown.disabled = !pointerAvailable;
+    manual.disabled = false;
+    state.textContent = pointerAvailable
+      ? "Live Desktop connected. Manual input requires explicit arming."
+      : "Live Desktop connected. Pointer input unavailable.";
+  }
+
+  async function startLive() {
+    if (liveSocket) { stopLive(); return; }
+    if (!sessionId || !windows.value || busy) return;
+    const attempt = ++liveAttempt;
+    const currentSession = sessionId;
+    const windowId = windows.value;
+    liveButton.disabled = true;
+    state.textContent = "Connecting Desktop stream…";
+    try {
+      const grant = await request("/gui/stream/start", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: currentSession, window_id: windowId }),
+      });
+      if (attempt !== liveAttempt || sessionId !== currentSession || windows.value !== windowId) return;
+      if (!/^stream_[A-Za-z0-9_-]{20,128}$/.test(grant.stream_id || "")
+        || !/^[A-Za-z0-9_-]{32,128}$/.test(grant.browser_token || "")) {
+        throw new Error("Invalid Desktop stream grant");
+      }
+      const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+      const socket = new WebSocket(`${scheme}//${location.host}/desktop-stream/${grant.stream_id}`,
+        ["workgate-ui-desktop", `workgate-desktop-token.${grant.browser_token}`]);
+      liveSocket = socket;
+      socket.binaryType = "arraybuffer";
+      socket.onopen = () => {
+        if (attempt !== liveAttempt) { socket.close(); return; }
+        socket.send(JSON.stringify({ type: "start" }));
+        liveButton.textContent = "Stop live";
+        liveButton.disabled = false;
+      };
+      socket.onmessage = (event) => {
+        if (attempt !== liveAttempt || socket !== liveSocket) return;
+        if (event.data instanceof ArrayBuffer) {
+          if (!liveFrame || event.data.byteLength > 131072) { stopLive(); return; }
+          const url = URL.createObjectURL(new Blob([event.data], { type: "image/jpeg" }));
+          if (liveImageUrl) URL.revokeObjectURL(liveImageUrl);
+          liveImageUrl = url;
+          image.src = url;
+          image.hidden = false;
+          applyStreamObservation(liveFrame);
+          liveFrame = null;
+          socket.send(JSON.stringify({ type: "ack" }));
+          return;
+        }
+        let message;
+        try { message = JSON.parse(event.data); } catch { stopLive(); return; }
+        if (message.type === "frame") liveFrame = message;
+        else if (message.type === "lease") applyStreamObservation(message);
+        else if (message.type === "action-result" && pendingAction) {
+          if (message.ok === true) pendingAction.resolve();
+          else pendingAction.reject(new Error("Desktop input was rejected"));
+          pendingAction = null;
+        } else if (message.type === "error") {
+          state.textContent = "Desktop stream unavailable; capture a frame to retry.";
+          stopLive();
+        }
+      };
+      socket.onclose = () => {
+        if (attempt !== liveAttempt || socket !== liveSocket) return;
+        stopLive();
+        invalidateObservation();
+        state.textContent = "Desktop stream disconnected. Capture or restart live.";
+      };
+      socket.onerror = () => {
+        if (attempt === liveAttempt) state.textContent = "Desktop stream connection failed.";
+      };
+    } catch (error) {
+      if (attempt === liveAttempt) {
+        stopLive();
+        state.textContent = error instanceof Error ? error.message : String(error);
+      }
+    } finally {
+      if (attempt === liveAttempt) liveButton.disabled = !sessionId || !windows.value;
+    }
+  }
+
 
   function setManual(enabled) {
     if (!enabled && manualEnabled) {
@@ -49,6 +171,7 @@ export function createGuiViewer({ request, onOpen = () => {} }) {
   function close() {
     layout.classList.remove("gui-open");
     panel.hidden = true;
+    stopLive();
     setManual(false);
     generation++;
     clearImage();
@@ -90,6 +213,7 @@ export function createGuiViewer({ request, onOpen = () => {} }) {
     windows.disabled = true;
     load.disabled = !sessionId;
     capture.disabled = true;
+    liveButton.disabled = true;
     manual.disabled = true;
     clearImage();
     state.textContent = sessionId
@@ -124,6 +248,7 @@ export function createGuiViewer({ request, onOpen = () => {} }) {
       }
       windows.disabled = windows.options.length < 2;
       capture.disabled = !windows.value;
+      liveButton.disabled = !windows.value;
       manual.disabled = !windows.value || (!observation && !manualEnabled);
       if (!windows.value) setManual(false);
       const count = windows.options.length - 1;
@@ -145,6 +270,10 @@ export function createGuiViewer({ request, onOpen = () => {} }) {
   async function captureWindow() {
     const id = windows.value;
     if (!sessionId || !id) return;
+    if (liveSocket?.readyState === WebSocket.OPEN) {
+      liveSocket.send(JSON.stringify({ type: "refresh" }));
+      return;
+    }
     const currentSession = sessionId;
     const revision = ++generation;
     capture.disabled = true;
@@ -241,9 +370,17 @@ export function createGuiViewer({ request, onOpen = () => {} }) {
     capture.disabled = true;
     state.textContent = "Sending manual input…";
     try {
-      await request("/gui/action", { method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: currentSession, window_id: currentWindow, state_id: id, action }) });
+      if (liveSocket?.readyState === WebSocket.OPEN) {
+        const socket = liveSocket;
+        await new Promise((resolve, reject) => {
+          pendingAction = { resolve, reject };
+          socket.send(JSON.stringify({ type: "action", state_id: id, action }));
+        });
+      } else {
+        await request("/gui/action", { method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: currentSession, window_id: currentWindow, state_id: id, action }) });
+      }
       if (revision !== generation || currentSession !== sessionId || currentWindow !== windows.value) return;
       await captureWindow();
     } catch (_error) {
@@ -334,11 +471,18 @@ export function createGuiViewer({ request, onOpen = () => {} }) {
       if (accepted) typed.value = "";
     });
     load.addEventListener("click", () => void loadWindows());
+    liveButton.addEventListener("click", () => void startLive());
+    document.addEventListener("visibilitychange", () => {
+      if (liveSocket?.readyState !== WebSocket.OPEN) return;
+      liveSocket.send(JSON.stringify({ type: document.hidden ? "pause" : "resume" }));
+    });
     capture.addEventListener("click", () => void captureWindow());
     windows.addEventListener("change", () => {
+      stopLive();
       generation++;
       clearImage();
       capture.disabled = !sessionId || !windows.value;
+      liveButton.disabled = !sessionId || !windows.value;
       setManual(false);
       manual.disabled = true;
       state.textContent = windows.value ? "Capture a fresh frame" : "Select a window";

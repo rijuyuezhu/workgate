@@ -436,3 +436,72 @@ async def test_gui_manual_stale_geometry_does_not_dispatch_input(
     )
     assert rejected.status_code != 200
     assert backend.actions == []
+
+
+@pytest.mark.asyncio
+async def test_desktop_stream_start_is_gui_scoped_and_session_window_bound(
+    tmp_path, monkeypatch
+):
+    """Browser stream grants never select a different Executor or unlisted window."""
+    from types import SimpleNamespace
+
+    client, harness, session_id = await _setup(tmp_path, monkeypatch)
+    calls = []
+
+    async def windows(name, args):
+        assert name == "gui_list" and args == {"session_id": session_id}
+        return {"windows": [{"id": "window-1", "title": "Test window"}]}
+
+    async def attach(executor_id, op, args, *, timeout_s, queue_timeout_s):
+        assert timeout_s == 15.0 and queue_timeout_s == 10.0
+        calls.append((executor_id, op, args))
+        assert executor_id == harness.executor_id
+        assert op == "gui.stream.attach"
+        return SimpleNamespace(
+            ok=True, result={"stream_id": args["stream_id"], "connected": True}
+        )
+
+    monkeypatch.setattr(
+        harness.control.session_coordinator, "call_session_tool", windows
+    )
+    monkeypatch.setattr(harness.control.executor_transport, "call", attach)
+    url = "/api/ui/gui/stream/start"
+    body = {"session_id": session_id, "window_id": "window-1"}
+    assert (
+        client.post(
+            url, json=body, headers=_headers(SCOPE_SHELL_READ)
+        ).status_code
+        == 403
+    )
+    assert client.post(url, json=body).status_code == 401
+    assert (
+        client.post(
+            url,
+            json={**body, "window_id": "other"},
+            headers=_headers(SCOPE_GUI_USE),
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            url,
+            json={**body, "session_id": "missing"},
+            headers=_headers(SCOPE_GUI_USE),
+        ).status_code
+        == 400
+    )
+    assert not calls
+    response = client.post(url, json=body, headers=_headers(SCOPE_GUI_USE))
+    assert response.status_code == 200, response.text
+    assert response.headers["Cache-Control"] == "no-store"
+    grant = response.json()["data"]
+    assert grant["mode"] == "desktop-jpeg"
+    assert grant["stream_id"].startswith("stream_")
+    assert len(grant["browser_token"]) >= 40
+    assert len(calls) == 1
+    assert calls[0][2]["session_id"] == session_id
+    assert calls[0][2]["window_id"] == "window-1"
+    assert (
+        harness.control.desktop_stream_hub.expected_executor(grant["stream_id"])
+        == harness.executor_id
+    )

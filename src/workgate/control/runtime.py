@@ -15,6 +15,7 @@ from ..jobs.managed import (
 )
 from ..oauth.core.state import OAuthState, build_oauth_state
 from ..persistence import FileStateStore
+from ..protocol.desktop import DESKTOP_MAX_FRAME_BYTES, DESKTOP_MAX_STREAMS
 from ..tools.catalog import ToolCatalog
 from ..ui.http.live_state import HumanUiRuntime, build_human_ui_runtime
 from .agent_bridge import ControlAgentBridgeService
@@ -74,6 +75,8 @@ class ControlRuntime:
     """Control-owned managed background-job tasks, handlers, and leases."""
     stream_hub: ControlStreamHub
     """Process-local terminal stream rendezvous and live relay state."""
+    desktop_stream_hub: ControlStreamHub
+    """Separate bounded Desktop WebSocket rendezvous, never a PTY stream."""
     human_ui_runtime: HumanUiRuntime
     """Control-owned WebUI connection admission state."""
     oauth_state: OAuthState
@@ -114,6 +117,8 @@ class ControlRuntime:
         except BaseException:
             with suppress(BaseException):
                 await self.stream_hub.aclose()
+            with suppress(BaseException):
+                await self.desktop_stream_hub.aclose()
             if human_ui_started:
                 with suppress(BaseException):
                     await self.human_ui_runtime.aclose()
@@ -209,6 +214,7 @@ class ControlRuntime:
 
         await close_async(self.managed_jobs_runtime.aclose)
         await close_async(self.stream_hub.aclose)
+        await close_async(self.desktop_stream_hub.aclose)
         await close_async(self.human_ui_runtime.aclose)
         await close_async(self.oauth_state.aclose)
         await close_async(self.session_copy_service.aclose)
@@ -344,8 +350,18 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         ),
         release_slot=human_ui_runtime.terminal_connections.release,
     )
+    desktop_stream_hub = ControlStreamHub(
+        max_streams=DESKTOP_MAX_STREAMS,
+        idle_timeout_s=120.0,
+        max_frame_bytes=DESKTOP_MAX_FRAME_BYTES,
+    )
+
+    async def close_invalidated_executor_streams(executor_id: str) -> None:
+        await stream_hub.close_executor(executor_id)
+        await desktop_stream_hub.close_executor(executor_id)
+
     executor_transport.set_executor_invalidated_callback(
-        stream_hub.close_executor
+        close_invalidated_executor_streams
     )
     oauth_state = build_oauth_state(config.state_dir, state_store=state_store)
     agent_bridge = ControlAgentBridgeService(config, session_coordinator)
@@ -366,6 +382,7 @@ def build_control_runtime(settings: Settings) -> ControlRuntime:
         audit_service=audit_service,
         managed_jobs_runtime=managed_jobs_runtime,
         stream_hub=stream_hub,
+        desktop_stream_hub=desktop_stream_hub,
         human_ui_runtime=human_ui_runtime,
         oauth_state=oauth_state,
         agent_bridge=agent_bridge,

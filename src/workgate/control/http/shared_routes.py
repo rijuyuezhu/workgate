@@ -12,7 +12,7 @@ from .config_inspection import config_inspection_routes
 from .executor_admin import executor_admin_routes
 from .executor_routes import executor_routes
 from .integration_oauth import browser_mcp_oauth_routes
-from .stream_routes import terminal_stream_routes
+from .stream_routes import desktop_stream_routes, terminal_stream_routes
 
 
 def control_http_routes(
@@ -31,6 +31,9 @@ def control_http_routes(
                 *runtime.transfer_gateway.routes(),
                 *terminal_stream_routes(
                     runtime.executor_transport, runtime.stream_hub
+                ),
+                *desktop_stream_routes(
+                    runtime.executor_transport, runtime.desktop_stream_hub
                 ),
             ]
         )
