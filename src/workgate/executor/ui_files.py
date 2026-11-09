@@ -4,6 +4,7 @@ import base64
 import binascii
 import contextlib
 import errno
+import hashlib
 import mimetypes
 import os
 import shutil
@@ -481,6 +482,66 @@ class UiFilesService:
                 raise
         return {"path": self._display(destination), "bytes": len(data)}
 
+    @staticmethod
+    def _download_identity(info: os.stat_result) -> list[int]:
+        return [
+            info.st_dev,
+            info.st_ino,
+            info.st_size,
+            info.st_mtime_ns,
+            info.st_ctime_ns,
+        ]
+
+    def download_info(self, path: str) -> dict[str, Any]:
+        """Describe a regular file without reading it into the Executor RPC."""
+        resolved = self._resolve(path, must_exist=True)
+        info = resolved.stat()
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("Only regular files can be downloaded")
+        return {
+            "path": self._display(resolved),
+            "name": resolved.name,
+            "size": info.st_size,
+            "identity": self._download_identity(info),
+        }
+
+    def download_chunk(
+        self, path: str, identity: list[int], offset: int, length: int
+    ) -> dict[str, Any]:
+        """Return only one bounded binary chunk of an unchanged source file."""
+        if not 0 <= length <= 256 * 1024:
+            raise ValueError("Download chunk exceeds 256 KiB")
+        resolved = self._resolve(path, must_exist=True)
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        flags |= getattr(os, "O_BINARY", 0)
+        fd = os.open(resolved, flags)
+        with os.fdopen(fd, "rb") as handle:
+            before = os.fstat(handle.fileno())
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or self._download_identity(before) != identity
+                or offset < 0
+                or offset + length > before.st_size
+            ):
+                raise ValueError(
+                    "Downloaded file changed since ticket issuance"
+                )
+            handle.seek(offset)
+            data = handle.read(length)
+            after = os.fstat(handle.fileno())
+            if (
+                len(data) != length
+                or self._download_identity(after) != identity
+                or self._download_identity(resolved.stat()) != identity
+            ):
+                raise ValueError("Downloaded file changed during streaming")
+        return {
+            "offset": offset,
+            "bytes": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "data_base64": base64.b64encode(data).decode("ascii"),
+        }
+
     def mkdir(self, path: str) -> dict[str, Any]:
         resolved = self._ensure_mutable(path, follow_final_symlink=False)
         with path_locks([resolved]):
@@ -511,6 +572,15 @@ class UiFilesService:
                 content,
                 bool(args.get("overwrite", True)),
                 None if expected is None else str(expected),
+            )
+        if op == "ui.files.download.info":
+            return self.download_info(str(args["path"]))
+        if op == "ui.files.download.chunk":
+            return self.download_chunk(
+                str(args["path"]),
+                list(args["identity"]),
+                int(args["offset"]),
+                int(args["length"]),
             )
         if op == "ui.files.upload":
             data_base64 = args.get("data_base64")

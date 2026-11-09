@@ -222,6 +222,7 @@ export function createFilesController({
     elements.filePaste.disabled = unavailable || controllerState.fileMutationBusy || !controllerState.fileClipboard ||
       !controllerState.fileMutations[controllerState.fileClipboard.mode];
     elements.fileOpen.disabled = unavailable || controllerState.fileMutationBusy || !entry || entry.type !== "dir";
+    elements.fileDownload.disabled = unavailable || controllerState.fileMutationBusy || !entry || entry.type !== "file";
     elements.fileEdit.disabled =
       unavailable || controllerState.fileMutationBusy || !controllerState.fileMutations.write || !entry || entry.type !== "file";
     elements.fileCopy.disabled = unavailable || controllerState.fileMutationBusy || !controllerState.fileMutations.copy || !entry;
@@ -660,6 +661,32 @@ export function createFilesController({
     }
   }
 
+  async function downloadSelectedFile() {
+    const entry = currentFileEntry();
+    if (controllerState.fileMutationBusy || !fileExecutorOnline() || entry?.type !== "file") return;
+    const executorId = controllerState.fileExecutorId;
+    elements.fileDownload.disabled = true;
+    try {
+      const result = await request("/files/download-ticket", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ executor_id: executorId, path: entry.path }),
+      });
+      if (!result.url?.startsWith("/api/ui/files/download/")) throw new Error("Invalid download URL");
+      const link = document.createElement("a");
+      link.href = result.url;
+      link.download = entry.name;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      elements.fileState.textContent = `Downloading ${entry.name}`;
+    } catch (error) {
+      elements.fileState.textContent = `Download failed: ${error instanceof Error ? error.message : String(error)}`;
+    } finally {
+      setFileControls();
+    }
+  }
+
   async function deleteSelectedFile() {
     const entry = currentFileEntry();
     if (!entry) return;
@@ -742,6 +769,7 @@ export function createFilesController({
   elements.fileUpload.addEventListener("click", () => elements.fileUploadInput.click());
   elements.fileUploadInput.addEventListener("change", () => void uploadSelectedFiles());
   elements.fileOpen.addEventListener("click", openSelectedFile);
+  elements.fileDownload.addEventListener("click", () => void downloadSelectedFile());
   elements.fileEdit.addEventListener("click", () => void openFileEditor());
   elements.fileCopy.addEventListener("click", () => stageFileClipboard("copy"));
   elements.fileMove.addEventListener("click", () => stageFileClipboard("move"));

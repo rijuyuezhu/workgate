@@ -33,6 +33,11 @@ from ..session import (
 from .audit import api_audit, api_audit_detail
 from .common import json_ok as _json_ok
 from .dashboard import api_dashboard, api_executor_resources
+from .file_download import (
+    BrowserDownloadTickets,
+    api_file_download,
+    api_file_download_ticket,
+)
 from .files import (
     api_file_action,
     api_file_content,
@@ -293,6 +298,11 @@ async def api_bootstrap(request: Request) -> Response:
     )
 
 
+def initialize_ui_browser_transfer_state(app: Any) -> None:
+    """Keep UI transfer capabilities owned by their HTTP app instance."""
+    app.state.browser_download_tickets = BrowserDownloadTickets()
+
+
 def human_ui_routes(
     settings: ControlConfig,
 ) -> tuple[list[BaseRoute], list[BaseRoute]]:
@@ -321,6 +331,11 @@ def human_ui_routes(
             UI_API_PREFIX + "/session/logout",
             api_ui_session_logout,
             methods=["POST"],
+        ),
+        Route(
+            UI_API_PREFIX + "/files/download/{ticket}",
+            api_file_download,
+            methods=["GET"],
         ),
     ]
     protected_routes: list[BaseRoute] = [
@@ -352,6 +367,11 @@ def human_ui_routes(
         Route(UI_API_PREFIX + "/gui/state", api_gui_state, methods=["GET"]),
         Route(UI_API_PREFIX + "/gui/action", api_gui_action, methods=["POST"]),
         Route(UI_API_PREFIX + "/files", api_files, methods=["GET"]),
+        Route(
+            UI_API_PREFIX + "/files/download-ticket",
+            api_file_download_ticket,
+            methods=["POST"],
+        ),
         Route(
             UI_API_PREFIX + "/files/preview",
             api_file_preview,

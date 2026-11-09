@@ -1107,3 +1107,30 @@ def test_browser_webui_auto_light_dark_theme(
     page.emulate_media(color_scheme="light")
     assert colors() == light_colors
     browser_harness.assert_clean_browser()
+
+
+def test_browser_file_download_streaming(
+    browser_harness: BrowserHarness,
+) -> None:
+    """Authenticated UI downloads a remote binary without in-browser base64."""
+    browser_harness.login()
+    browser_harness.wait_executor_online()
+    workspace = browser_harness.executor_workspace
+    original = bytes(range(256)) * 12289 + b"finished"
+    source = workspace / "stream-download.bin"
+    source.write_bytes(original)
+    page = browser_harness.page
+    browser_harness.navigate("files")
+    page.locator("#file-refresh").click()
+    entry = page.locator('#file-list .file-entry[title="stream-download.bin"]')
+    expect(entry).to_be_visible()
+    entry.click()
+    expect(page.locator("#file-download")).to_be_enabled()
+    with page.expect_download() as result:
+        page.locator("#file-download").click()
+    download = result.value
+    assert download.suggested_filename == "stream-download.bin"
+    path = browser_harness.artifacts / "stream-download.bin"
+    download.save_as(path)
+    assert path.read_bytes() == original
+    browser_harness.assert_clean_browser()
