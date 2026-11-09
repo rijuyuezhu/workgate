@@ -24,11 +24,21 @@ def pinned_sources(lock_file: Path) -> list[tuple[str, str, str]]:
         package
         for package in lock["package"]
         if package["name"] == "cryptography"
-        and package["version"] == CRYPTOGRAPHY_VERSION
     ]
-    if len(packages) != 1:
+    if not packages or {p["version"] for p in packages} != {
+        CRYPTOGRAPHY_VERSION
+    }:
         raise ValueError("expected one pinned cryptography version in uv.lock")
-    source = packages[0]["sdist"]
+    registry = [
+        package
+        for package in packages
+        if package.get("source") == {"registry": "https://pypi.org/simple"}
+    ]
+    if len(registry) != 1:
+        raise ValueError(
+            "expected one pinned PyPI cryptography source in uv.lock"
+        )
+    source = registry[0]["sdist"]
     if not source["url"].startswith("https://files.pythonhosted.org/"):
         raise ValueError("unexpected cryptography source host")
     if not source["hash"].startswith("sha256:"):
