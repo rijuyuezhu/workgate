@@ -19,6 +19,7 @@ export function createFilesController({
     fileEditorPath: "",
     fileEditorSha256: "",
     fileMutationBusy: false,
+    uploadCancelled: false,
     fileClipboard: null,
     fileDialogAction: "",
     fileSortDescending: false,
@@ -619,44 +620,70 @@ export function createFilesController({
     showFileDialog("paste", clipboard.mode === "copy" ? "Paste copy" : "Move here", splitFilePath(clipboard.path).name);
   }
 
-  function uploadFileBytes(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || "").split(",", 2)[1] || "");
-      reader.onerror = () => reject(reader.error || new Error("Unable to read local file"));
-      reader.readAsDataURL(file);
+  async function uploadFileStream(file, destination) {
+    const target = joinFilePath(destination, file.name);
+    const started = await request("/files/upload/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ executor_id: controllerState.fileExecutorId, path: target, size: file.size }),
     });
+    const token = started.token;
+    if (typeof token !== "string" || !token || started.chunk_bytes !== 262144) {
+      throw new Error("Invalid upload transaction");
+    }
+    const endpoint = `/files/upload/${encodeURIComponent(token)}`;
+    let committed = false;
+    try {
+      for (let offset = 0; offset < file.size; offset += started.chunk_bytes) {
+        if (controllerState.uploadCancelled) throw new Error("Upload cancelled");
+        const end = Math.min(file.size, offset + started.chunk_bytes);
+        const result = await request(`${endpoint}/chunk`, {
+          method: "PUT",
+          headers: { "X-Workgate-Upload-Offset": String(offset) },
+          body: file.slice(offset, end),
+        });
+        if (result.offset !== end) throw new Error("Upload acknowledgement mismatch");
+        elements.fileState.textContent = `Uploading ${file.name}: ${Math.round(100 * end / file.size)}%`;
+      }
+      if (controllerState.uploadCancelled) throw new Error("Upload cancelled");
+      await request(`${endpoint}/finish`, { method: "POST" });
+      committed = true;
+    } finally {
+      if (!committed) {
+        try { await request(`${endpoint}/abort`, { method: "POST" }); } catch { /* Executor may be offline. */ }
+      }
+    }
   }
 
   async function uploadSelectedFiles() {
     const files = Array.from(elements.fileUploadInput.files || []);
     elements.fileUploadInput.value = "";
     if (!files.length || controllerState.fileMutationBusy) return;
-    if (files.length > 8 || files.some((file) => file.size > 2_000_000 || !validFileName(file.name))) {
-      elements.fileState.textContent = "Upload up to 8 files, at most 2 MB each, with valid names.";
+    if (files.length > 8 || files.some((file) => file.size > 8 * 1024 ** 3 || !validFileName(file.name))) {
+      elements.fileState.textContent = "Upload up to 8 files, at most 8 GiB each, with valid names.";
       return;
     }
     const destination = controllerState.filePath;
+    controllerState.uploadCancelled = false;
+    elements.fileUploadCancel.hidden = false;
+    elements.fileUploadCancel.disabled = false;
     setFileMutationBusy(true);
     try {
       for (const file of files) {
+        if (controllerState.uploadCancelled) throw new Error("Upload cancelled");
         elements.fileState.textContent = `Uploading ${file.name}`;
-        await fileAction("upload", {
-          path: joinFilePath(destination, file.name),
-          data_base64: await uploadFileBytes(file),
-        });
+        await uploadFileStream(file, destination);
       }
       controllerState.selectedFilePath = joinFilePath(destination, files[files.length - 1].name);
       await refreshFiles({ previewSelection: true });
       elements.fileState.textContent = `Uploaded ${files.length} file(s)`;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      try {
-        await refreshFiles();
-      } finally {
-        elements.fileState.textContent = `Upload failed: ${message}`;
-      }
+      try { await refreshFiles(); }
+      finally { elements.fileState.textContent = `Upload failed: ${message}`; }
     } finally {
+      elements.fileUploadCancel.hidden = true;
+      controllerState.uploadCancelled = false;
       setFileMutationBusy(false);
     }
   }
@@ -768,6 +795,11 @@ export function createFilesController({
   elements.fileNewFolder.addEventListener("click", () => showFileDialog("new-folder", "New folder", ""));
   elements.fileUpload.addEventListener("click", () => elements.fileUploadInput.click());
   elements.fileUploadInput.addEventListener("change", () => void uploadSelectedFiles());
+  elements.fileUploadCancel.addEventListener("click", () => {
+    controllerState.uploadCancelled = true;
+    elements.fileUploadCancel.disabled = true;
+    elements.fileState.textContent = "Cancelling upload…";
+  });
   elements.fileOpen.addEventListener("click", openSelectedFile);
   elements.fileDownload.addEventListener("click", () => void downloadSelectedFile());
   elements.fileEdit.addEventListener("click", () => void openFileEditor());

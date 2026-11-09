@@ -344,7 +344,10 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert 'stageFileClipboard("move")' in files_script.text
     assert "fileAction(clipboard.mode" in files_script.text
     assert 'fileAction("rename"' in files_script.text
-    assert 'fileAction("upload"' in files_script.text
+    assert 'request("/files/upload/start"' in files_script.text
+    assert "request(`${endpoint}/chunk`" in files_script.text
+    assert "request(`${endpoint}/finish`" in files_script.text
+    assert "request(`${endpoint}/abort`" in files_script.text
     protected = client.get("/api/ui/bootstrap")
     assert protected.status_code == 401
 

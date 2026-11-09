@@ -182,6 +182,7 @@ void (async () => {
     fileSort: document.getElementById("file-sort"),
     fileSortDirection: document.getElementById("file-sort-direction"),
     fileUpload: document.getElementById("file-upload"),
+    fileUploadCancel: document.getElementById("file-upload-cancel"),
     fileUploadInput: document.getElementById("file-upload-input"),
     fileNew: document.getElementById("file-new"),
     fileOpen: document.getElementById("file-open"),
