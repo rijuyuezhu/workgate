@@ -31,7 +31,7 @@ For settings and defaults, consult the [Configuration reference](../reference/co
 
 ## Use a desktop
 
-With an active session on a graphical Executor, choose **Open GUI** from that session. Choose a window, capture a frame and enable manual input if needed.
+With an active session on a graphical Executor, choose **Open GUI**, then select a window. Use **Start live** for a bounded JPEG Desktop stream; **Stop live** ends it. The browser pauses the stream while its tab is hidden. Wayland captures refresh on request or after explicit input to avoid repeatedly stealing focus; **Capture frame** also remains available for one-shot observation. To send manual input, explicitly choose **Enter manual mode**; each action needs a fresh, short-lived observation.
 
 GUI tools require the host OS's desktop permissions. See [Executors](executors.md).
 

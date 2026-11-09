@@ -485,6 +485,92 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
         assert actions[-1]["action"] == {"type": "key", "keys": "Up"}
         page.locator("#session-gui-manual").click()
         expect(frame).to_have_attribute("tabindex", "-1")
+        # Native Desktop stream: browser token, JPEG binary frames, scoped input,
+        # stop lifecycle and original one-shot REST fallback in real Chromium.
+        jpeg_buffer = io.BytesIO()
+        Image.new("RGB", (80, 50), "#aabbcc").save(jpeg_buffer, format="JPEG")
+        jpeg_data = base64.b64encode(jpeg_buffer.getvalue()).decode()
+        page.route(
+            "**/api/ui/gui/stream/start",
+            lambda route: route.fulfill(
+                json={
+                    "ok": True,
+                    "data": {
+                        "stream_id": "stream_" + "x" * 36,
+                        "browser_token": "y" * 48,
+                        "mode": "desktop-jpeg",
+                    },
+                }
+            ),
+        )
+        page.evaluate(
+            """(jpeg) => {
+                window.fakeDesktopSent = [];
+                window.fakeDesktopActions = [];
+                window.fakeDesktopClosed = false;
+                const raw = atob(jpeg);
+                const frame = Uint8Array.from(raw, x => x.charCodeAt(0)).buffer;
+                window.WebSocket = class FakeDesktopSocket {
+                    static OPEN = 1;
+                    constructor(url, protocols) {
+                        if (!url.endsWith('/desktop-stream/' + 'stream_' + 'x'.repeat(36))) throw Error('wrong url');
+                        if (protocols[0] !== 'workgate-ui-desktop') throw Error('wrong protocol');
+                        if (protocols[1] !== 'workgate-desktop-token.' + 'y'.repeat(48)) throw Error('wrong token');
+                        this.readyState = 0;
+                        this.rev = 0;
+                        setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 0);
+                    }
+                    send(data) {
+                        const msg = JSON.parse(data);
+                        window.fakeDesktopSent.push(msg);
+                        if (msg.type === 'action') {
+                            window.fakeDesktopActions.push(msg);
+                            this.onmessage?.({data: JSON.stringify({type:'action-result', ok:true})});
+                            return;
+                        }
+                        if (msg.type === 'start' || msg.type === 'refresh') {
+                            this.rev++;
+                            const metadata = {
+                                type: msg.type === 'start' ? 'frame' : 'lease',
+                                state_id: this.rev.toString(16).padStart(32, '0'),
+                                state_ttl_s: 30,
+                                window: {bounds: {x:0,y:0,width:80,height:50}},
+                                capabilities: {coordinate_input:true},
+                            };
+                            this.onmessage?.({data: JSON.stringify(metadata)});
+                            if (msg.type === 'start') this.onmessage?.({data: frame});
+                        }
+                    }
+                    close() { this.readyState = 3; window.fakeDesktopClosed = true; this.onclose?.(); }
+                };
+            }""",
+            jpeg_data,
+        )
+        count_before_stream = len(actions)
+        page.locator("#session-gui-live").click()
+        expect(page.locator("#session-gui-live")).to_have_text("Stop live")
+        expect(page.locator("#session-gui-state")).to_contain_text(
+            "Live Desktop connected"
+        )
+        expect(page.locator("#session-gui-image")).to_be_visible()
+        page.locator("#session-gui-manual").click()
+        page.locator("#session-gui-focus").click()
+        expect(page.locator("#session-gui-state")).to_contain_text(
+            "Live Desktop connected"
+        )
+        assert page.evaluate("window.fakeDesktopActions.length") == 1
+        assert (
+            page.evaluate("window.fakeDesktopActions[0].action.type") == "focus"
+        )
+        assert (
+            len(actions) == count_before_stream
+        )  # No per-action REST tool call.
+        page.locator("#session-gui-live").click()
+        expect(page.locator("#session-gui-live")).to_have_text("Start live")
+        assert page.evaluate("window.fakeDesktopClosed === true")
+        assert page.evaluate(
+            "window.fakeDesktopSent.some(x => x.type === 'stop')"
+        )
         page.locator("#session-gui-back").click()
         expect(page.locator("#session-gui")).to_be_hidden()
         expect(page.locator(".session-audit")).to_be_visible()

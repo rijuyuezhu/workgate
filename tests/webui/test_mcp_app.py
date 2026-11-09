@@ -59,6 +59,7 @@ def _runtime_stub(settings: Settings, tool_catalog: object | None = None):
         session_coordinator=session_coordinator,
         transfer_gateway=SimpleNamespace(routes=lambda: []),
         stream_hub=object(),
+        desktop_stream_hub=object(),
     )
 
 

@@ -114,6 +114,9 @@ class ExecutorRuntime:
     _terminal_stream_tasks: set[asyncio.Task[None]] = field(
         default_factory=set, init=False, repr=False
     )
+    _desktop_stream_tasks: set[asyncio.Task[None]] = field(
+        default_factory=set, init=False, repr=False
+    )
     _profile_lock: ExitStack | None = field(
         default=None, init=False, repr=False
     )
@@ -185,7 +188,11 @@ class ExecutorRuntime:
             raise RuntimeError(
                 "source cutover requires a running Executor connection"
             )
-        if connection.active_command_count or self._terminal_stream_tasks:
+        if (
+            connection.active_command_count
+            or self._terminal_stream_tasks
+            or self._desktop_stream_tasks
+        ):
             raise SourceCutoverDeferred(
                 "source cutover deferred: commands or terminal streams active"
             )
@@ -237,7 +244,11 @@ class ExecutorRuntime:
             )
 
         # Recheck work that could have changed during the inventory snapshot.
-        if connection.active_command_count or self._terminal_stream_tasks:
+        if (
+            connection.active_command_count
+            or self._terminal_stream_tasks
+            or self._desktop_stream_tasks
+        ):
             raise SourceCutoverDeferred(
                 "source cutover deferred: commands or terminal streams active"
             )
@@ -535,6 +546,51 @@ class ExecutorRuntime:
         self, command: ExecutorCommand
     ):
         """Adapt executor protocol envelopes to owned operation services."""
+        if command.op == "gui.stream.attach":
+            if command.session_id is not None:
+                raise ValueError(
+                    "gui.stream.attach is an internal sessionless command"
+                )
+            profile_store = self.profile_store
+            profile = None if profile_store is None else profile_store.load()
+            if profile is None:
+                raise RuntimeError("Desktop stream requires a paired Executor")
+            stream_id = _peer_arg(command.args, "stream_id", str)
+            session_id = _peer_arg(command.args, "session_id", str)
+            window_id = _peer_arg(command.args, "window_id", str)
+            if (
+                not 0 < len(session_id) <= 128
+                or not 0 < len(window_id.encode("utf-8")) <= 1024
+            ):
+                raise ValueError(
+                    "Desktop session or window identifier is invalid"
+                )
+            from .gui.stream import connect_executor_desktop_stream
+            from .tool_session.lifecycle import session_lifecycle_lock
+
+            async with session_lifecycle_lock(session_id):
+                windows = await self.gui.list_windows(session_id)
+                if not any(
+                    isinstance(window, dict)
+                    and str(window.get("id")) == window_id
+                    for window in windows["windows"]
+                ):
+                    raise ValueError("Selected Desktop window is unavailable")
+            stream = await connect_executor_desktop_stream(
+                profile,
+                self.gui,
+                stream_id=stream_id,
+                session_id=session_id,
+                window_id=window_id,
+            )
+            task = asyncio.create_task(stream.run())
+            self._desktop_stream_tasks.add(task)
+            task.add_done_callback(
+                lambda done: self._desktop_stream_done(
+                    done, stream_id=stream.stream_id
+                )
+            )
+            return {"stream_id": stream.stream_id, "connected": True}
         if command.op == "terminal.attach":
             if command.session_id is not None:
                 raise ValueError("terminal.attach must not carry session_id")
@@ -875,6 +931,18 @@ class ExecutorRuntime:
                 type(error).__name__,
             )
 
+    def _desktop_stream_done(
+        self, task: asyncio.Task[None], *, stream_id: str
+    ) -> None:
+        self._desktop_stream_tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.warning(
+                "Desktop stream %s failed (%s)", stream_id, type(error).__name__
+            )
+
     async def aclose(self) -> None:
         """Close executor-owned live resources; failed cleanup remains retryable."""
         connection = self.connection
@@ -887,8 +955,11 @@ class ExecutorRuntime:
             if connection is not None:
                 await connection.aclose()
         finally:
-            stream_tasks = tuple(self._terminal_stream_tasks)
+            stream_tasks = tuple(
+                self._terminal_stream_tasks | self._desktop_stream_tasks
+            )
             self._terminal_stream_tasks.clear()
+            self._desktop_stream_tasks.clear()
             for task in stream_tasks:
                 task.cancel()
             if stream_tasks:

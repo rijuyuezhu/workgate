@@ -70,6 +70,87 @@ def _error(exc: Exception) -> JSONResponse:
     return response
 
 
+async def api_gui_stream_start(request: Request) -> Response:
+    """Start one authenticated Desktop stream for a selected session/window."""
+    runtime = _authorized_runtime(request)
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Desktop stream request must be a JSON object")
+        session_id = bounded_text(
+            body.get("session_id"),
+            field="session_id",
+            max_bytes=128,
+            allow_empty=False,
+        )
+        window_id = bounded_text(
+            body.get("window_id"),
+            field="window_id",
+            max_bytes=1024,
+            allow_empty=False,
+        )
+        record = runtime.control_state.snapshot_sessions().get(session_id)
+        if record is None or str(record.status) != "active":
+            raise ValueError(
+                "Desktop stream requires an active execution session"
+            )
+        executor_id = str(record.executor_id)
+        windows = await runtime.session_coordinator.call_session_tool(
+            "gui_list", {"session_id": session_id}
+        )
+        if (
+            not isinstance(windows, dict)
+            or not isinstance(windows.get("windows"), list)
+            or not any(
+                isinstance(window, dict) and str(window.get("id")) == window_id
+                for window in windows["windows"]
+            )
+        ):
+            raise ValueError("Desktop stream window is unavailable")
+        grant = await runtime.desktop_stream_hub.create(executor_id)
+        try:
+            result = await runtime.executor_transport.call(
+                executor_id,
+                "gui.stream.attach",
+                {
+                    "stream_id": grant.stream_id,
+                    "session_id": session_id,
+                    "window_id": window_id,
+                },
+                timeout_s=15.0,
+                queue_timeout_s=10.0,
+            )
+            if (
+                not result.ok
+                or not isinstance(result.result, dict)
+                or result.result.get("stream_id") != grant.stream_id
+                or result.result.get("connected") is not True
+            ):
+                raise RuntimeError("Executor rejected Desktop stream attach")
+            expires_at = await runtime.desktop_stream_hub.browser_expires_at(
+                grant.stream_id
+            )
+            if expires_at is None:
+                raise RuntimeError(
+                    "Desktop stream expired before browser attach"
+                )
+        except BaseException:
+            await runtime.desktop_stream_hub.cancel(grant.stream_id)
+            raise
+        return _ok(
+            {
+                "stream_id": grant.stream_id,
+                "browser_token": grant.browser_token,
+                "expires_at": expires_at,
+                "mode": "desktop-jpeg",
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return _error(exc)
+
+
 async def api_gui_windows(request: Request) -> Response:
     """Enumerate GUI windows only on the explicitly selected active session."""
     try:

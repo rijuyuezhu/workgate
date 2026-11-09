@@ -51,7 +51,12 @@ from .files import (
     api_file_preview,
     api_files,
 )
-from .gui import api_gui_action, api_gui_state, api_gui_windows
+from .gui import (
+    api_gui_action,
+    api_gui_state,
+    api_gui_stream_start,
+    api_gui_windows,
+)
 from .session import (
     api_ui_session_logout,
     api_ui_session_oauth,
@@ -91,6 +96,7 @@ def _ui_asset_revision() -> str:
         "mobile_navigation.js",
         "terminal.js",
         "files.js",
+        "gui_view.js",
     ):
         digest.update(name.encode("utf-8"))
         digest.update(b"\0")
@@ -372,6 +378,11 @@ def human_ui_routes(
             methods=["POST"],
         ),
         Route(UI_API_PREFIX + "/gui/windows", api_gui_windows, methods=["GET"]),
+        Route(
+            UI_API_PREFIX + "/gui/stream/start",
+            api_gui_stream_start,
+            methods=["POST"],
+        ),
         Route(UI_API_PREFIX + "/gui/state", api_gui_state, methods=["GET"]),
         Route(UI_API_PREFIX + "/gui/action", api_gui_action, methods=["POST"]),
         Route(UI_API_PREFIX + "/files", api_files, methods=["GET"]),

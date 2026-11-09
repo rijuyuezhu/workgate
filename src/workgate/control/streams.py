@@ -64,11 +64,13 @@ class ControlStreamHub:
         *,
         max_streams: int,
         idle_timeout_s: float,
+        max_frame_bytes: int = TERMINAL_STREAM_MAX_FRAME_BYTES,
         browser_token_ttl_s: float = _BROWSER_TOKEN_TTL_S,
         reserve_slot: Callable[[], int | None] | None = None,
         release_slot: Callable[[int], None] | None = None,
     ) -> None:
         self._max_streams = max(1, int(max_streams))
+        self._max_frame_bytes = max(1024, int(max_frame_bytes))
         self._idle_timeout_s = max(0.0, float(idle_timeout_s))
         self._browser_token_ttl_s = max(0.001, float(browser_token_ttl_s))
         self._reserve_slot = reserve_slot
@@ -320,14 +322,14 @@ class ControlStreamHub:
             if raw is not None:
                 data = bytes(raw)
 
-                if len(data) > TERMINAL_STREAM_MAX_FRAME_BYTES:
+                if len(data) > self._max_frame_bytes:
                     return
                 stream.last_activity = time.monotonic()
                 await destination.send_bytes(data)
                 continue
             if text is not None:
                 value = str(text)
-                if len(value.encode("utf-8")) > TERMINAL_STREAM_MAX_FRAME_BYTES:
+                if len(value.encode("utf-8")) > self._max_frame_bytes:
                     return
                 stream.last_activity = time.monotonic()
                 await destination.send_text(value)
