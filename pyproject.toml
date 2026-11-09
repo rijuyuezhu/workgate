@@ -18,6 +18,8 @@ classifiers = [
 dependencies = [
     "aiofiles>=25.1.0",
     "authlib>=1.7.2",
+    "cryptography==50.0.2; sys_platform == 'win32' and platform_machine == 'ARM64'",
+    "cryptography>=50.0.2; sys_platform != 'win32' or platform_machine != 'ARM64'",
     "fastapi>=0.138.1",
     "httpx>=0.28.1",
     "httpx2>=2.5.0,<3",
@@ -67,6 +69,19 @@ docs = [
 [build-system]
 requires = ["uv_build>=0.13.0,<0.14.0"]
 build-backend = "uv_build"
+
+# The upstream PyPI Windows ARM64 wheel dynamically imports OpenSSL DLLs.
+# Use WorkGate's release-verified, statically linked ARM64 artifact instead.
+[tool.uv.sources]
+cryptography = [
+    { url = "https://github.com/rijuyuezhu/workgate/releases/download/v5.0.0/cryptography-50.0.2-cp314-abi3-win_arm64.whl", marker = "sys_platform == 'win32' and platform_machine == 'ARM64'" },
+    { index = "pypi", marker = "sys_platform != 'win32' or platform_machine != 'ARM64'" },
+]
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+explicit = true
 
 [tool.uv.build-backend]
 source-include = [
