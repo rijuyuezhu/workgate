@@ -19,9 +19,9 @@ Sign in to see the controls available to your account.
 
 The available panels depend on permissions and the selected Executor's capabilities.
 
-## Download a file
+## Transfer files
 
-Open **Files**, select an online Executor and a regular file, then select **Download**. The browser saves the original bytes without loading the whole file into the WebUI. A one-time download link expires after 60 seconds; request another download if the link has expired. Upload and text editing remain separate actions.
+Open **Files**, select an online Executor and a regular file, then select **Download**. The browser saves the original bytes without loading the whole file into the WebUI. A one-time download link expires after 60 seconds; request another download if the link has expired. For uploads, select **Upload** to send large files in chunks; use **Cancel upload** to stop before the destination is published. Existing files are not overwritten. Text editing remains a separate action.
 
 ## Change settings
 

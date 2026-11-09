@@ -38,6 +38,13 @@ from .file_download import (
     api_file_download,
     api_file_download_ticket,
 )
+from .file_upload import (
+    BrowserUploadTransfers,
+    api_file_upload_abort,
+    api_file_upload_chunk,
+    api_file_upload_finish,
+    api_file_upload_start,
+)
 from .files import (
     api_file_action,
     api_file_content,
@@ -299,8 +306,9 @@ async def api_bootstrap(request: Request) -> Response:
 
 
 def initialize_ui_browser_transfer_state(app: Any) -> None:
-    """Keep UI transfer capabilities owned by their HTTP app instance."""
+    """Keep browser transfer capability state owned by its HTTP host."""
     app.state.browser_download_tickets = BrowserDownloadTickets()
+    app.state.browser_uploads = BrowserUploadTransfers()
 
 
 def human_ui_routes(
@@ -370,6 +378,26 @@ def human_ui_routes(
         Route(
             UI_API_PREFIX + "/files/download-ticket",
             api_file_download_ticket,
+            methods=["POST"],
+        ),
+        Route(
+            UI_API_PREFIX + "/files/upload/start",
+            api_file_upload_start,
+            methods=["POST"],
+        ),
+        Route(
+            UI_API_PREFIX + "/files/upload/{token}/chunk",
+            api_file_upload_chunk,
+            methods=["PUT"],
+        ),
+        Route(
+            UI_API_PREFIX + "/files/upload/{token}/finish",
+            api_file_upload_finish,
+            methods=["POST"],
+        ),
+        Route(
+            UI_API_PREFIX + "/files/upload/{token}/abort",
+            api_file_upload_abort,
             methods=["POST"],
         ),
         Route(

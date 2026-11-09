@@ -1134,3 +1134,48 @@ def test_browser_file_download_streaming(
     download.save_as(path)
     assert path.read_bytes() == original
     browser_harness.assert_clean_browser()
+
+
+def test_browser_file_chunked_upload(browser_harness: BrowserHarness) -> None:
+    """Actual OAuth browser uploads >2 MiB to an Executor transaction."""
+    browser_harness.login()
+    browser_harness.wait_executor_online()
+    original = bytes(range(256)) * 12289 + b"uploaded"
+    local_file = browser_harness.root / "local-upload.bin"
+    local_file.write_bytes(original)
+    page = browser_harness.page
+    browser_harness.navigate("files")
+    expect(page.locator("#file-executor")).to_have_value(
+        browser_harness.executor_id
+    )
+    expect(page.locator("#file-upload")).to_be_enabled()
+    page.locator("#file-upload-input").set_input_files(local_file)
+    expect(page.locator("#file-state")).to_contain_text(
+        "Uploaded 1 file(s)", timeout=45_000
+    )
+    uploaded = browser_harness.executor_workspace / local_file.name
+    assert uploaded.read_bytes() == original
+    assert page.locator("#file-upload-cancel").is_hidden()
+    browser_harness.assert_clean_browser()
+
+
+def test_browser_chunked_upload_cancel(browser_harness: BrowserHarness) -> None:
+    """Cancel an in-flight browser upload without publishing partial bytes."""
+    browser_harness.login()
+    browser_harness.wait_executor_online()
+    local_file = browser_harness.root / "cancel-upload.bin"
+    local_file.write_bytes(bytes(range(256)) * 32768)
+    page = browser_harness.page
+    browser_harness.navigate("files")
+    expect(page.locator("#file-executor")).to_have_value(
+        browser_harness.executor_id
+    )
+    expect(page.locator("#file-upload")).to_be_enabled()
+    page.locator("#file-upload-input").set_input_files(local_file)
+    expect(page.locator("#file-upload-cancel")).to_be_visible()
+    page.locator("#file-upload-cancel").click()
+    expect(page.locator("#file-state")).to_contain_text(
+        "Upload cancelled", timeout=45_000
+    )
+    assert not (browser_harness.executor_workspace / local_file.name).exists()
+    browser_harness.assert_clean_browser()
