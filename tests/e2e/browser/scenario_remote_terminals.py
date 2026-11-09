@@ -1,6 +1,8 @@
 """Two independently paired executor runtimes sharing a Control StreamHub."""
 
-from playwright.sync_api import expect
+import time
+
+from playwright.sync_api import Page, expect
 
 from tests.e2e.browser.harness import BrowserHarness
 from tests.e2e.browser.scenario_terminals import (
@@ -8,6 +10,20 @@ from tests.e2e.browser.scenario_terminals import (
     _start_terminal,
     _wait_terminal_stream_marker,
 )
+
+
+def _wait_other_viewer_output(
+    page: Page, frames: list[bytes], marker: str, *, since: int
+) -> None:
+    """Require fresh PTY data on the second browser's own WebSocket."""
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline:
+        if marker.encode() in b"".join(frames[since:]):
+            return
+        page.wait_for_timeout(50)
+    raise AssertionError(
+        f"second browser did not receive live PTY output {marker!r}"
+    )
 
 
 def run_remote_terminals(harness: BrowserHarness) -> None:
@@ -67,9 +83,27 @@ def run_remote_terminals(harness: BrowserHarness) -> None:
         "running-on-remote-executor",
     )
 
-    # A second logged-in browser can attach the *same* HP tmux session.
-    # Both WebSockets stay active; tmux owns concurrent input and screen state.
-    second_page = harness.context.new_page()
+    # Two isolated browser contexts attach to the same remote tmux shell.
+    # The second context has its own cookies/storage after an authenticated
+    # snapshot; it cannot share a tab's WebSocket or xterm instance.
+    second_context = harness.browser.new_context(
+        storage_state=harness.context.storage_state(),
+        viewport={"width": 1440, "height": 1000},
+    )
+    second_page = second_context.new_page()
+    second_frames: list[bytes] = []
+
+    def watch_terminal_socket(socket) -> None:
+        if "/stream/stream_" not in socket.url:
+            return
+        socket.on(
+            "framereceived",
+            lambda frame: second_frames.append(
+                frame if isinstance(frame, bytes) else str(frame).encode()
+            ),
+        )
+
+    second_page.on("websocket", watch_terminal_socket)
     try:
         second_page.goto(
             f"{harness.base_url}/ui", wait_until="domcontentloaded"
@@ -90,18 +124,81 @@ def run_remote_terminals(harness: BrowserHarness) -> None:
             "Connected"
         )
         expect(page.locator("#terminal-state")).to_contain_text("Connected")
-        # Raw WebSocket PTY input from the second client appears on the first.
-        received_start = len(harness.websocket_events)
+
+        # The output of one command must reach BOTH live browser sockets.
+        first_start = len(harness.websocket_events)
+        second_start = len(second_frames)
         expect(second_page.locator("#terminal-xterm textarea")).to_be_focused()
         second_page.keyboard.type("printf 'dual-%s\\n' client", delay=5)
         second_page.keyboard.press("Enter")
         _wait_terminal_stream_marker(
-            harness, "dual-client", websocket_event_start=received_start
+            harness, "dual-client", websocket_event_start=first_start
+        )
+        _wait_other_viewer_output(
+            second_page, second_frames, "dual-client", since=second_start
+        )
+
+        # Switching only the second viewer must preserve the first viewer's
+        # remote shell. The second viewer gets a different local PTY.
+        second_page.locator(
+            f'#terminal-executor-locations button[data-executor-id="{harness.executor_id}"]'
+        ).click()
+        expect(second_page.locator("#terminal-executor")).to_have_value(
+            harness.executor_id
+        )
+        second_page.locator(
+            f'#terminal-list .terminal-session[title*="{local_shell}"]'
+        ).click()
+        expect(second_page.locator("#terminal-state")).to_contain_text(
+            "Connected"
+        )
+        second_start = len(second_frames)
+        second_page.locator("#terminal-input").fill("cat notes.txt")
+        second_page.locator("#terminal-input-form").get_by_role(
+            "button", name="Send"
+        ).click()
+        _wait_other_viewer_output(
+            second_page,
+            second_frames,
+            "executor browser fixture",
+            since=second_start,
+        )
+        expect(page.locator("#terminal-state")).to_contain_text("Connected")
+        _send_terminal(
+            harness,
+            remote_id,
+            remote_shell,
+            "cat remote-marker.txt",
+            "running-on-remote-executor",
+        )
+
+        # Reattach the original shell while the first viewer remains online.
+        second_page.locator(
+            f'#terminal-executor-locations button[data-executor-id="{remote_id}"]'
+        ).click()
+        second_entry = second_page.locator(
+            f'#terminal-list .terminal-session[title*="{remote_shell}"]'
+        )
+        expect(second_entry).to_be_visible()
+        second_entry.click()
+        expect(second_page.locator("#terminal-state")).to_contain_text(
+            "Connected"
+        )
+        first_start = len(harness.websocket_events)
+        second_start = len(second_frames)
+        expect(second_page.locator("#terminal-xterm textarea")).to_be_focused()
+        second_page.keyboard.type("printf 'reattach-%s\\n' verified", delay=5)
+        second_page.keyboard.press("Enter")
+        _wait_terminal_stream_marker(
+            harness, "reattach-verified", websocket_event_start=first_start
+        )
+        _wait_other_viewer_output(
+            second_page, second_frames, "reattach-verified", since=second_start
         )
     finally:
-        second_page.close()
+        second_context.close()
 
-    # Closing one tab must not detach the first client's PTY.
+    # Closing the other browser context must not detach this PTY.
     expect(page.locator("#terminal-state")).to_contain_text("Connected")
     _send_terminal(
         harness,
