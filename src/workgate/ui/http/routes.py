@@ -33,7 +33,11 @@ from ..session import (
 from .audit import api_audit, api_audit_detail
 from .common import json_ok as _json_ok
 from .dashboard import api_dashboard, api_executor_resources
-from .file_download import api_file_download, api_file_download_ticket
+from .file_download import (
+    BrowserDownloadTickets,
+    api_file_download,
+    api_file_download_ticket,
+)
 from .files import (
     api_file_action,
     api_file_content,
@@ -292,6 +296,11 @@ async def api_bootstrap(request: Request) -> Response:
             **await _executor_targets(request),
         }
     )
+
+
+def initialize_ui_browser_transfer_state(app: Any) -> None:
+    """Keep UI transfer capabilities owned by their HTTP app instance."""
+    app.state.browser_download_tickets = BrowserDownloadTickets()
 
 
 def human_ui_routes(
