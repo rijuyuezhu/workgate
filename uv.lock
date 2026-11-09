@@ -1,6 +1,10 @@
 version = 1
 revision = 5
 requires-python = ">=3.14"
+resolution-markers = [
+    "platform_machine == 'ARM64' and sys_platform == 'win32'",
+    "platform_machine != 'ARM64' or sys_platform != 'win32'",
+]
 
 [[package]]
 name = "aiofiles"
@@ -56,7 +60,8 @@ name = "authlib"
 version = "1.9.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography" },
+    { name = "cryptography", version = "50.0.2", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'ARM64' or sys_platform != 'win32'" },
+    { name = "cryptography", version = "50.0.2", source = { url = "https://github.com/rijuyuezhu/workgate/releases/download/v5.0.0/cryptography-50.0.2-cp314-abi3-win_arm64.whl" }, marker = "platform_machine == 'ARM64' and sys_platform == 'win32'" },
     { name = "joserfc" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c9/dc/087c08741a98d234c9b98beef8a28d3c309f814d14b6156422c5815bf6d6/authlib-1.9.1.tar.gz", hash = "sha256:5c7d9848f47cac340f060f76ae0bc09b59f5c8e89cc1bb032d4370a0c55b5974", size = 182700, upload-time = "2026-10-14T14:17:52.307Z" }
@@ -386,6 +391,9 @@ wheels = [
 name = "cryptography"
 version = "50.0.2"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "platform_machine != 'ARM64' or sys_platform != 'win32'",
+]
 dependencies = [
     { name = "cffi", marker = "platform_python_implementation != 'PyPy'" },
 ]
@@ -444,6 +452,28 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/d4/aa/f3f6e0de7e6253b8baa8b2d8fb9d50924fa75cee3d4624bd4bc1208ee923/cryptography-50.0.2-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:ce47f66801c20ec6c6632453bb5960fe38939e9306970b48b3a5a26de7745d94", size = 5058280, upload-time = "2026-09-30T15:29:44.827Z" },
     { url = "https://files.pythonhosted.org/packages/f6/b6/a1faf3a27ae9405fb34b1713cc73b2d8a26b04d5c561578fa2e6ef3e5bb9/cryptography-50.0.2-cp39-abi3-win_amd64.whl", hash = "sha256:4e81d95e5bafc2d6e34e4bed780e53e4d5b9a2f928573428aa4d35fbec1eb0de", size = 3854095, upload-time = "2026-09-30T15:29:46.782Z" },
 ]
+
+[[package]]
+name = "cryptography"
+version = "50.0.2"
+source = { url = "https://github.com/rijuyuezhu/workgate/releases/download/v5.0.0/cryptography-50.0.2-cp314-abi3-win_arm64.whl" }
+resolution-markers = [
+    "platform_machine == 'ARM64' and sys_platform == 'win32'",
+]
+dependencies = [
+    { name = "cffi", marker = "platform_python_implementation != 'PyPy'" },
+]
+wheels = [
+    { url = "https://github.com/rijuyuezhu/workgate/releases/download/v5.0.0/cryptography-50.0.2-cp314-abi3-win_arm64.whl", hash = "sha256:bcce2ad86870ec78899cc6db94a83e3493efe7bd33e8357492e120deba7556b8" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "bcrypt", marker = "extra == 'ssh'", specifier = ">=3.1.5" },
+    { name = "cffi", marker = "platform_python_implementation != 'PyPy'", specifier = ">=2.0.0" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'", specifier = ">=4.13.2" },
+]
+provides-extras = ["ssh"]
 
 [[package]]
 name = "dbus-next"
@@ -736,7 +766,8 @@ name = "joserfc"
 version = "1.7.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography" },
+    { name = "cryptography", version = "50.0.2", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'ARM64' or sys_platform != 'win32'" },
+    { name = "cryptography", version = "50.0.2", source = { url = "https://github.com/rijuyuezhu/workgate/releases/download/v5.0.0/cryptography-50.0.2-cp314-abi3-win_arm64.whl" }, marker = "platform_machine == 'ARM64' and sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/cd/db/ec5b5fe07a7bda62cd2c2d619daf160eb7442b979c7cd61bbe0262108de9/joserfc-1.7.6.tar.gz", hash = "sha256:fb1cf6d2977318bef976c2ed2ef2167cc5f8ade8fc96f034e38f7abd656907c4", size = 236091, upload-time = "2026-10-18T23:12:18.43Z" }
 wheels = [
@@ -1266,7 +1297,8 @@ wheels = [
 
 [package.optional-dependencies]
 crypto = [
-    { name = "cryptography" },
+    { name = "cryptography", version = "50.0.2", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'ARM64' or sys_platform != 'win32'" },
+    { name = "cryptography", version = "50.0.2", source = { url = "https://github.com/rijuyuezhu/workgate/releases/download/v5.0.0/cryptography-50.0.2-cp314-abi3-win_arm64.whl" }, marker = "platform_machine == 'ARM64' and sys_platform == 'win32'" },
 ]
 
 [[package]]
@@ -1986,6 +2018,8 @@ source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
     { name = "authlib" },
+    { name = "cryptography", version = "50.0.2", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'ARM64' or sys_platform != 'win32'" },
+    { name = "cryptography", version = "50.0.2", source = { url = "https://github.com/rijuyuezhu/workgate/releases/download/v5.0.0/cryptography-50.0.2-cp314-abi3-win_arm64.whl" }, marker = "platform_machine == 'ARM64' and sys_platform == 'win32'" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "httpx2" },
@@ -2037,6 +2071,8 @@ requires-dist = [
     { name = "aiofiles", specifier = ">=25.1.0" },
     { name = "authlib", specifier = ">=1.7.2" },
     { name = "boto3", marker = "extra == 's3'", specifier = ">=1.40,<2" },
+    { name = "cryptography", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'", specifier = ">=50.0.2", index = "https://pypi.org/simple" },
+    { name = "cryptography", marker = "platform_machine == 'ARM64' and sys_platform == 'win32'", url = "https://github.com/rijuyuezhu/workgate/releases/download/v5.0.0/cryptography-50.0.2-cp314-abi3-win_arm64.whl" },
     { name = "dbus-next", marker = "sys_platform == 'linux' and extra == 'gui'", specifier = ">=0.2.3,<1" },
     { name = "fastapi", specifier = ">=0.138.1" },
     { name = "httpx", specifier = ">=0.28.1" },
