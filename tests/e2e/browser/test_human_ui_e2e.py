@@ -1179,3 +1179,48 @@ def test_browser_chunked_upload_cancel(browser_harness: BrowserHarness) -> None:
     )
     assert not (browser_harness.executor_workspace / local_file.name).exists()
     browser_harness.assert_clean_browser()
+
+
+@pytest.mark.skipif(
+    os.environ.get("WORKGATE_BROWSER_E2E") != "1",
+    reason="Real Chromium E2E requires the dedicated browser launcher",
+)
+def test_browser_remote_executor_chunk_upload(tmp_path):
+    """Browser uploads to a second paired Executor, never the first machine."""
+    with sync_playwright() as playwright:
+        harness = BrowserHarness.start(
+            tmp_path,
+            tmp_path / "remote-upload-artifacts",
+            playwright,
+            with_remote_executor=True,
+        )
+        failed = True
+        try:
+            harness.login()
+            harness.wait_executor_online()
+            remote_id = harness.remote_executor_id
+            assert remote_id
+            original = bytes(range(256)) * 8200 + b"remote"
+            local_file = tmp_path / "remote-upload.bin"
+            local_file.write_bytes(original)
+            page = harness.page
+            harness.navigate("files")
+            expect(
+                page.locator(f'#file-executor option[value="{remote_id}"]')
+            ).to_be_enabled(timeout=20_000)
+            page.locator(
+                f'#file-location-executors .file-location-row[data-executor-id="{remote_id}"]'
+            ).click()
+            expect(page.locator("#file-upload")).to_be_enabled()
+            page.locator("#file-upload-input").set_input_files(local_file)
+            expect(page.locator("#file-state")).to_contain_text(
+                "Uploaded 1 file(s)", timeout=45_000
+            )
+            assert (
+                tmp_path / "workspace-remote" / local_file.name
+            ).read_bytes() == original
+            assert not (harness.executor_workspace / local_file.name).exists()
+            harness.assert_clean_browser()
+            failed = False
+        finally:
+            harness.stop(failed=failed)
