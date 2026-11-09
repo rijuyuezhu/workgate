@@ -395,3 +395,233 @@ async def test_desktop_refresh_respects_capture_rate_on_wayland(
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid",
+    [b"binary", "x" * 8193, "[]", "{", '{"type":"unknown"}'],
+)
+async def test_desktop_stream_rejects_malformed_or_unbounded_client_messages(
+    tmp_path, monkeypatch, invalid
+):
+    gui, backend, _, session_id, _ = service(tmp_path)
+    monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+    ws = _LocalWebSocket()
+    stream = ExecutorDesktopStream(
+        cast(Any, None),
+        "stream_invalid",
+        session_id,
+        "window-1",
+        gui,
+        cast(Any, ws),
+    )
+    task = asyncio.create_task(stream.run())
+    try:
+        await ws.message()
+        await ws.incoming.put(cast(str, invalid))
+        assert json.loads(cast(str, await ws.message()))["type"] == "error"
+        await asyncio.wait_for(task, timeout=2)
+        assert not backend.actions
+        assert ws.closed
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_desktop_stream_stays_view_only_until_start_and_disallows_bad_actions(
+    tmp_path, monkeypatch
+):
+    gui, backend, _, session_id, _ = service(tmp_path)
+    monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+    ws = _LocalWebSocket()
+    stream = ExecutorDesktopStream(
+        cast(Any, None),
+        "stream_view_only",
+        session_id,
+        "window-1",
+        gui,
+        cast(Any, ws),
+    )
+    task = asyncio.create_task(stream.run())
+    try:
+        await ws.message()
+        await ws.incoming.put(
+            json.dumps(
+                {
+                    "type": "action",
+                    "state_id": "a" * 32,
+                    "action": {"type": "focus"},
+                }
+            )
+        )
+        assert json.loads(cast(str, await ws.message())) == {
+            "type": "action-result",
+            "ok": False,
+        }
+        await ws.incoming.put('{"type":"start"}')
+        frame = json.loads(cast(str, await ws.message()))
+        await ws.message()
+        await ws.incoming.put('{"type":"ack"}')
+        await ws.incoming.put(
+            json.dumps(
+                {"type": "action", "state_id": frame["state_id"], "action": []}
+            )
+        )
+        assert json.loads(cast(str, await ws.message())) == {
+            "type": "action-result",
+            "ok": False,
+        }
+        assert not backend.actions
+        await ws.incoming.put('{"type":"pause"}')
+        await ws.incoming.put('{"type":"stop"}')
+        await asyncio.wait_for(task, timeout=2)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_desktop_stream_rejects_oversize_server_message(tmp_path):
+    gui, _, _, session_id, _ = service(tmp_path)
+    ws = _LocalWebSocket()
+    stream = ExecutorDesktopStream(
+        cast(Any, None),
+        "stream_output",
+        session_id,
+        "window-1",
+        gui,
+        cast(Any, ws),
+    )
+    with pytest.raises(ValueError, match="protocol bound"):
+        await stream._send({"data": "x" * 9000})
+    assert ws.outgoing.empty()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "damage",
+    ["no-image", "bad-window", "no-bounds", "bad-size", "no-observation"],
+)
+async def test_desktop_frame_rejects_invalid_native_observation(
+    tmp_path, monkeypatch, damage
+):
+    gui, _, _, session_id, _ = service(tmp_path)
+    snapshot = gui.snapshot
+
+    async def damaged(*args, **kwargs):
+        observed = await snapshot(*args, **kwargs)
+        if damage == "no-image":
+            observed.content = []
+        elif damage == "bad-window":
+            observed.structured_content["window"]["id"] = "another-window"
+        elif damage == "no-bounds":
+            observed.structured_content["window"].pop("bounds")
+        elif damage == "bad-size":
+            observed.structured_content["window"]["bounds"]["width"] = -1
+        else:
+            observed.structured_content.pop("state_id")
+        return observed
+
+    monkeypatch.setattr(gui, "snapshot", damaged)
+    ws = _LocalWebSocket()
+    stream = ExecutorDesktopStream(
+        cast(Any, None),
+        "stream_bad_native",
+        session_id,
+        "window-1",
+        gui,
+        cast(Any, ws),
+    )
+    with pytest.raises((RuntimeError, ValueError)):
+        await stream._frame(b"")
+    assert ws.outgoing.empty()
+
+
+def test_desktop_frame_rejects_unbounded_source_and_incompressible_frame(
+    monkeypatch,
+):
+    import workgate.executor.gui.stream as desktop
+
+    source = io.BytesIO()
+    Image.new("RGB", (16_385, 1), "white").save(source, format="PNG")
+    with pytest.raises(ValueError, match="dimensions"):
+        compress_desktop_frame(source.getvalue())
+    monkeypatch.setattr(desktop, "DESKTOP_MAX_FRAME_BYTES", 10)
+    source = io.BytesIO()
+    Image.new("RGB", (60, 40), "blue").save(source, format="PNG")
+    with pytest.raises(ValueError, match="cannot fit"):
+        compress_desktop_frame(source.getvalue())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [
+        '{"type":"wrong"}',
+        '{"type":"stream-accepted","stream_id":"wrong"}',
+        b"binary",
+    ],
+)
+async def test_desktop_executor_handshake_closes_on_invalid_control_ack(
+    monkeypatch, failure
+):
+    from types import SimpleNamespace
+
+    import workgate.executor.gui.stream as desktop
+
+    ws = _LocalWebSocket()
+    await ws.incoming.put(cast(str, failure))
+
+    async def fake_connect(*_args, **_kwargs):
+        return ws
+
+    monkeypatch.setattr(desktop, "_NoRedirectConnect", fake_connect)
+    profile = cast(
+        Any,
+        SimpleNamespace(
+            control_url="https://control.example", credential="secret"
+        ),
+    )
+    with pytest.raises(RuntimeError, match="rejected"):
+        await desktop.connect_executor_desktop_stream(
+            profile,
+            cast(Any, None),
+            stream_id="stream_abcdefghijklmnopqrstuvwxyz",
+            session_id="sess_valid",
+            window_id="window-1",
+        )
+    assert ws.closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stream_id,session_id,window_id",
+    [
+        ("bad", "sess_valid", "window-1"),
+        ("stream_abcdefghijklmnopqrstuvwxyz", "", "window-1"),
+        ("stream_abcdefghijklmnopqrstuvwxyz", "sess_valid", ""),
+    ],
+)
+async def test_desktop_executor_connector_rejects_invalid_identity(
+    stream_id, session_id, window_id
+):
+    from types import SimpleNamespace
+
+    from workgate.executor.gui.stream import connect_executor_desktop_stream
+
+    profile = cast(
+        Any,
+        SimpleNamespace(
+            control_url="https://control.example", credential="secret"
+        ),
+    )
+    with pytest.raises(ValueError):
+        await connect_executor_desktop_stream(
+            profile,
+            cast(Any, None),
+            stream_id=stream_id,
+            session_id=session_id,
+            window_id=window_id,
+        )
