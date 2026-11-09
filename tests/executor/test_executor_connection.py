@@ -1671,9 +1671,9 @@ async def test_connection_status_preserves_revoked_credential_action() -> None:
 
 
 @pytest.mark.asyncio
-async def test_status_callback_failure_cannot_disable_executor_connection() -> (
-    None
-):
+async def test_status_callback_failure_cannot_disable_executor_connection(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     reached_poll = asyncio.Event()
 
     class Client(_BaseFakeClient):
@@ -1694,7 +1694,7 @@ async def test_status_callback_failure_cannot_disable_executor_connection() -> (
             raise AssertionError("no result expected")
 
     def bad_diagnostic(_phase: str, _reason: str | None) -> None:
-        raise RuntimeError("status writer unexpectedly failed")
+        raise PermissionError("private status path and bearer secret")
 
     connection = ExecutorConnection(
         Client(),
@@ -1709,6 +1709,12 @@ async def test_status_callback_failure_cannot_disable_executor_connection() -> (
         assert connection.owner_action_error is None
     finally:
         await connection.aclose()
+    assert (
+        "executor connection status write failed: phase=connected error=PermissionError"
+        in caplog.text
+    )
+    assert "private status path" not in caplog.text
+    assert "bearer secret" not in caplog.text
 
 
 @pytest.mark.asyncio

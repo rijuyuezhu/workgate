@@ -2,7 +2,10 @@
 
 import argparse
 import asyncio
+import json
+import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -61,6 +64,67 @@ def _task_last_run(task_name: str) -> str:
     ).stdout.strip()
 
 
+def _status_evidence(path: Path) -> str:
+    """Allowlisted status-file evidence only; never print arbitrary JSON fields."""
+    try:
+        metadata = path.stat()
+        if metadata.st_size > 1024:
+            return "oversized"
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except OSError, ValueError, UnicodeError:
+        return "unavailable"
+    if not isinstance(state, dict):
+        return "invalid"
+    phase = state.get("phase")
+    if phase not in ("connected", "reconnecting", "action-required"):
+        phase = "invalid"
+    reason = state.get("error_class")
+    if not isinstance(reason, str) or not reason.isidentifier():
+        reason = "none"
+
+    def timestamp(field: str) -> str:
+        value = state.get(field)
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+        ):
+            return f"{value:.3f}"
+        return "unknown"
+
+    return (
+        f"phase={phase} updated={timestamp('updated_at')} "
+        f"last_success={timestamp('last_success_at')} error={reason} "
+        f"mtime_ns={metadata.st_mtime_ns} size={metadata.st_size}"
+    )
+
+
+def _connection_log_events(path: Path) -> list[str]:
+    """Summarize known state transitions without publishing arbitrary log text."""
+    try:
+        with path.open("rb") as source:
+            source.seek(0, os.SEEK_END)
+            source.seek(max(0, source.tell() - 32_768))
+            lines = source.read().decode("utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    events: list[str] = []
+    for line in lines:
+        if "executor connection status write failed:" in line:
+            event = "status-write-failed"
+        elif "executor connection recovered" in line:
+            event = "recovered"
+        elif "executor connection established" in line:
+            event = "established"
+        elif "executor reconnecting:" in line:
+            event = "reconnecting"
+        else:
+            continue
+        clock = re.search(r"\b[0-2]\d:[0-5]\d:[0-5]\d\b", line)
+        events.append(f"{clock.group() if clock else 'unknown-time'} {event}")
+    return events[-20:]
+
+
 async def main(*, outage_only: bool = False) -> None:
     root = Path(tempfile.gettempdir()) / f"wg392-paired-service-{uuid4().hex}"
     root.mkdir()
@@ -70,6 +134,7 @@ async def main(*, outage_only: bool = False) -> None:
         run=_powershell,
     )
     control = None
+    recovery_trace: list[str] = []
     try:
         state = root / "control-state"
         executor_state = root / "executor-state"
@@ -219,6 +284,10 @@ async def main(*, outage_only: bool = False) -> None:
             deadline = asyncio.get_running_loop().time() + 10
             while not connection.describe().startswith("connected;"):
                 current = connection.describe()
+                snapshot = _status_evidence(connection.path)
+                if not recovery_trace or recovery_trace[-1] != snapshot:
+                    recovery_trace.append(snapshot)
+                    recovery_trace[:] = recovery_trace[-20:]
                 assert not current.startswith("action-required"), current
                 assert asyncio.get_running_loop().time() < deadline, (
                     f"Executor did not report recovery: {current}"
@@ -249,15 +318,23 @@ async def main(*, outage_only: bool = False) -> None:
                 )
                 assert task.status()["state"].lower() == "running"
         except Exception:
-            error_file = root / "executor-error.log"
-            diagnostic = (
-                error_file.read_text(encoding="utf-8", errors="replace")[-6000:]
-                if error_file.exists()
-                else "No Executor errors"
-            )
-            print(
-                diagnostic.encode("ascii", "backslashreplace").decode("ascii")
-            )
+            if recovery_trace:
+                print(
+                    "Bounded connection.json recovery trace (allowlisted fields):"
+                )
+                for snapshot in recovery_trace:
+                    print("  " + snapshot)
+            if "connection" in locals():
+                print(
+                    "Final connection.json snapshot: "
+                    + _status_evidence(connection.path)
+                )
+            if control is not None:
+                print(f"Control process running: {control.poll() is None}")
+            events = _connection_log_events(root / "executor-error.log")
+            print("Recent Executor connection events (redacted):")
+            for event in events:
+                print("  " + event)
             raise
     finally:
         try:

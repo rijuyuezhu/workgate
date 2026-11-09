@@ -798,9 +798,18 @@ class ExecutorConnection:
 
         callback = self._status_callback
         if callback is not None:
-            # Diagnostic persistence must never prevent Control reconnection.
-            with suppress(Exception):
+            try:
                 callback(phase, error_class)
+            except Exception as exc:
+                # Status is advisory. Keep reconnecting even if its private
+                # diagnostic file cannot be written, and never log exception
+                # text (which can contain private state paths or credentials).
+                with suppress(Exception):
+                    logger.warning(
+                        "executor connection status write failed: phase=%s error=%s",
+                        phase,
+                        type(exc).__name__,
+                    )
 
     def _retry_delay(self, attempt: int) -> float:
         return executor_retry_delay(attempt, self._random_value())
