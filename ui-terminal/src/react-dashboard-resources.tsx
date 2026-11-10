@@ -33,7 +33,7 @@ function rate(value: unknown) {
   return amount === "—" ? amount : amount + "/s";
 }
 
-function Trend({ samples, name }: { samples: Array<number | null>; name: string }) {
+function Trend({ samples, name, idPrefix }: { samples: Array<number | null>; name: string; idPrefix: string }) {
   const valid = samples
     .map((value, index) => ({ value, index }))
     .filter((point): point is { value: number; index: number } =>
@@ -45,7 +45,7 @@ function Trend({ samples, name }: { samples: Array<number | null>; name: string 
     return x.toFixed(2) + "," + y.toFixed(2);
   }).join(" ");
   return <svg
-    id={"dashboard-" + name + "-trend"}
+    id={idPrefix + "-" + name + "-trend"}
     className="dashboard-sparkline"
     viewBox="0 0 100 32"
     role="img"
@@ -77,12 +77,14 @@ const metrics = [
 ] as const;
 
 function ResourceCards({
-  system, history, live,
+  system, history, live, idPrefix,
 }: {
   system: ResourceData;
   history: Sample[];
   live: string;
+  idPrefix: string;
 }) {
+  const id = (name: string) => idPrefix + "-" + name;
   const rx = numeric(system.network_rx_bps);
   const tx = numeric(system.network_tx_bps);
   const total = rx === null || tx === null ? null : rx + tx;
@@ -95,14 +97,14 @@ function ResourceCards({
           <span className={"dashboard-metric-icon " + metric.color}>
             <svg viewBox="0 0 24 24">{metric.icon}</svg>
           </span>
-          <span className="dashboard-live">{live}</span>
+          {live && <span className="dashboard-live">{live}</span>}
         </div>
         <span>{metric.title}</span>
-        <strong id={"dashboard-" + metric.key}>{percent(system[metric.valueKey])}</strong>
-        <Trend name={metric.key} samples={samples} />
+        <strong id={id(metric.key)}>{percent(system[metric.valueKey])}</strong>
+        <Trend name={metric.key} samples={samples} idPrefix={idPrefix} />
         <div className="dashboard-metric-foot">
-          <span id={"dashboard-" + metric.key + "-foot-" + (metric.key === "cpu" ? "load" : "used")}>{foot[0]}</span>
-          <span id={"dashboard-" + metric.key + "-foot-" + (metric.key === "cpu" ? "cores" : "total")}>{foot[1]}</span>
+          <span id={id(metric.key + "-foot-" + (metric.key === "cpu" ? "load" : "used"))}>{foot[0]}</span>
+          <span id={id(metric.key + "-foot-" + (metric.key === "cpu" ? "cores" : "total"))}>{foot[1]}</span>
         </div>
       </article>;
     })}
@@ -111,19 +113,19 @@ function ResourceCards({
         <span className="dashboard-metric-icon green">
           <svg viewBox="0 0 24 24"><path d="M12 20V10M7 15l5 5 5-5M4 4h16"/></svg>
         </span>
-        <span className="dashboard-live positive">{live}</span>
+        {live && <span className="dashboard-live positive">{live}</span>}
       </div>
       <span>Network throughput</span>
-      <strong id="dashboard-network" className="visually-hidden">
+      <strong id={id("network")} className="visually-hidden">
         {rate(total)}
       </strong>
       <div className="dashboard-network-values">
-        <div><span className="download-arrow">↓</span><strong id="dashboard-network-down">{bytes(rx)}</strong><small>received</small></div>
-        <div><span className="upload-arrow">↑</span><strong id="dashboard-network-up">{bytes(tx)}</strong><small>sent</small></div>
+        <div><span className="download-arrow">↓</span><strong id={id("network-down")}>{bytes(rx)}</strong><small>received</small></div>
+        <div><span className="upload-arrow">↑</span><strong id={id("network-up")}>{bytes(tx)}</strong><small>sent</small></div>
       </div>
       <div className="dashboard-network-bar" aria-label="Relative incoming and outgoing traffic">
-        <span id="dashboard-network-rx-bar" style={{ width: total !== null && total > 0 && rx !== null ? (100 * rx / total) + "%" : "0%" }} />
-        <i id="dashboard-network-tx-bar" style={{ width: total !== null && total > 0 && tx !== null ? (100 * tx / total) + "%" : "0%" }} />
+        <span id={id("network-rx-bar")} style={{ width: total !== null && total > 0 && rx !== null ? (100 * rx / total) + "%" : "0%" }} />
+        <i id={id("network-tx-bar")} style={{ width: total !== null && total > 0 && tx !== null ? (100 * tx / total) + "%" : "0%" }} />
       </div>
       <div className="dashboard-metric-foot"><span>Downlink</span><span>Uplink</span></div>
     </article>
@@ -133,9 +135,10 @@ function ResourceCards({
 function mount(host: HTMLElement) {
   const root = createRoot(host);
   return {
-    render(system: ResourceData = {}, history: Sample[] = [], live = "—") {
-      root.render(<ResourceCards system={system} history={history} live={live} />);
+    render(system: ResourceData = {}, history: Sample[] = [], live = "—", idPrefix = "dashboard") {
+      root.render(<ResourceCards system={system} history={history} live={live} idPrefix={idPrefix} />);
     },
+    unmount() { root.unmount(); },
   };
 }
 

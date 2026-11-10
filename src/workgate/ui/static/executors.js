@@ -1,4 +1,3 @@
-import { renderResourceCards } from "./dashboard.js";
 import { createSkillFileEditor } from "./skill_file_editor.js";
 import { createExecutorTopology } from "./executor_topology.js";
 import { createConfigurationView } from "./config_inspector.js";
@@ -15,8 +14,10 @@ export function createExecutorsController({
   isAuthenticated,
   reloadApp,
   onInventory,
+  mountDashboardResources,
   onNavigate = () => {},
 }) {
+  let diagnosticResources = null;
   const state = {
     executors: [],
     selectedId: CONTROL_SELECTION,
@@ -92,6 +93,8 @@ export function createExecutorsController({
   }
 
   function resetMetrics() {
+    diagnosticResources?.unmount();
+    diagnosticResources = null;
     state.metricGeneration += 1;
     state.metricInFlightId = "";
     state.metricHistory = [];
@@ -412,17 +415,16 @@ export function createExecutorsController({
   }
 
   function renderDiagnosticCards(container, system) {
-    const template = document.querySelector("#dashboard-panel .dashboard-summary");
-    if (!template) return;
-    const cards = template.cloneNode(true);
-    cards.removeAttribute("aria-label");
-    cards.querySelectorAll("[id]").forEach((item) => item.removeAttribute("id"));
-    cards.querySelectorAll(".dashboard-live").forEach((item) => item.remove());
+    if (!diagnosticResources) {
+      const host = document.createElement("div");
+      host.className = "dashboard-summary";
+      container.append(host);
+      diagnosticResources = mountDashboardResources(host);
+    }
     const history = state.metricHistory.map((sample) => ({
       cpu: sample.cpu_percent, memory: sample.memory_percent, disk: sample.disk_percent,
     }));
-    renderResourceCards(cards, system, history);
-    container.append(cards);
+    diagnosticResources.render(system, history, "", "executor");
   }
 
   function managementQuery(owner, kind, action = "list", name = "") {
@@ -1091,7 +1093,10 @@ export function createExecutorsController({
       state.metricHistory.push(sample);
       state.metricHistory = state.metricHistory.slice(-60);
       const body = document.getElementById("executor-overview-metrics");
-      if (body) { body.replaceChildren(); renderDiagnosticCards(body, sample); }
+      if (body) {
+        body.querySelector(".executor-metric-error")?.remove();
+        renderDiagnosticCards(body, sample);
+      }
     } catch (error) {
       if (error.authenticationRequired) { void reloadApp(); return; }
       if (generation !== state.metricGeneration || state.selectedId !== executorId) return;

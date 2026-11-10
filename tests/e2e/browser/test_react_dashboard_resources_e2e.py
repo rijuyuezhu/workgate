@@ -39,6 +39,23 @@ def test_react_dashboard_resources_format_and_reset(
         )
     ).to_be_visible()
 
+    # Executor details used to clone Dashboard's HTML template. Ensure the
+    # shared React renderer still displays those metrics after the migration.
+    harness.navigate("executors")
+    row = page.locator(
+        f'#executor-list .executor-row[data-selection="{harness.executor_id}"]'
+    )
+    expect(row).to_be_visible()
+    row.click()
+    metrics = page.locator("#executor-overview-metrics")
+    expect(metrics.locator(".dashboard-metric-card")).to_have_count(
+        4, timeout=12_000
+    )
+    expect(metrics.locator("#executor-cpu")).not_to_have_text("—")
+    expect(metrics.locator(".dashboard-live")).to_have_count(0)
+    expect(page.locator("#dashboard-cpu")).to_have_count(1)
+    harness.navigate("overview")
+
     # Use a separate React root to test synthetic data deterministically. The
     # WorkGate Dashboard's real authenticated polling keeps its own sole root.
     page.evaluate("""() => {

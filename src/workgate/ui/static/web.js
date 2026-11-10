@@ -541,6 +541,7 @@ void (async () => {
   const executors = createExecutorsController({
     elements,
     request,
+    mountDashboardResources,
     authMode: config.authMode,
     isAuthenticated: () => authenticated,
     reloadApp: () => load(),

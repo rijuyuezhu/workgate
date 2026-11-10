@@ -304,9 +304,9 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
         "renderResources(system, controllerState.history"
         in dashboard_script.text
     )
-    # The Executor detail view still reuses the legacy resource SVG builder;
-    # only Dashboard's resource cards are React-owned in this migration.
-    assert "export function renderResourceCards" in dashboard_script.text
+    # Dashboard and Executor details share the React resource renderer.
+    assert "export function renderResourceCards" not in dashboard_script.text
+    assert "mountDashboardResources" in executors_script.text
     assert "dashboardNumber" in dashboard_script.text
     assert 'request("/executors")' in executors_script.text
     assert (
