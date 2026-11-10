@@ -26,7 +26,6 @@ def _attach(*, alive=True, closed=False):
     cast(Any, attachment)._termios = SimpleNamespace(TIOCSWINSZ=0x1234)
     cast(Any, attachment)._fcntl = SimpleNamespace(ioctl=lambda *_args: None)
     process = SimpleNamespace(
-        pid=123,
         poll=lambda: None if alive else 0,
         wait=lambda timeout: None,
     )
@@ -150,10 +149,8 @@ def test_close_is_idempotent_and_does_not_signal_exited_child(monkeypatch):
     monkeypatch.setattr(
         posix_terminal.os, "close", lambda fd: closes.append(fd)
     )
-    monkeypatch.setattr(
-        posix_terminal.os,
-        "killpg",
-        lambda *_: pytest.fail("exited child should not be signaled"),
+    cast(Any, attach).process.terminate = lambda: pytest.fail(
+        "exited child should not be signaled"
     )
     attach.close_sync()
     attach.close_sync()
