@@ -109,12 +109,17 @@ def run_background_polling(harness: BrowserHarness) -> None:
             expect(records).to_have_count(before + 1, timeout=10_000)
             expect(detail).to_have_attribute("data-audit-entry-id", identity)
             page.unroute("**/api/ui/audit?*", newer_record)
+        # Snapshot IDs in a single browser evaluation: polling may replace
+        # rows between separate Playwright nth-locator attribute reads.
+        record_ids = records.evaluate_all(
+            "rows => rows.map(row => row.getAttribute('data-audit-id'))"
+        )
         different_id = next(
             (
                 record_id
-                for record in records.all()
-                if (record_id := record.get_attribute("data-audit-id"))
-                not in (identity, "new-background-audit-entry")
+                for record_id in record_ids
+                if record_id
+                and record_id not in (identity, "new-background-audit-entry")
             ),
             None,
         )
