@@ -1,4 +1,62 @@
+import { useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
+
+declare global {
+  interface Window {
+    WorkgateTheme?: { get: () => string; set: (value: string) => void };
+  }
+}
+
+type HeaderStatus = {
+  connectionLabel: string;
+  connectionKind: string;
+  version: string;
+  authMode: string;
+  showSignOut: boolean;
+};
+
+function subscribeTheme(notify: () => void) {
+  window.addEventListener("workgate-theme-change", notify);
+  return () => window.removeEventListener("workgate-theme-change", notify);
+}
+
+function readTheme() {
+  return window.WorkgateTheme?.get() ?? "auto";
+}
+
+function GlobalStatus({
+  status, onSignOut,
+}: {
+  status: HeaderStatus;
+  onSignOut: () => void;
+}) {
+  const theme = useSyncExternalStore(subscribeTheme, readTheme);
+  return <div className="app-global-status">
+    <label className="appearance-control" htmlFor="appearance-mode">
+      <span>Theme</span>
+      <select
+        id="appearance-mode"
+        aria-label="Theme preference"
+        value={theme}
+        onChange={event => window.WorkgateTheme?.set(event.target.value)}
+      >
+        <option value="auto">Auto</option>
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+      </select>
+    </label>
+    <span id="connection-state" className={`status status-${status.connectionKind}`}>
+      {status.connectionLabel}
+    </span>
+    <span className="app-version">
+      <span id="version">{status.version}</span> <span id="auth-mode">{status.authMode}</span>
+    </span>
+    <button id="sign-out" type="button" hidden={!status.showSignOut} onClick={onSignOut}>
+      Sign out
+    </button>
+  </div>;
+}
+
 
 const items = [
   { view: "overview", title: "Overview", icon: <><path d="M4 13h6V4H4zm10 7h6v-9h-6zM4 20h6v-3H4zm10-13h6V4h-6z"/></> },
@@ -18,10 +76,11 @@ function mount(
   host: HTMLElement,
   onNavigate: (view: View) => void,
   onToggle: () => void,
+  onSignOut: () => void,
 ) {
   const root = createRoot(host);
   return {
-    render(activeView: string, menuOpen: boolean) {
+    render(activeView: string, menuOpen: boolean, status: HeaderStatus) {
       root.render(<>
         <button
           className="brand-block"
@@ -51,6 +110,7 @@ function mount(
             </button>
           ))}
         </nav>
+        <GlobalStatus status={status} onSignOut={onSignOut}/>
         <button
           id="nav-toggle"
           className="nav-toggle"

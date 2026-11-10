@@ -14,29 +14,32 @@
     return "auto";
   }
 
+  let currentTheme = savedTheme();
+
   function applyTheme(theme) {
+    currentTheme = theme;
     document.documentElement.dataset.theme = theme;
-    const selector = document.getElementById("appearance-mode");
-    if (selector) selector.value = theme;
+    window.dispatchEvent(new Event("workgate-theme-change"));
   }
 
-  applyTheme(savedTheme());
-  window.addEventListener("DOMContentLoaded", () => {
-    const selector = document.getElementById("appearance-mode");
-    if (!selector) return;
-    // The selector is parsed after this head script has applied the root theme.
-    selector.value = savedTheme();
-    selector.addEventListener("change", () => {
-      const theme = choices.has(selector.value) ? selector.value : "auto";
+  // The head script stays responsible for pre-paint application, persistence
+  // and cross-tab changes. React only renders the preference control.
+  window.WorkgateTheme = Object.freeze({
+    get: () => currentTheme,
+    set(value) {
+      const theme = choices.has(value) ? value : "auto";
       applyTheme(theme);
       try {
         localStorage.setItem(key, theme);
       } catch {
-        // Apply the chosen theme for this tab even when persistence is denied.
+        // The selected theme still applies to this tab.
       }
-    });
+    },
   });
+
+  applyTheme(currentTheme);
   window.addEventListener("storage", (event) => {
     if (event.key === key || event.key === null) applyTheme(savedTheme());
   });
+
 })();
