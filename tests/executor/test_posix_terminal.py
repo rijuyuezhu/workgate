@@ -34,19 +34,17 @@ def _attach(*, alive=True, closed=False):
     return attachment
 
 
-def test_resize_checks_closed_state_and_signals_live_group(monkeypatch):
+def test_resize_checks_closed_state_and_signals_live_client():
     attach = _attach()
     calls = []
     cast(Any, attach)._fcntl = SimpleNamespace(
         ioctl=lambda fd, operation, size: calls.append((fd, operation, size))
     )
-    monkeypatch.setattr(
-        posix_terminal.os, "killpg", lambda *args: calls.append(args)
-    )
+    cast(Any, attach).process.send_signal = lambda sig: calls.append(sig)
     assert attach.resize(90, 35)
     assert calls == [
         (71, 0x1234, struct.pack("HHHH", 35, 90, 0, 0)),
-        (123, posix_terminal.signal.SIGWINCH),
+        posix_terminal.signal.SIGWINCH,
     ]
 
     attach._closed = True
@@ -54,20 +52,16 @@ def test_resize_checks_closed_state_and_signals_live_group(monkeypatch):
         attach.resize(90, 35)
 
 
-def test_resize_skips_exited_group_and_ignores_process_race(monkeypatch):
+def test_resize_skips_exited_client_and_ignores_process_race():
     attach = _attach(alive=False)
     calls = []
-    monkeypatch.setattr(
-        posix_terminal.os, "killpg", lambda *_: calls.append("signal")
-    )
+    cast(Any, attach).process.send_signal = lambda *_: calls.append("signal")
     assert attach.resize(120, 36)
     assert calls == []
 
-    cast(Any, attach).process = SimpleNamespace(pid=123, poll=lambda: None)
-    monkeypatch.setattr(
-        posix_terminal.os,
-        "killpg",
-        lambda *_: (_ for _ in ()).throw(ProcessLookupError()),
+    cast(Any, attach).process = SimpleNamespace(
+        poll=lambda: None,
+        send_signal=lambda *_: (_ for _ in ()).throw(ProcessLookupError()),
     )
     assert attach.resize(120, 36)
 
@@ -176,22 +170,20 @@ def test_close_escalates_after_term_timeout(monkeypatch):
         raise subprocess.TimeoutExpired("tmux", timeout)
 
     cast(Any, attach).process = SimpleNamespace(
-        pid=123, poll=lambda: None, wait=wait
+        poll=lambda: None,
+        wait=wait,
+        terminate=lambda: calls.append("terminate"),
+        kill=lambda: calls.append("kill"),
     )
     monkeypatch.setattr(
         posix_terminal.os, "close", lambda fd: calls.append(("close", fd))
     )
-    monkeypatch.setattr(
-        posix_terminal.os,
-        "killpg",
-        lambda pid, sig: calls.append(("signal", pid, sig)),
-    )
     attach.close_sync()
     assert calls == [
         ("close", 71),
-        ("signal", 123, posix_terminal.signal.SIGTERM),
+        "terminate",
         ("wait", 2),
-        ("signal", 123, posix_terminal.signal.SIGKILL),
+        "kill",
         ("wait", 2),
     ]
 
