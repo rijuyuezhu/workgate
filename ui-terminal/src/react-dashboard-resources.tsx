@@ -3,18 +3,18 @@ import { createRoot } from "react-dom/client";
 type ResourceData = Record<string, unknown>;
 type Sample = { cpu: number | null; memory: number | null; disk: number | null };
 
-function numeric(value: unknown): number | null {
+export function numeric(value: unknown): number | null {
   if (value === null || value === undefined || value === "" || typeof value === "boolean") return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
 
-function percent(value: unknown) {
+export function percent(value: unknown) {
   const n = numeric(value);
   return n === null ? "—" : n.toFixed(1) + "%";
 }
 
-function bytes(value: unknown) {
+export function bytes(value: unknown) {
   const n = numeric(value);
   if (n === null || n < 0) return "—";
   const units = ["B", "KiB", "MiB", "GiB", "TiB"];
@@ -28,7 +28,7 @@ function bytes(value: unknown) {
   return scaled.toFixed(digits) + " " + units[unit];
 }
 
-function rate(value: unknown) {
+export function rate(value: unknown) {
   const amount = bytes(value);
   return amount === "—" ? amount : amount + "/s";
 }
