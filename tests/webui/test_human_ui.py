@@ -270,11 +270,21 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert 'executorAction("reset")' in executors_script.text
     assert '"resume" : "drain"' in executors_script.text
     assert "WorkgateReactAuditDetails" in react_bundle.text
+    assert "WorkgateReactTaskLists" in react_bundle.text
     assert "mountAuditDetails" in script.text
     assert "auditDetailViews" in script.text
     assert "mountAuditLists" in script.text
     assert "mountAuditLists" in client.get("/ui/assets/audit.js").text
     assert "mountAuditLists" in client.get("/ui/assets/tasks.js").text
+    assert "mountTaskLists" in script.text
+    assert "mountTaskLists" in client.get("/ui/assets/tasks.js").text
+    assert (
+        "taskList.replaceChildren" not in client.get("/ui/assets/tasks.js").text
+    )
+    assert (
+        "sessionList.replaceChildren"
+        not in client.get("/ui/assets/tasks.js").text
+    )
     audit_script = client.get("/ui/assets/audit.js")
     assert audit_script.status_code == 200
     assert audit_script.headers["x-content-type-options"] == "nosniff"
