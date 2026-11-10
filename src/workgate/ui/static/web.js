@@ -41,8 +41,9 @@ void (async () => {
   const mountDashboardSystem = window.WorkgateReactDashboardSystem?.mount;
   const mountOverviewLists = window.WorkgateReactOverviewLists?.mount;
   const mountDashboardHealth = window.WorkgateReactDashboardHealth?.mount;
+  const mountExecutorInventory = window.WorkgateReactExecutorInventory?.mount;
   if (typeof mountReactFiles !== "function" || typeof reactNavigation?.mount !== "function"
-      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function" || typeof mountOverviewLists !== "function" || typeof mountDashboardHealth !== "function") {
+      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function" || typeof mountOverviewLists !== "function" || typeof mountDashboardHealth !== "function" || typeof mountExecutorInventory !== "function") {
     throw new Error("React UI failed to initialize");
   }
   const apiPrefix = String(config.apiPrefix || "/api/ui").replace(/\/$/, "");
@@ -239,7 +240,6 @@ void (async () => {
     executorMcpBody: document.getElementById("executor-mcp-body"),
     executorSkillsBody: document.getElementById("executor-skills-body"),
     executorList: document.getElementById("executor-list"),
-    executorOnline: document.getElementById("executor-online"),
     executorPairApprove: document.getElementById("executor-pair-approve"),
     executorPairBuild: document.getElementById("executor-pair-build"),
     executorPairCode: document.getElementById("executor-pair-code"),
@@ -267,10 +267,8 @@ void (async () => {
     executorRevokeName: document.getElementById("executor-revoke-name"),
     executorReset: document.getElementById("executor-reset"),
     executorRevokeOpen: document.getElementById("executor-revoke-open"),
-    executorRevoked: document.getElementById("executor-revoked"),
     executorActionStatus: document.getElementById("executor-action-status"),
     executorState: document.getElementById("executor-state"),
-    executorTotal: document.getElementById("executor-total"),
     terminalCopy: document.getElementById("terminal-copy"),
     terminalFeedback: document.getElementById("terminal-feedback"),
     terminalInput: document.getElementById("terminal-input"),
@@ -537,6 +535,7 @@ void (async () => {
   dashboard.bind();
 
   const executors = createExecutorsController({
+    mountExecutorInventory,
     elements,
     request,
     mountDashboardResources,

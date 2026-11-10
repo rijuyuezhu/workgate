@@ -163,6 +163,8 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert 'class="dashboard-audit-shortcut"' not in index.text
     assert 'id="executors-panel"' in index.text
     assert 'id="executor-list"' in index.text
+    assert 'id="executor-inventory-summary"' in index.text
+    assert 'class="executor-control-group"' not in index.text
     assert 'id="executor-pair-dialog"' in index.text
     assert 'id="executor-rename-dialog"' in index.text
     assert 'id="executor-revoke-dialog"' in index.text
@@ -313,6 +315,12 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert "dashboardNumber" in dashboard_script.text
     assert "mountOverviewLists" in script.text
     assert "mountDashboardHealth" in script.text
+    assert "mountExecutorInventory" in script.text
+    assert (
+        "inventoryView.renderList(entries, state.selectedId)"
+        in executors_script.text
+    )
+    assert "executorList.querySelector" not in executors_script.text
     assert "healthView.renderSnapshot(payload)" in dashboard_script.text
     assert "dashboardHealthCard" not in dashboard_script.text
     assert "renderOverviewExecutors" in dashboard_script.text

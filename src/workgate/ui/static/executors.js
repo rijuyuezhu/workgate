@@ -15,6 +15,7 @@ export function createExecutorsController({
   reloadApp,
   onInventory,
   mountDashboardResources,
+  mountExecutorInventory,
   onNavigate = () => {},
 }) {
   let diagnosticResources = null;
@@ -50,6 +51,12 @@ export function createExecutorsController({
     oauthSessions: new Map(),
     oauthTimer: null,
   };
+
+  const inventoryView = mountExecutorInventory(
+    elements.executorList,
+    document.getElementById("executor-inventory-summary"),
+    (id) => { select(id); onNavigate("detail"); },
+  );
 
   const topology = createExecutorTopology({
     request,
@@ -213,66 +220,7 @@ export function createExecutorsController({
         status: executor.revoked_at ? "revoked" : executor.draining ? "draining" : executor.online ? "online" : "offline",
       })),
     ];
-    const controlGroup = elements.executorList.querySelector(".executor-control-group");
-    const peerGroup = elements.executorList.querySelector(".executor-peer-group");
-    const peerRows = peerGroup.querySelector(".executor-peer-rows");
-    peerGroup.hidden = state.executors.length === 0;
-    const existing = new Map(Array.from(elements.executorList.querySelectorAll(".executor-row"),
-      child => [child.dataset.selection, child]));
-    let peerPosition = 0;
-    for (const entry of entries) {
-      let button = existing.get(entry.key);
-      existing.delete(entry.key);
-      if (!button) {
-        button = document.createElement("button");
-        button.type = "button";
-        button.className = "executor-band executor-row";
-        button.dataset.selection = entry.key;
-        const indicator = document.createElement("span");
-        indicator.className = "executor-band-mark";
-        const main = document.createElement("span");
-        main.className = "executor-band-main";
-        const name = document.createElement("strong");
-        name.className = "executor-band-name";
-        const meta = document.createElement("span");
-        meta.className = "executor-band-meta";
-        const resources = document.createElement("span");
-        resources.className = "executor-band-resources";
-        main.append(name, meta, resources);
-        const status = document.createElement("span");
-        status.className = "executor-band-state";
-        button.append(indicator, main, status);
-        button.addEventListener("click", () => {
-          select(button.dataset.selection);
-          onNavigate("detail");
-        });
-      }
-      const selected = entry.key === state.selectedId;
-      button.classList.toggle("executor-row-selected", selected);
-      const pressed = String(selected);
-      if (button.getAttribute("aria-pressed") !== pressed)
-        button.setAttribute("aria-pressed", pressed);
-      if (button.title !== entry.name) button.title = entry.name;
-      const mark = button.querySelector(".executor-band-mark");
-      const initial = entry.name.slice(0, 1).toUpperCase();
-      if (mark.textContent !== initial) mark.textContent = initial;
-      const name = button.querySelector(".executor-band-name");
-      if (name.textContent !== entry.name) name.textContent = entry.name;
-      const meta = button.querySelector(".executor-band-meta");
-      if (meta.textContent !== entry.label) meta.textContent = entry.label;
-      const resources = button.querySelector(".executor-band-resources");
-      if (resources.textContent !== (entry.resources || "")) resources.textContent = entry.resources || "";
-      const status = button.querySelector(".executor-band-state");
-      if (status.textContent !== entry.status) status.textContent = entry.status;
-      const statusKind = entry.status === "available" ? "online"
-        : entry.status === "unavailable" ? "offline" : entry.status;
-      if (status.dataset.status !== statusKind) status.dataset.status = statusKind;
-      const group = entry.key === CONTROL_SELECTION ? controlGroup : peerRows;
-      const position = entry.key === CONTROL_SELECTION ? 0 : peerPosition++;
-      if (group.children[position] !== button)
-        group.insertBefore(button, group.children[position] || null);
-    }
-    for (const stale of existing.values()) stale.remove();
+    inventoryView.renderList(entries, state.selectedId);
   }
 
   function activeSubtab() {
@@ -1231,10 +1179,7 @@ export function createExecutorsController({
     }
     const online = state.executors.filter((item) => !item.revoked_at && item.online).length;
     const revoked = state.executors.filter((item) => item.revoked_at).length;
-    elements.executorOnline.textContent = String(online);
-    elements.executorTotal.textContent = String(state.executors.length);
-    elements.executorRevoked.textContent = String(revoked);
-    document.getElementById("executor-revoked-summary").hidden = revoked === 0;
+    inventoryView.renderSummary(state.executors.length, online, revoked);
     notice(elements.executorState, `Updated ${new Date().toLocaleTimeString()}`);
     renderList();
     renderDetails();
@@ -1456,10 +1401,7 @@ export function createExecutorsController({
     elements.executorRenameForm.reset();
     notice(elements.executorState, message);
     notice(elements.executorActionStatus, "");
-    elements.executorOnline.textContent = "—";
-    elements.executorTotal.textContent = "—";
-    elements.executorRevoked.textContent = "—";
-    document.getElementById("executor-revoked-summary").hidden = true;
+    inventoryView.renderSummary(null, null, null);
     renderList();
     renderDetails();
     renderManagement();
