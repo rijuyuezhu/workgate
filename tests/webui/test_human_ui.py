@@ -308,6 +308,10 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert "export function renderResourceCards" not in dashboard_script.text
     assert "mountDashboardResources" in executors_script.text
     assert "dashboardNumber" in dashboard_script.text
+    assert "renderSystemDetails(payload)" in dashboard_script.text
+    assert "renderSystemDetails(null)" in dashboard_script.text
+    assert "mountDashboardSystem" in script.text
+    assert "setDashboardBar" not in dashboard_script.text
     assert 'request("/executors")' in executors_script.text
     assert (
         "request(`/pair?code=${encodeURIComponent(code)}`)"

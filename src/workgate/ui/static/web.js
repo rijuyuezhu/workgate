@@ -38,8 +38,9 @@ void (async () => {
   const mountReactFiles = window.WorkgateReactFiles?.mount;
   const reactNavigation = window.WorkgateReactNavigation;
   const mountDashboardResources = window.WorkgateReactDashboardResources?.mount;
+  const mountDashboardSystem = window.WorkgateReactDashboardSystem?.mount;
   if (typeof mountReactFiles !== "function" || typeof reactNavigation?.mount !== "function"
-      || typeof mountDashboardResources !== "function") {
+      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function") {
     throw new Error("React UI failed to initialize");
   }
   const apiPrefix = String(config.apiPrefix || "/api/ui").replace(/\/$/, "");
@@ -116,27 +117,11 @@ void (async () => {
     dashboardAlerts: document.getElementById("dashboard-alerts"),
     dashboardAuditDetail: document.getElementById("dashboard-audit-detail"),
     dashboardAuditTotal: document.getElementById("dashboard-audit-total"),
-    dashboardCpuBar: document.getElementById("dashboard-cpu-bar"),
-    dashboardCpuCount: document.getElementById("dashboard-cpu-count"),
-    dashboardCpuValue: document.getElementById("dashboard-cpu-value"),
-    dashboardDiskBar: document.getElementById("dashboard-disk-bar"),
-    dashboardDiskUsed: document.getElementById("dashboard-disk-used"),
-    dashboardDiskValue: document.getElementById("dashboard-disk-value"),
-    dashboardGenerated: document.getElementById("dashboard-generated"),
     dashboardHealth: document.getElementById("dashboard-health"),
     dashboardHealthCard: document.getElementById("dashboard-health-card"),
     dashboardHealthDetail: document.getElementById("dashboard-health-detail"),
-    dashboardLoad: document.getElementById("dashboard-load"),
     dashboardExecutor: document.getElementById("dashboard-executor"),
-    dashboardMemoryBar: document.getElementById("dashboard-memory-bar"),
-    dashboardMemoryUsed: document.getElementById("dashboard-memory-used"),
-    dashboardMemoryValue: document.getElementById("dashboard-memory-value"),
-    dashboardNetworkRx: document.getElementById("dashboard-network-rx"),
-    dashboardNetworkTx: document.getElementById("dashboard-network-tx"),
-    dashboardPlatform: document.getElementById("dashboard-platform"),
-    dashboardPython: document.getElementById("dashboard-python"),
     dashboardState: document.getElementById("dashboard-state"),
-    dashboardUptime: document.getElementById("dashboard-uptime"),
     auditDetailBody: document.getElementById("audit-detail-body"),
     auditDetailMeta: document.getElementById("audit-detail-meta"),
     auditDetailTitle: document.getElementById("audit-detail-title"),
@@ -522,7 +507,10 @@ void (async () => {
     document.querySelector("#dashboard-panel .dashboard-summary"),
   );
   resourceCards.render();
+  const systemDetails = mountDashboardSystem(document.getElementById("dashboard-system-root"));
+  systemDetails.render();
   const dashboard = createDashboardController({
+    renderSystemDetails: systemDetails.render,
     renderResources: resourceCards.render,
     elements,
     request,

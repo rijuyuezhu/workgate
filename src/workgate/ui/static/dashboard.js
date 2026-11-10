@@ -4,30 +4,6 @@ function dashboardNumber(value) {
     return Number.isFinite(number) ? number : null;
   }
 
-function dashboardPercent(value) {
-    const number = dashboardNumber(value);
-    return number === null ? "—" : `${number.toFixed(1)}%`;
-  }
-
-function dashboardBytes(value) {
-    const number = dashboardNumber(value);
-    if (number === null || number < 0) return "—";
-    const units = ["B", "KiB", "MiB", "GiB", "TiB"];
-    let scaled = number;
-    let unit = 0;
-    while (scaled >= 1024 && unit < units.length - 1) {
-      scaled /= 1024;
-      unit += 1;
-    }
-    const digits = scaled >= 100 || unit === 0 ? 0 : scaled >= 10 ? 1 : 2;
-    return `${scaled.toFixed(digits)} ${units[unit]}`;
-  }
-
-function dashboardRate(value) {
-    const formatted = dashboardBytes(value);
-    return formatted === "—" ? formatted : `${formatted}/s`;
-  }
-
 
 export function createDashboardController({
   elements,
@@ -38,6 +14,7 @@ export function createDashboardController({
   onAuthenticationRequired,
   onOpenTask,
   renderResources,
+  renderSystemDetails,
   initialExecutorId = "",
 }) {
   const controllerState = {
@@ -53,25 +30,6 @@ export function createDashboardController({
 
   function dashboardExecutorOnline(executorId = controllerState.executorId) {
     return Boolean(executorId) && controllerState.executorStates.get(executorId) === "online";
-  }
-
-  function dashboardDuration(value) {
-    let seconds = dashboardNumber(value);
-    if (seconds === null || seconds < 0) return "—";
-    seconds = Math.floor(seconds);
-    const days = Math.floor(seconds / 86400);
-    const hours = Math.floor((seconds % 86400) / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    if (days) return `${days}d ${hours}h`;
-    if (hours) return `${hours}h ${minutes}m`;
-    return `${minutes}m ${seconds % 60}s`;
-  }
-
-  function dashboardTimestamp(value, fallback = "Unknown time") {
-    const seconds = dashboardNumber(value);
-    if (seconds === null || seconds <= 0) return fallback;
-    const date = new Date(seconds * 1000);
-    return Number.isNaN(date.getTime()) ? fallback : date.toLocaleString();
   }
 
   function setDashboardControls() {
@@ -105,13 +63,6 @@ export function createDashboardController({
   }
 
 
-  function setDashboardBar(element, value) {
-    const number = dashboardNumber(value);
-    const width = number === null ? 0 : Math.max(0, Math.min(100, number));
-    element.style.width = `${width}%`;
-    element.parentElement?.classList.toggle("dashboard-resource-missing", number === null);
-  }
-
   function resetDashboardExecutor(executorId = "") {
     controllerState.executorId = executorId;
     controllerState.loading = false;
@@ -125,26 +76,9 @@ export function createDashboardController({
     elements.dashboardHealthDetail.textContent = "Waiting for telemetry";
     elements.dashboardHealthCard.className = "dashboard-card dashboard-health-card";
     document.querySelector(".dashboard-health-banner").dataset.health = "unknown";
-    for (const element of [
-      elements.dashboardAuditTotal,
-      elements.dashboardCpuValue,
-      elements.dashboardMemoryValue,
-      elements.dashboardDiskValue,
-      elements.dashboardPlatform,
-      elements.dashboardPython,
-      elements.dashboardCpuCount,
-      elements.dashboardLoad,
-      elements.dashboardUptime,
-      elements.dashboardMemoryUsed,
-      elements.dashboardDiskUsed,
-      elements.dashboardNetworkRx,
-      elements.dashboardNetworkTx,
-      elements.dashboardGenerated,
-    ]) element.textContent = "—";
+    elements.dashboardAuditTotal.textContent = "—";
     elements.dashboardAuditDetail.textContent = "No activity loaded";
-    setDashboardBar(elements.dashboardCpuBar, null);
-    setDashboardBar(elements.dashboardMemoryBar, null);
-    setDashboardBar(elements.dashboardDiskBar, null);
+    renderSystemDetails(null);
     dashboardEmpty(elements.dashboardAlerts, `Alerts for ${controllerState.executorId} are not loaded.`);
     setDashboardControls();
   }
@@ -276,7 +210,6 @@ export function createDashboardController({
 
   function renderDashboard(payload) {
     const system = payload && payload.system && typeof payload.system === "object" ? payload.system : {};
-    const version = payload && payload.version && typeof payload.version === "object" ? payload.version : {};
     const alerts = Array.isArray(payload?.alerts) ? payload.alerts : [];
     controllerState.history.push({
       cpu: dashboardNumber(system.cpu_percent),
@@ -298,33 +231,11 @@ export function createDashboardController({
     elements.dashboardHealthDetail.textContent = alerts.length
       ? `${alerts.length} active alert${alerts.length === 1 ? "" : "s"}.`
       : "No active alerts.";
-    const load = dashboardNumber(system.load_1m);
     controllerState.lastSystem = system;
     renderResources(system, controllerState.history, "Live");
+    renderSystemDetails(payload);
     elements.dashboardAuditTotal.textContent = text(payload.audit_total_24h, "0");
     elements.dashboardAuditDetail.textContent = `${text(payload.audit_failed_24h, "0")} failed in 24h`;
-    elements.dashboardGenerated.textContent = dashboardTimestamp(payload.generated_at, "Unknown sample time");
-
-    elements.dashboardCpuValue.textContent = dashboardPercent(system.cpu_percent);
-    elements.dashboardMemoryValue.textContent = dashboardPercent(system.memory_percent);
-    elements.dashboardDiskValue.textContent = dashboardPercent(system.disk_percent);
-    setDashboardBar(elements.dashboardCpuBar, system.cpu_percent);
-    setDashboardBar(elements.dashboardMemoryBar, system.memory_percent);
-    setDashboardBar(elements.dashboardDiskBar, system.disk_percent);
-    elements.dashboardPlatform.textContent = text(version.platform);
-    elements.dashboardPython.textContent = text(version.python);
-    elements.dashboardCpuCount.textContent = text(system.cpu_count);
-    elements.dashboardLoad.textContent = load === null ? "—" : load.toFixed(2);
-    elements.dashboardUptime.textContent = dashboardDuration(system.uptime_s);
-    elements.dashboardMemoryUsed.textContent = system.memory_total_bytes === null
-      ? "—"
-      : `${dashboardBytes(system.memory_used_bytes)} / ${dashboardBytes(system.memory_total_bytes)}`;
-    elements.dashboardDiskUsed.textContent = system.disk_total_bytes === null
-      ? "—"
-      : `${dashboardBytes(system.disk_used_bytes)} / ${dashboardBytes(system.disk_total_bytes)}`;
-    elements.dashboardNetworkRx.textContent = dashboardRate(system.network_rx_bps);
-    elements.dashboardNetworkTx.textContent = dashboardRate(system.network_tx_bps);
-
     elements.dashboardAlerts.replaceChildren();
     if (!alerts.length) {
       dashboardEmpty(elements.dashboardAlerts, "No active alerts.");
