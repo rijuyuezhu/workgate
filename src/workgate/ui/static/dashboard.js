@@ -29,6 +29,8 @@ function dashboardRate(value) {
   }
 
 
+// Executor detail cards still use the original DOM renderer. Dashboard
+// resource cards have their own React presentation.
 function finiteNumber(value) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -104,6 +106,7 @@ export function createDashboardController({
   isAuthenticated,
   onAuthenticationRequired,
   onOpenTask,
+  renderResources,
   initialExecutorId = "",
 }) {
   const controllerState = {
@@ -113,6 +116,7 @@ export function createDashboardController({
     loading: false,
     executorStates: new Map(),
     history: [],
+    lastSystem: {},
     timer: null,
   };
 
@@ -142,10 +146,6 @@ export function createDashboardController({
   function setDashboardControls() {
     const online = dashboardExecutorOnline();
     elements.dashboardExecutor.disabled = controllerState.loading;
-  }
-
-  function setMetricLive(label) {
-    for (const badge of document.querySelectorAll(".dashboard-live")) badge.textContent = label;
   }
 
   function stopDashboardPolling() {
@@ -186,18 +186,15 @@ export function createDashboardController({
     controllerState.loading = false;
     controllerState.generation += 1;
     controllerState.history = [];
+    controllerState.lastSystem = {};
+    renderResources({}, [], "—");
     elements.dashboardExecutor.value = controllerState.executorId;
     elements.dashboardState.textContent = "Not loaded";
     elements.dashboardHealth.textContent = "—";
     elements.dashboardHealthDetail.textContent = "Waiting for telemetry";
     elements.dashboardHealthCard.className = "dashboard-card dashboard-health-card";
     document.querySelector(".dashboard-health-banner").dataset.health = "unknown";
-    setMetricLive("—");
     for (const element of [
-      elements.dashboardCpu,
-      elements.dashboardMemory,
-      elements.dashboardDisk,
-      elements.dashboardNetwork,
       elements.dashboardAuditTotal,
       elements.dashboardCpuValue,
       elements.dashboardMemoryValue,
@@ -214,22 +211,9 @@ export function createDashboardController({
       elements.dashboardGenerated,
     ]) element.textContent = "—";
     elements.dashboardAuditDetail.textContent = "No activity loaded";
-    for (const id of [
-      "dashboard-cpu-foot-load", "dashboard-cpu-foot-cores",
-      "dashboard-memory-foot-used", "dashboard-memory-foot-total",
-      "dashboard-disk-foot-used", "dashboard-disk-foot-total",
-      "dashboard-network-down", "dashboard-network-up",
-    ]) document.getElementById(id).textContent = "—";
-    document.getElementById("dashboard-network-rx-bar").style.width = "0%";
-    document.getElementById("dashboard-network-tx-bar").style.width = "0%";
     setDashboardBar(elements.dashboardCpuBar, null);
     setDashboardBar(elements.dashboardMemoryBar, null);
     setDashboardBar(elements.dashboardDiskBar, null);
-    for (const trend of [
-      elements.dashboardCpuTrend,
-      elements.dashboardMemoryTrend,
-      elements.dashboardDiskTrend,
-    ]) trend.replaceChildren();
     dashboardEmpty(elements.dashboardAlerts, `Alerts for ${controllerState.executorId} are not loaded.`);
     setDashboardControls();
   }
@@ -380,12 +364,12 @@ export function createDashboardController({
     }[health];
     elements.dashboardHealthCard.className = `dashboard-card dashboard-health-card dashboard-health-${health}`;
     document.querySelector(".dashboard-health-banner").dataset.health = health;
-    setMetricLive("Live");
     elements.dashboardHealthDetail.textContent = alerts.length
       ? `${alerts.length} active alert${alerts.length === 1 ? "" : "s"}.`
       : "No active alerts.";
     const load = dashboardNumber(system.load_1m);
-    renderResourceCards(document.querySelector("#dashboard-panel .dashboard-summary"), system, controllerState.history);
+    controllerState.lastSystem = system;
+    renderResources(system, controllerState.history, "Live");
     elements.dashboardAuditTotal.textContent = text(payload.audit_total_24h, "0");
     elements.dashboardAuditDetail.textContent = `${text(payload.audit_failed_24h, "0")} failed in 24h`;
     elements.dashboardGenerated.textContent = dashboardTimestamp(payload.generated_at, "Unknown sample time");
@@ -451,7 +435,7 @@ export function createDashboardController({
       if (generation !== controllerState.generation || requestedExecutor !== controllerState.executorId) return null;
       elements.dashboardState.textContent = error instanceof Error ? error.message : String(error);
       elements.dashboardHealth.textContent = "unavailable";
-      setMetricLive("Unavailable");
+      renderResources(controllerState.lastSystem, controllerState.history, "Unavailable");
       elements.dashboardHealthCard.className = "dashboard-card dashboard-health-card dashboard-health-attention";
       elements.dashboardHealthDetail.textContent = `Telemetry for ${requestedExecutor} could not be loaded`;
       return null;

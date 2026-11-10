@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { navigation } from "./react-navigation";
+import { dashboardResources } from "./react-dashboard-resources";
 import { createRoot } from "react-dom/client";
 import { Filemanager, Willow, type IEntity } from "@svar-ui/react-filemanager";
 import "@svar-ui/react-filemanager/all.css";
@@ -141,9 +142,12 @@ declare global {
   interface Window {
     WorkgateReactFiles?: { mount: typeof mount };
     WorkgateReactNavigation?: typeof navigation;
+    WorkgateReactDashboardResources?: typeof dashboardResources;
   }
 }
 
 window.WorkgateReactFiles = { mount };
 
 window.WorkgateReactNavigation = navigation;
+
+window.WorkgateReactDashboardResources = dashboardResources;
