@@ -12,8 +12,11 @@ export function createDashboardController({
   authMode,
   isAuthenticated,
   onAuthenticationRequired,
-  onOpenTask,
   renderResources,
+  renderOverviewExecutors,
+  renderOverviewSelection,
+  renderOverviewAlerts,
+  renderOverviewTasks,
   renderSystemDetails,
   initialExecutorId = "",
 }) {
@@ -33,8 +36,8 @@ export function createDashboardController({
   }
 
   function setDashboardControls() {
-    const online = dashboardExecutorOnline();
     elements.dashboardExecutor.disabled = controllerState.loading;
+    renderOverviewSelection(controllerState.executorId, controllerState.loading);
   }
 
   function stopDashboardPolling() {
@@ -54,15 +57,6 @@ export function createDashboardController({
     }, 5000);
   }
 
-  function dashboardEmpty(container, message) {
-    container.replaceChildren();
-    const empty = document.createElement("div");
-    empty.className = "empty-state";
-    empty.textContent = message;
-    container.append(empty);
-  }
-
-
   function resetDashboardExecutor(executorId = "") {
     controllerState.executorId = executorId;
     controllerState.loading = false;
@@ -79,7 +73,7 @@ export function createDashboardController({
     elements.dashboardAuditTotal.textContent = "—";
     elements.dashboardAuditDetail.textContent = "No activity loaded";
     renderSystemDetails(null);
-    dashboardEmpty(elements.dashboardAlerts, `Alerts for ${controllerState.executorId} are not loaded.`);
+    renderOverviewAlerts([], `Alerts for ${controllerState.executorId} are not loaded.`);
     setDashboardControls();
   }
 
@@ -88,9 +82,6 @@ export function createDashboardController({
     const wasOnline = dashboardExecutorOnline();
     controllerState.executorStates = new Map();
     elements.dashboardExecutor.replaceChildren();
-    const machineList = document.getElementById("dashboard-machine-list");
-    machineList.replaceChildren();
-    if (!available.length) dashboardEmpty(machineList, "No executors paired.");
     for (const executor of available) {
       const executorId = text(executor.executor_id, "");
       if (!executorId) continue;
@@ -102,37 +93,6 @@ export function createDashboardController({
       option.textContent = state === "online" ? label : `${label} (${state})`;
       option.disabled = state !== "online";
       elements.dashboardExecutor.append(option);
-      const row = document.createElement("button");
-      row.type = "button";
-      row.className = "executor-band dashboard-machine-row";
-      row.setAttribute("aria-label", `Select ${label}`);
-      row.dataset.executorId = executorId;
-      row.setAttribute("aria-current", String(executorId === controllerState.executorId));
-      row.disabled = state !== "online";
-      const avatar = document.createElement("span");
-      avatar.className = "executor-band-mark";
-      avatar.textContent = label.slice(0, 1).toUpperCase();
-      const details = document.createElement("span");
-      details.className = "executor-band-main";
-      const name = document.createElement("strong");
-      name.textContent = label;
-      const version = document.createElement("small");
-      version.textContent = text(executor.runtime?.workgate_version, "Executor");
-      details.append(name, version);
-      const status = document.createElement("span");
-      status.className = "executor-band-state";
-      status.dataset.status = state;
-      status.textContent = state;
-      row.append(avatar, details, status);
-      row.addEventListener("click", () => {
-        if (controllerState.loading || executorId === controllerState.executorId) return;
-        elements.dashboardExecutor.value = executorId;
-        elements.dashboardExecutor.dispatchEvent(new Event("change", { bubbles: true }));
-        for (const item of machineList.children) {
-          item.setAttribute("aria-current", String(item.dataset.executorId === executorId));
-        }
-      });
-      machineList.append(row);
     }
     const previousExecutorId = controllerState.executorId;
     if (!dashboardExecutorOnline() && !controllerState.executorPinned) {
@@ -149,9 +109,6 @@ export function createDashboardController({
       elements.dashboardExecutor.append(option);
     }
     elements.dashboardExecutor.value = controllerState.executorId;
-    for (const item of machineList.children) {
-      item.setAttribute("aria-current", String(item.dataset.executorId === controllerState.executorId));
-    }
     if (!dashboardExecutorOnline() && wasOnline) resetDashboardExecutor(controllerState.executorId);
     if (dashboardExecutorOnline() && (!wasOnline || previousExecutorId !== controllerState.executorId)) {
       refreshDashboardInBackground({ force: true });
@@ -160,52 +117,11 @@ export function createDashboardController({
       elements.dashboardState.textContent = "Executor offline";
     }
     setDashboardControls();
+    renderOverviewExecutors(available, controllerState.executorId, controllerState.loading);
   }
 
   function renderTasks(tasks) {
-    const list = document.getElementById("dashboard-task-list");
-    list.replaceChildren();
-    const active = (Array.isArray(tasks) ? tasks : []).filter(
-      (task) => task.status !== "completed" && task.status !== "cancelled",
-    );
-    if (!active.length) {
-      dashboardEmpty(list, "No active tasks.");
-      return;
-    }
-    for (const task of active.slice(0, 4)) {
-      const row = document.createElement("button");
-      row.type = "button";
-      row.className = "dashboard-task-row";
-      row.dataset.taskId = task.task_id;
-      const title = document.createElement("strong");
-      title.textContent = text(task.objective, text(task.task_id));
-      const state = document.createElement("span");
-      state.className = "dashboard-task-state";
-      state.textContent = text(task.status);
-      row.append(title, state);
-      row.addEventListener("click", () => onOpenTask(task.task_id));
-      list.append(row);
-    }
-  }
-
-  function dashboardListItem(kind, titleText, detailText, metaText = "") {
-    const article = document.createElement("article");
-    article.className = `dashboard-list-item dashboard-list-${kind}`;
-    const icon = document.createElement("span");
-    icon.className = "dashboard-event-icon";
-    icon.setAttribute("aria-hidden", "true");
-    icon.textContent = ["failed", "critical", "warning", "attention"].includes(kind) ? "!" : "✓";
-    const header = document.createElement("div");
-    header.className = "dashboard-list-header";
-    const title = document.createElement("strong");
-    title.textContent = titleText;
-    const meta = document.createElement("span");
-    meta.textContent = metaText;
-    header.append(title, meta);
-    const detail = document.createElement("p");
-    detail.textContent = detailText;
-    article.append(icon, header, detail);
-    return article;
+    renderOverviewTasks(tasks);
   }
 
   function renderDashboard(payload) {
@@ -236,21 +152,7 @@ export function createDashboardController({
     renderSystemDetails(payload);
     elements.dashboardAuditTotal.textContent = text(payload.audit_total_24h, "0");
     elements.dashboardAuditDetail.textContent = `${text(payload.audit_failed_24h, "0")} failed in 24h`;
-    elements.dashboardAlerts.replaceChildren();
-    if (!alerts.length) {
-      dashboardEmpty(elements.dashboardAlerts, "No active alerts.");
-    } else {
-      for (const alert of alerts) {
-        elements.dashboardAlerts.append(
-          dashboardListItem(
-            text(alert.severity, "info"),
-            text(alert.title, "Dashboard alert"),
-            text(alert.detail, ""),
-            text(alert.node, controllerState.executorId),
-          ),
-        );
-      }
-    }
+    renderOverviewAlerts(alerts, "No active alerts.");
 
     elements.dashboardState.textContent = `Updated ${new Date().toLocaleTimeString()}`;
   }
