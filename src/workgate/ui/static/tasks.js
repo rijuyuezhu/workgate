@@ -3,6 +3,7 @@ export function createTasksController({
   request,
   text,
   mountAuditLists,
+  mountTaskLists,
   auditEntryTitle,
   auditTimestamp,
   renderAuditDetailInto,
@@ -65,6 +66,22 @@ export function createTasksController({
     onNavigate("session-record");
   });
   auditListView.render([], "", "Select a session to load its Audit records.");
+  const taskLists = mountTaskLists(elements.taskList, elements.sessionList, {
+    task: (id) => void selectTask(id),
+    unattached: (id) => void selectUnattachedSession(id),
+    session: (id) => {
+      if (id === controllerState.sessionId) onNavigate("session");
+      else void selectSession(id);
+    },
+  });
+  taskLists.renderTasks({
+    tasks: [], unattached: [], selectedTaskId: "", selectedSessionId: "",
+    emptyMessage: "Loading tasks…",
+  });
+  taskLists.renderSessions({
+    sessions: [], selectedSessionId: "",
+    emptyMessage: "Select a task to inspect its execution sessions.",
+  });
 
   let activeTab = initialSessionId ? "sessions" : "progress";
 
@@ -131,43 +148,18 @@ export function createTasksController({
     return text(controllerState.executorTargets.get(executorId)?.name, text(executorId, "Unknown executor"));
   }
 
-  function updateSessionEntryExecutor(button, session) {
-    const name = executorName(session.executor_id);
-    button.querySelector(".executor-band-mark").textContent = name.slice(0, 1).toUpperCase();
-    button.querySelector(".session-entry-meta").textContent = sessionEntryMetaText(
-      session, button.classList.contains("unattached-session-entry"),
-    );
-    button.title = `${sessionOptionLabel(session)} — ${name}`;
-  }
-
-  function appendSessionEntryContent(button, session, title, meta) {
-    const avatar = document.createElement("span");
-    avatar.className = "executor-band-mark";
-    avatar.setAttribute("aria-hidden", "true");
-    const main = document.createElement("span");
-    main.className = "session-entry-main";
-    main.append(title, meta);
-    button.append(avatar, main);
-    updateSessionEntryExecutor(button, session);
-  }
-
   function renderExecutors(targets) {
     const previous = sessionAvailability();
     controllerState.executorTargets = new Map(
       targets.map((item) => [item.executor_id, item]),
     );
-    // Refresh identity in place: renamed/offline executors must not reset list focus or scroll.
-    const sessions = new Map(
-      [...controllerState.sessions, ...controllerState.unattachedSessions]
-        .map((session) => [session.session_id, session]),
-    );
-    for (const list of [elements.sessionList, elements.taskList]) {
-      for (const button of list.querySelectorAll(".session-entry[data-session-id]")) {
-        const session = sessions.get(button.dataset.sessionId);
-        if (session) updateSessionEntryExecutor(button, session);
-      }
+    // React updates executor identity in place without replacing focused rows.
+    if (controllerState.inventorySignature) {
+      renderTaskList();
+      renderSessions(controllerState.sessions);
+    } else {
+      renderSessionDetail();
     }
-    renderSessionDetail();
     if (previous === "executor_offline" && sessionAvailability() !== "executor_offline") {
       void refreshWorkspace();
     }
@@ -331,16 +323,14 @@ export function createTasksController({
     controllerState.workspaceLoading = false;
     controllerState.sessionTerminating = false;
     controllerState.taskMutationBusy = false;
-    elements.taskList.replaceChildren();
-    const taskEmpty = document.createElement("div");
-    taskEmpty.className = "empty-state";
-    taskEmpty.textContent = "Loading tasks…";
-    elements.taskList.append(taskEmpty);
-    elements.sessionList.replaceChildren();
-    const sessionEmpty = document.createElement("div");
-    sessionEmpty.className = "empty-state";
-    sessionEmpty.textContent = "Select a task to inspect its execution sessions.";
-    elements.sessionList.append(sessionEmpty);
+    taskLists.renderTasks({
+      tasks: [], unattached: [], selectedTaskId: "", selectedSessionId: "",
+      emptyMessage: "Loading tasks…",
+    });
+    taskLists.renderSessions({
+      sessions: [], selectedSessionId: "",
+      emptyMessage: "Select a task to inspect its execution sessions.",
+    });
     clearTaskResources("Select a task");
     resetSessionAuditWorkspace("Select a session");
     elements.tasksState.textContent = "Not loaded";
@@ -404,43 +394,31 @@ export function createTasksController({
     syncControls();
   }
 
+  function sessionRow(session, legacy = false) {
+    const name = executorName(session.executor_id);
+    return {
+      id: text(session.session_id, ""),
+      title: legacy
+        ? sessionOptionLabel(session)
+        : text(session.label, text(session.workdir, "Session")),
+      meta: sessionEntryMetaText(session, legacy),
+      executor: name,
+      terminated: !legacy && sessionTerminated(session),
+      tooltip: `${sessionOptionLabel(session)} — ${name}`,
+    };
+  }
+
   function renderSessions(sessions) {
     controllerState.sessions = Array.isArray(sessions) ? sessions : [];
-    elements.sessionList.replaceChildren();
-    if (!controllerState.sessions.length) {
-      const empty = document.createElement("div");
-      empty.className = "empty-state";
-      empty.textContent = selectedTaskId()
+    taskLists.renderSessions({
+      sessions: controllerState.sessions.map((session) => sessionRow(session)),
+      selectedSessionId: controllerState.sessionId,
+      emptyMessage: !controllerState.sessions.length && selectedTaskId()
         ? "This task has no retained execution sessions."
         : controllerState.sessionId
           ? "Unattached session selected from the task list."
-          : "No retained execution session selected.";
-      elements.sessionList.append(empty);
-    } else {
-      for (const session of controllerState.sessions) {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "session-entry";
-        button.dataset.sessionId = text(session.session_id, "");
-        button.setAttribute(
-          "aria-current",
-          session.session_id === controllerState.sessionId ? "true" : "false",
-        );
-        const title = document.createElement("strong");
-        title.textContent = text(session.label, text(session.workdir, "Session"));
-        const meta = document.createElement("span");
-        meta.className = sessionTerminated(session)
-          ? "session-entry-meta session-entry-terminated"
-          : "session-entry-meta";
-        meta.textContent = sessionEntryMetaText(session);
-        appendSessionEntryContent(button, session, title, meta);
-        button.addEventListener("click", () => {
-          if (session.session_id === controllerState.sessionId) onNavigate("session");
-          else void selectSession(session.session_id);
-        });
-        elements.sessionList.append(button);
-      }
-    }
+          : "No retained execution session selected.",
+    });
     renderSessionDetail();
     syncControls();
   }
@@ -463,69 +441,18 @@ export function createTasksController({
     document.getElementById("task-count-total").textContent = String(controllerState.taskOverallCount);
     elements.tasksPageState.textContent = `Page ${controllerState.taskCursorStack.length + 1} (${controllerState.taskPageCount} of ${controllerState.taskTotal})`;
     document.getElementById("tasks-panel").dataset.taskFilter = controllerState.taskFilter;
-    elements.taskList.replaceChildren();
-    if (!controllerState.tasks.length && !controllerState.unattachedSessions.length) {
-      const empty = document.createElement("div");
-      empty.className = "empty-state";
-      empty.textContent = "Nothing matches this filter.";
-      elements.taskList.append(empty);
-      return;
-    }
-    for (const task of controllerState.tasks) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "session-entry task-entry";
-      button.dataset.taskId = text(task.task_id, "");
-      button.setAttribute(
-        "aria-current",
-        task.task_id === controllerState.taskId ? "true" : "false",
-      );
-      const title = document.createElement("strong");
-      title.textContent = taskOptionLabel(task);
-      const heading = document.createElement("span");
-      heading.className = "task-entry-heading";
-      const status = document.createElement("span");
-      status.className = "task-entry-status";
-      status.dataset.status = text(task.status, "unknown");
-      status.textContent = text(task.status, "unknown");
-      heading.append(title, status);
-      const meta = document.createElement("span");
-      meta.className = "session-entry-meta";
-      meta.textContent = taskMeta(task);
-      button.append(heading, meta);
-      button.addEventListener("click", () => {
-        void selectTask(task.task_id);
-      });
-      elements.taskList.append(button);
-    }
-    if (!controllerState.unattachedSessions.length) return;
-    const label = document.createElement("div");
-    label.className = "session-group-label";
-    label.textContent = "Unattached sessions";
-    elements.taskList.append(label);
-    for (const session of controllerState.unattachedSessions) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "session-entry unattached-session-entry";
-      button.dataset.sessionId = text(session.session_id, "");
-      button.setAttribute(
-        "aria-current",
-        !selectedTaskId() && session.session_id === controllerState.sessionId
-          ? "true"
-          : "false",
-      );
-      const title = document.createElement("strong");
-      title.textContent = sessionOptionLabel(session);
-      const meta = document.createElement("span");
-      meta.className = "session-entry-meta";
-      meta.textContent = sessionEntryMetaText(session, true);
-      appendSessionEntryContent(button, session, title, meta);
-      button.addEventListener(
-        "click",
-        () => void selectUnattachedSession(session.session_id),
-      );
-      elements.taskList.append(button);
-    }
+    taskLists.renderTasks({
+      tasks: controllerState.tasks.map((task) => ({
+        id: text(task.task_id, ""),
+        title: taskOptionLabel(task),
+        status: text(task.status, "unknown"),
+        meta: taskMeta(task),
+      })),
+      unattached: controllerState.unattachedSessions.map((session) => sessionRow(session, true)),
+      selectedTaskId: controllerState.taskId,
+      selectedSessionId: controllerState.sessionId,
+      emptyMessage: "Nothing matches this filter.",
+    });
   }
 
   function syncDeepLink() {
@@ -552,12 +479,6 @@ export function createTasksController({
       selectedTaskId(), controllerState.sessionId]);
     if (signature === controllerState.inventorySignature) return;
     controllerState.inventorySignature = signature;
-    const listScroll = [elements.taskList.scrollTop, elements.sessionList.scrollTop];
-    const focused = (elements.taskList.contains(document.activeElement) || elements.sessionList.contains(document.activeElement))
-      ? document.activeElement.closest(".session-entry")
-      : null;
-    const focusedTask = focused?.dataset.taskId;
-    const focusedSession = focused?.dataset.sessionId;
     controllerState.tasks = Array.isArray(payload?.tasks) ? payload.tasks : [];
     // Keep the selected detail independent of the filtered list. Never inject
     // an out-of-filter Task or legacy Session into the visible page.
@@ -616,14 +537,6 @@ export function createTasksController({
 
     renderTaskList();
     renderSessions(controllerState.sessions);
-    [elements.taskList.scrollTop, elements.sessionList.scrollTop] = listScroll;
-    if (focused) {
-      const list = focusedTask || focused.classList.contains("unattached-session-entry")
-        ? elements.taskList : elements.sessionList;
-      Array.from(list.querySelectorAll(".session-entry"))
-        .find((item) => (focusedTask ? item.dataset.taskId === focusedTask : item.dataset.sessionId === focusedSession))
-        ?.focus({ preventScroll: true });
-    }
     if (controllerState.sessionId) showTab("sessions");
     updateTaskTabs();
     syncDeepLink();
