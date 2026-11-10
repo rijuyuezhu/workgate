@@ -43,8 +43,9 @@ void (async () => {
   const mountDashboardHealth = window.WorkgateReactDashboardHealth?.mount;
   const mountExecutorInventory = window.WorkgateReactExecutorInventory?.mount;
   const mountExecutorDetail = window.WorkgateReactExecutorDetail?.mount;
+  const mountAuditLists = window.WorkgateReactAuditLists?.mount;
   if (typeof mountReactFiles !== "function" || typeof reactNavigation?.mount !== "function"
-      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function" || typeof mountOverviewLists !== "function" || typeof mountDashboardHealth !== "function" || typeof mountExecutorInventory !== "function" || typeof mountExecutorDetail !== "function") {
+      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function" || typeof mountOverviewLists !== "function" || typeof mountDashboardHealth !== "function" || typeof mountExecutorInventory !== "function" || typeof mountExecutorDetail !== "function" || typeof mountAuditLists !== "function") {
     throw new Error("React UI failed to initialize");
   }
   const apiPrefix = String(config.apiPrefix || "/api/ui").replace(/\/$/, "");
@@ -400,7 +401,6 @@ void (async () => {
   mobileNavigation.bind();
 
   const {
-    auditEntryButton,
     auditEntryTitle,
     auditTimestamp,
     renderAuditDetailInto,
@@ -411,7 +411,7 @@ void (async () => {
     elements,
     request,
     text,
-    auditEntryButton,
+    mountAuditLists,
     auditEntryTitle,
     auditTimestamp,
     renderAuditDetailInto,
@@ -462,7 +462,7 @@ void (async () => {
     elements,
     request,
     text,
-    auditEntryButton,
+    mountAuditLists,
     auditEntryTitle,
     auditTimestamp,
     renderAuditDetailInto,

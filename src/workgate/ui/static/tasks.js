@@ -2,7 +2,7 @@ export function createTasksController({
   elements,
   request,
   text,
-  auditEntryButton,
+  mountAuditLists,
   auditEntryTitle,
   auditTimestamp,
   renderAuditDetailInto,
@@ -57,8 +57,15 @@ export function createTasksController({
     sessionAuditDetailGeneration: 0,
     sessionAuditLoading: false,
     sessionAuditRefreshing: false,
-    sessionAuditListSignature: "",
   };
+  const auditListView = mountAuditLists(elements.sessionAuditList, (id) => {
+    controllerState.sessionAuditSelectedId = id;
+    renderSessionAuditList();
+    void loadSessionAuditDetail(id);
+    onNavigate("session-record");
+  });
+  auditListView.render([], "", "Select a session to load its Audit records.");
+
   let activeTab = initialSessionId ? "sessions" : "progress";
 
   function showTab(tab) {
@@ -1110,17 +1117,12 @@ export function createTasksController({
   }
 
   function resetSessionAuditWorkspace(message = "Select a session") {
-    controllerState.sessionAuditListSignature = "";
     controllerState.sessionAuditRefreshing = false;
     controllerState.sessionAuditEntries = [];
     controllerState.sessionAuditSelectedId = "";
     controllerState.sessionAuditLoading = false;
     controllerState.sessionAuditGeneration += 1;
-    elements.sessionAuditList.replaceChildren();
-    const empty = document.createElement("div");
-    empty.className = "empty-state";
-    empty.textContent = message;
-    elements.sessionAuditList.append(empty);
+    auditListView.render([], "", message);
     elements.sessionAuditSummary.textContent = "0 entries";
     elements.sessionAuditState.textContent = message;
     clearSessionAuditDetail();
@@ -1128,38 +1130,13 @@ export function createTasksController({
   }
 
   function renderSessionAuditList() {
-    const signature = JSON.stringify([controllerState.sessionAuditEntries, controllerState.sessionAuditSelectedId]);
-    if (signature === controllerState.sessionAuditListSignature) return;
-    controllerState.sessionAuditListSignature = signature;
-    const scroll = elements.sessionAuditList.scrollTop;
-    const focusedId = elements.sessionAuditList.contains(document.activeElement)
-      ? document.activeElement.closest(".audit-entry")?.dataset.auditId
-      : "";
-    elements.sessionAuditList.replaceChildren();
-    if (!controllerState.sessionAuditEntries.length) {
-      const empty = document.createElement("div");
-      empty.className = "empty-state";
-      empty.textContent = controllerState.sessionId
+    const entries = controllerState.sessionAuditEntries;
+    auditListView.render(entries, controllerState.sessionAuditSelectedId,
+      controllerState.sessionId
         ? `No Audit records match for ${controllerState.sessionId}.`
-        : "Select a session to load its Audit records.";
-      elements.sessionAuditList.append(empty);
+        : "Select a session to load its Audit records.");
+    if (!entries.length) {
       clearSessionAuditDetail("No matching session Audit record is available.");
-      return;
-    }
-    for (const entry of controllerState.sessionAuditEntries) {
-      elements.sessionAuditList.append(
-        auditEntryButton(entry, controllerState.sessionAuditSelectedId, () => {
-          controllerState.sessionAuditSelectedId = text(entry.id, "");
-          renderSessionAuditList();
-          void loadSessionAuditDetail(controllerState.sessionAuditSelectedId);
-          onNavigate("session-record");
-        }),
-      );
-    }
-    elements.sessionAuditList.scrollTop = scroll;
-    if (focusedId) {
-      Array.from(elements.sessionAuditList.querySelectorAll(".audit-entry"))
-        .find((button) => button.dataset.auditId === focusedId)?.focus({ preventScroll: true });
     }
   }
 

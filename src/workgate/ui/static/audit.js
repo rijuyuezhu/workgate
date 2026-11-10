@@ -2,7 +2,7 @@ export function createAuditController({
   elements,
   request,
   text,
-  auditEntryButton,
+  mountAuditLists,
   auditEntryTitle,
   auditTimestamp,
   renderAuditDetailInto,
@@ -19,8 +19,16 @@ export function createAuditController({
     auditRefreshing: false,
     auditSessionId: text(initialSessionId, ""),
     paused: false,
-    listSignature: "",
   };
+
+  const listView = mountAuditLists(elements.auditList, (id) => {
+    controllerState.auditSelectedId = id;
+    renderAuditList();
+    setAuditControls();
+    void loadAuditDetail(id);
+    onNavigate("detail");
+  });
+  listView.render([], "", "Loading Audit records…");
 
   function auditScopeLabel() {
     return controllerState.auditSessionId
@@ -50,13 +58,8 @@ export function createAuditController({
     controllerState.auditRefreshing = false;
     controllerState.auditEntries = [];
     controllerState.auditSelectedId = "";
-    controllerState.listSignature = "";
     controllerState.auditGeneration += 1;
-    elements.auditList.replaceChildren();
-    const empty = document.createElement("div");
-    empty.className = "empty-state";
-    empty.textContent = `No records loaded for ${auditScopeLabel()}.`;
-    elements.auditList.append(empty);
+    listView.render([], "", `No records loaded for ${auditScopeLabel()}.`);
     elements.auditSummary.textContent = "0 entries";
     elements.auditState.textContent = "Not loaded";
     clearAuditDetail();
@@ -71,37 +74,11 @@ export function createAuditController({
   }
 
   function renderAuditList() {
-    const signature = JSON.stringify([controllerState.auditEntries, controllerState.auditSelectedId]);
-    if (signature === controllerState.listSignature) return;
-    const scroll = elements.auditList.scrollTop;
-    const focusedId = elements.auditList.contains(document.activeElement)
-      ? document.activeElement.closest(".audit-entry")?.dataset.auditId
-      : "";
-    controllerState.listSignature = signature;
-    elements.auditList.replaceChildren();
-    if (!controllerState.auditEntries.length) {
-      const empty = document.createElement("div");
-      empty.className = "empty-state";
-      empty.textContent = `No matching records for ${auditScopeLabel()}.`;
-      elements.auditList.append(empty);
+    const entries = controllerState.auditEntries;
+    listView.render(entries, controllerState.auditSelectedId,
+      `No matching records for ${auditScopeLabel()}.`);
+    if (!entries.length) {
       clearAuditDetail(`No matching Audit record is available for ${auditScopeLabel()}.`);
-      return;
-    }
-    for (const entry of controllerState.auditEntries) {
-      elements.auditList.append(
-        auditEntryButton(entry, controllerState.auditSelectedId, () => {
-          controllerState.auditSelectedId = text(entry.id, "");
-          renderAuditList();
-          setAuditControls();
-          void loadAuditDetail(controllerState.auditSelectedId);
-          onNavigate("detail");
-        }),
-      );
-    }
-    elements.auditList.scrollTop = scroll;
-    if (focusedId) {
-      Array.from(elements.auditList.querySelectorAll(".audit-entry"))
-        .find((button) => button.dataset.auditId === focusedId)?.focus({ preventScroll: true });
     }
   }
 
@@ -272,7 +249,8 @@ export function createAuditController({
       controllerState.auditSelectedId = next.id;
       renderAuditList();
       setAuditControls();
-      elements.auditList.querySelector('[aria-current="true"]')?.scrollIntoView({ block: "nearest" });
+      Array.from(elements.auditList.querySelectorAll(".audit-entry"))
+        .find((button) => button.dataset.auditId === next.id)?.scrollIntoView({ block: "nearest" });
       void loadAuditDetail(next.id);
     };
     document.getElementById("audit-previous").addEventListener("click", () => moveSelection(-1));
