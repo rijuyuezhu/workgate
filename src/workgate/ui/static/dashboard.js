@@ -18,6 +18,7 @@ export function createDashboardController({
   renderOverviewAlerts,
   renderOverviewTasks,
   renderSystemDetails,
+  healthView,
   initialExecutorId = "",
 }) {
   const controllerState = {
@@ -65,13 +66,8 @@ export function createDashboardController({
     controllerState.lastSystem = {};
     renderResources({}, [], "—");
     elements.dashboardExecutor.value = controllerState.executorId;
-    elements.dashboardState.textContent = "Not loaded";
-    elements.dashboardHealth.textContent = "—";
-    elements.dashboardHealthDetail.textContent = "Waiting for telemetry";
-    elements.dashboardHealthCard.className = "dashboard-card dashboard-health-card";
-    document.querySelector(".dashboard-health-banner").dataset.health = "unknown";
-    elements.dashboardAuditTotal.textContent = "—";
-    elements.dashboardAuditDetail.textContent = "No activity loaded";
+    healthView.reset();
+    healthView.renderStatus("Not loaded");
     renderSystemDetails(null);
     renderOverviewAlerts([], `Alerts for ${controllerState.executorId} are not loaded.`);
     setDashboardControls();
@@ -114,7 +110,7 @@ export function createDashboardController({
       refreshDashboardInBackground({ force: true });
     }
     if (!dashboardExecutorOnline() && controllerState.executorId) {
-      elements.dashboardState.textContent = "Executor offline";
+      healthView.renderStatus("Executor offline");
     }
     setDashboardControls();
     renderOverviewExecutors(available, controllerState.executorId, controllerState.loading);
@@ -134,27 +130,13 @@ export function createDashboardController({
     });
     controllerState.history = controllerState.history.slice(-60);
 
-    const health = ["healthy", "attention", "critical"].includes(payload.health)
-      ? payload.health
-      : "attention";
-    elements.dashboardHealth.textContent = {
-      healthy: "All systems operational",
-      attention: "Attention needed",
-      critical: "Critical issue detected",
-    }[health];
-    elements.dashboardHealthCard.className = `dashboard-card dashboard-health-card dashboard-health-${health}`;
-    document.querySelector(".dashboard-health-banner").dataset.health = health;
-    elements.dashboardHealthDetail.textContent = alerts.length
-      ? `${alerts.length} active alert${alerts.length === 1 ? "" : "s"}.`
-      : "No active alerts.";
+    healthView.renderSnapshot(payload);
     controllerState.lastSystem = system;
     renderResources(system, controllerState.history, "Live");
     renderSystemDetails(payload);
-    elements.dashboardAuditTotal.textContent = text(payload.audit_total_24h, "0");
-    elements.dashboardAuditDetail.textContent = `${text(payload.audit_failed_24h, "0")} failed in 24h`;
     renderOverviewAlerts(alerts, "No active alerts.");
 
-    elements.dashboardState.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    healthView.renderStatus(`Updated ${new Date().toLocaleTimeString()}`);
   }
 
   function dashboardQueryPath() {
@@ -168,7 +150,7 @@ export function createDashboardController({
     const requestedExecutor = controllerState.executorId;
     controllerState.loading = true;
     setDashboardControls();
-    elements.dashboardState.textContent = "Loading…";
+    healthView.renderStatus("Loading…");
     try {
       const payload = await request(dashboardQueryPath());
       if (generation !== controllerState.generation || requestedExecutor !== controllerState.executorId) return null;
@@ -177,11 +159,9 @@ export function createDashboardController({
     } catch (error) {
       if (error.authenticationRequired) throw error;
       if (generation !== controllerState.generation || requestedExecutor !== controllerState.executorId) return null;
-      elements.dashboardState.textContent = error instanceof Error ? error.message : String(error);
-      elements.dashboardHealth.textContent = "unavailable";
+      healthView.renderStatus(error instanceof Error ? error.message : String(error));
+      healthView.renderError(requestedExecutor);
       renderResources(controllerState.lastSystem, controllerState.history, "Unavailable");
-      elements.dashboardHealthCard.className = "dashboard-card dashboard-health-card dashboard-health-attention";
-      elements.dashboardHealthDetail.textContent = `Telemetry for ${requestedExecutor} could not be loaded`;
       return null;
     } finally {
       if (generation === controllerState.generation) {
