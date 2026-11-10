@@ -13,11 +13,7 @@
 <body data-workgate-config="__WORKGATE_UI_CONFIG_JSON__">
   <div class="app-shell">
     <header class="app-header">
-      <button class="brand-block" type="button" data-go-view="overview" aria-label="Workgate home, go to Overview" title="Overview">
-        <div class="brand-mark" aria-hidden="true">WG</div>
-        <div class="brand-name">Workgate</div>
-      </button>
-      <nav id="app-navigation" class="primary-nav" aria-label="Primary navigation"></nav>
+      <div id="app-header-navigation" class="header-react"></div>
       <div class="app-global-status">
         <label class="appearance-control" for="appearance-mode">
           <span>Theme</span>
@@ -31,9 +27,6 @@
         <span class="app-version"><span id="version">—</span> <span id="auth-mode">—</span></span>
         <button id="sign-out" type="button" hidden>Sign out</button>
       </div>
-      <button id="nav-toggle" class="nav-toggle" type="button" aria-controls="app-navigation" aria-expanded="false" aria-label="Open navigation">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-      </button>
     </header>
     <main id="app-main" class="main-content">
       <h1 id="page-title" class="visually-hidden">Overview</h1>

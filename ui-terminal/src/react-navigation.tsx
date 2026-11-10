@@ -14,25 +14,57 @@ const views = Object.freeze(
   Object.fromEntries(items.map(({ view, title }) => [view, { title }]))
 ) as Record<View, { title: string }>;
 
-function mount(host: HTMLElement, onNavigate: (view: View) => void) {
+function mount(
+  host: HTMLElement,
+  onNavigate: (view: View) => void,
+  onToggle: () => void,
+) {
   const root = createRoot(host);
   return {
-    render(activeView: string) {
-      root.render(items.map(({ view, title, icon }) => (
+    render(activeView: string, menuOpen: boolean) {
+      root.render(<>
         <button
-          key={view}
+          className="brand-block"
           type="button"
-          className={view === activeView ? "nav-item active" : "nav-item"}
-          data-view={view}
-          aria-label={title}
-          title={title}
-          aria-current={view === activeView ? "page" : undefined}
-          onClick={() => onNavigate(view)}
+          data-go-view="overview"
+          aria-label="Workgate home, go to Overview"
+          title="Overview"
+          onClick={() => onNavigate("overview")}
         >
-          <svg viewBox="0 0 24 24" aria-hidden="true">{icon}</svg>
-          <span>{title}</span>
+          <div className="brand-mark" aria-hidden="true">WG</div>
+          <div className="brand-name">Workgate</div>
         </button>
-      )));
+        <nav id="app-navigation" className="primary-nav" aria-label="Primary navigation">
+          {items.map(({ view, title, icon }) => (
+            <button
+              key={view}
+              type="button"
+              className={view === activeView ? "nav-item active" : "nav-item"}
+              data-view={view}
+              aria-label={title}
+              title={title}
+              aria-current={view === activeView ? "page" : undefined}
+              onClick={() => onNavigate(view)}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">{icon}</svg>
+              <span>{title}</span>
+            </button>
+          ))}
+        </nav>
+        <button
+          id="nav-toggle"
+          className="nav-toggle"
+          type="button"
+          aria-controls="app-navigation"
+          aria-expanded={menuOpen}
+          aria-label={menuOpen ? "Close navigation" : "Open navigation"}
+          onClick={onToggle}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 6h16M4 12h16M4 18h16"/>
+          </svg>
+        </button>
+      </>);
     },
   };
 }

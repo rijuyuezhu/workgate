@@ -110,7 +110,6 @@ void (async () => {
   const elements = {
     appViews: Array.from(document.querySelectorAll("[data-app-view]")),
     appHeader: document.querySelector(".app-header"),
-    navToggle: document.getElementById("nav-toggle"),
     pageTitle: document.getElementById("page-title"),
     dashboardAlerts: document.getElementById("dashboard-alerts"),
     dashboardAuditDetail: document.getElementById("dashboard-audit-detail"),
@@ -368,7 +367,9 @@ void (async () => {
   };
 
   const navigation = reactNavigation.mount(
-    document.getElementById("app-navigation"), navigateTo,
+    document.getElementById("app-header-navigation"),
+    navigateTo,
+    () => setNavigationOpen(!elements.appHeader.classList.contains("menu-open")),
   );
 
   // Compact inline line icons for commonly used actions; no font or icon package required.
@@ -570,7 +571,7 @@ void (async () => {
     elements.pageTitle.textContent = definition.title;
     document.title = `${definition.title} — Workgate`;
 
-    navigation.render(view);
+    navigation.render(view, elements.appHeader.classList.contains("menu-open"));
     for (const panel of elements.appViews) {
       panel.hidden = panel.dataset.appView !== view;
     }
@@ -607,8 +608,7 @@ void (async () => {
 
   function setNavigationOpen(open) {
     elements.appHeader.classList.toggle("menu-open", open);
-    elements.navToggle.setAttribute("aria-expanded", String(open));
-    elements.navToggle.setAttribute("aria-label", open ? "Close navigation" : "Open navigation");
+    navigation.render(document.body.dataset.activeView || "overview", open);
   }
 
   function cookieValue(name) {
@@ -1172,9 +1172,6 @@ void (async () => {
     setActiveView(view, { syncHash: false });
     if (view === "audit") audit.showGlobalAudit();
   }
-  elements.navToggle.addEventListener("click", () => {
-    setNavigationOpen(!elements.appHeader.classList.contains("menu-open"));
-  });
   document.addEventListener("pointerdown", (event) => {
     if (elements.appHeader.classList.contains("menu-open") && !elements.appHeader.contains(event.target)) {
       setNavigationOpen(false);
@@ -1183,10 +1180,12 @@ void (async () => {
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && elements.appHeader.classList.contains("menu-open")) {
       setNavigationOpen(false);
-      elements.navToggle.focus();
+      document.getElementById("nav-toggle")?.focus();
     }
   });
   window.matchMedia("(max-width: 1160px)").addEventListener("change", () => setNavigationOpen(false));
+  // Dashboard shortcuts are still WorkGate-owned buttons; the brand navigation
+  // is now React-owned, mounted after these listeners are registered.
   for (const link of document.querySelectorAll("[data-go-view]")) {
     link.addEventListener("click", () => navigateTo(link.dataset.goView));
   }
