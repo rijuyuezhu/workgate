@@ -254,6 +254,7 @@ def _fit_record(record: dict[str, Any], max_bytes: int) -> bytes:
         "ts",
         "event",
         "call_id",
+        "parent_call_id",
         "transport",
         "tool",
         "session",
@@ -285,7 +286,16 @@ def _fit_record(record: dict[str, Any], max_bytes: int) -> bytes:
 
     minimal = {
         name: compact[name]
-        for name in ("id", "ts", "event", "call_id", "tool", "session", "ok")
+        for name in (
+            "id",
+            "ts",
+            "event",
+            "call_id",
+            "parent_call_id",
+            "tool",
+            "session",
+            "ok",
+        )
         if name in compact
     }
     minimal[_AUDIT_TRUNCATED_KEY] = {
@@ -350,11 +360,14 @@ def _retention_units(lines: list[bytes]) -> list[list[tuple[int, bytes]]]:
         call_id = ""
         with contextlib.suppress(json.JSONDecodeError, UnicodeDecodeError):
             record = json.loads(raw_line)
-            if isinstance(record, dict) and record.get("event") in {
-                "tool_call_start",
-                "tool_call_end",
-            }:
-                call_id = str(record.get("call_id") or "")
+            if isinstance(record, dict):
+                field = (
+                    "call_id"
+                    if record.get("event")
+                    in {"tool_call_start", "tool_call_end"}
+                    else "parent_call_id"
+                )
+                call_id = str(record.get(field) or "")
         if call_id:
             unit = call_units.get(call_id)
             if unit is None:
@@ -757,7 +770,7 @@ def _nested_audit_event(record: dict[str, Any]) -> dict[str, Any] | None:
     return {
         name: value
         for name, value in record.items()
-        if name not in {"id", "ts", "parent_call_id"}
+        if name not in {"id", "parent_call_id"}
     }
 
 
@@ -1200,24 +1213,36 @@ def query_audit(
         if task_filter
         else set()
     )
+
+    def in_time_range(value: Any) -> bool:
+        timestamp = _audit_timestamp(value)
+        return (start_ts is None or timestamp >= start_ts) and (
+            end_ts is None or timestamp <= end_ts
+        )
+
     matched: list[dict[str, Any]] = []
     for row in rows:
         if exclude_call_id and str(row.get("call_id") or "") == exclude_call_id:
             continue
-        timestamp = _audit_timestamp(row.get("ts"))
-        if start_ts is not None and timestamp < start_ts:
-            continue
-        if end_ts is not None and timestamp > end_ts:
-            continue
-        if event_filter:
-            event_text = " ".join(
-                [
-                    str(row.get("event") or ""),
-                    *map(str, row.get("source_events") or []),
-                ]
+        parent_events = (
+            str(row.get("event") or ""),
+            *map(str, row.get("source_events") or []),
+        )
+        parent_matches = in_time_range(row.get("ts")) and (
+            not event_filter
+            or any(event_filter in name.casefold() for name in parent_events)
+        )
+        child_matches = any(
+            isinstance(child, dict)
+            and in_time_range(child.get("ts", row.get("ts")))
+            and (
+                not event_filter
+                or event_filter in str(child.get("event") or "").casefold()
             )
-            if event_filter not in event_text.casefold():
-                continue
+            for child in row.get("related_events") or []
+        )
+        if not (parent_matches or child_matches):
+            continue
         if (
             operation_filter
             and operation_filter != str(row.get("operation") or "").casefold()
