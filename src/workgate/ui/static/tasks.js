@@ -5,6 +5,7 @@ export function createTasksController({
   mountAuditLists,
   mountTaskLists,
   mountTaskDetails,
+  mountTaskPlan,
   auditEntryTitle,
   auditTimestamp,
   renderAuditDetailInto,
@@ -90,6 +91,32 @@ export function createTasksController({
   );
   taskDetails.renderTask();
   taskDetails.renderSession();
+
+  function updateTodo(id, field, value) {
+    const item = controllerState.todoItems.find((candidate) => candidate.id === id);
+    if (!item) return;
+    item[field] = value;
+    setTodoDirty();
+    renderTodos();
+  }
+
+  const planView = mountTaskPlan(elements.todoSummary, elements.todoList, {
+    content: (id, value) => updateTodo(id, "content", value),
+    status: (id, value) => updateTodo(id, "status", value),
+    priority: (id, value) => updateTodo(id, "priority", value),
+    remove: (id) => {
+      const index = controllerState.todoItems.findIndex((candidate) => candidate.id === id);
+      if (index === -1) return;
+      controllerState.todoItems.splice(index, 1);
+      setTodoDirty();
+      renderTodos();
+    },
+  });
+  planView.render({
+    rows: [], counts: { total: 0, open: 0, completed: 0, skipped: 0 },
+    contentMaxLength: controllerState.todoLimits.content_bytes,
+    emptyMessage: "Select a task to load its plan.",
+  });
 
   let activeTab = initialSessionId ? "sessions" : "progress";
 
@@ -244,11 +271,13 @@ export function createTasksController({
     for (const control of elements.sessionAuditFilterForm.querySelectorAll("input, select")) {
       control.disabled = controllerState.sessionAuditLoading || !sessionReady;
     }
+    const planDisabled = controllerState.todoMutationBusy || controllerState.taskMutationBusy || !taskMutable;
     for (const control of elements.todoList.querySelectorAll("input, select, button")) {
-      control.disabled = controllerState.todoMutationBusy || controllerState.taskMutationBusy || !taskMutable;
+      if (control.disabled !== planDisabled) control.disabled = planDisabled;
     }
     for (const row of elements.todoList.querySelectorAll(".todo-row")) {
-      row.setAttribute("aria-disabled", controllerState.todoMutationBusy || controllerState.taskMutationBusy || !taskMutable ? "true" : "false");
+      const disabled = planDisabled ? "true" : "false";
+      if (row.getAttribute("aria-disabled") !== disabled) row.setAttribute("aria-disabled", disabled);
     }
   }
 
@@ -787,27 +816,6 @@ export function createTasksController({
     }
   }
 
-  function todoOption(select, value, choices) {
-    const normalized = text(value, choices[0]);
-    const values = choices.includes(normalized) ? choices : [...choices, normalized];
-    for (const choice of values) {
-      const option = document.createElement("option");
-      option.value = choice;
-      option.textContent = choice.replaceAll("_", " ");
-      option.selected = choice === normalized;
-      select.append(option);
-    }
-  }
-
-  function todoField(labelText, className, control) {
-    const label = document.createElement("label");
-    label.className = `todo-field ${className}`;
-    const caption = document.createElement("span");
-    caption.textContent = labelText;
-    label.append(caption, control);
-    return label;
-  }
-
   function planStepClosed(item) {
     return item.status === "completed" || item.status === "skipped";
   }
@@ -823,100 +831,23 @@ export function createTasksController({
       });
   }
 
-  function renderTodoSummary() {
+  function renderTodos() {
     const completed = controllerState.todoItems.filter((item) => item.status === "completed").length;
     const skipped = controllerState.todoItems.filter((item) => item.status === "skipped").length;
-    const open = controllerState.todoItems.length - completed - skipped;
-    const labels = [
-      `${controllerState.todoItems.length} total`,
-      `${open} open`,
-      `${completed} completed`,
-      `${skipped} skipped`,
-    ];
-    elements.todoSummary.replaceChildren(
-      ...labels.map((label) => {
-        const span = document.createElement("span");
-        span.textContent = label;
-        return span;
-      }),
-    );
-  }
-
-  function renderTodos() {
-    renderTodoSummary();
     const visible = visibleTodos();
-    elements.todoList.replaceChildren();
-    if (!visible.length) {
-      const empty = document.createElement("div");
-      empty.className = "empty-state";
-      empty.textContent = controllerState.todoItems.length ? "No plan steps match this filter." : "No plan steps in this task.";
-      elements.todoList.append(empty);
-      syncControls();
-      return;
-    }
-
-    for (const { item, index } of visible) {
-      const row = document.createElement("article");
-      row.className = "todo-row";
-      row.dataset.todoId = item.id;
-      row.dataset.status = item.status;
-      row.dataset.priority = item.priority;
-
-      const content = document.createElement("input");
-      content.type = "text";
-      content.value = item.content;
-      content.maxLength = controllerState.todoLimits.content_bytes;
-      content.autocomplete = "off";
-      content.spellcheck = true;
-      content.addEventListener("input", () => {
-        controllerState.todoItems[index].content = content.value;
-        setTodoDirty();
-      });
-
-      const status = document.createElement("select");
-      todoOption(status, item.status, ["pending", "in_progress", "blocked", "completed", "skipped"]);
-      status.addEventListener("change", () => {
-        controllerState.todoItems[index].status = status.value;
-        row.dataset.status = status.value;
-        setTodoDirty();
-        renderTodoSummary();
-        if (elements.todoFilter.value !== "all") renderTodos();
-      });
-
-      const priority = document.createElement("select");
-      todoOption(priority, item.priority, ["high", "medium", "low"]);
-      priority.addEventListener("change", () => {
-        controllerState.todoItems[index].priority = priority.value;
-        row.dataset.priority = priority.value;
-        setTodoDirty();
-      });
-
-      const identifier = document.createElement("span");
-      identifier.className = "todo-id";
-      identifier.textContent = `Step ${index + 1}`;
-      identifier.title = item.id;
-
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "todo-remove";
-      remove.textContent = "Remove";
-      remove.addEventListener("click", () => {
-        controllerState.todoItems.splice(index, 1);
-        setTodoDirty();
-        renderTodos();
-      });
-
-      const heading = document.createElement("div");
-      heading.className = "todo-row-heading";
-      heading.append(identifier, remove);
-      row.append(
-        heading,
-        todoField("Content", "todo-field-content", content),
-        todoField("Status", "todo-field-status", status),
-        todoField("Priority", "todo-field-priority", priority),
-      );
-      elements.todoList.append(row);
-    }
+    planView.render({
+      rows: visible.map(({ item, index }) => ({ ...item, index })),
+      counts: {
+        total: controllerState.todoItems.length,
+        open: controllerState.todoItems.length - completed - skipped,
+        completed,
+        skipped,
+      },
+      contentMaxLength: controllerState.todoLimits.content_bytes,
+      emptyMessage: controllerState.todoItems.length
+        ? "No plan steps match this filter."
+        : "No plan steps in this task.",
+    });
     syncControls();
   }
 
