@@ -220,7 +220,8 @@ def run_background_polling(harness: BrowserHarness) -> None:
     expect(
         page.locator("#session-audit-detail-body .audit-call-panel")
     ).to_have_count(0)
-    page.unroute("**/api/ui/tasks/detail?**", removed_session)
-
+    # The accelerated poll can still be inside route.fetch()/fulfill(). Drain
+    # pending callbacks before closing this isolated test page.
+    page.unroute_all(behavior="wait")
     page.close()
     harness.page = original_page
