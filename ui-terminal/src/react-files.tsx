@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Filemanager, Willow, type IEntity } from "@svar-ui/react-filemanager";
 import "@svar-ui/react-filemanager/all.css";
@@ -53,43 +54,57 @@ function fileIconFor(file: { type?: string; name?: string }): string {
   return fileIcon;
 }
 
+function FilesView({ model, events }: { model: FilesModel; events: FilesEvents }) {
+  const [mobile, setMobile] = useState(
+    () => window.matchMedia("(max-width: 780px)").matches,
+  );
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 780px)");
+    const update = () => setMobile(media.matches);
+    media.addEventListener("change", update);
+    update();
+    return () => media.removeEventListener("change", update);
+  }, []);
+  const byId = new Map(model.entries.map((entry) => [
+    `/${encodeURIComponent(entry.name)}`,
+    entry,
+  ]));
+
+  return <div className="wg-react-files-prototype" aria-label="React Files prototype">
+    <Willow fonts={false}>
+      <Filemanager
+        key={JSON.stringify([
+          model.executorId, model.directory, model.generation,
+          model.filter, model.sort, model.descending, model.showHidden, mobile,
+        ])}
+        data={toFilemanagerData(model.entries)}
+        mode={mobile ? "cards" : "table"}
+        readonly
+        preview={false}
+        icons={fileIconFor}
+        onSelectFile={({ id }) => {
+          if (id && byId.has(id)) events.select(byId.get(id)!.path);
+        }}
+        onSetPath={({ id }) => {
+          const entry = byId.get(id);
+          if (entry?.type === "dir") events.openFolder(entry.path);
+        }}
+        onOpenFile={({ id }) => {
+          const entry = byId.get(id);
+          if (entry) events.select(entry.path);
+        }}
+      />
+    </Willow>
+  </div>;
+}
+
 function mount(host: HTMLElement, events: FilesEvents) {
   const root = createRoot(host);
-  function render(model: FilesModel) {
-    const byId = new Map(model.entries.map((entry) => [
-      `/${encodeURIComponent(entry.name)}`,
-      entry,
-    ]));
-    root.render(
-      <div className="wg-react-files-prototype" aria-label="React Files prototype">
-        <Willow fonts={false}>
-          <Filemanager
-            key={JSON.stringify([
-              model.executorId, model.directory, model.generation,
-              model.filter, model.sort, model.descending, model.showHidden,
-            ])}
-            data={toFilemanagerData(model.entries)}
-            mode="table"
-            readonly
-            preview={false}
-            icons={fileIconFor}
-            onSelectFile={({ id }) => {
-              if (id && byId.has(id)) events.select(byId.get(id)!.path);
-            }}
-            onSetPath={({ id }) => {
-              const entry = byId.get(id);
-              if (entry?.type === "dir") events.openFolder(entry.path);
-            }}
-            onOpenFile={({ id }) => {
-              const entry = byId.get(id);
-              if (entry) events.select(entry.path);
-            }}
-          />
-        </Willow>
-      </div>,
-    );
-  }
-  return { render };
+  return {
+    render(model: FilesModel) {
+      root.render(<FilesView model={model} events={events} />);
+    },
+  };
 }
 
 declare global {

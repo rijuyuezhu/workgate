@@ -90,4 +90,38 @@ def test_react_files_preview_reuses_authenticated_files_api(
     expect(page.locator("#connection-state")).to_have_text("Connected")
     expect(page.locator("#file-list .file-entry").first).to_be_visible()
     assert page.evaluate("typeof window.WorkgateReactFiles") == "undefined"
+
+    # Keep the original mobile list → detail → back navigation.
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.goto(
+        f"{harness.base_url}/ui?files_view=react#files",
+        wait_until="domcontentloaded",
+    )
+    expect(page.locator("#file-panel")).to_have_attribute(
+        "data-mobile-step", "list"
+    )
+    expect(page.locator(".wg-react-files-prototype")).to_be_visible()
+    expect(page.locator(".wg-react-files-prototype")).to_contain_text(
+        "copy-source.txt", timeout=10000
+    )
+    page.locator(".wg-react-files-prototype").get_by_text(
+        "copy-source.txt", exact=True
+    ).click()
+    expect(page.locator("#file-panel")).to_have_attribute(
+        "data-mobile-step", "detail"
+    )
+    expect(page.locator("#file-preview-body")).to_contain_text("copy source")
+    page.locator(".mobile-subpage-bar:visible .mobile-subpage-back").click()
+    expect(page.locator("#file-panel")).to_have_attribute(
+        "data-mobile-step", "list"
+    )
+
+    # The component also responds when a browser is resized without reloading.
+    page.set_viewport_size({"width": 1440, "height": 1000})
+    expect(
+        page.locator(".wg-react-files-prototype")
+        .get_by_role("grid")
+        .get_by_text("notes.txt", exact=True)
+    ).to_be_visible(timeout=10000)
+
     harness.assert_clean_browser()
