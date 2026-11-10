@@ -6,7 +6,9 @@ export function createFilesController({
   initialExecutorId = "",
   initialPath = "",
   onNavigate = () => {},
+  mountReactFiles = null,
 }) {
+  let reactFilesView = null;
   const controllerState = {
     fileExecutorId: text(initialExecutorId, ""),
     fileExecutorPinned: Boolean(initialExecutorId),
@@ -303,6 +305,21 @@ export function createFilesController({
       controllerState.filePreviewGeneration += 1;
       clearFileEditor();
       showFilePreviewMessage("No file selected", "Select a file or directory.");
+    }
+
+    if (reactFilesView) {
+      reactFilesView.render({
+        entries: visible,
+        executorId: controllerState.fileExecutorId,
+        directory: controllerState.filePath,
+        generation: controllerState.fileListGeneration,
+        filter: elements.fileFilter.value,
+        sort: elements.fileSort.value,
+        descending: controllerState.fileSortDescending,
+        showHidden: elements.fileShowHidden.checked,
+      });
+      setFileControls();
+      return;
     }
 
     elements.fileList.replaceChildren();
@@ -740,6 +757,23 @@ export function createFilesController({
   }
 
   function bind() {
+  if (typeof mountReactFiles === "function") {
+    const host = elements.fileList;
+    host.classList.add("react-files-list");
+    host.closest(".file-browser")?.classList.add("react-files-browser");
+    reactFilesView = mountReactFiles(host, {
+      select(path) {
+        if (controllerState.fileMutationBusy) return;
+        const entry = controllerState.fileEntries.find((item) => item.path === path);
+        if (entry) selectFile(entry);
+      },
+      openFolder(path) {
+        if (controllerState.fileMutationBusy) return;
+        const entry = controllerState.fileEntries.find((item) => item.path === path);
+        if (entry?.type === "dir") void navigateFiles(entry.path);
+      },
+    });
+  }
   elements.fileExecutor.addEventListener("change", () => {
     if (controllerState.fileMutationBusy) return;
     controllerState.fileExecutorPinned = false;

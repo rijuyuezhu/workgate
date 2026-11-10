@@ -205,6 +205,18 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert "@xterm/xterm 5.5.0" in license_text.text
     assert "@xterm/addon-fit 0.10.0" in license_text.text
     assert "@xterm/addon-image 0.8.0" in license_text.text
+    react_bundle = client.get("/ui/assets/react_files_bundle.js")
+    assert react_bundle.status_code == 200
+    assert react_bundle.headers["x-content-type-options"] == "nosniff"
+    assert "WorkgateReactFiles" in react_bundle.text
+    assert "sourceMappingURL" not in react_bundle.text
+    react_css = client.get("/ui/assets/react_files_bundle.css")
+    assert react_css.status_code == 200
+    assert "cdn.svar.dev" not in react_css.text
+    react_licenses = client.get("/ui/assets/react_files.LICENSE.txt")
+    assert react_licenses.status_code == 200
+    assert "@svar-ui/react-filemanager 2.6.0" in react_licenses.text
+    assert "React 19.2.0" in react_licenses.text
     script = client.get("/ui/assets/web.js")
     assert script.status_code == 200
     assert script.headers["x-content-type-options"] == "nosniff"
