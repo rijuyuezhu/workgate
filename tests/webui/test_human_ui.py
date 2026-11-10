@@ -248,7 +248,7 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert "await Promise.all([" in script.text
     assert 'import(assetUrl("dashboard.js"))' in script.text
     assert 'import(assetUrl("executors.js"))' in script.text
-    assert 'import(assetUrl("audit_view.js"))' in script.text
+    assert 'import(assetUrl("audit_view.js"))' not in script.text
     assert 'import(assetUrl("audit.js"))' in script.text
     assert 'import(assetUrl("tasks.js"))' in script.text
     assert 'import(assetUrl("terminal.js"))' in script.text
@@ -269,11 +269,9 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert "executorDetailRuntimeOwner" not in executors_script.text
     assert 'executorAction("reset")' in executors_script.text
     assert '"resume" : "drain"' in executors_script.text
-    audit_view_script = client.get("/ui/assets/audit_view.js")
-    assert audit_view_script.status_code == 200
-    assert audit_view_script.headers["x-content-type-options"] == "nosniff"
-    assert "export function createAuditView" in audit_view_script.text
-    assert "auditEntryButton" not in audit_view_script.text
+    assert "WorkgateReactAuditDetails" in react_bundle.text
+    assert "mountAuditDetails" in script.text
+    assert "auditDetailViews" in script.text
     assert "mountAuditLists" in script.text
     assert "mountAuditLists" in client.get("/ui/assets/audit.js").text
     assert "mountAuditLists" in client.get("/ui/assets/tasks.js").text

@@ -9,7 +9,6 @@ void (async () => {
   const [
     { createDashboardController },
     { createExecutorsController },
-    { createAuditView },
     { createAuditController },
     { createTerminalController },
     { createFilesController },
@@ -20,7 +19,6 @@ void (async () => {
   ] = await Promise.all([
     import(assetUrl("dashboard.js")),
     import(assetUrl("executors.js")),
-    import(assetUrl("audit_view.js")),
     import(assetUrl("audit.js")),
     import(assetUrl("terminal.js")),
     import(assetUrl("files.js")),
@@ -44,8 +42,9 @@ void (async () => {
   const mountExecutorInventory = window.WorkgateReactExecutorInventory?.mount;
   const mountExecutorDetail = window.WorkgateReactExecutorDetail?.mount;
   const mountAuditLists = window.WorkgateReactAuditLists?.mount;
+  const mountAuditDetails = window.WorkgateReactAuditDetails?.mount;
   if (typeof mountReactFiles !== "function" || typeof reactNavigation?.mount !== "function"
-      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function" || typeof mountOverviewLists !== "function" || typeof mountDashboardHealth !== "function" || typeof mountExecutorInventory !== "function" || typeof mountExecutorDetail !== "function" || typeof mountAuditLists !== "function") {
+      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function" || typeof mountOverviewLists !== "function" || typeof mountDashboardHealth !== "function" || typeof mountExecutorInventory !== "function" || typeof mountExecutorDetail !== "function" || typeof mountAuditLists !== "function" || typeof mountAuditDetails !== "function") {
     throw new Error("React UI failed to initialize");
   }
   const apiPrefix = String(config.apiPrefix || "/api/ui").replace(/\/$/, "");
@@ -400,12 +399,21 @@ void (async () => {
   const mobileNavigation = createMobileNavigation();
   mobileNavigation.bind();
 
-  const {
-    auditEntryTitle,
-    auditTimestamp,
-    renderAuditDetailInto,
-    renderAuditDetailMessage,
-  } = createAuditView({ text, formatFileBytes });
+  const auditEntryTitle = (entry) => text(entry.tool, text(entry.event, "unknown"));
+  function auditTimestamp(value) {
+    const date = new Date(Number(value || 0) * 1000);
+    return Number.isNaN(date.getTime()) ? "Unknown time" : date.toLocaleString();
+  }
+  const auditDetailViews = new Map([
+    [elements.auditDetailBody, mountAuditDetails(elements.auditDetailBody, formatFileBytes)],
+    [elements.sessionAuditDetailBody, mountAuditDetails(elements.sessionAuditDetailBody, formatFileBytes)],
+  ]);
+  function renderAuditDetailInto(entry, target) {
+    auditDetailViews.get(target).renderEntry(entry);
+  }
+  function renderAuditDetailMessage(target, message) {
+    auditDetailViews.get(target).renderMessage(message);
+  }
 
   const audit = createAuditController({
     elements,

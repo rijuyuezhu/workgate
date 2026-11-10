@@ -363,8 +363,14 @@ def test_audit_static_ui_avoids_html_injection_for_untrusted_details() -> None:
         Path(__file__).parents[2] / "src" / "workgate" / "ui" / "static"
     )
     audit_script = (static_root / "audit.js").read_text(encoding="utf-8")
-    audit_view = (static_root / "audit_view.js").read_text(encoding="utf-8")
+    react_details = (
+        Path(__file__).parents[2]
+        / "ui-terminal"
+        / "src"
+        / "react-audit-details.tsx"
+    ).read_text(encoding="utf-8")
 
-    assert "innerHTML" not in audit_view
+    assert "innerHTML" not in react_details
+    assert "dangerouslySetInnerHTML" not in react_details
     assert "elements.auditDetailBody.innerHTML" not in audit_script
-    assert "textContent" in audit_view
+    assert "textContent" in react_details
