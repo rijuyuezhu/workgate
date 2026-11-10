@@ -39,11 +39,27 @@ def test_react_files_default_reuses_authenticated_files_api(
     expect(prototype).to_be_visible(timeout=10000)
     expect(prototype).to_contain_text("notes.txt", timeout=10000)
     # Selecting uses WorkGate's existing preview and authenticated request path.
+    preview_urls = []
+
+    def count_note_preview(request) -> None:
+        if (
+            "/api/ui/files/preview?" in request.url
+            and "notes.txt" in request.url
+        ):
+            preview_urls.append(request.url)
+
+    page.on("request", count_note_preview)
     prototype.get_by_text("notes.txt", exact=True).click()
     expect(page.locator("#file-preview-title")).to_have_text("notes.txt")
     expect(page.locator("#file-preview-body")).to_contain_text(
         "executor browser fixture", timeout=10000
     )
+    page.wait_for_timeout(100)
+    assert len(preview_urls) == 1
+    # A separate deliberate re-selection still refreshes its preview once.
+    prototype.get_by_text("notes.txt", exact=True).click()
+    page.wait_for_timeout(100)
+    assert len(preview_urls) == 2
 
     # SVAR folder navigation drives the same WorkGate file path/controller.
     prototype.get_by_role("grid").get_by_text(
