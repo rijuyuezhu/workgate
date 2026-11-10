@@ -654,6 +654,128 @@ def test_query_audit_pairs_calls_folds_children_and_keeps_auth(
     assert any(row["event"] == "auth_ok" for row in result["entries"])
 
 
+def test_nested_audit_filter_uses_child_event_and_own_timestamp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _configure_audit(tmp_path, monkeypatch)
+    records = [
+        {
+            "id": "a",
+            "ts": 10,
+            "event": "tool_call_start",
+            "call_id": "nested-filter",
+            "tool": "bash",
+        },
+        {
+            "id": "b",
+            "ts": 20,
+            "event": "child_completed",
+            "parent_call_id": "nested-filter",
+            "machine": "remote",
+        },
+        {
+            "id": "c",
+            "ts": 30,
+            "event": "tool_call_end",
+            "call_id": "nested-filter",
+            "tool": "bash",
+            "ok": True,
+        },
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+
+    by_child = query_audit(event="child_completed", start_ts=19, end_ts=21)
+    assert [row["id"] for row in by_child["entries"]] == ["call:nested-filter"]
+    assert by_child["entries"][0]["related_events"][0]["ts"] == 20
+    assert query_audit(start_ts=19, end_ts=21)["count"] == 1
+    assert (
+        query_audit(event="child_completed", start_ts=10, end_ts=12)["count"]
+        == 0
+    )
+    assert (
+        query_audit(event="tool_call_start", start_ts=19, end_ts=21)["count"]
+        == 0
+    )
+    assert (
+        query_audit(event="tool_call_start", start_ts=10, end_ts=12)["count"]
+        == 1
+    )
+    assert (
+        query_audit(event="child_completed", start_ts=29, end_ts=31)["count"]
+        == 0
+    )
+
+    assert (
+        query_audit(event="tool_call_end", start_ts=29, end_ts=31)["count"] == 1
+    )
+    assert (
+        query_audit(event="tool_call_end", start_ts=10, end_ts=12)["count"] == 0
+    )
+    assert query_audit(start_ts=29, end_ts=31)["count"] == 1
+    assert (
+        query_audit(event="tool_call_start", start_ts=29, end_ts=31)["count"]
+        == 0
+    )
+    assert by_child["entries"][0]["end_ts"] == 30
+
+
+def test_nested_audit_retention_keeps_parent_and_child_as_one_unit() -> None:
+    records = [
+        {"id": "a", "event": "tool_call_start", "call_id": "paired"},
+        {"id": "b", "event": "nested", "parent_call_id": "paired"},
+        {"id": "c", "event": "other"},
+        {"id": "d", "event": "tool_call_end", "call_id": "paired"},
+        {"id": "e", "event": "orphan", "parent_call_id": "unpaired"},
+        {
+            "id": "f",
+            "event": "tool_call_start",
+            "parent_call_id": "paired",
+            "call_id": "nested-call",
+        },
+    ]
+    lines = [(json.dumps(record) + "\n").encode() for record in records]
+    units = audit_core._retention_units(lines)
+    assert [[index for index, _ in unit] for unit in units] == [
+        [2],
+        [4],
+        [0, 1, 3, 5],
+    ]
+
+
+def test_nested_audit_hot_log_trim_keeps_complete_call(
+    tmp_path: Path,
+) -> None:
+    rows = [
+        {"id": "start", "event": "tool_call_start", "call_id": "one"},
+        {"id": "child", "event": "child", "parent_call_id": "one"},
+        {"id": "end", "event": "tool_call_end", "call_id": "one"},
+    ]
+    paired = [(json.dumps(row) + "\n").encode() for row in rows]
+    total = sum(len(raw) for raw in paired)
+    limit = total * 2 + 4
+    path = tmp_path / "audit.jsonl"
+    path.write_bytes(
+        (json.dumps({"event": "old", "text": "x" * limit}) + "\n").encode()
+        + b"".join(paired)
+    )
+    assert audit_core._enforce_audit_log_limit(path, limit)
+    retained = [json.loads(line) for line in path.read_text().splitlines()]
+    assert [row["id"] for row in retained] == ["start", "child", "end"]
+
+
+def test_oversized_nested_audit_retains_correlation_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _configure_audit(tmp_path, monkeypatch, max_event_bytes=512)
+    audit("child_large", parent_call_id="parent-call", content="x" * 10_000)
+    record = _records(path)[0]
+    assert record["parent_call_id"] == "parent-call"
+
+
 def test_audit_query_snapshot_summarizes_list_and_keeps_selected_preview():
     first = {
         "id": "call:first",
