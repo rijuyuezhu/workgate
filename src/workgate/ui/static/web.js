@@ -36,8 +36,9 @@ void (async () => {
   document.head.append(stylesheet);
   await import(assetUrl("react_files_bundle.js"));
   const mountReactFiles = window.WorkgateReactFiles?.mount;
-  if (typeof mountReactFiles !== "function") {
-    throw new Error("Files UI failed to initialize");
+  const reactNavigation = window.WorkgateReactNavigation;
+  if (typeof mountReactFiles !== "function" || typeof reactNavigation?.mount !== "function") {
+    throw new Error("React UI failed to initialize");
   }
   const apiPrefix = String(config.apiPrefix || "/api/ui").replace(/\/$/, "");
   const oauth = config.oauth && typeof config.oauth === "object" ? config.oauth : null;
@@ -85,14 +86,7 @@ void (async () => {
   }
 
   const initialUiLocation = startupUiLocation();
-  const viewDefinitions = Object.freeze({
-    overview: { title: "Overview" },
-    executors: { title: "Executors" },
-    tasks: { title: "Tasks" },
-    terminals: { title: "Terminals" },
-    files: { title: "Files" },
-    audit: { title: "Audit" },
-  });
+  const viewDefinitions = reactNavigation.views;
   const encoder = new TextEncoder();
   let authenticated = config.authMode !== "oauth";
   let loadGeneration = 0;
@@ -114,7 +108,6 @@ void (async () => {
   }
 
   const elements = {
-    appNavItems: Array.from(document.querySelectorAll(".nav-item[data-view]")),
     appViews: Array.from(document.querySelectorAll("[data-app-view]")),
     appHeader: document.querySelector(".app-header"),
     navToggle: document.getElementById("nav-toggle"),
@@ -374,6 +367,10 @@ void (async () => {
     version: document.getElementById("version"),
   };
 
+  const navigation = reactNavigation.mount(
+    document.getElementById("app-navigation"), navigateTo,
+  );
+
   // Compact inline line icons for commonly used actions; no font or icon package required.
   const iconPaths = {
     refresh: "M20 11a8 8 0 0 0-14.6-4.6L3 9m0-5v5h5M4 13a8 8 0 0 0 14.6 4.6L21 15m0 5v-5h-5",
@@ -487,7 +484,7 @@ void (async () => {
     request,
     onOpen: () => guiViewer.close(),
     onManage: (executorId, kind) => {
-      document.querySelector('.nav-item[data-view="executors"]').click();
+      navigateTo("executors");
       void executors.openManagement(executorId, kind);
     },
   });
@@ -522,7 +519,7 @@ void (async () => {
     isAuthenticated: () => authenticated,
     onAuthenticationRequired: () => void load(),
     onOpenTask: (taskId) => {
-      document.querySelector('.nav-item[data-view="tasks"]').click();
+      navigateTo("tasks");
       void tasks.select(taskId);
     },
     initialExecutorId: deepLink.executorId,
@@ -573,12 +570,7 @@ void (async () => {
     elements.pageTitle.textContent = definition.title;
     document.title = `${definition.title} — Workgate`;
 
-    for (const item of elements.appNavItems) {
-      const active = item.dataset.view === view;
-      item.classList.toggle("active", active);
-      if (active) item.setAttribute("aria-current", "page");
-      else item.removeAttribute("aria-current");
-    }
+    navigation.render(view);
     for (const panel of elements.appViews) {
       panel.hidden = panel.dataset.appView !== view;
     }
@@ -1168,19 +1160,17 @@ void (async () => {
     showAuthentication("Signed out", "The persistent browser session was cleared.");
   });
 
-  for (const item of elements.appNavItems) {
-    item.addEventListener("click", () => {
-      setNavigationOpen(false);
-      const view = normalizeView(item.dataset.view);
-      const url = new URL(location.href);
-      for (const key of ["task_id", "session_id", "executor_id", "workdir", "shell_id"]) {
-        url.searchParams.delete(key);
-      }
-      url.hash = view;
-      history.pushState({}, "", url);
-      setActiveView(view, { syncHash: false });
-      if (view === "audit") audit.showGlobalAudit();
-    });
+  function navigateTo(target) {
+    setNavigationOpen(false);
+    const view = normalizeView(target);
+    const url = new URL(location.href);
+    for (const key of ["task_id", "session_id", "executor_id", "workdir", "shell_id"]) {
+      url.searchParams.delete(key);
+    }
+    url.hash = view;
+    history.pushState({}, "", url);
+    setActiveView(view, { syncHash: false });
+    if (view === "audit") audit.showGlobalAudit();
   }
   elements.navToggle.addEventListener("click", () => {
     setNavigationOpen(!elements.appHeader.classList.contains("menu-open"));
@@ -1198,9 +1188,7 @@ void (async () => {
   });
   window.matchMedia("(max-width: 1160px)").addEventListener("change", () => setNavigationOpen(false));
   for (const link of document.querySelectorAll("[data-go-view]")) {
-    link.addEventListener("click", () => {
-      document.querySelector(`.nav-item[data-view="${link.dataset.goView}"]`)?.click();
-    });
+    link.addEventListener("click", () => navigateTo(link.dataset.goView));
   }
   const restoreViewFromLocation = () => {
     setNavigationOpen(false);
