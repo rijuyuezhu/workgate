@@ -307,67 +307,16 @@ export function createFilesController({
       showFilePreviewMessage("No file selected", "Select a file or directory.");
     }
 
-    if (reactFilesView) {
-      reactFilesView.render({
-        entries: visible,
-        executorId: controllerState.fileExecutorId,
-        directory: controllerState.filePath,
-        generation: controllerState.fileListGeneration,
-        filter: elements.fileFilter.value,
-        sort: elements.fileSort.value,
-        descending: controllerState.fileSortDescending,
-        showHidden: elements.fileShowHidden.checked,
-      });
-      setFileControls();
-      return;
-    }
-
-    elements.fileList.replaceChildren();
-    if (!visible.length) {
-      const empty = document.createElement("div");
-      empty.className = "empty-state";
-      empty.textContent = controllerState.fileEntries.length ? "Hidden entries are not shown." : "This directory is empty.";
-      elements.fileList.append(empty);
-      setFileControls();
-      return;
-    }
-
-    for (const entry of visible) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "file-entry";
-      button.setAttribute("aria-current", entry.path === controllerState.selectedFilePath ? "true" : "false");
-      button.title = entry.path;
-
-      const label = document.createElement("span");
-      label.className = "file-entry-name";
-      const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-      icon.setAttribute("class", `file-entry-icon file-entry-icon-${entry.type === "dir" ? "dir" : entry.type === "link" ? "link" : "file"}`);
-      icon.setAttribute("aria-hidden", "true");
-      icon.setAttribute("viewBox", "0 0 24 24");
-      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      path.setAttribute("d", entry.type === "dir"
-        ? "M3 7h7l2 2h9v11H3z M3 7V5h7l2 2"
-        : entry.type === "link"
-          ? "M9 15 15 9 M8 7H6a5 5 0 0 0 0 10h4 M14 7h4a5 5 0 0 1 0 10h-2"
-          : "M6 3h8l4 4v14H6z M14 3v5h5");
-      icon.append(path);
-      label.append(icon, document.createTextNode(text(entry.name, entry.path)));
-      const detail = document.createElement("span");
-      detail.className = "file-entry-detail";
-      detail.textContent = entry.type === "dir" ? "dir" : entry.type === "link" ? "link" : formatFileBytes(entry.size);
-      const modified = document.createElement("span");
-      modified.className = "file-entry-modified";
-      const modifiedAt = Number(entry.modified);
-      modified.textContent = Number.isFinite(modifiedAt) && modifiedAt > 0
-        ? new Date(modifiedAt * 1000).toLocaleDateString() : "—";
-      button.append(label, detail, modified);
-      button.addEventListener("click", () => selectFile(entry));
-      button.addEventListener("dblclick", () => {
-        if (!controllerState.fileMutationBusy && entry.type === "dir") void navigateFiles(entry.path);
-      });
-      elements.fileList.append(button);
-    }
+    reactFilesView.render({
+      entries: visible,
+      executorId: controllerState.fileExecutorId,
+      directory: controllerState.filePath,
+      generation: controllerState.fileListGeneration,
+      filter: elements.fileFilter.value,
+      sort: elements.fileSort.value,
+      descending: controllerState.fileSortDescending,
+      showHidden: elements.fileShowHidden.checked,
+    });
     setFileControls();
   }
 
@@ -462,7 +411,8 @@ export function createFilesController({
   function selectFile(entry) {
     if (controllerState.fileMutationBusy) return;
     controllerState.selectedFilePath = entry.path;
-    renderFileList();
+    // SVAR owns the selected row; avoid rebuilding the list on every click.
+    setFileControls();
     void previewFile(entry);
     onNavigate("detail");
   }
@@ -757,23 +707,21 @@ export function createFilesController({
   }
 
   function bind() {
-  if (typeof mountReactFiles === "function") {
-    const host = elements.fileList;
-    host.classList.add("react-files-list");
-    host.closest(".file-browser")?.classList.add("react-files-browser");
-    reactFilesView = mountReactFiles(host, {
-      select(path) {
-        if (controllerState.fileMutationBusy) return;
-        const entry = controllerState.fileEntries.find((item) => item.path === path);
-        if (entry) selectFile(entry);
-      },
-      openFolder(path) {
-        if (controllerState.fileMutationBusy) return;
-        const entry = controllerState.fileEntries.find((item) => item.path === path);
-        if (entry?.type === "dir") void navigateFiles(entry.path);
-      },
-    });
-  }
+  const host = elements.fileList;
+  host.classList.add("react-files-list");
+  host.closest(".file-browser")?.classList.add("react-files-browser");
+  reactFilesView = mountReactFiles(host, {
+    select(path) {
+      if (controllerState.fileMutationBusy) return;
+      const entry = controllerState.fileEntries.find((item) => item.path === path);
+      if (entry) selectFile(entry);
+    },
+    openFolder(path) {
+      if (controllerState.fileMutationBusy) return;
+      const entry = controllerState.fileEntries.find((item) => item.path === path);
+      if (entry?.type === "dir") void navigateFiles(entry.path);
+    },
+  });
   elements.fileExecutor.addEventListener("change", () => {
     if (controllerState.fileMutationBusy) return;
     controllerState.fileExecutorPinned = false;

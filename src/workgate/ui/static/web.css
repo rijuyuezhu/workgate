@@ -485,33 +485,6 @@ h2 {
   padding: 0.55rem;
 }
 
-.file-entry {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  border-color: transparent;
-  background: transparent;
-  padding: 0.55rem 0.65rem;
-  text-align: left;
-}
-
-.file-entry-name {
-  min-width: 0;
-  font-family: var(--font-mono);
-  font-size: 0.82rem;
-  overflow-wrap: anywhere;
-  white-space: normal;
-}
-
-.file-entry-detail {
-  flex: 0 0 auto;
-  color: light-dark(#7b8495, #bdc9dc);
-  font-size: 0.72rem;
-}
-
 .file-preview {
   padding: 0.8rem;
 }
@@ -2411,21 +2384,6 @@ input[type=checkbox] { accent-color: #6759e7; }
 .file-browser-heading h3 { margin: 0; }
 .file-breadcrumbs { margin: 9px 0; }
 .file-list-options { margin-bottom: 9px; }
-.file-column-heading { display: grid; grid-template-columns: minmax(0,1fr) 65px minmax(0,95px); gap: 10px; padding: 8px 10px; border-bottom: 1px solid var(--line); color: light-dark(#858e9e, #bdc9dc); font-size: 10px; font-weight: 650; }
-.file-column-heading span:not(:first-child) { text-align: right; }
-.file-browser .file-entry { display: grid; grid-template-columns: minmax(0,1fr) 65px minmax(0,95px); gap: 10px; border-radius: 7px; text-align: left; }
-.file-browser .file-entry-name { display: flex; min-width: 0; align-items: center; gap: 7px; }
-.file-browser .file-entry-detail, .file-browser .file-entry-modified { color: light-dark(#939cab, #bdc9dc); font-size: 11px; text-align: right; overflow-wrap: anywhere; }
-/* The Files rail is narrow even in a wide desktop window. */
-@container (max-width: 420px) {
-  .file-column-heading { display: none; }
-  .file-browser .file-entry { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .file-browser .file-entry-name { grid-column: 1 / -1; }
-  .file-browser .file-entry-detail { text-align: left; }
-}
-.file-browser .file-entry-icon { display: grid; place-items: center; flex: none; width: 23px; height: 23px; border-radius: 6px; color: light-dark(#687589, #bdc9dc); background: light-dark(#eff1f6, #202b3b); font-size: 15px; }
-.file-browser .file-entry-icon-dir { color: light-dark(#a97e18, #efd18b); background: light-dark(#fff5dd, #56461f); }
-.file-browser .file-entry-icon-link { color: light-dark(#6658e8, #948aef); background: light-dark(#eeecff, #251f56); }
 .file-browser .file-list { flex: 1 1 auto; max-height: 640px; border: none; border-radius: 0; padding: 0; }
 .file-preview { margin: 0; border: none; border-radius: 0; background: var(--panel); backdrop-filter: none; }
 
@@ -2510,7 +2468,7 @@ input[type=checkbox] { accent-color: #6759e7; }
 .dashboard-system-disclosure,
 .tasks-layout,
 .executors-layout, .audit-layout, .audit-searchbar, .audit-filter-strip,
-.audit-advanced, .file-layout, .file-locations button, .file-entry,
+.audit-advanced, .file-layout, .file-locations button,
 .file-preview, .terminal-heading, .terminal-layout, .terminal-console,
 .executor-row, .audit-call-panel { border-radius: 6px; }
 button:where(:not(.nav-item)), input:not([type=checkbox]), select, textarea { border-radius: 5px; }
@@ -2526,7 +2484,6 @@ button:where(:not(.nav-item)), input:not([type=checkbox]), select, textarea { bo
 /* Icon + label: clarity without creating an additional visual hierarchy. */
 button:has(> .control-icon) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .control-icon { flex: 0 0 14px; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.file-browser .file-entry-icon { width: 23px; height: 23px; padding: 4px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linejoin: round; stroke-linecap: round; }
 /* Desktop Locations owns executor switching; mobile retains a compact chooser. */
 .file-toolbar .file-executor-control, .file-toolbar #file-up { display: none; }
 @media (max-width: 780px) {
@@ -2730,14 +2687,14 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
 .tasks-layout > .session-list .task-entry .session-entry-meta { color: light-dark(#8590a0, #bdc9dc); font-size: 11px; }
 
 /* Shared interaction feedback; preserve each list's own content layout. */
-:is(.task-entry, .session-entry, .audit-entry, .file-entry, .terminal-session):not([aria-current="true"]):hover {
+:is(.task-entry, .session-entry, .audit-entry, .terminal-session):not([aria-current="true"]):hover {
   border-color: light-dark(#cac3ee, #3b4960); background: light-dark(#faf9ff, #151f2c);
 }
-:is(.task-entry, .session-entry, .audit-entry, .file-entry, .terminal-session)[aria-current="true"] {
+:is(.task-entry, .session-entry, .audit-entry, .terminal-session)[aria-current="true"] {
   border-color: light-dark(#d8d0fc, #3b4960); background: light-dark(#f1eeff, #291f56);
   box-shadow: inset 3px 0 #7668dc;
 }
-:is(.task-entry, .session-entry, .audit-entry, .file-entry, .terminal-session):focus-visible {
+:is(.task-entry, .session-entry, .audit-entry, .terminal-session):focus-visible {
   outline: 2px solid #7668dc; outline-offset: -2px;
 }
 .tasks-layout > .session-list .task-entry[aria-current="true"] strong,

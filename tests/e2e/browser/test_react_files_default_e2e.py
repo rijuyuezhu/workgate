@@ -1,4 +1,4 @@
-"""Opt-in React/SVAR Files preview over real authenticated Control/Executor."""
+"""Default React/SVAR Files view over real authenticated Control/Executor."""
 
 import os
 
@@ -16,7 +16,7 @@ pytestmark = [
 ]
 
 
-def test_react_files_preview_reuses_authenticated_files_api(
+def test_react_files_default_reuses_authenticated_files_api(
     browser_harness: BrowserHarness,
 ) -> None:
     harness = browser_harness
@@ -30,19 +30,13 @@ def test_react_files_preview_reuses_authenticated_files_api(
         "from React directory", encoding="utf-8"
     )
 
-    # The standard UI does not load the React prototype on ordinary navigation.
-    assert page.evaluate("typeof window.WorkgateReactFiles") == "undefined"
-
-    page.goto(
-        f"{harness.base_url}/ui?files_view=react#files",
-        wait_until="domcontentloaded",
-    )
+    # The authenticated default Files view now uses React/SVAR.
+    harness.navigate("files")
     expect(page.locator("#connection-state")).to_have_text("Connected")
     expect(page.locator("#file-list.react-files-list")).to_be_visible()
-    prototype = page.locator(".wg-react-files-prototype")
+    prototype = page.locator(".wg-files-list")
     expect(prototype).to_be_visible(timeout=10000)
     expect(prototype).to_contain_text("notes.txt", timeout=10000)
-
     # Selecting uses WorkGate's existing preview and authenticated request path.
     prototype.get_by_text("notes.txt", exact=True).click()
     expect(page.locator("#file-preview-title")).to_have_text("notes.txt")
@@ -76,7 +70,7 @@ def test_react_files_preview_reuses_authenticated_files_api(
         directory / upload.name
     ).read_text() == "React uses the existing upload API"
 
-    # No extra browser authentication/session state is introduced by the island.
+    # No duplicate browser authentication/session state is introduced by React.
     assert page.evaluate(
         "typeof window.WorkgateReactFiles.mount === 'function'"
     )
@@ -84,27 +78,26 @@ def test_react_files_preview_reuses_authenticated_files_api(
         """() => Boolean(document.querySelector('link[href*="react_files_bundle.css"]'))"""
     )
 
-    # Switching back to the normal URL uses the original Files view and no
-    # optional React bundle. This is a prototype, not a replacement release.
+    # A normal reload continues to display the same, single React Files view.
     page.goto(f"{harness.base_url}/ui#files", wait_until="domcontentloaded")
     expect(page.locator("#connection-state")).to_have_text("Connected")
-    expect(page.locator("#file-list .file-entry").first).to_be_visible()
-    assert page.evaluate("typeof window.WorkgateReactFiles") == "undefined"
+    expect(page.locator("#file-list .wg-files-list")).to_be_visible()
+    expect(page.locator("#file-list .file-entry")).to_have_count(0)
 
-    # Keep the original mobile list → detail → back navigation.
+    # Preserve mobile list → detail → back navigation.
     page.set_viewport_size({"width": 390, "height": 844})
-    page.goto(
-        f"{harness.base_url}/ui?files_view=react#files",
-        wait_until="domcontentloaded",
-    )
+    page.goto(f"{harness.base_url}/ui#files", wait_until="domcontentloaded")
     expect(page.locator("#file-panel")).to_have_attribute(
         "data-mobile-step", "list"
     )
-    expect(page.locator(".wg-react-files-prototype")).to_be_visible()
-    expect(page.locator(".wg-react-files-prototype")).to_contain_text(
+    # The refreshed app can retain the last directory; use its real nav.
+    page.locator("#file-breadcrumbs").get_by_role(
+        "button", name="Workspace"
+    ).click()
+    expect(page.locator(".wg-files-list")).to_contain_text(
         "copy-source.txt", timeout=10000
     )
-    page.locator(".wg-react-files-prototype").get_by_text(
+    page.locator(".wg-files-list").get_by_text(
         "copy-source.txt", exact=True
     ).click()
     expect(page.locator("#file-panel")).to_have_attribute(
@@ -119,9 +112,35 @@ def test_react_files_preview_reuses_authenticated_files_api(
     # The component also responds when a browser is resized without reloading.
     page.set_viewport_size({"width": 1440, "height": 1000})
     expect(
-        page.locator(".wg-react-files-prototype")
+        page.locator(".wg-files-list")
         .get_by_role("grid")
         .get_by_text("notes.txt", exact=True)
     ).to_be_visible(timeout=10000)
 
+    harness.assert_clean_browser()
+
+
+def test_files_folder_selection_after_sort_and_copy(
+    browser_harness: BrowserHarness,
+) -> None:
+    harness = browser_harness
+    harness.login()
+    harness.wait_executor_online()
+    page = harness.page
+    harness.navigate("files")
+    page.locator("#file-new-folder").click()
+    page.locator("#file-operation-name").fill("archive")
+    page.locator("#file-operation-form button[type=submit]").click()
+    grid = page.locator("#file-list").get_by_role("grid")
+    expect(grid.get_by_text("archive", exact=True)).to_be_visible()
+    page.locator("#file-filter").fill("copy-")
+    expect(grid.get_by_text("copy-source.txt", exact=True)).to_be_visible()
+    page.locator("#file-filter").clear()
+    page.locator("#file-sort").select_option("size")
+    page.locator("#file-sort-direction").click()
+    page.locator("#file-sort").select_option("name")
+    grid.get_by_text("copy-source.txt", exact=True).click()
+    page.locator("#file-copy").click()
+    grid.get_by_text("archive", exact=True).dblclick()
+    expect(page.locator("#file-breadcrumbs")).to_contain_text("archive")
     harness.assert_clean_browser()

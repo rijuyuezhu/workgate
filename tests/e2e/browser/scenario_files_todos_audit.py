@@ -7,7 +7,11 @@ from tests.e2e.browser.harness import BrowserHarness
 
 
 def _file_entry(harness: BrowserHarness, path: str):
-    return harness.page.locator(f'.file-entry[title="{path}"]')
+    return (
+        harness.page.locator("#file-list")
+        .get_by_role("grid")
+        .get_by_text(path.rsplit("/", 1)[-1], exact=True)
+    )
 
 
 def _show_task_tab(page, tab: str) -> None:
@@ -155,8 +159,15 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     page.locator("#file-sort").select_option("size")
     page.locator("#file-sort-direction").click()
     expect(page.locator("#file-sort-direction")).to_have_text("Descending")
-    displayed = page.locator('#file-list .file-entry[title$=".txt"]')
-    order = [entry.get_attribute("title") or "" for entry in displayed.all()]
+    rows = page.locator("#file-list").get_by_role("grid").get_by_role("row")
+    order = [
+        name
+        for row in rows.all()
+        if row.get_by_role("gridcell").count()
+        if (
+            name := row.get_by_role("gridcell").first.inner_text().strip()
+        ).endswith(".txt")
+    ]
     assert order and all(order)
     sizes = [
         harness.executor_workspace.joinpath(name).stat().st_size
@@ -168,7 +179,9 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
     _file_entry(harness, "copy-source.txt").click()
     page.locator("#file-copy").click()
     expect(page.locator("#file-clipboard-state")).to_contain_text("Copy")
-    _file_entry(harness, "archive").dblclick()
+    _file_entry(harness, "archive").click()
+    expect(page.locator("#file-open")).to_be_enabled()
+    page.locator("#file-open").click()
     expect(page.locator("#file-breadcrumbs")).to_contain_text("archive")
     page.locator("#file-paste").click()
     page.locator("#file-operation-name").fill("copied.txt")

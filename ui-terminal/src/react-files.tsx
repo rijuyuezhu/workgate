@@ -29,13 +29,16 @@ type FilesEvents = {
 };
 
 function toFilemanagerData(entries: FileEntry[]): IEntity[] {
-  return entries.map((entry) => ({
+  return entries.map((entry, index) => ({
     // Widget IDs describe the displayed tree, not remote filesystem paths.
     id: `/${encodeURIComponent(entry.name)}`,
     name: entry.name,
     type: entry.type === "dir" ? "folder" : "file",
     size: entry.type === "dir" ? undefined : Number(entry.size) || 0,
     date: entry.modified ? new Date(entry.modified * 1000) : undefined,
+    // WorkGate already sorted the visible entries. Preserve that order inside
+    // SVAR rather than running a second name/size/date sort.
+    sortIndex: index,
   }));
 }
 
@@ -70,7 +73,7 @@ function FilesView({ model, events }: { model: FilesModel; events: FilesEvents }
     entry,
   ]));
 
-  return <div className="wg-react-files-prototype" aria-label="React Files prototype">
+  return <div className="wg-files-list" aria-label="Files">
     <Willow fonts={false}>
       <Filemanager
         key={JSON.stringify([
@@ -78,6 +81,10 @@ function FilesView({ model, events }: { model: FilesModel; events: FilesEvents }
           model.filter, model.sort, model.descending, model.showHidden, mobile,
         ])}
         data={toFilemanagerData(model.entries)}
+        panels={[{
+          path: "/",
+          _sorts: { "/": { key: "sortIndex", order: "asc" } },
+        }]}
         mode={mobile ? "cards" : "table"}
         readonly
         preview={false}

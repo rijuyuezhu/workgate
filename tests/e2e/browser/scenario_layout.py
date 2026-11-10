@@ -161,7 +161,7 @@ def run_webui_layout(harness: BrowserHarness) -> None:
                     el.getBoundingClientRect().height];
         }"""
     )
-    expect(page.locator(".file-column-heading span")).to_have_count(3)
+    expect(page.locator("#file-list .wg-files-list")).to_be_visible()
     page.keyboard.press("Control+l")
     expect(page.locator("#file-path")).to_be_focused()
     page.keyboard.press("Control+f")
@@ -229,13 +229,12 @@ def run_webui_layout(harness: BrowserHarness) -> None:
                 path=str(harness.artifacts / f"webui-{view}-desktop.png")
             )
 
-    # Selection styling is shared; content grids within each list remain distinct.
+    # Selection styling is shared among legacy list pages; Files uses SVAR.
     list_styles = page.evaluate("""() => {
         const cases = [
             ['#task-list', 'session-entry task-entry'],
             ['#session-list', 'session-entry'],
             ['#audit-list', 'audit-entry'],
-            ['#file-list', 'file-entry'],
             ['#terminal-list', 'terminal-session'],
         ];
         return cases.map(([container, classes]) => {
@@ -249,7 +248,7 @@ def run_webui_layout(harness: BrowserHarness) -> None:
             return result;
         });
     }""")
-    assert len(list_styles) == 5
+    assert len(list_styles) == 4
     assert all(style == list_styles[0] for style in list_styles)
     assert list_styles[0][0] == "rgb(241, 238, 255)"
 
