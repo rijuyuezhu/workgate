@@ -1122,7 +1122,11 @@ def test_browser_file_download_streaming(
     page = browser_harness.page
     browser_harness.navigate("files")
     page.locator("#file-refresh").click()
-    entry = page.locator('#file-list .file-entry[title="stream-download.bin"]')
+    entry = (
+        page.locator("#file-list")
+        .get_by_role("grid")
+        .get_by_text("stream-download.bin", exact=True)
+    )
     expect(entry).to_be_visible()
     entry.click()
     expect(page.locator("#file-download")).to_be_enabled()

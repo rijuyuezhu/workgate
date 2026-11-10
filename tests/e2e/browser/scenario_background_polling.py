@@ -163,8 +163,13 @@ def run_background_polling(harness: BrowserHarness) -> None:
 
     # Inventory polls and the 30s app timer must not discard an editor draft.
     harness.navigate("files")
-    expect(page.locator('.file-entry[title="notes.txt"]')).to_be_visible()
-    page.locator('.file-entry[title="notes.txt"]').click()
+    file_entry = (
+        page.locator("#file-list")
+        .get_by_role("grid")
+        .get_by_text("notes.txt", exact=True)
+    )
+    expect(file_entry).to_be_visible()
+    file_entry.click()
     page.locator("#file-edit").click()
     expect(page.locator("#file-editor-form")).to_be_visible()
     page.locator("#file-editor").fill("unsaved draft through background polls")

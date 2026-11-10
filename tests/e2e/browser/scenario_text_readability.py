@@ -25,8 +25,6 @@ def assert_narrow_text_readable(page: Page) -> None:
                 ['Network throughput', '<div class="dashboard-network-values" style="width:130px"><div><strong>1234.5 GB/s</strong></div><div><strong>1234.5 GB/s</strong></div></div>', 'strong'],
                 ['Executor name', `<div class="executor-band-main" style="width:130px"><strong>${longId}</strong></div>`, 'strong'],
                 ['Executor version', `<div class="executor-band-main" style="width:130px"><small>${longId}</small></div>`, 'small'],
-                ['File name', `<div class="file-browser" style="width:240px"><button class="file-entry"><span class="file-entry-name">${longPath}</span><span class="file-entry-detail">10 KB</span><span class="file-entry-modified">10/16/2026</span></button></div>`, '.file-entry-name'],
-                ['File modified date', `<div class="file-browser" style="width:240px"><button class="file-entry"><span class="file-entry-name">name.txt</span><span class="file-entry-detail">10 KB</span><span class="file-entry-modified">10/16/2026</span></button></div>`, '.file-entry-modified'],
                 ['File preview name', `<div class="file-preview-header" style="width:130px"><strong>${longPath}</strong></div>`, 'strong'],
                 ['File status', `<div id="file-state" style="width:130px">${longPath}</div>`, '#file-state'],
                 ['Terminal shell', `<button class="terminal-session" style="width:130px">${longId}</button>`, '.terminal-session'],

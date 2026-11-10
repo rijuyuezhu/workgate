@@ -29,21 +29,15 @@ void (async () => {
     import(assetUrl("session_integrations.js")),
     import(assetUrl("mobile_navigation.js")),
   ]);
-  // Explicit opt-in while the React/SVAR Files view is evaluated.
-  let mountReactFiles = null;
-  if (new URLSearchParams(location.search).get("files_view") === "react") {
-    try {
-      await import(assetUrl("react_files_bundle.js"));
-      if (typeof window.WorkgateReactFiles?.mount === "function") {
-        const stylesheet = document.createElement("link");
-        stylesheet.rel = "stylesheet";
-        stylesheet.href = assetUrl("react_files_bundle.css");
-        document.head.append(stylesheet);
-        mountReactFiles = window.WorkgateReactFiles.mount;
-      }
-    } catch (error) {
-      console.warn("React Files preview unavailable; using the standard Files view", error);
-    }
+  // Keep one authenticated Files controller; React owns list presentation.
+  const stylesheet = document.createElement("link");
+  stylesheet.rel = "stylesheet";
+  stylesheet.href = assetUrl("react_files_bundle.css");
+  document.head.append(stylesheet);
+  await import(assetUrl("react_files_bundle.js"));
+  const mountReactFiles = window.WorkgateReactFiles?.mount;
+  if (typeof mountReactFiles !== "function") {
+    throw new Error("Files UI failed to initialize");
   }
   const apiPrefix = String(config.apiPrefix || "/api/ui").replace(/\/$/, "");
   const oauth = config.oauth && typeof config.oauth === "object" ? config.oauth : null;

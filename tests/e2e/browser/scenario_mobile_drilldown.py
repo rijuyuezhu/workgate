@@ -133,7 +133,7 @@ def run_mobile_drilldown(harness: BrowserHarness) -> None:
     harness.navigate("files")
     step("files", "list")
     expect(page.locator(".file-preview")).to_be_hidden()
-    page.locator("#file-list .file-entry").first.click()
+    page.locator("#file-list").get_by_text("notes.txt", exact=True).click()
     step("files", "detail")
     expect(page.locator(".file-preview")).to_be_visible()
     page.screenshot(path=str(harness.artifacts / "mobile-file-preview.png"))

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Filemanager, Willow, type IEntity } from "@svar-ui/react-filemanager";
 import "@svar-ui/react-filemanager/all.css";
@@ -29,13 +29,16 @@ type FilesEvents = {
 };
 
 function toFilemanagerData(entries: FileEntry[]): IEntity[] {
-  return entries.map((entry) => ({
+  return entries.map((entry, index) => ({
     // Widget IDs describe the displayed tree, not remote filesystem paths.
     id: `/${encodeURIComponent(entry.name)}`,
     name: entry.name,
     type: entry.type === "dir" ? "folder" : "file",
     size: entry.type === "dir" ? undefined : Number(entry.size) || 0,
     date: entry.modified ? new Date(entry.modified * 1000) : undefined,
+    // WorkGate already sorted the visible entries. Preserve that order inside
+    // SVAR rather than running a second name/size/date sort.
+    sortIndex: index,
   }));
 }
 
@@ -58,6 +61,7 @@ function FilesView({ model, events }: { model: FilesModel; events: FilesEvents }
   const [mobile, setMobile] = useState(
     () => window.matchMedia("(max-width: 780px)").matches,
   );
+  const mousePressSelected = useRef(false);
   useEffect(() => {
     const media = window.matchMedia("(max-width: 780px)");
     const update = () => setMobile(media.matches);
@@ -70,7 +74,22 @@ function FilesView({ model, events }: { model: FilesModel; events: FilesEvents }
     entry,
   ]));
 
-  return <div className="wg-react-files-prototype" aria-label="React Files prototype">
+  return <div className="wg-files-list" aria-label="Files"
+    onPointerDownCapture={(event) => {
+      // When desktop grid focus scrolls the page between down/up, SVAR's
+      // subsequent click can land on the list background. Select the row
+      // under the original mouse press so the intended file remains selected.
+      if (mobile || event.pointerType !== "mouse" || event.button !== 0) return;
+      mousePressSelected.current = false;
+      const row = (event.target as HTMLElement).closest('[role="row"][data-id]');
+      const id = row?.getAttribute("data-id");
+      const entry = id?.startsWith(":") ? byId.get(id.slice(1)) : undefined;
+      if (entry) {
+        event.preventDefault();
+        mousePressSelected.current = true;
+        events.select(entry.path);
+      }
+    }}>
     <Willow fonts={false}>
       <Filemanager
         key={JSON.stringify([
@@ -78,11 +97,21 @@ function FilesView({ model, events }: { model: FilesModel; events: FilesEvents }
           model.filter, model.sort, model.descending, model.showHidden, mobile,
         ])}
         data={toFilemanagerData(model.entries)}
+        panels={[{
+          path: "/",
+          _sorts: { "/": { key: "sortIndex", order: "asc" } },
+        }]}
         mode={mobile ? "cards" : "table"}
         readonly
         preview={false}
         icons={fileIconFor}
         onSelectFile={({ id }) => {
+          // The desktop mouse press already selected this row. Ignore SVAR's
+          // follow-up click event to avoid duplicate remote preview reads.
+          if (mousePressSelected.current) {
+            mousePressSelected.current = false;
+            return;
+          }
           if (id && byId.has(id)) events.select(byId.get(id)!.path);
         }}
         onSetPath={({ id }) => {
