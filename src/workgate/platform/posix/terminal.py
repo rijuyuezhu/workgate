@@ -93,7 +93,7 @@ class UnixTmuxAttach:
         process = getattr(self, "process", None)
         if process is not None and process.poll() is None:
             with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGWINCH)
+                process.send_signal(signal.SIGWINCH)
         return True
 
     def read_wait(self, max_bytes: int, wait_ms: int) -> tuple[bytes, bool]:
@@ -156,12 +156,13 @@ class UnixTmuxAttach:
                 os.close(master_fd)
         if process is None or process.poll() is not None:
             return
+        # Only the attach client belongs to this bridge, not its process group.
         with contextlib.suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGTERM)
+            process.terminate()
         try:
             process.wait(timeout=2)
         except subprocess.TimeoutExpired:
             with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
+                process.kill()
             with contextlib.suppress(subprocess.TimeoutExpired):
                 process.wait(timeout=2)
