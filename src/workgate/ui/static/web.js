@@ -46,8 +46,9 @@ void (async () => {
   const mountTaskLists = window.WorkgateReactTaskLists?.mount;
   const mountTaskDetails = window.WorkgateReactTaskDetails?.mount;
   const mountTaskPlan = window.WorkgateReactTaskPlan?.mount;
+  const mountSessionIntegrations = window.WorkgateReactSessionIntegrations?.mount;
   if (typeof mountReactFiles !== "function" || typeof reactNavigation?.mount !== "function"
-      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function" || typeof mountOverviewLists !== "function" || typeof mountDashboardHealth !== "function" || typeof mountExecutorInventory !== "function" || typeof mountExecutorDetail !== "function" || typeof mountAuditLists !== "function" || typeof mountAuditDetails !== "function" || typeof mountTaskLists !== "function" || typeof mountTaskDetails !== "function" || typeof mountTaskPlan !== "function") {
+      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function" || typeof mountOverviewLists !== "function" || typeof mountDashboardHealth !== "function" || typeof mountExecutorInventory !== "function" || typeof mountExecutorDetail !== "function" || typeof mountAuditLists !== "function" || typeof mountAuditDetails !== "function" || typeof mountTaskLists !== "function" || typeof mountTaskDetails !== "function" || typeof mountTaskPlan !== "function" || typeof mountSessionIntegrations !== "function") {
     throw new Error("React UI failed to initialize");
   }
   const apiPrefix = String(config.apiPrefix || "/api/ui").replace(/\/$/, "");
@@ -449,6 +450,7 @@ void (async () => {
   const guiViewer = createGuiViewer({ request, onOpen: () => integrationsViewer.close() });
   const integrationsViewer = createSessionIntegrationsViewer({
     request,
+    mountSessionIntegrations,
     onOpen: () => guiViewer.close(),
     onManage: (executorId, kind) => {
       navigateTo("executors");

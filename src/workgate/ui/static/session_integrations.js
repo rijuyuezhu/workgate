@@ -1,5 +1,5 @@
 // Session-bound integrations are inspected here; edits reuse the Executor manager.
-export function createSessionIntegrationsViewer({ request, onManage, onOpen = () => {} }) {
+export function createSessionIntegrationsViewer({ request, mountSessionIntegrations, onManage, onOpen = () => {} }) {
   const panel = document.getElementById("session-integrations");
   const layout = panel.closest(".task-sessions-layout");
   const openButton = document.getElementById("session-integrations-open");
@@ -22,6 +22,9 @@ export function createSessionIntegrationsViewer({ request, onManage, onOpen = ()
     },
   };
   const sources = { project: "Project", managed: "Executor", global: "Executor (User Global)", control: "Control" };
+  const listView = mountSessionIntegrations(views.mcp.list, views.skills.list);
+  listView.render("mcp", []);
+  listView.render("skills", []);
   let session = null;
   let sessionKey = "";
   let active = "skills";
@@ -35,44 +38,23 @@ export function createSessionIntegrationsViewer({ request, onManage, onOpen = ()
     panel.hidden = true;
   }
 
-  function group(list, heading, entries) {
-    if (!entries.length) return;
-    const section = document.createElement("section");
-    section.className = "executor-manage-group";
-    const title = document.createElement("h4");
-    title.textContent = heading;
-    section.append(title);
-    for (const entry of entries) {
-      const row = document.createElement("div");
-      row.className = "executor-manage-row";
-      const name = document.createElement("strong");
-      name.textContent = entry.name;
-      const state = document.createElement("span");
-      state.className = "executor-manage-pill";
-      state.dataset.enabled = String(entry.state === "Effective" || entry.state === "Enabled");
-      state.textContent = entry.state;
-      row.append(name, state);
-      section.append(row);
-    }
-    list.append(section);
-  }
-
   async function loadSkills() {
     const view = views.skills;
     const revision = ++generation;
     const id = session?.session_id || "";
     loaded.skills = false;
     view.status.textContent = "Loading Skills…";
-    view.list.replaceChildren();
+    listView.render("skills", []);
     view.refresh.disabled = true;
     try {
       const result = await request(`/sessions/skills?session_id=${encodeURIComponent(id)}`);
       if (revision !== generation || id !== session?.session_id) return;
       const rows = Array.isArray(result.skills) ? result.skills : [];
-      for (const key of ["project", "managed", "global", "control"]) {
-        group(view.list, sources[key], rows.filter((row) => row.source === key && typeof row.name === "string")
-          .map((row) => ({ name: row.name, state: "Effective" })));
-      }
+      listView.render("skills", ["project", "managed", "global", "control"].map((key) => ({
+        heading: sources[key],
+        entries: rows.filter((row) => row.source === key && typeof row.name === "string")
+          .map((row) => ({ name: row.name, state: "Effective" })),
+      })).filter((group) => group.entries.length));
       view.status.textContent = `${rows.length} effective Skills (project read-only)`;
       loaded.skills = true;
     } catch (error) {
@@ -87,7 +69,7 @@ export function createSessionIntegrationsViewer({ request, onManage, onOpen = ()
     const revision = ++generation;
     loaded.mcp = false;
     view.status.textContent = "Loading MCPs…";
-    view.list.replaceChildren();
+    listView.render("mcp", []);
     view.refresh.disabled = true;
     const executorId = session?.executor_id || "";
     try {
@@ -107,9 +89,12 @@ export function createSessionIntegrationsViewer({ request, onManage, onOpen = ()
         name: row.name,
         state: !row.enabled ? "Disabled" : overridden ? "Overridden" : "Enabled",
       });
-      group(view.list, "Executor", executors.filter((row) => typeof row.name === "string").map((row) => describe(row)));
-      group(view.list, "Control", controls.filter((row) => typeof row.name === "string")
-        .map((row) => describe(row, activeExecutorNames.has(row.name))));
+      listView.render("mcp", [
+        { heading: "Executor", entries: executors.filter((row) => typeof row.name === "string")
+          .map((row) => describe(row)) },
+        { heading: "Control", entries: controls.filter((row) => typeof row.name === "string")
+          .map((row) => describe(row, activeExecutorNames.has(row.name))) },
+      ].filter((group) => group.entries.length));
       view.status.textContent = executorUnavailable
         ? `${controls.length} Control MCPs (Executor unavailable)`
         : `${executors.length + controls.length} configured MCPs`;
@@ -148,8 +133,8 @@ export function createSessionIntegrationsViewer({ request, onManage, onOpen = ()
     if (key === sessionKey) return;
     sessionKey = key;
     close();
-    for (const view of Object.values(views)) {
-      view.list.replaceChildren();
+    for (const [kind, view] of Object.entries(views)) {
+      listView.render(kind, []);
       view.status.textContent = "Open this tab to inspect";
     }
   }
