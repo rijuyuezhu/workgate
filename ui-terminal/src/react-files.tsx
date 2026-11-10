@@ -73,7 +73,20 @@ function FilesView({ model, events }: { model: FilesModel; events: FilesEvents }
     entry,
   ]));
 
-  return <div className="wg-files-list" aria-label="Files">
+  return <div className="wg-files-list" aria-label="Files"
+    onPointerDownCapture={(event) => {
+      // When desktop grid focus scrolls the page between down/up, SVAR's
+      // subsequent click can land on the list background. Select the row
+      // under the original mouse press so the intended file remains selected.
+      if (mobile || event.pointerType !== "mouse" || event.button !== 0) return;
+      const row = (event.target as HTMLElement).closest('[role="row"][data-id]');
+      const id = row?.getAttribute("data-id");
+      const entry = id?.startsWith(":") ? byId.get(id.slice(1)) : undefined;
+      if (entry) {
+        event.preventDefault();
+        events.select(entry.path);
+      }
+    }}>
     <Willow fonts={false}>
       <Filemanager
         key={JSON.stringify([

@@ -128,6 +128,7 @@ def test_files_folder_selection_after_sort_and_copy(
     harness.login()
     harness.wait_executor_online()
     page = harness.page
+    page.set_viewport_size({"width": 1280, "height": 720})
     harness.navigate("files")
     grid = page.locator("#file-list").get_by_role("grid")
     grid.get_by_text("notes.txt", exact=True).click()
@@ -167,6 +168,10 @@ def test_files_folder_selection_after_sort_and_copy(
     page.locator("#file-sort").select_option("name")
     grid.get_by_text("copy-source.txt", exact=True).click()
     page.locator("#file-copy").click()
+    # A row near the bottom of the viewport must be selectable even when
+    # focusing SVAR's grid would normally scroll the document mid-click.
+    grid.get_by_text("archive", exact=True).click()
+    expect(page.locator("#file-open")).to_be_enabled()
     grid.get_by_text("archive", exact=True).dblclick()
     expect(page.locator("#file-breadcrumbs")).to_contain_text("archive")
     harness.assert_clean_browser()
