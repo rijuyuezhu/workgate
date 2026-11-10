@@ -9,6 +9,7 @@ import { executorDetail } from "./react-executor-detail";
 import { auditLists } from "./react-audit-lists";
 import { auditDetails } from "./react-audit-details";
 import { taskLists } from "./react-task-lists";
+import { taskDetails } from "./react-task-details";
 import { createRoot } from "react-dom/client";
 import { Filemanager, Willow, type IEntity } from "@svar-ui/react-filemanager";
 import "@svar-ui/react-filemanager/all.css";
@@ -159,6 +160,7 @@ declare global {
     WorkgateReactAuditLists?: typeof auditLists;
     WorkgateReactAuditDetails?: typeof auditDetails;
     WorkgateReactTaskLists?: typeof taskLists;
+    WorkgateReactTaskDetails?: typeof taskDetails;
   }
 }
 
@@ -175,3 +177,4 @@ window.WorkgateReactExecutorDetail = executorDetail;
 window.WorkgateReactAuditLists = auditLists;
 window.WorkgateReactAuditDetails = auditDetails;
 window.WorkgateReactTaskLists = taskLists;
+window.WorkgateReactTaskDetails = taskDetails;

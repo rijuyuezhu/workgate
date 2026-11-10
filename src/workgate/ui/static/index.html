@@ -465,14 +465,8 @@ description: My Skill
           </nav>
           <div id="task-panel-progress" class="task-tab-panel" role="tabpanel" aria-labelledby="task-tab-progress">
           <section class="session-resource session-task">
-            <div class="task-progress-lead">
-              <div class="task-progress-objective">
-                <span>Objective</span>
-                <strong id="task-objective">—</strong>
-              </div>
-              <span id="task-status" class="task-status-pill">—</span>
-              <span id="task-state" class="visually-hidden">Select a task</span>
-            </div>
+            <div class="task-progress-lead"></div>
+            <span id="task-state" class="visually-hidden">Select a task</span>
             <div class="task-lifecycle-actions" aria-label="Task lifecycle actions">
               <button type="button" data-task-action="finish">Complete</button>
               <button type="button" data-task-action="resume">Reopen</button>
@@ -481,12 +475,7 @@ description: My Skill
               <button type="button" data-task-action="delete">Delete</button>
               <span id="task-action-state" class="muted" role="status" aria-live="polite"></span>
             </div>
-            <dl class="session-task-grid">
-              <div class="task-progress-summary"><dt>Summary</dt><dd id="task-summary">—</dd></div>
-              <div class="task-progress-next"><dt>Next action</dt><dd id="task-next-action">—</dd></div>
-              <div class="task-progress-findings"><dt>Findings</dt><dd id="task-findings">—</dd></div>
-              <div class="task-progress-blockers"><dt>Blockers</dt><dd id="task-blockers">—</dd></div>
-            </dl>
+            <dl class="session-task-grid"></dl>
           </section>
           </div>
           <div id="task-panel-plan" class="task-tab-panel" role="tabpanel" aria-labelledby="task-tab-plan" hidden>
@@ -526,17 +515,7 @@ description: My Skill
             <p class="task-session-empty">Select a session to view its Audit.</p>
           <section class="session-resource session-execution-detail">
             <div class="session-detail-header">
-              <div class="session-detail-heading">
-                <div class="session-detail-executor-identity">
-                  <span id="session-detail-executor-avatar" class="executor-band-mark" aria-hidden="true">—</span>
-                  <strong id="session-detail-executor">—</strong>
-                </div>
-                <div class="session-detail-label">
-                  <strong id="session-detail-title">No session selected</strong>
-                  <span id="session-detail-status" class="muted">Select a retained execution session to inspect it</span>
-                  <span id="session-detail-task-created" class="muted" hidden></span>
-                </div>
-              </div>
+              <div class="session-detail-heading"></div>
               <div class="session-detail-actions">
                 <button id="session-gui-open" type="button" disabled>Open GUI</button>
                 <button id="session-integrations-open" type="button" disabled>MCP / Skills</button>
@@ -545,13 +524,7 @@ description: My Skill
             </div>
             <details class="task-session-metadata">
               <summary>Session metadata</summary>
-            <dl class="session-detail-grid">
-              <div><dt>Session ID</dt><dd id="session-detail-id">—</dd></div>
-              <div><dt>Executor ID</dt><dd id="session-detail-executor-id">—</dd></div>
-              <div><dt>Workdir</dt><dd id="session-detail-workdir">—</dd></div>
-              <div><dt>Created</dt><dd id="session-detail-created">—</dd></div>
-              <div><dt>Last activity</dt><dd id="session-detail-updated">—</dd></div>
-            </dl>
+            <dl class="session-detail-grid"></dl>
             </details>
           </section>
 

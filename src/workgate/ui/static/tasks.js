@@ -4,6 +4,7 @@ export function createTasksController({
   text,
   mountAuditLists,
   mountTaskLists,
+  mountTaskDetails,
   auditEntryTitle,
   auditTimestamp,
   renderAuditDetailInto,
@@ -82,6 +83,13 @@ export function createTasksController({
     sessions: [], selectedSessionId: "",
     emptyMessage: "Select a task to inspect its execution sessions.",
   });
+
+  const taskDetails = mountTaskDetails(
+    elements.taskProgressLead, elements.taskProgressGrid,
+    elements.sessionDetailHeading, elements.sessionDetailGrid,
+  );
+  taskDetails.renderTask();
+  taskDetails.renderSession();
 
   let activeTab = initialSessionId ? "sessions" : "progress";
 
@@ -269,16 +277,16 @@ export function createTasksController({
     const task = controllerState.task;
     const progress = task && task.progress && typeof task.progress === "object" ? task.progress : {};
     const status = text(task && task.status);
-    elements.taskStatus.textContent = status;
-    elements.taskStatus.dataset.status = ["active", "completed", "cancelled", "blocked"].includes(status)
-      ? status : "other";
-    elements.taskObjective.textContent = text(task && task.objective);
-    elements.taskSummary.textContent = text(progress.summary);
-    elements.taskNextAction.textContent = text(progress.next_action);
-    elements.taskFindings.textContent = taskListText(progress.findings);
-    elements.taskBlockers.textContent = taskListText(progress.blockers);
-    elements.taskFindings.closest(".task-progress-findings").hidden = !Array.isArray(progress.findings) || !progress.findings.length;
-    elements.taskBlockers.closest(".task-progress-blockers").hidden = !Array.isArray(progress.blockers) || !progress.blockers.length;
+    taskDetails.renderTask({
+      objective: text(task && task.objective),
+      status,
+      summary: text(progress.summary),
+      nextAction: text(progress.next_action),
+      findings: taskListText(progress.findings),
+      blockers: taskListText(progress.blockers),
+      hasFindings: Array.isArray(progress.findings) && progress.findings.length > 0,
+      hasBlockers: Array.isArray(progress.blockers) && progress.blockers.length > 0,
+    });
     elements.taskState.textContent = task
       ? text(task.task_id, "task")
       : selectedTaskId()
@@ -347,23 +355,10 @@ export function createTasksController({
 
   function renderSessionDetail() {
     const session = selectedSession();
-    const createdNotice = document.getElementById("session-detail-task-created");
-    createdNotice.hidden = !session?.task_created;
-    createdNotice.textContent = session?.task_created
-      ? `Created Task ${session.task_id} automatically` : "";
     onSessionChange(session && { ...session, availability: sessionAvailability(session) });
     document.querySelector(".task-sessions-main").classList.toggle("has-session", Boolean(session));
     if (!session) {
-      elements.sessionDetailStatus.dataset.state = "other";
-      elements.sessionDetailTitle.textContent = "No session selected";
-      elements.sessionDetailStatus.textContent = "Select a retained execution session to inspect it";
-      elements.sessionDetailId.textContent = "—";
-      elements.sessionDetailExecutor.textContent = "—";
-      elements.sessionDetailExecutorAvatar.textContent = "—";
-      elements.sessionDetailExecutorId.textContent = "—";
-      elements.sessionDetailWorkdir.textContent = "—";
-      elements.sessionDetailCreated.textContent = "—";
-      elements.sessionDetailUpdated.textContent = "—";
+      taskDetails.renderSession();
       syncControls();
       return;
     }
@@ -372,25 +367,27 @@ export function createTasksController({
     let state = "available";
     if (finalStatus === "ended") state = "ended";
     else if (finalStatus === "terminating" || (availability && availability !== "available")) state = "warning";
-    elements.sessionDetailStatus.dataset.state = state;
-    elements.sessionDetailTitle.textContent = text(session.label, text(session.session_id, "session"));
-    elements.sessionDetailStatus.textContent = finalStatus === "ended"
-      ? "Ended (history retained)"
-      : finalStatus === "terminating"
-        ? "Terminating (awaiting Executor absence)"
-        : availability === "missing_on_executor"
-          ? "Unavailable (missing on executor)"
-          : availability === "executor_offline"
-            ? "Unavailable (executor offline)"
-            : `Available (${sessionActivityTimestamp(session)})`;
-    elements.sessionDetailId.textContent = text(session.session_id);
     const name = executorName(session.executor_id);
-    elements.sessionDetailExecutor.textContent = name;
-    elements.sessionDetailExecutorAvatar.textContent = name.slice(0, 1).toUpperCase();
-    elements.sessionDetailExecutorId.textContent = text(session.executor_id);
-    elements.sessionDetailWorkdir.textContent = text(session.workdir);
-    elements.sessionDetailCreated.textContent = sessionTimestamp(session.created_at);
-    elements.sessionDetailUpdated.textContent = sessionTimestamp(session.updated_at);
+    taskDetails.renderSession({
+      executor: name,
+      title: text(session.label, text(session.session_id, "session")),
+      state,
+      status: finalStatus === "ended"
+        ? "Ended (history retained)"
+        : finalStatus === "terminating"
+          ? "Terminating (awaiting Executor absence)"
+          : availability === "missing_on_executor"
+            ? "Unavailable (missing on executor)"
+            : availability === "executor_offline"
+              ? "Unavailable (executor offline)"
+              : `Available (${sessionActivityTimestamp(session)})`,
+      taskCreated: session.task_created ? `Created Task ${session.task_id} automatically` : "",
+      sessionId: text(session.session_id),
+      executorId: text(session.executor_id),
+      workdir: text(session.workdir),
+      created: sessionTimestamp(session.created_at),
+      updated: sessionTimestamp(session.updated_at),
+    });
     syncControls();
   }
 

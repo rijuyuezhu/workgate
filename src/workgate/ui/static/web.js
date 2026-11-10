@@ -44,8 +44,9 @@ void (async () => {
   const mountAuditLists = window.WorkgateReactAuditLists?.mount;
   const mountAuditDetails = window.WorkgateReactAuditDetails?.mount;
   const mountTaskLists = window.WorkgateReactTaskLists?.mount;
+  const mountTaskDetails = window.WorkgateReactTaskDetails?.mount;
   if (typeof mountReactFiles !== "function" || typeof reactNavigation?.mount !== "function"
-      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function" || typeof mountOverviewLists !== "function" || typeof mountDashboardHealth !== "function" || typeof mountExecutorInventory !== "function" || typeof mountExecutorDetail !== "function" || typeof mountAuditLists !== "function" || typeof mountAuditDetails !== "function" || typeof mountTaskLists !== "function") {
+      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function" || typeof mountOverviewLists !== "function" || typeof mountDashboardHealth !== "function" || typeof mountExecutorInventory !== "function" || typeof mountExecutorDetail !== "function" || typeof mountAuditLists !== "function" || typeof mountAuditDetails !== "function" || typeof mountTaskLists !== "function" || typeof mountTaskDetails !== "function") {
     throw new Error("React UI failed to initialize");
   }
   const apiPrefix = String(config.apiPrefix || "/api/ui").replace(/\/$/, "");
@@ -282,15 +283,10 @@ void (async () => {
     sessionAuditSort: document.getElementById("session-audit-sort"),
     sessionAuditState: document.getElementById("session-audit-state"),
     sessionAuditSummary: document.getElementById("session-audit-summary"),
-    sessionDetailCreated: document.getElementById("session-detail-created"),
-    sessionDetailId: document.getElementById("session-detail-id"),
-    sessionDetailExecutor: document.getElementById("session-detail-executor"),
-    sessionDetailExecutorAvatar: document.getElementById("session-detail-executor-avatar"),
-    sessionDetailExecutorId: document.getElementById("session-detail-executor-id"),
-    sessionDetailStatus: document.getElementById("session-detail-status"),
-    sessionDetailTitle: document.getElementById("session-detail-title"),
-    sessionDetailUpdated: document.getElementById("session-detail-updated"),
-    sessionDetailWorkdir: document.getElementById("session-detail-workdir"),
+    taskProgressLead: document.querySelector(".task-progress-lead"),
+    taskProgressGrid: document.querySelector(".session-task-grid"),
+    sessionDetailHeading: document.querySelector(".session-detail-heading"),
+    sessionDetailGrid: document.querySelector(".session-detail-grid"),
     sessionList: document.getElementById("session-list"),
     taskList: document.getElementById("task-list"),
     tasksFilter: document.getElementById("tasks-filter"),
@@ -300,14 +296,8 @@ void (async () => {
     tasksRefresh: document.getElementById("tasks-refresh"),
     tasksState: document.getElementById("tasks-state"),
     sessionTerminate: document.getElementById("session-terminate"),
-    taskBlockers: document.getElementById("task-blockers"),
-    taskFindings: document.getElementById("task-findings"),
-    taskNextAction: document.getElementById("task-next-action"),
-    taskObjective: document.getElementById("task-objective"),
     taskState: document.getElementById("task-state"),
-    taskStatus: document.getElementById("task-status"),
     taskActionState: document.getElementById("task-action-state"),
-    taskSummary: document.getElementById("task-summary"),
     todoAdd: document.getElementById("todo-add"),
     todoFilter: document.getElementById("todo-filter"),
     todoList: document.getElementById("todo-list"),
@@ -473,6 +463,7 @@ void (async () => {
     text,
     mountAuditLists,
     mountTaskLists,
+    mountTaskDetails,
     auditEntryTitle,
     auditTimestamp,
     renderAuditDetailInto,
