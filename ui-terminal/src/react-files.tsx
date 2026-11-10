@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { navigation } from "./react-navigation";
 import { createRoot } from "react-dom/client";
 import { Filemanager, Willow, type IEntity } from "@svar-ui/react-filemanager";
 import "@svar-ui/react-filemanager/all.css";
@@ -139,7 +140,10 @@ function mount(host: HTMLElement, events: FilesEvents) {
 declare global {
   interface Window {
     WorkgateReactFiles?: { mount: typeof mount };
+    WorkgateReactNavigation?: typeof navigation;
   }
 }
 
 window.WorkgateReactFiles = { mount };
+
+window.WorkgateReactNavigation = navigation;

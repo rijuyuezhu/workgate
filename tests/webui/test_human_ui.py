@@ -141,10 +141,12 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert 'id="page-title"' in index.text
     assert 'id="page-location"' not in index.text
     assert 'data-view="console"' not in index.text
-    assert 'id="app-navigation"' in index.text
-    assert 'data-view="overview"' in index.text
-    assert 'data-view="tasks"' in index.text
-    assert 'data-view="audit"' in index.text
+    assert (
+        '<nav id="app-navigation" class="primary-nav" aria-label="Primary navigation"></nav>'
+        in index.text
+    )
+    # The navigation is a React-owned component within the existing bundle.
+    assert 'class="nav-item"' not in index.text
     assert 'data-app-view="overview"' in index.text
     assert 'id="dashboard-panel"' in index.text
     assert 'id="dashboard-executor"' in index.text
@@ -217,6 +219,7 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert react_licenses.status_code == 200
     assert "@svar-ui/react-filemanager 2.6.0" in react_licenses.text
     assert "React 19.2.0" in react_licenses.text
+    assert "WorkgateReactNavigation" in react_bundle.text
     script = client.get("/ui/assets/web.js")
     assert script.status_code == 200
     assert script.headers["x-content-type-options"] == "nosniff"
