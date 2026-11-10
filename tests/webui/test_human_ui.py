@@ -272,6 +272,7 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert "WorkgateReactAuditDetails" in react_bundle.text
     assert "WorkgateReactTaskLists" in react_bundle.text
     assert "WorkgateReactTaskDetails" in react_bundle.text
+    assert "WorkgateReactTaskPlan" in react_bundle.text
     assert "mountAuditDetails" in script.text
     assert "auditDetailViews" in script.text
     assert "mountAuditLists" in script.text
@@ -281,6 +282,11 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert "mountTaskLists" in client.get("/ui/assets/tasks.js").text
     assert "mountTaskDetails" in script.text
     assert "mountTaskDetails" in client.get("/ui/assets/tasks.js").text
+    assert "mountTaskPlan" in script.text
+    assert "mountTaskPlan" in client.get("/ui/assets/tasks.js").text
+    assert (
+        "todoList.replaceChildren" not in client.get("/ui/assets/tasks.js").text
+    )
     assert (
         "taskList.replaceChildren" not in client.get("/ui/assets/tasks.js").text
     )

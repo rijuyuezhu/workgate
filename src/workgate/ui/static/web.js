@@ -45,8 +45,9 @@ void (async () => {
   const mountAuditDetails = window.WorkgateReactAuditDetails?.mount;
   const mountTaskLists = window.WorkgateReactTaskLists?.mount;
   const mountTaskDetails = window.WorkgateReactTaskDetails?.mount;
+  const mountTaskPlan = window.WorkgateReactTaskPlan?.mount;
   if (typeof mountReactFiles !== "function" || typeof reactNavigation?.mount !== "function"
-      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function" || typeof mountOverviewLists !== "function" || typeof mountDashboardHealth !== "function" || typeof mountExecutorInventory !== "function" || typeof mountExecutorDetail !== "function" || typeof mountAuditLists !== "function" || typeof mountAuditDetails !== "function" || typeof mountTaskLists !== "function" || typeof mountTaskDetails !== "function") {
+      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function" || typeof mountOverviewLists !== "function" || typeof mountDashboardHealth !== "function" || typeof mountExecutorInventory !== "function" || typeof mountExecutorDetail !== "function" || typeof mountAuditLists !== "function" || typeof mountAuditDetails !== "function" || typeof mountTaskLists !== "function" || typeof mountTaskDetails !== "function" || typeof mountTaskPlan !== "function") {
     throw new Error("React UI failed to initialize");
   }
   const apiPrefix = String(config.apiPrefix || "/api/ui").replace(/\/$/, "");
@@ -464,6 +465,7 @@ void (async () => {
     mountAuditLists,
     mountTaskLists,
     mountTaskDetails,
+    mountTaskPlan,
     auditEntryTitle,
     auditTimestamp,
     renderAuditDetailInto,
