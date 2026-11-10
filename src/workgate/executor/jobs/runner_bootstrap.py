@@ -24,7 +24,7 @@ def main() -> None:
             status = Path(sys.argv[index + 1])
             if status.suffix == ".json" and not status.exists():
                 evidence = {
-                    "exception_type": type(exc).__name__,
+                    "exception_type": type(exc).__name__[:128],
                     "frames": [
                         {
                             "module": Path(frame.filename).name[:128],
@@ -32,7 +32,7 @@ def main() -> None:
                             "line": frame.lineno,
                         }
                         for frame in traceback.extract_tb(
-                            exc.__traceback__, limit=20
+                            exc.__traceback__, limit=-20
                         )
                     ],
                 }

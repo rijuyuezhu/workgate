@@ -94,5 +94,6 @@ def _prepare_attempt(
     )
     paths["log"].unlink(missing_ok=True)
     paths["status"].unlink(missing_ok=True)
+    paths["status"].with_suffix(".runner-error.json").unlink(missing_ok=True)
     atomic_write_private_text(paths["command"], command)
     return paths, runner_command
