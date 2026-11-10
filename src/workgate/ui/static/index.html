@@ -62,11 +62,7 @@
 
     <section id="executors-panel" class="panel executors-panel app-view" data-app-view="executors" hidden>
       <div class="section-heading executors-heading">
-        <div class="inventory-summary" aria-live="polite">
-          <span><strong id="executor-total">—</strong> executors</span>
-          <span><strong id="executor-online">—</strong> online</span>
-          <span id="executor-revoked-summary" hidden><strong id="executor-revoked">—</strong> revoked</span>
-        </div>
+        <div id="executor-inventory-summary" class="inventory-summary" aria-live="polite"></div>
         <div class="executors-actions">
           <button id="executor-topology-open" type="button">Topology</button>
           <button id="executor-pair-open" class="primary-action" type="button">Pair executor</button>
@@ -115,13 +111,7 @@
         </section>
       </section>
       <div class="executors-layout">
-        <nav id="executor-list" class="executor-list" aria-label="Control and executors" aria-live="polite">
-          <div class="executor-control-group"></div>
-          <div class="executor-peer-group">
-            <div class="executor-peer-heading">Executors</div>
-            <div class="executor-peer-rows"></div>
-          </div>
-        </nav>
+        <nav id="executor-list" class="executor-list" aria-label="Control and executors" aria-live="polite"></nav>
         <article class="executor-details">
           <div class="executor-details-header">
             <div>
