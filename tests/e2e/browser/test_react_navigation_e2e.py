@@ -85,3 +85,32 @@ def test_react_primary_navigation_preserves_routing_and_mobile_menu(
     page.mouse.click(5, 610)
     expect(nav).to_be_hidden()
     harness.assert_clean_browser()
+
+
+def test_react_header_status_theme_and_sign_out(
+    browser_harness: BrowserHarness,
+) -> None:
+    """React header consumes existing session state and the pre-paint theme owner."""
+    harness = browser_harness
+    harness.login()
+    page = harness.page
+
+    status = page.locator("#app-header-navigation .app-global-status")
+    expect(status).to_have_count(1)
+    expect(page.locator("#connection-state")).to_have_text("Connected")
+    expect(page.locator("#auth-mode")).to_have_text("oauth")
+    expect(page.locator("#version")).not_to_have_text("—")
+    expect(page.locator("#sign-out")).to_be_visible()
+    assert page.evaluate("typeof window.WorkgateTheme?.set") == "function"
+
+    page.locator("#appearance-mode").select_option("light")
+    expect(page.locator("html")).to_have_attribute("data-theme", "light")
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator("#appearance-mode")).to_have_value("light")
+    expect(page.locator("#connection-state")).to_have_text("Connected")
+
+    page.locator("#sign-out").click()
+    expect(page.locator("#auth-panel")).to_be_visible()
+    expect(page.locator("#connection-state")).to_have_text("Signed out")
+    expect(page.locator("#sign-out")).to_be_hidden()
+    harness.assert_clean_browser()

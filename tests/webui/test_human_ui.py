@@ -1120,15 +1120,19 @@ def test_webui_theme_assets_follow_strict_script_csp(monkeypatch, tmp_path):
     assert response.status_code == 200
     assert "script-src 'self'" in response.headers["content-security-policy"]
     html = response.text
-    assert 'id="appearance-mode"' in html
-    assert 'value="auto"' in html
-    assert 'value="light"' in html
-    assert 'value="dark"' in html
+    # Theme preferences are now React-owned; the synchronous theme bootstrap
+    # still runs from the head before the first paint.
+    assert 'id="appearance-mode"' not in html
+    react = client.get("/ui/assets/react_files_bundle.js")
+    assert react.status_code == 200
+    assert "WorkgateTheme" in react.text
     assert html.index("/assets/theme.js") < html.index("/assets/web.css")
     theme = client.get("/ui/assets/theme.js")
     assert theme.status_code == 200
     assert "document.documentElement.dataset.theme = theme" in theme.text
     assert "localStorage.setItem(key, theme)" in theme.text
+    assert "window.WorkgateTheme" in theme.text
+    assert "workgate-theme-change" in theme.text
     css = client.get("/ui/assets/web.css")
     assert css.status_code == 200
     assert ':root[data-theme="dark"] { color-scheme: dark; }' in css.text

@@ -157,9 +157,7 @@ void (async () => {
     auditSummary: document.getElementById("audit-summary"),
     authDetail: document.getElementById("auth-detail"),
     authForm: document.getElementById("auth-form"),
-    authMode: document.getElementById("auth-mode"),
     authPanel: document.getElementById("auth-panel"),
-    connectionState: document.getElementById("connection-state"),
     fileBreadcrumbs: document.getElementById("file-breadcrumbs"),
     fileClipboardState: document.getElementById("file-clipboard-state"),
     fileCopy: document.getElementById("file-copy"),
@@ -300,7 +298,6 @@ void (async () => {
     executorTargetOnline: document.getElementById("executor-target-online"),
     executorTargetTotal: document.getElementById("executor-target-total"),
     executorTotal: document.getElementById("executor-total"),
-    signOut: document.getElementById("sign-out"),
     terminalCopy: document.getElementById("terminal-copy"),
     terminalFeedback: document.getElementById("terminal-feedback"),
     terminalInput: document.getElementById("terminal-input"),
@@ -363,14 +360,28 @@ void (async () => {
     todoState: document.getElementById("todo-state"),
     todoSummary: document.getElementById("todo-summary"),
     tokenInput: document.getElementById("access-token"),
-    version: document.getElementById("version"),
   };
 
+  const headerStatus = {
+    connectionLabel: "Connecting",
+    connectionKind: "idle",
+    version: "—",
+    authMode: text(config.authMode),
+    showSignOut: false,
+  };
   const navigation = reactNavigation.mount(
     document.getElementById("app-header-navigation"),
     navigateTo,
     () => setNavigationOpen(!elements.appHeader.classList.contains("menu-open")),
+    () => void signOut(),
   );
+  function renderHeader() {
+    navigation.render(
+      document.body.dataset.activeView || "overview",
+      elements.appHeader.classList.contains("menu-open"),
+      headerStatus,
+    );
+  }
 
   // Compact inline line icons for commonly used actions; no font or icon package required.
   const iconPaths = {
@@ -571,7 +582,7 @@ void (async () => {
     elements.pageTitle.textContent = definition.title;
     document.title = `${definition.title} — Workgate`;
 
-    navigation.render(view, elements.appHeader.classList.contains("menu-open"));
+    renderHeader();
     for (const panel of elements.appViews) {
       panel.hidden = panel.dataset.appView !== view;
     }
@@ -602,13 +613,14 @@ void (async () => {
   }
 
   function setConnection(label, state) {
-    elements.connectionState.textContent = label;
-    elements.connectionState.className = `status status-${state}`;
+    headerStatus.connectionLabel = label;
+    headerStatus.connectionKind = state;
+    renderHeader();
   }
 
   function setNavigationOpen(open) {
     elements.appHeader.classList.toggle("menu-open", open);
-    navigation.render(document.body.dataset.activeView || "overview", open);
+    renderHeader();
   }
 
   function cookieValue(name) {
@@ -629,7 +641,8 @@ void (async () => {
     elements.authPanel.hidden = false;
     elements.oauthLogin.hidden = !oauthAvailable();
     elements.oauthLogin.disabled = false;
-    elements.signOut.hidden = true;
+    headerStatus.showSignOut = false;
+    renderHeader();
     elements.tokenInput.setAttribute("aria-invalid", "true");
     elements.authDetail.textContent = detail || "Sign in through the Workgate OAuth approval page.";
     setConnection(message || "Authentication required", "error");
@@ -639,7 +652,8 @@ void (async () => {
     authenticated = true;
     elements.authPanel.hidden = true;
     elements.tokenInput.removeAttribute("aria-invalid");
-    elements.signOut.hidden = config.authMode !== "oauth";
+    headerStatus.showSignOut = config.authMode === "oauth";
+    renderHeader();
   }
 
   async function responsePayload(response) {
@@ -998,8 +1012,8 @@ void (async () => {
 
   function render(data) {
     executorTargetsSignature = "";
-    elements.version.textContent = text(data.version && data.version.version);
-    elements.authMode.textContent = text(data.ui && data.ui.auth_mode, config.authMode);
+    headerStatus.version = text(data.version && data.version.version);
+    headerStatus.authMode = text(data.ui && data.ui.auth_mode, config.authMode);
     renderExecutorTargets(Array.isArray(data.executor_targets) ? data.executor_targets : []);
     hideAuthentication();
     setConnection("Connected", "online");
@@ -1131,7 +1145,7 @@ void (async () => {
   });
 
   elements.oauthLogin.addEventListener("click", () => void startOAuth());
-  elements.signOut.addEventListener("click", async () => {
+  async function signOut() {
     cancelPendingReads();
     clearAuthenticatedViews();
     try {
@@ -1158,7 +1172,7 @@ void (async () => {
     clearSessionBindingToken();
     elements.tokenInput.value = "";
     showAuthentication("Signed out", "The persistent browser session was cleared.");
-  });
+  }
 
   function navigateTo(target) {
     setNavigationOpen(false);
@@ -1211,7 +1225,6 @@ void (async () => {
     terminal.close();
   });
   elements.oauthLogin.hidden = !oauthAvailable();
-  elements.authMode.textContent = text(config.authMode);
   setActiveView(viewFromLocation(initialUiLocation), { replaceHash: true });
   void boot();
   window.setInterval(() => {
