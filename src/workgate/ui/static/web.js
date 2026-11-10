@@ -39,8 +39,9 @@ void (async () => {
   const reactNavigation = window.WorkgateReactNavigation;
   const mountDashboardResources = window.WorkgateReactDashboardResources?.mount;
   const mountDashboardSystem = window.WorkgateReactDashboardSystem?.mount;
+  const mountOverviewLists = window.WorkgateReactOverviewLists?.mount;
   if (typeof mountReactFiles !== "function" || typeof reactNavigation?.mount !== "function"
-      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function") {
+      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function" || typeof mountOverviewLists !== "function") {
     throw new Error("React UI failed to initialize");
   }
   const apiPrefix = String(config.apiPrefix || "/api/ui").replace(/\/$/, "");
@@ -114,7 +115,6 @@ void (async () => {
     appViews: Array.from(document.querySelectorAll("[data-app-view]")),
     appHeader: document.querySelector(".app-header"),
     pageTitle: document.getElementById("page-title"),
-    dashboardAlerts: document.getElementById("dashboard-alerts"),
     dashboardAuditDetail: document.getElementById("dashboard-audit-detail"),
     dashboardAuditTotal: document.getElementById("dashboard-audit-total"),
     dashboardHealth: document.getElementById("dashboard-health"),
@@ -509,7 +509,22 @@ void (async () => {
   resourceCards.render();
   const systemDetails = mountDashboardSystem(document.getElementById("dashboard-system-root"));
   systemDetails.render();
+  const overviewLists = mountOverviewLists(document.getElementById("dashboard-overview-lists"), {
+    navigate: (view) => navigateTo(view),
+    selectExecutor: (id) => {
+      elements.dashboardExecutor.value = id;
+      elements.dashboardExecutor.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+    openTask: (taskId) => {
+      navigateTo("tasks");
+      void tasks.select(taskId);
+    },
+  });
   const dashboard = createDashboardController({
+    renderOverviewExecutors: overviewLists.renderExecutors,
+    renderOverviewSelection: overviewLists.renderSelection,
+    renderOverviewAlerts: overviewLists.renderAlerts,
+    renderOverviewTasks: overviewLists.renderTasks,
     renderSystemDetails: systemDetails.render,
     renderResources: resourceCards.render,
     elements,
@@ -518,10 +533,6 @@ void (async () => {
     authMode: config.authMode,
     isAuthenticated: () => authenticated,
     onAuthenticationRequired: () => void load(),
-    onOpenTask: (taskId) => {
-      navigateTo("tasks");
-      void tasks.select(taskId);
-    },
     initialExecutorId: deepLink.executorId,
   });
   dashboard.bind();
@@ -1025,6 +1036,7 @@ void (async () => {
     files.invalidate();
     terminal.reset("");
     dashboard.reset("");
+    overviewLists.renderExecutors([], "", false);
     executors.reset("Authentication required");
     files.reset("");
     tasks.reset();
@@ -1146,6 +1158,7 @@ void (async () => {
     dashboard.stopPolling();
     executors.stopPolling();
     dashboard.reset("");
+    overviewLists.renderExecutors([], "", false);
     executors.reset("Authentication required");
     files.reset("");
     tasks.reset();

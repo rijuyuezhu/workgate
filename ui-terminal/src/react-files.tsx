@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { navigation } from "./react-navigation";
 import { dashboardResources } from "./react-dashboard-resources";
 import { dashboardSystem } from "./react-dashboard-system";
+import { overviewLists } from "./react-overview-lists";
 import { createRoot } from "react-dom/client";
 import { Filemanager, Willow, type IEntity } from "@svar-ui/react-filemanager";
 import "@svar-ui/react-filemanager/all.css";
@@ -145,6 +146,7 @@ declare global {
     WorkgateReactNavigation?: typeof navigation;
     WorkgateReactDashboardResources?: typeof dashboardResources;
     WorkgateReactDashboardSystem?: typeof dashboardSystem;
+    WorkgateReactOverviewLists?: typeof overviewLists;
   }
 }
 
@@ -154,3 +156,4 @@ window.WorkgateReactNavigation = navigation;
 
 window.WorkgateReactDashboardResources = dashboardResources;
 window.WorkgateReactDashboardSystem = dashboardSystem;
+window.WorkgateReactOverviewLists = overviewLists;
