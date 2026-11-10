@@ -42,8 +42,9 @@ void (async () => {
   const mountOverviewLists = window.WorkgateReactOverviewLists?.mount;
   const mountDashboardHealth = window.WorkgateReactDashboardHealth?.mount;
   const mountExecutorInventory = window.WorkgateReactExecutorInventory?.mount;
+  const mountExecutorDetail = window.WorkgateReactExecutorDetail?.mount;
   if (typeof mountReactFiles !== "function" || typeof reactNavigation?.mount !== "function"
-      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function" || typeof mountOverviewLists !== "function" || typeof mountDashboardHealth !== "function" || typeof mountExecutorInventory !== "function") {
+      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function" || typeof mountOverviewLists !== "function" || typeof mountDashboardHealth !== "function" || typeof mountExecutorInventory !== "function" || typeof mountExecutorDetail !== "function") {
     throw new Error("React UI failed to initialize");
   }
   const apiPrefix = String(config.apiPrefix || "/api/ui").replace(/\/$/, "");
@@ -174,19 +175,6 @@ void (async () => {
     fileState: document.getElementById("file-state"),
     fileUp: document.getElementById("file-up"),
     oauthLogin: document.getElementById("oauth-login"),
-    executorDetailAdmission: document.getElementById("executor-detail-admission"),
-    executorDetailCapabilities: document.getElementById("executor-detail-capabilities"),
-    executorDetailCommands: document.getElementById("executor-detail-commands"),
-    executorDetailCompatibility: document.getElementById("executor-detail-compatibility"),
-    executorDetailCreated: document.getElementById("executor-detail-created"),
-    executorDetailId: document.getElementById("executor-detail-id"),
-    executorDetailLastSeen: document.getElementById("executor-detail-last-seen"),
-    executorDetailName: document.getElementById("executor-detail-name"),
-    executorDetailPlatform: document.getElementById("executor-detail-platform"),
-    executorDetailRuntimeOwner: document.getElementById("executor-detail-runtime-owner"),
-    executorDetailSessions: document.getElementById("executor-detail-sessions"),
-    executorDetailStatus: document.getElementById("executor-detail-status"),
-    executorDetailVersion: document.getElementById("executor-detail-version"),
     executorSubtabs: Array.from(document.querySelectorAll("#executor-subtabs [data-executor-subtab]")),
     executorSubtabPanes: Array.from(document.querySelectorAll(".executor-subtab-pane[data-executor-pane]")),
     executorMcpAdd: document.getElementById("executor-mcp-add"),
@@ -257,16 +245,12 @@ void (async () => {
     executorPairReplaceWrap: document.getElementById("executor-pair-replace-wrap"),
     executorPairRequestedName: document.getElementById("executor-pair-requested-name"),
     executorPairReview: document.getElementById("executor-pair-review"),
-    executorDrain: document.getElementById("executor-drain"),
     executorRenameDialog: document.getElementById("executor-rename-dialog"),
     executorRenameForm: document.getElementById("executor-rename-form"),
     executorRenameName: document.getElementById("executor-rename-name"),
-    executorRenameOpen: document.getElementById("executor-rename-open"),
     executorRevokeDialog: document.getElementById("executor-revoke-dialog"),
     executorRevokeForm: document.getElementById("executor-revoke-form"),
     executorRevokeName: document.getElementById("executor-revoke-name"),
-    executorReset: document.getElementById("executor-reset"),
-    executorRevokeOpen: document.getElementById("executor-revoke-open"),
     executorActionStatus: document.getElementById("executor-action-status"),
     executorState: document.getElementById("executor-state"),
     terminalCopy: document.getElementById("terminal-copy"),
@@ -536,6 +520,7 @@ void (async () => {
 
   const executors = createExecutorsController({
     mountExecutorInventory,
+    mountExecutorDetail,
     elements,
     request,
     mountDashboardResources,

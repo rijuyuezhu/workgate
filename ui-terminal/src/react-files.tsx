@@ -5,6 +5,7 @@ import { dashboardSystem } from "./react-dashboard-system";
 import { overviewLists } from "./react-overview-lists";
 import { dashboardHealth } from "./react-dashboard-health";
 import { executorInventory } from "./react-executor-inventory";
+import { executorDetail } from "./react-executor-detail";
 import { createRoot } from "react-dom/client";
 import { Filemanager, Willow, type IEntity } from "@svar-ui/react-filemanager";
 import "@svar-ui/react-filemanager/all.css";
@@ -151,6 +152,7 @@ declare global {
     WorkgateReactOverviewLists?: typeof overviewLists;
     WorkgateReactDashboardHealth?: typeof dashboardHealth;
     WorkgateReactExecutorInventory?: typeof executorInventory;
+    WorkgateReactExecutorDetail?: typeof executorDetail;
   }
 }
 
@@ -163,3 +165,4 @@ window.WorkgateReactDashboardSystem = dashboardSystem;
 window.WorkgateReactOverviewLists = overviewLists;
 window.WorkgateReactDashboardHealth = dashboardHealth;
 window.WorkgateReactExecutorInventory = executorInventory;
+window.WorkgateReactExecutorDetail = executorDetail;

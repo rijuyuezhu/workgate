@@ -16,6 +16,7 @@ export function createExecutorsController({
   onInventory,
   mountDashboardResources,
   mountExecutorInventory,
+  mountExecutorDetail,
   onNavigate = () => {},
 }) {
   let diagnosticResources = null;
@@ -56,6 +57,12 @@ export function createExecutorsController({
     elements.executorList,
     document.getElementById("executor-inventory-summary"),
     (id) => { select(id); onNavigate("detail"); },
+  );
+
+  const detailView = mountExecutorDetail(
+    document.getElementById("executor-detail-header-root"),
+    document.getElementById("executor-detail-overview-root"),
+    handleDetailAction,
   );
 
   const topology = createExecutorTopology({
@@ -139,27 +146,14 @@ export function createExecutorsController({
     if (["mcp", "skills"].includes(activeSubtab())) void loadManagement();
   }
 
-  function timestamp(value, fallback = "Never") {
-    const seconds = Number(value);
-    if (!Number.isFinite(seconds) || seconds <= 0) return fallback;
-    const date = new Date(seconds * 1000);
-    return Number.isNaN(date.getTime()) ? fallback : date.toLocaleString();
-  }
-
   function closeDialog(dialog) {
     if (dialog?.open) dialog.close();
   }
 
   function setControls() {
     elements.executorPairOpen.disabled = state.loading;
-    const selected = selectedExecutor();
-    const mutable = selected && !selected.revoked_at && !state.inventoryStale;
-    elements.executorReset.disabled = state.loading || !mutable;
-    elements.executorDrain.disabled = state.loading || !mutable;
-    elements.executorRenameOpen.disabled = state.loading || !mutable;
-    elements.executorRevokeOpen.disabled = state.loading || !mutable;
-    elements.executorDrain.textContent = selected?.draining ? "Resume" : "Drain";
-    elements.executorReset.closest(".executor-detail-actions").hidden = isControlSelected();
+    const executor = selectedExecutor();
+    detailView.renderControls(Boolean(state.loading || !executor || executor.revoked_at || state.inventoryStale));
   }
 
   function fleetVisible() {
@@ -1089,66 +1083,14 @@ export function createExecutorsController({
     renderSubtabs();
     const executor = selectedExecutor();
     const control = isControlSelected();
-    document.getElementById("executor-detail-grid").hidden = control;
-    document.getElementById("executor-control-overview").hidden = !control;
     document.getElementById("executor-overview-metrics").hidden = control || !executor?.online;
-    if (control) {
-      elements.executorDetailName.textContent = "Control";
-      elements.executorDetailStatus.textContent = state.inventoryStale
-        ? "Stale" : state.controlAvailable ? "Available" : "Unavailable";
-      document.getElementById("executor-control-connection").textContent =
-        state.inventoryStale ? "Stale" : state.controlAvailable ? "Connected" : "Unavailable";
-      document.getElementById("executor-control-online").textContent =
-        String(state.executors.filter((item) => item.online && !item.revoked_at).length);
-      setControls();
-      return;
-    }
-    if (!executor) {
-      elements.executorDetailName.textContent = "No executor selected";
-      elements.executorDetailStatus.textContent = "Select an executor to inspect it";
-      elements.executorDetailId.textContent = "—";
-      elements.executorDetailVersion.textContent = "—";
-      elements.executorDetailRuntimeOwner.textContent = "—";
-      elements.executorDetailCompatibility.textContent = "—";
-      elements.executorDetailPlatform.textContent = "—";
-      elements.executorDetailAdmission.textContent = "—";
-      elements.executorDetailSessions.textContent = "—";
-      elements.executorDetailCommands.textContent = "—";
-      elements.executorDetailCapabilities.textContent = "—";
-      elements.executorDetailCreated.textContent = "—";
-      elements.executorDetailLastSeen.textContent = "—";
-      setControls();
-      return;
-    }
-    const status = executor.revoked_at
-      ? "revoked"
-      : executor.draining
-        ? "draining"
-        : executor.online
-          ? "online"
-          : "offline";
-    elements.executorDetailName.textContent = executor.name || executor.executor_id;
-    elements.executorDetailStatus.textContent = status;
-    elements.executorDetailId.textContent = executor.executor_id;
-    elements.executorDetailVersion.textContent = executor.runtime?.workgate_version || "Not reported";
-    elements.executorDetailRuntimeOwner.textContent = executor.runtime?.ownership || "Not reported";
-    elements.executorDetailCompatibility.textContent = !executor.runtime
-      ? "Not reported"
-      : executor.runtime_update_required
-        ? "Update required: " + executor.required_workgate_version
-        : "Compatible";
-    elements.executorDetailPlatform.textContent = executor.runtime?.platform || "Not reported";
-    elements.executorDetailAdmission.textContent = executor.session_admission
-      ? "Eligible"
-      : (executor.session_admission_reasons || []).join(", ") || "Not eligible";
-    elements.executorDetailSessions.textContent = String(executor.active_sessions || 0);
-    elements.executorDetailCommands.textContent =
-      String(executor.queued_commands || 0) + " queued, " + String(executor.offered_commands || 0) + " offered (limit " + String(executor.command_limit || 0) + ")";
-    elements.executorDetailCapabilities.textContent =
-      (executor.capabilities || []).join(", ") || "None reported";
-    elements.executorDetailCreated.textContent = timestamp(executor.created_at, "Unknown");
-    elements.executorDetailLastSeen.textContent = executor.online
-      ? "Now" : timestamp(executor.last_seen_at);
+    detailView.renderDetails({
+      control,
+      executor,
+      available: state.controlAvailable,
+      stale: state.inventoryStale,
+      onlineCount: state.executors.filter((item) => item.online && !item.revoked_at).length,
+    });
     setControls();
   }
 
@@ -1407,6 +1349,40 @@ export function createExecutorsController({
     renderManagement();
   }
 
+  async function executorAction(action) {
+    const executor = selectedExecutor();
+    if (!executor || executor.revoked_at) return;
+    const executorId = executor.executor_id;
+    notice(elements.executorActionStatus, "");
+    try {
+      await request("/executors/" + action, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ executor_id: executorId }),
+      });
+      await refresh({ force: true });
+      if (state.selectedId === executorId) notice(elements.executorActionStatus, "");
+    } catch (error) {
+      if (error.authenticationRequired) void reloadApp();
+      else if (state.selectedId === executorId)
+        notice(elements.executorActionStatus, error instanceof Error ? error.message : String(error), "error");
+    }
+  }
+  function handleDetailAction(action) {
+    const executor = selectedExecutor();
+    if (state.loading || state.inventoryStale || !executor || executor.revoked_at) return;
+    if (action === "reset") void executorAction("reset");
+    else if (action === "drain") void executorAction(executor.draining ? "resume" : "drain");
+    else if (action === "rename") {
+      elements.executorRenameName.value = executor.name || "";
+      elements.executorRenameDialog.showModal();
+      elements.executorRenameName.select();
+    } else if (action === "revoke") {
+      elements.executorRevokeName.textContent = executor.name || executor.executor_id;
+      elements.executorRevokeDialog.showModal();
+    }
+  }
+
   function bind() {
     topology.bind();
     document.getElementById("executor-topology-open").addEventListener("click", () => topology.open());
@@ -1547,38 +1523,6 @@ export function createExecutorsController({
         else notice(elements.executorPairStatus, error instanceof Error ? error.message : String(error), "error");
       });
     });
-    async function executorAction(action) {
-      const executor = selectedExecutor();
-      if (!executor || executor.revoked_at) return;
-      const executorId = executor.executor_id;
-      notice(elements.executorActionStatus, "");
-      try {
-        await request("/executors/" + action, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ executor_id: executorId }),
-        });
-        await refresh({ force: true });
-        if (state.selectedId === executorId) notice(elements.executorActionStatus, "");
-      } catch (error) {
-        if (error.authenticationRequired) void reloadApp();
-        else if (state.selectedId === executorId)
-          notice(elements.executorActionStatus, error instanceof Error ? error.message : String(error), "error");
-      }
-    }
-    elements.executorReset.addEventListener("click", () => void executorAction("reset"));
-    elements.executorDrain.addEventListener("click", () => {
-      const executor = selectedExecutor();
-      if (!executor || executor.revoked_at) return;
-      void executorAction(executor.draining ? "resume" : "drain");
-    });
-    elements.executorRenameOpen.addEventListener("click", () => {
-      const executor = selectedExecutor();
-      if (!executor || executor.revoked_at) return;
-      elements.executorRenameName.value = executor.name || "";
-      elements.executorRenameDialog.showModal();
-      elements.executorRenameName.select();
-    });
     elements.executorRenameForm.addEventListener("submit", async (event) => {
       event.preventDefault();
       const executor = selectedExecutor();
@@ -1599,12 +1543,6 @@ export function createExecutorsController({
         else if (state.selectedId === executor.executor_id)
           notice(elements.executorActionStatus, error instanceof Error ? error.message : String(error), "error");
       }
-    });
-    elements.executorRevokeOpen.addEventListener("click", () => {
-      const executor = selectedExecutor();
-      if (!executor || executor.revoked_at) return;
-      elements.executorRevokeName.textContent = executor.name || executor.executor_id;
-      elements.executorRevokeDialog.showModal();
     });
     elements.executorRevokeForm.addEventListener("submit", async (event) => {
       event.preventDefault();
