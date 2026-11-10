@@ -6,7 +6,7 @@ export function createFilesController({
   initialExecutorId = "",
   initialPath = "",
   onNavigate = () => {},
-  mountReactFiles = null,
+  mountReactFiles,
 }) {
   let reactFilesView = null;
   const controllerState = {

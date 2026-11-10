@@ -56,10 +56,17 @@ def test_react_files_default_reuses_authenticated_files_api(
     )
     page.wait_for_timeout(100)
     assert len(preview_urls) == 1
+    # Keyboard navigation remains usable after a desktop mouse selection.
+    page.keyboard.press("ArrowDown")
+    expect(page.locator("#file-preview-title")).to_have_text(
+        "stale-executor.txt"
+    )
+    page.keyboard.press("ArrowUp")
+    expect(page.locator("#file-preview-title")).to_have_text("notes.txt")
     # A separate deliberate re-selection still refreshes its preview once.
     prototype.get_by_text("notes.txt", exact=True).click()
     page.wait_for_timeout(100)
-    assert len(preview_urls) == 2
+    assert len(preview_urls) == 3
 
     # SVAR folder navigation drives the same WorkGate file path/controller.
     prototype.get_by_role("grid").get_by_text(
