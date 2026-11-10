@@ -131,7 +131,8 @@ def remove_attempt_paths(paths: JobAttemptPaths | None) -> None:
         paths["command"],
         paths["log"],
         paths["status"],
-        paths["status"].with_suffix(".runner-stderr.log"),
+        paths["status"].with_suffix(".runner-stderr.log"),  # old diagnostic
+        paths["status"].with_suffix(".runner-error.json"),
     ):
         with contextlib.suppress(OSError):
             path.unlink(missing_ok=True)
