@@ -149,7 +149,12 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert 'data-app-view="overview"' in index.text
     assert 'id="dashboard-panel"' in index.text
     assert 'id="dashboard-executor"' in index.text
-    assert 'id="dashboard-cpu-trend"' in index.text
+    # The four resource cards and sparklines are React-owned.
+    assert (
+        '<div class="dashboard-summary" aria-label="Resource usage"></div>'
+        in index.text
+    )
+    assert 'id="dashboard-cpu-trend"' not in index.text
     assert 'id="dashboard-alerts"' in index.text
     assert 'id="dashboard-activity"' not in index.text
     assert 'class="dashboard-audit-shortcut"' in index.text
@@ -219,6 +224,7 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert "@svar-ui/react-filemanager 2.6.0" in react_licenses.text
     assert "React 19.2.0" in react_licenses.text
     assert "WorkgateReactNavigation" in react_bundle.text
+    assert "WorkgateReactDashboardResources" in react_bundle.text
     script = client.get("/ui/assets/web.js")
     assert script.status_code == 200
     assert script.headers["x-content-type-options"] == "nosniff"
@@ -294,7 +300,13 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     )
     assert "refreshDashboardInBackground" in dashboard_script.text
     assert "request(dashboardQueryPath())" in dashboard_script.text
-    assert "createElementNS" in dashboard_script.text
+    assert (
+        "renderResources(system, controllerState.history"
+        in dashboard_script.text
+    )
+    # Dashboard and Executor details share the React resource renderer.
+    assert "export function renderResourceCards" not in dashboard_script.text
+    assert "mountDashboardResources" in executors_script.text
     assert "dashboardNumber" in dashboard_script.text
     assert 'request("/executors")' in executors_script.text
     assert (

@@ -29,73 +29,6 @@ function dashboardRate(value) {
   }
 
 
-function finiteNumber(value) {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function renderDashboardSparkline(element, rawValues, fixedMaximum = null) {
-  const values = Array.isArray(rawValues) ? rawValues : [];
-  if (!element) return;
-  element.replaceChildren();
-  const finite = values
-    .map((value, index) => ({ index, value: finiteNumber(value) }))
-    .filter((item) => item.value !== null);
-  if (finite.length < 2) return;
-  const normalizedMaximum = finiteNumber(fixedMaximum);
-  const maximum = normalizedMaximum !== null
-    ? Math.max(1, normalizedMaximum)
-    : Math.max(1, ...finite.map((item) => item.value));
-  const lastIndex = Math.max(1, values.length - 1);
-  const points = finite
-    .map((item) => {
-      const x = (item.index / lastIndex) * 100;
-      const y = 30 - Math.max(0, Math.min(1, item.value / maximum)) * 26;
-      return `${x.toFixed(2)},${y.toFixed(2)}`;
-    })
-    .join(" ");
-  const line = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-  line.setAttribute("points", points);
-  line.setAttribute("fill", "none");
-  line.setAttribute("vector-effect", "non-scaling-stroke");
-  element.append(line);
-}
-
-
-export function renderResourceCards(root, system = {}, history = []) {
-  if (!root) return;
-  const cards = ["cpu", "memory", "disk"].map((key) => root.querySelector(`[data-resource="${key}"]`));
-  for (const [i, key] of ["cpu_percent", "memory_percent", "disk_percent"].entries()) {
-    const card = cards[i];
-    if (!card) continue;
-    const value = card.querySelector(":scope > strong");
-    if (value) value.textContent = dashboardPercent(system[key]);
-    renderDashboardSparkline(card.querySelector(".dashboard-sparkline"), history.map((v) => v[["cpu", "memory", "disk"][i]]), 100);
-  }
-  const foot = (card, values) => {
-    const spans = card?.querySelectorAll(".dashboard-metric-foot span") || [];
-    for (let i = 0; i < Math.min(spans.length, values.length); i++) spans[i].textContent = values[i];
-  };
-  const load = dashboardNumber(system.load_1m);
-  foot(cards[0], [load === null ? "Load —" : `Load ${load.toFixed(2)}`, `${system.cpu_count ?? "—"} cores`]);
-  foot(cards[1], [`${dashboardBytes(system.memory_used_bytes)} used`, `${dashboardBytes(system.memory_total_bytes)} total`]);
-  foot(cards[2], [`${dashboardBytes(system.disk_used_bytes)} used`, `${dashboardBytes(system.disk_total_bytes)} total`]);
-  const network = root.querySelector('[data-resource="network"]');
-  if (!network) return;
-  const rx = dashboardNumber(system.network_rx_bps);
-  const tx = dashboardNumber(system.network_tx_bps);
-  const total = rx === null || tx === null ? null : rx + tx;
-  const totalNode = network.querySelector(":scope > strong");
-  if (totalNode) totalNode.textContent = dashboardRate(total);
-  const rates = network.querySelectorAll(".dashboard-network-values strong");
-  if (rates[0]) rates[0].textContent = dashboardBytes(rx);
-  if (rates[1]) rates[1].textContent = dashboardBytes(tx);
-  const bars = network.querySelector(".dashboard-network-bar");
-  if (bars?.children.length === 2) {
-    bars.children[0].style.width = total > 0 ? `${100 * rx / total}%` : "0%";
-    bars.children[1].style.width = total > 0 ? `${100 * tx / total}%` : "0%";
-  }
-}
-
 export function createDashboardController({
   elements,
   request,
@@ -104,6 +37,7 @@ export function createDashboardController({
   isAuthenticated,
   onAuthenticationRequired,
   onOpenTask,
+  renderResources,
   initialExecutorId = "",
 }) {
   const controllerState = {
@@ -113,6 +47,7 @@ export function createDashboardController({
     loading: false,
     executorStates: new Map(),
     history: [],
+    lastSystem: {},
     timer: null,
   };
 
@@ -142,10 +77,6 @@ export function createDashboardController({
   function setDashboardControls() {
     const online = dashboardExecutorOnline();
     elements.dashboardExecutor.disabled = controllerState.loading;
-  }
-
-  function setMetricLive(label) {
-    for (const badge of document.querySelectorAll(".dashboard-live")) badge.textContent = label;
   }
 
   function stopDashboardPolling() {
@@ -186,18 +117,15 @@ export function createDashboardController({
     controllerState.loading = false;
     controllerState.generation += 1;
     controllerState.history = [];
+    controllerState.lastSystem = {};
+    renderResources({}, [], "—");
     elements.dashboardExecutor.value = controllerState.executorId;
     elements.dashboardState.textContent = "Not loaded";
     elements.dashboardHealth.textContent = "—";
     elements.dashboardHealthDetail.textContent = "Waiting for telemetry";
     elements.dashboardHealthCard.className = "dashboard-card dashboard-health-card";
     document.querySelector(".dashboard-health-banner").dataset.health = "unknown";
-    setMetricLive("—");
     for (const element of [
-      elements.dashboardCpu,
-      elements.dashboardMemory,
-      elements.dashboardDisk,
-      elements.dashboardNetwork,
       elements.dashboardAuditTotal,
       elements.dashboardCpuValue,
       elements.dashboardMemoryValue,
@@ -214,22 +142,9 @@ export function createDashboardController({
       elements.dashboardGenerated,
     ]) element.textContent = "—";
     elements.dashboardAuditDetail.textContent = "No activity loaded";
-    for (const id of [
-      "dashboard-cpu-foot-load", "dashboard-cpu-foot-cores",
-      "dashboard-memory-foot-used", "dashboard-memory-foot-total",
-      "dashboard-disk-foot-used", "dashboard-disk-foot-total",
-      "dashboard-network-down", "dashboard-network-up",
-    ]) document.getElementById(id).textContent = "—";
-    document.getElementById("dashboard-network-rx-bar").style.width = "0%";
-    document.getElementById("dashboard-network-tx-bar").style.width = "0%";
     setDashboardBar(elements.dashboardCpuBar, null);
     setDashboardBar(elements.dashboardMemoryBar, null);
     setDashboardBar(elements.dashboardDiskBar, null);
-    for (const trend of [
-      elements.dashboardCpuTrend,
-      elements.dashboardMemoryTrend,
-      elements.dashboardDiskTrend,
-    ]) trend.replaceChildren();
     dashboardEmpty(elements.dashboardAlerts, `Alerts for ${controllerState.executorId} are not loaded.`);
     setDashboardControls();
   }
@@ -380,12 +295,12 @@ export function createDashboardController({
     }[health];
     elements.dashboardHealthCard.className = `dashboard-card dashboard-health-card dashboard-health-${health}`;
     document.querySelector(".dashboard-health-banner").dataset.health = health;
-    setMetricLive("Live");
     elements.dashboardHealthDetail.textContent = alerts.length
       ? `${alerts.length} active alert${alerts.length === 1 ? "" : "s"}.`
       : "No active alerts.";
     const load = dashboardNumber(system.load_1m);
-    renderResourceCards(document.querySelector("#dashboard-panel .dashboard-summary"), system, controllerState.history);
+    controllerState.lastSystem = system;
+    renderResources(system, controllerState.history, "Live");
     elements.dashboardAuditTotal.textContent = text(payload.audit_total_24h, "0");
     elements.dashboardAuditDetail.textContent = `${text(payload.audit_failed_24h, "0")} failed in 24h`;
     elements.dashboardGenerated.textContent = dashboardTimestamp(payload.generated_at, "Unknown sample time");
@@ -451,7 +366,7 @@ export function createDashboardController({
       if (generation !== controllerState.generation || requestedExecutor !== controllerState.executorId) return null;
       elements.dashboardState.textContent = error instanceof Error ? error.message : String(error);
       elements.dashboardHealth.textContent = "unavailable";
-      setMetricLive("Unavailable");
+      renderResources(controllerState.lastSystem, controllerState.history, "Unavailable");
       elements.dashboardHealthCard.className = "dashboard-card dashboard-health-card dashboard-health-attention";
       elements.dashboardHealthDetail.textContent = `Telemetry for ${requestedExecutor} could not be loaded`;
       return null;
