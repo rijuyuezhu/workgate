@@ -165,6 +165,9 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert 'id="executor-list"' in index.text
     assert 'id="executor-inventory-summary"' in index.text
     assert 'class="executor-control-group"' not in index.text
+    assert 'id="executor-detail-header-root"' in index.text
+    assert 'id="executor-detail-overview-root"' in index.text
+    assert 'id="executor-detail-name"' not in index.text
     assert 'id="executor-pair-dialog"' in index.text
     assert 'id="executor-rename-dialog"' in index.text
     assert 'id="executor-revoke-dialog"' in index.text
@@ -257,9 +260,10 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert executors_script.status_code == 200
     assert executors_script.headers["x-content-type-options"] == "nosniff"
     assert "export function createExecutorsController" in executors_script.text
-    assert "executorDetailRuntimeOwner" in executors_script.text
-    assert "executorDetailCompatibility" in executors_script.text
-    assert "executorDetailAdmission" in executors_script.text
+    assert "mountExecutorDetail" in script.text
+    assert "detailView.renderDetails" in executors_script.text
+    assert "detailView.renderControls" in executors_script.text
+    assert "executorDetailRuntimeOwner" not in executors_script.text
     assert 'executorAction("reset")' in executors_script.text
     assert '"resume" : "drain"' in executors_script.text
     audit_view_script = client.get("/ui/assets/audit_view.js")
