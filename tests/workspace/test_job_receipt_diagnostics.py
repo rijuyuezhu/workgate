@@ -1,5 +1,6 @@
 """Fault-injected durable Job receipt diagnostics."""
 
+import json
 import sys
 from pathlib import Path
 
@@ -113,14 +114,28 @@ def test_bootstrap_keeps_unhandled_runner_failure_and_prunes_it(
     )
     monkeypatch.setattr(sys, "path", sys.path.copy())
 
+    secret = "sensitive-exception-text"
+
     def fail() -> None:
-        raise RuntimeError("injected status write failure")
+        raise RuntimeError(secret)
 
     monkeypatch.setattr(job_runner, "main", fail)
-    with pytest.raises(RuntimeError, match="injected status write failure"):
+    with pytest.raises(RuntimeError, match=secret):
         runner_bootstrap.main()
-    trace = receipt.with_suffix(".runner-stderr.log")
-    assert "injected status write failure" in trace.read_text()
+    trace = receipt.with_suffix(".runner-error.json")
+    raw = trace.read_text()
+    assert secret not in raw
+    evidence = json.loads(raw)
+    assert evidence["exception_type"] == "RuntimeError"
+    assert evidence["frames"]
+    assert all(
+        set(frame) == {"module", "function", "line"}
+        for frame in evidence["frames"]
+    )
+    assert all(
+        "/" not in frame["module"] and "\\" not in frame["module"]
+        for frame in evidence["frames"]
+    )
     assert trace.stat().st_mode & 0o777 == 0o600
     persistence.remove_attempt_paths(
         {
@@ -153,4 +168,95 @@ def test_runner_bootstrap_without_receipt_argument_still_raises_original_error(
     monkeypatch.setattr(job_runner, "main", fail)
     with pytest.raises(RuntimeError, match="original import or runner error"):
         runner_bootstrap.main()
-    assert not list(tmp_path.glob("*.runner-stderr.log"))
+    assert not list(tmp_path.glob("*.runner-error.json"))
+
+
+def test_runner_bootstrap_keeps_existing_receipt_and_error_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    receipt = tmp_path / "job.status.json"
+    receipt.write_text('{"exit_code": 0}')
+    previous = receipt.with_suffix(".runner-error.json")
+    previous.write_text("retained")
+    monkeypatch.setattr(
+        sys, "argv", ["runner_bootstrap.py", "--status-file", str(receipt)]
+    )
+    monkeypatch.setattr(sys, "path", sys.path.copy())
+
+    def fail() -> None:
+        raise RuntimeError("should not overwrite existing records")
+
+    monkeypatch.setattr(job_runner, "main", fail)
+    with pytest.raises(RuntimeError, match="should not overwrite"):
+        runner_bootstrap.main()
+    assert previous.read_text() == "retained"
+    assert receipt.read_text() == '{"exit_code": 0}'
+
+
+def test_runner_bootstrap_keeps_innermost_frames_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    receipt = tmp_path / "deep.status.json"
+    monkeypatch.setattr(
+        sys, "argv", ["runner_bootstrap.py", "--status-file", str(receipt)]
+    )
+    monkeypatch.setattr(sys, "path", sys.path.copy())
+
+    def leaf() -> None:
+        raise RuntimeError("private-leaf-detail")
+
+    def deep(depth: int) -> None:
+        if depth == 0:
+            leaf()
+        else:
+            deep(depth - 1)
+
+    monkeypatch.setattr(job_runner, "main", lambda: deep(35))
+    with pytest.raises(RuntimeError, match="private-leaf-detail"):
+        runner_bootstrap.main()
+    text = receipt.with_suffix(".runner-error.json").read_text()
+    evidence = json.loads(text)
+    assert "private-leaf-detail" not in text
+    assert len(evidence["frames"]) == 20
+    assert evidence["frames"][-1]["function"] == "leaf"
+
+
+def test_runner_bootstrap_caps_unusual_exception_class_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    receipt = tmp_path / "large-type.status.json"
+    monkeypatch.setattr(
+        sys, "argv", ["runner_bootstrap.py", "--status-file", str(receipt)]
+    )
+    monkeypatch.setattr(sys, "path", sys.path.copy())
+    LargeError = type("E" * 1000, (RuntimeError,), {})
+
+    def fail() -> None:
+        raise LargeError("private text")
+
+    monkeypatch.setattr(job_runner, "main", fail)
+    with pytest.raises(LargeError):
+        runner_bootstrap.main()
+    evidence = json.loads(receipt.with_suffix(".runner-error.json").read_text())
+    assert len(evidence["exception_type"]) == 128
+    assert len(json.dumps(evidence)) < 10_000
+
+
+def test_runner_bootstrap_does_not_replace_existing_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    receipt = tmp_path / "previous.status.json"
+    diagnostic = receipt.with_suffix(".runner-error.json")
+    diagnostic.write_text("original")
+    monkeypatch.setattr(
+        sys, "argv", ["runner_bootstrap.py", "--status-file", str(receipt)]
+    )
+    monkeypatch.setattr(sys, "path", sys.path.copy())
+
+    def fail() -> None:
+        raise RuntimeError("new private detail")
+
+    monkeypatch.setattr(job_runner, "main", fail)
+    with pytest.raises(RuntimeError, match="new private detail"):
+        runner_bootstrap.main()
+    assert diagnostic.read_text() == "original"

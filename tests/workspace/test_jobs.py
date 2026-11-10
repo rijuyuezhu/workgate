@@ -288,6 +288,23 @@ def test_windows_job_runner_rejected_shell_leaves_no_attempt_files(
     assert all(not paths[key].exists() for key in ("command", "log", "status"))
 
 
+def test_runner_prepare_attempt_removes_previous_structured_diagnostic(
+    tmp_path, monkeypatch
+):
+    config = resolve_executor_config(get_settings())
+    paths: job_state.JobAttemptPaths = {
+        "command": tmp_path / "job.command",
+        "log": tmp_path / "job.log",
+        "status": tmp_path / "job.status.json",
+    }
+    diagnostic = paths["status"].with_suffix(".runner-error.json")
+    diagnostic.write_text("previous evidence")
+    monkeypatch.setattr(job_lifecycle, "_attempt_paths", lambda *_: paths)
+    job_lifecycle._prepare_attempt(config, "job_test", 1, "echo hi", tmp_path)
+    assert not diagnostic.exists()
+    assert paths["command"].read_text() == "echo hi"
+
+
 def test_job_attempt_failed_status_cleanup_does_not_write_command(
     tmp_path, monkeypatch
 ):

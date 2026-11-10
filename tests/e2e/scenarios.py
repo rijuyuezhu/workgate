@@ -500,10 +500,7 @@ def _e2e_log_excerpt(path: Path, limit: int = 2048) -> str:
 
 
 def _failed_job_evidence(workspace: Path, job_id: str) -> str:
-    """Temporary #397 evidence for the missing-receipt E2E failure.
-
-    Reassess this extra collection once the original failure is explained.
-    """
+    """Include bounded Job receipt and startup evidence in failed assertions."""
     for state_dir in workspace.parent.glob("executor-state-*"):
         store = state_dir / "jobs.json"
         try:
@@ -521,10 +518,9 @@ def _failed_job_evidence(workspace: Path, job_id: str) -> str:
                     continue
                 evidence.append(f"{field} ({path}): {_e2e_log_excerpt(path)}")
                 if field == "status_path":
-                    stderr_path = path.with_suffix(".runner-stderr.log")
+                    error_path = path.with_suffix(".runner-error.json")
                     evidence.append(
-                        f"runner_stderr ({stderr_path}): "
-                        f"{_e2e_log_excerpt(stderr_path, 4096)}"
+                        f"runner_error: {_e2e_log_excerpt(error_path, 4096)}"
                     )
             for process_log in workspace.parent.glob(
                 "process-logs-*/executor-*.stderr.log"
