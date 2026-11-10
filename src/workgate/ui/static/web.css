@@ -30,6 +30,7 @@ body { margin: 0; background: light-dark(#f5f6fa, #151f2c); }
 button, a { font: inherit; }
 a { color: inherit; text-decoration: none; }
 .app-shell { min-height: 100vh; }
+.header-react { display: contents; }
 .app-header {
   position: sticky; top: 0; z-index: 30;
   display: flex; align-items: center; gap: 24px;
@@ -56,11 +57,11 @@ a { color: inherit; text-decoration: none; }
 .nav-item:hover { color: #fff; background: #29364e; border-color: #596681; }
 .nav-item.active { color: #fff; background: #3c356f; border-color: light-dark(#8578e2, #604fd9); }
 .nav-item:focus-visible, .nav-toggle:focus-visible { outline: 2px solid #b9b0ff; outline-offset: 2px; }
-.app-global-status { display: flex; flex: none; align-items: center; gap: 10px; margin-left: auto; }
+.app-global-status { order: 1; display: flex; flex: none; align-items: center; gap: 10px; margin-left: auto; }
 .app-global-status .status { min-height: 30px; padding: 5px 10px; white-space: nowrap; }
 .app-version { color: light-dark(#9aa6ba, #bdc9dc); font-size: 10px; white-space: nowrap; }
 .app-global-status #sign-out { padding: 7px 9px; color: #c6d0e0; background: #25324a; border-color: #46516a; }
-.nav-toggle { display: none; }
+.nav-toggle { order: 2; display: none; }
 .main-content { padding: 20px 28px 26px; min-width: 0; max-width: none; overflow-x: hidden; }
 h1 { margin: 0; color: light-dark(#182033, #dce4f1); font-size: 24px; line-height: 1.2; letter-spacing: -.035em; }
 /* Workgate functional views mapped onto the upstream Web-native palette. */

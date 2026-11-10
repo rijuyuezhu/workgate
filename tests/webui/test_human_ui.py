@@ -135,14 +135,13 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert 'class="app-shell"' in index.text
     assert "<title>Workgate WebUI</title>" in index.text
     assert 'class="app-header"' in index.text
-    assert 'class="brand-block"' in index.text
-    assert 'data-go-view="overview"' in index.text
-    assert 'id="nav-toggle"' in index.text
+    assert 'id="app-header-navigation"' in index.text
+    assert 'id="nav-toggle"' not in index.text
     assert 'id="page-title"' in index.text
     assert 'id="page-location"' not in index.text
     assert 'data-view="console"' not in index.text
     assert (
-        '<nav id="app-navigation" class="primary-nav" aria-label="Primary navigation"></nav>'
+        '<div id="app-header-navigation" class="header-react"></div>'
         in index.text
     )
     # The navigation is a React-owned component within the existing bundle.
@@ -227,7 +226,8 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
         re.findall(r'document\.getElementById\("([^"]+)"\)', script.text)
     )
     html_ids = set(re.findall(r'\bid="([^"]+)"', index.text))
-    assert bound_ids <= html_ids, sorted(bound_ids - html_ids)
+    # The mobile toggle now mounts inside the React header rather than static HTML.
+    assert bound_ids <= html_ids | {"nav-toggle"}, sorted(bound_ids - html_ids)
     assert "await Promise.all([" in script.text
     assert 'import(assetUrl("dashboard.js"))' in script.text
     assert 'import(assetUrl("executors.js"))' in script.text

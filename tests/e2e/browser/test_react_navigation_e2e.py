@@ -24,7 +24,11 @@ def test_react_primary_navigation_preserves_routing_and_mobile_menu(
     harness.wait_executor_online()
     page = harness.page
 
-    nav = page.locator("#app-navigation")
+    header = page.locator("#app-header-navigation")
+    expect(header.locator(".brand-block")).to_have_count(1)
+    expect(header.locator("#nav-toggle")).to_have_count(1)
+    expect(page.locator(".app-global-status #appearance-mode")).to_be_visible()
+    nav = header.locator("#app-navigation")
     expect(nav).to_have_attribute("aria-label", "Primary navigation")
     items = nav.locator(".nav-item[data-view]")
     expect(items).to_have_count(6)
@@ -57,6 +61,9 @@ def test_react_primary_navigation_preserves_routing_and_mobile_menu(
     expect(page.locator("#page-title")).to_have_text("Executors")
 
     page.set_viewport_size({"width": 390, "height": 844})
+    assert page.evaluate(
+        "document.documentElement.scrollWidth <= window.innerWidth + 2"
+    )
     menu = page.locator("#nav-toggle")
     expect(menu).to_be_visible()
     expect(nav).to_be_hidden()
