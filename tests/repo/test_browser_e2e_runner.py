@@ -57,6 +57,7 @@ def test_browser_e2e_runner_forwards_contract_and_exit_status(
         "tests/e2e/browser/test_react_dashboard_health_e2e.py",
         "tests/e2e/browser/test_react_executor_inventory_e2e.py",
         "tests/e2e/browser/test_react_executor_detail_e2e.py",
+        "tests/e2e/browser/test_react_audit_lists_e2e.py",
     ]
     assert observed["check"] is False
     artifacts = tmp_path / "relative-artifacts"

@@ -9,45 +9,6 @@ export function createAuditView({ text, formatFileBytes }) {
     return text(entry.tool, text(entry.event, "unknown"));
   }
 
-  function auditEntryStatus(entry) {
-    const raw = entry.status
-      ? text(entry.status, "recorded").toLowerCase()
-      : entry.ok === true
-        ? "success"
-        : entry.ok === false
-          ? "failed"
-          : "recorded";
-    return ["success", "failed", "running", "unpaired", "completed", "recorded"].includes(raw)
-      ? raw
-      : "recorded";
-  }
-
-  function auditEntryButton(entry, selectedId, onSelect) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "audit-entry";
-    button.dataset.auditId = text(entry.id, "");
-    button.setAttribute("aria-current", entry.id === selectedId ? "true" : "false");
-
-    const title = document.createElement("span");
-    title.className = "audit-entry-title";
-    title.textContent = auditEntryTitle(entry);
-
-    const status = auditEntryStatus(entry);
-    const meta = document.createElement("span");
-    meta.className = `audit-entry-meta audit-entry-status-${status}`;
-    const duration = Number.isFinite(Number(entry.duration_ms)) ? `, ${Number(entry.duration_ms)} ms` : "";
-    meta.textContent = `${text(entry.operation, "other")}: ${status} (${auditTimestamp(entry.ts)}${duration})`;
-
-    const session = document.createElement("span");
-    session.className = "audit-entry-session";
-    session.textContent = text(entry.session, text(entry.event, "record"));
-
-    button.append(title, meta, session);
-    button.addEventListener("click", onSelect);
-    return button;
-  }
-
   function isAuditRecord(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value);
   }
@@ -387,7 +348,6 @@ export function createAuditView({ text, formatFileBytes }) {
 
 
   return {
-    auditEntryButton,
     auditEntryTitle,
     auditTimestamp,
     renderAuditDetailInto,

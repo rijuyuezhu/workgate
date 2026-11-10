@@ -168,6 +168,9 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert 'id="executor-detail-header-root"' in index.text
     assert 'id="executor-detail-overview-root"' in index.text
     assert 'id="executor-detail-name"' not in index.text
+    assert 'id="audit-list"' in index.text
+    assert 'id="session-audit-list"' in index.text
+    assert "Loading Audit records…" not in index.text
     assert 'id="executor-pair-dialog"' in index.text
     assert 'id="executor-rename-dialog"' in index.text
     assert 'id="executor-revoke-dialog"' in index.text
@@ -270,6 +273,10 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert audit_view_script.status_code == 200
     assert audit_view_script.headers["x-content-type-options"] == "nosniff"
     assert "export function createAuditView" in audit_view_script.text
+    assert "auditEntryButton" not in audit_view_script.text
+    assert "mountAuditLists" in script.text
+    assert "mountAuditLists" in client.get("/ui/assets/audit.js").text
+    assert "mountAuditLists" in client.get("/ui/assets/tasks.js").text
     audit_script = client.get("/ui/assets/audit.js")
     assert audit_script.status_code == 200
     assert audit_script.headers["x-content-type-options"] == "nosniff"

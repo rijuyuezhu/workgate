@@ -44,6 +44,7 @@ def main() -> int:
         "tests/e2e/browser/test_react_dashboard_health_e2e.py",
         "tests/e2e/browser/test_react_executor_inventory_e2e.py",
         "tests/e2e/browser/test_react_executor_detail_e2e.py",
+        "tests/e2e/browser/test_react_audit_lists_e2e.py",
     ]
     return subprocess.run(command, env=env, check=False).returncode
 
