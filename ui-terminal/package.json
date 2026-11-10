@@ -6,14 +6,21 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node --test src/*.test.js",
-    "check": "npm test && node scripts/build.mjs --check"
+    "check": "npm test && npm run typecheck && node scripts/build.mjs --check",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@svar-ui/react-filemanager": "2.6.0",
     "@xterm/addon-fit": "0.10.0",
     "@xterm/addon-image": "0.8.0",
-    "@xterm/xterm": "5.5.0"
+    "@xterm/xterm": "5.5.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
   },
   "devDependencies": {
-    "esbuild": "0.25.8"
+    "@types/react": "19.2.0",
+    "@types/react-dom": "19.2.0",
+    "esbuild": "0.25.8",
+    "typescript": "5.9.3"
   }
 }

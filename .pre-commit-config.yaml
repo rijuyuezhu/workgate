@@ -27,8 +27,8 @@ repos:
         pass_filenames: false
         files: ^(src/workgate/.*\.py|scripts/generation/export-tools-json\.py|docs/reference/generated/(tools|server-instructions)\.json)$
       - id: terminal-ui-build
-        name: terminal UI generated assets
+        name: WebUI generated assets
         entry: bash -c 'cd ui-terminal && npm ci && npm run check'
         language: system
         pass_filenames: false
-        files: ^(ui-terminal/(src/.*\.js|scripts/.*\.mjs|package(-lock)?\.json)|src/workgate/ui/static/xterm(_bundle\.js|\.css|\.LICENSE\.txt))$
+        files: ^(ui-terminal/(src/.*\.(js|tsx|css)|scripts/.*\.mjs|package(-lock)?\.json|tsconfig\.json)|src/workgate/ui/static/(xterm(_bundle\.js|\.css|\.LICENSE\.txt)|react_files(_bundle\.(js|css)|\.LICENSE\.txt)))$
