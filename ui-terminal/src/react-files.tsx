@@ -3,6 +3,7 @@ import { navigation } from "./react-navigation";
 import { dashboardResources } from "./react-dashboard-resources";
 import { dashboardSystem } from "./react-dashboard-system";
 import { overviewLists } from "./react-overview-lists";
+import { dashboardHealth } from "./react-dashboard-health";
 import { createRoot } from "react-dom/client";
 import { Filemanager, Willow, type IEntity } from "@svar-ui/react-filemanager";
 import "@svar-ui/react-filemanager/all.css";
@@ -147,6 +148,7 @@ declare global {
     WorkgateReactDashboardResources?: typeof dashboardResources;
     WorkgateReactDashboardSystem?: typeof dashboardSystem;
     WorkgateReactOverviewLists?: typeof overviewLists;
+    WorkgateReactDashboardHealth?: typeof dashboardHealth;
   }
 }
 
@@ -157,3 +159,4 @@ window.WorkgateReactNavigation = navigation;
 window.WorkgateReactDashboardResources = dashboardResources;
 window.WorkgateReactDashboardSystem = dashboardSystem;
 window.WorkgateReactOverviewLists = overviewLists;
+window.WorkgateReactDashboardHealth = dashboardHealth;

@@ -40,8 +40,9 @@ void (async () => {
   const mountDashboardResources = window.WorkgateReactDashboardResources?.mount;
   const mountDashboardSystem = window.WorkgateReactDashboardSystem?.mount;
   const mountOverviewLists = window.WorkgateReactOverviewLists?.mount;
+  const mountDashboardHealth = window.WorkgateReactDashboardHealth?.mount;
   if (typeof mountReactFiles !== "function" || typeof reactNavigation?.mount !== "function"
-      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function" || typeof mountOverviewLists !== "function") {
+      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function" || typeof mountOverviewLists !== "function" || typeof mountDashboardHealth !== "function") {
     throw new Error("React UI failed to initialize");
   }
   const apiPrefix = String(config.apiPrefix || "/api/ui").replace(/\/$/, "");
@@ -115,13 +116,7 @@ void (async () => {
     appViews: Array.from(document.querySelectorAll("[data-app-view]")),
     appHeader: document.querySelector(".app-header"),
     pageTitle: document.getElementById("page-title"),
-    dashboardAuditDetail: document.getElementById("dashboard-audit-detail"),
-    dashboardAuditTotal: document.getElementById("dashboard-audit-total"),
-    dashboardHealth: document.getElementById("dashboard-health"),
-    dashboardHealthCard: document.getElementById("dashboard-health-card"),
-    dashboardHealthDetail: document.getElementById("dashboard-health-detail"),
     dashboardExecutor: document.getElementById("dashboard-executor"),
-    dashboardState: document.getElementById("dashboard-state"),
     auditDetailBody: document.getElementById("audit-detail-body"),
     auditDetailMeta: document.getElementById("audit-detail-meta"),
     auditDetailTitle: document.getElementById("audit-detail-title"),
@@ -275,8 +270,6 @@ void (async () => {
     executorRevoked: document.getElementById("executor-revoked"),
     executorActionStatus: document.getElementById("executor-action-status"),
     executorState: document.getElementById("executor-state"),
-    executorTargetOnline: document.getElementById("executor-target-online"),
-    executorTargetTotal: document.getElementById("executor-target-total"),
     executorTotal: document.getElementById("executor-total"),
     terminalCopy: document.getElementById("terminal-copy"),
     terminalFeedback: document.getElementById("terminal-feedback"),
@@ -509,6 +502,11 @@ void (async () => {
   resourceCards.render();
   const systemDetails = mountDashboardSystem(document.getElementById("dashboard-system-root"));
   systemDetails.render();
+  const healthView = mountDashboardHealth(
+    document.getElementById("dashboard-health-root"),
+    document.getElementById("dashboard-state"),
+    () => navigateTo("audit"),
+  );
   const overviewLists = mountOverviewLists(document.getElementById("dashboard-overview-lists"), {
     navigate: (view) => navigateTo(view),
     selectExecutor: (id) => {
@@ -526,6 +524,7 @@ void (async () => {
     renderOverviewAlerts: overviewLists.renderAlerts,
     renderOverviewTasks: overviewLists.renderTasks,
     renderSystemDetails: systemDetails.render,
+    healthView,
     renderResources: resourceCards.render,
     elements,
     request,
@@ -1002,8 +1001,7 @@ void (async () => {
     const signature = JSON.stringify(targets);
     if (signature === executorTargetsSignature) return;
     executorTargetsSignature = signature;
-    elements.executorTargetTotal.textContent = String(targets.length);
-    elements.executorTargetOnline.textContent = String(targets.filter((row) => row.status === "online").length);
+    healthView.renderTargets(targets);
     dashboard.renderExecutors(targets);
     terminal.renderExecutors(targets);
     files.renderExecutors(targets);
@@ -1023,7 +1021,7 @@ void (async () => {
     cancelPendingReads();
     clearAuthenticatedViews();
     elements.terminalState.textContent = "Authentication required";
-    elements.dashboardState.textContent = "Authentication required";
+    healthView.renderStatus("Authentication required");
     showAuthentication("Authentication required");
   }
 
@@ -1036,6 +1034,7 @@ void (async () => {
     files.invalidate();
     terminal.reset("");
     dashboard.reset("");
+    healthView.renderTargets(null);
     overviewLists.renderExecutors([], "", false);
     executors.reset("Authentication required");
     files.reset("");
@@ -1158,13 +1157,14 @@ void (async () => {
     dashboard.stopPolling();
     executors.stopPolling();
     dashboard.reset("");
+    healthView.renderTargets(null);
     overviewLists.renderExecutors([], "", false);
     executors.reset("Authentication required");
     files.reset("");
     tasks.reset();
     audit.reset();
     elements.terminalState.textContent = "Authentication required";
-    elements.dashboardState.textContent = "Authentication required";
+    healthView.renderStatus("Authentication required");
     elements.fileState.textContent = "Authentication required";
     elements.tasksState.textContent = "Authentication required";
     elements.todoState.textContent = "Authentication required";

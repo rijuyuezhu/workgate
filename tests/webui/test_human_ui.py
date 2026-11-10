@@ -158,7 +158,9 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert 'id="dashboard-overview-lists"' in index.text
     assert 'id="dashboard-alerts"' not in index.text
     assert 'id="dashboard-activity"' not in index.text
-    assert 'class="dashboard-audit-shortcut"' in index.text
+    assert 'id="dashboard-health-root"' in index.text
+    assert 'id="dashboard-state"' in index.text
+    assert 'class="dashboard-audit-shortcut"' not in index.text
     assert 'id="executors-panel"' in index.text
     assert 'id="executor-list"' in index.text
     assert 'id="executor-pair-dialog"' in index.text
@@ -310,6 +312,9 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert "mountDashboardResources" in executors_script.text
     assert "dashboardNumber" in dashboard_script.text
     assert "mountOverviewLists" in script.text
+    assert "mountDashboardHealth" in script.text
+    assert "healthView.renderSnapshot(payload)" in dashboard_script.text
+    assert "dashboardHealthCard" not in dashboard_script.text
     assert "renderOverviewExecutors" in dashboard_script.text
     assert "renderOverviewTasks(tasks)" in dashboard_script.text
     assert "dashboardListItem" not in dashboard_script.text

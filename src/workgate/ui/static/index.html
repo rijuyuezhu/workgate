@@ -51,29 +51,7 @@
           <span id="dashboard-state" class="muted">Not loaded</span>
         </div>
       </div>
-      <div class="dashboard-health-banner" data-health="unknown" aria-live="polite">
-        <div class="dashboard-status-illustration" aria-hidden="true">
-          <div class="dashboard-status-ring"></div>
-          <div class="dashboard-status-ring inner"></div>
-          <div class="dashboard-status-circle">
-            <svg class="dashboard-health-check" viewBox="0 0 24 24"><path d="m7 12 3 3 7-7"/></svg>
-            <svg class="dashboard-health-warning" viewBox="0 0 24 24"><path d="M12 4 3 20h18zM12 9v5M12 17h.01"/></svg>
-          </div>
-        </div>
-        <article id="dashboard-health-card" class="dashboard-card dashboard-health-card">
-          <span>System health</span>
-          <strong id="dashboard-health">—</strong>
-          <small id="dashboard-health-detail">Waiting for telemetry</small>
-        </article>
-        <div class="dashboard-health-stats">
-          <div><strong id="executor-target-total">—</strong><span>Executors</span></div>
-          <div><strong id="executor-target-online">—</strong><span>Online</span></div>
-          <button class="dashboard-audit-shortcut" type="button" data-go-view="audit" aria-label="Open Audit records">
-            <strong id="dashboard-audit-total">—</strong><span>Audit (24h) <span aria-hidden="true">↗</span></span>
-            <small id="dashboard-audit-detail" class="visually-hidden">—</small>
-          </button>
-        </div>
-      </div>
+      <div id="dashboard-health-root"></div>
       <div class="dashboard-summary" aria-label="Resource usage"></div>
       <div id="dashboard-overview-lists" class="dashboard-executors-row"></div>
       <details class="dashboard-system-disclosure">
