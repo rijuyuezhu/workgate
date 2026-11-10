@@ -109,8 +109,7 @@ def test_react_dashboard_system_details(
     expect(root.locator("#dashboard-python")).to_have_text("—")
     expect(root.locator("#dashboard-generated")).to_have_text("—")
     expect(disclosure).to_have_attribute("open", "")
-    page.unroute("**/api/ui/executors", offline_inventory)
-    page.unroute("**/api/ui/dashboard?*", synthetic_dashboard)
+    page.unroute_all(behavior="wait")
     expect(page.locator("#executor-target-online")).to_have_text(
         "1", timeout=12_000
     )
@@ -120,5 +119,16 @@ def test_react_dashboard_system_details(
     expect(disclosure).to_have_attribute("open", "")
     assert page.evaluate(
         "document.documentElement.scrollWidth <= window.innerWidth + 2"
+    )
+    page.locator("#appearance-mode").select_option("light")
+    light = root.locator("#dashboard-platform").evaluate(
+        "el => getComputedStyle(el).color"
+    )
+    page.locator("#appearance-mode").select_option("dark")
+    assert (
+        root.locator("#dashboard-platform").evaluate(
+            "el => getComputedStyle(el).color"
+        )
+        != light
     )
     harness.assert_clean_browser()
