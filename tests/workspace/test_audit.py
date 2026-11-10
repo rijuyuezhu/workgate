@@ -709,6 +709,19 @@ def test_nested_audit_filter_uses_child_event_and_own_timestamp(
         == 0
     )
 
+    assert (
+        query_audit(event="tool_call_end", start_ts=29, end_ts=31)["count"] == 1
+    )
+    assert (
+        query_audit(event="tool_call_end", start_ts=10, end_ts=12)["count"] == 0
+    )
+    assert query_audit(start_ts=29, end_ts=31)["count"] == 1
+    assert (
+        query_audit(event="tool_call_start", start_ts=29, end_ts=31)["count"]
+        == 0
+    )
+    assert by_child["entries"][0]["end_ts"] == 30
+
 
 def test_nested_audit_retention_keeps_parent_and_child_as_one_unit() -> None:
     records = [
@@ -717,13 +730,19 @@ def test_nested_audit_retention_keeps_parent_and_child_as_one_unit() -> None:
         {"id": "c", "event": "other"},
         {"id": "d", "event": "tool_call_end", "call_id": "paired"},
         {"id": "e", "event": "orphan", "parent_call_id": "unpaired"},
+        {
+            "id": "f",
+            "event": "tool_call_start",
+            "parent_call_id": "paired",
+            "call_id": "nested-call",
+        },
     ]
     lines = [(json.dumps(record) + "\n").encode() for record in records]
     units = audit_core._retention_units(lines)
     assert [[index for index, _ in unit] for unit in units] == [
         [2],
-        [0, 1, 3],
         [4],
+        [0, 1, 3, 5],
     ]
 
 

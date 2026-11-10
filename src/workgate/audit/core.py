@@ -361,13 +361,15 @@ def _retention_units(lines: list[bytes]) -> list[list[tuple[int, bytes]]]:
         with contextlib.suppress(json.JSONDecodeError, UnicodeDecodeError):
             record = json.loads(raw_line)
             if isinstance(record, dict):
-                field = (
-                    "call_id"
-                    if record.get("event")
-                    in {"tool_call_start", "tool_call_end"}
-                    else "parent_call_id"
-                )
-                call_id = str(record.get(field) or "")
+                # Match _AuditAccumulator: an explicit parent wins over
+                # a nested event's own lifecycle id.
+                if record.get("parent_call_id"):
+                    call_id = str(record["parent_call_id"])
+                elif record.get("event") in {
+                    "tool_call_start",
+                    "tool_call_end",
+                }:
+                    call_id = str(record.get("call_id") or "")
         if call_id:
             unit = call_units.get(call_id)
             if unit is None:
@@ -725,6 +727,7 @@ def _finish_audit_call_entry(
         "success" if ok is True else "failed" if ok is False else "completed"
     )
     entry["source_events"] = ["tool_call_start", "tool_call_end"]
+    entry["end_ts"] = _audit_timestamp(record.get("ts"))
     entry[_AUDIT_SOURCE_INDEXES].append(index)
     if ok is not None:
         entry["ok"] = ok
@@ -1224,13 +1227,20 @@ def query_audit(
     for row in rows:
         if exclude_call_id and str(row.get("call_id") or "") == exclude_call_id:
             continue
-        parent_events = (
-            str(row.get("event") or ""),
-            *map(str, row.get("source_events") or []),
-        )
-        parent_matches = in_time_range(row.get("ts")) and (
-            not event_filter
-            or any(event_filter in name.casefold() for name in parent_events)
+        parent_matches = (
+            in_time_range(row.get("ts"))
+            and (
+                not event_filter
+                or event_filter in str(row.get("event") or "").casefold()
+            )
+        ) or any(
+            (not event_filter or event_filter in str(name).casefold())
+            and in_time_range(
+                row.get("end_ts", row.get("ts"))
+                if name == "tool_call_end"
+                else row.get("ts")
+            )
+            for name in row.get("source_events") or []
         )
         child_matches = any(
             isinstance(child, dict)
