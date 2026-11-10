@@ -1,9 +1,10 @@
 """Default React/SVAR Files view over real authenticated Control/Executor."""
 
 import os
+import time
 
 import pytest
-from playwright.sync_api import expect
+from playwright.sync_api import Route, expect
 
 from tests.e2e.browser.harness import BrowserHarness
 
@@ -128,6 +129,31 @@ def test_files_folder_selection_after_sort_and_copy(
     harness.wait_executor_online()
     page = harness.page
     harness.navigate("files")
+    grid = page.locator("#file-list").get_by_role("grid")
+    grid.get_by_text("notes.txt", exact=True).click()
+    page.locator("#file-edit").click()
+    page.locator("#file-editor").fill("edited by Chromium\n")
+    page.locator("#file-editor-form").get_by_role(
+        "button", name="Save file"
+    ).click()
+    expect(page.locator("#file-state")).to_contain_text("Saved")
+    delayed = False
+
+    def delay_stale_preview(route: Route) -> None:
+        nonlocal delayed
+        if "stale-executor.txt" in route.request.url and not delayed:
+            delayed = True
+            time.sleep(0.4)
+        route.continue_()
+
+    page.route("**/api/ui/files/preview**", delay_stale_preview)
+    grid.get_by_text("stale-executor.txt", exact=True).click()
+    grid.get_by_text("notes.txt", exact=True).click()
+    expect(page.locator("#file-preview-body")).to_contain_text(
+        "edited by Chromium"
+    )
+    page.wait_for_timeout(600)
+    page.unroute("**/api/ui/files/preview**", delay_stale_preview)
     page.locator("#file-new-folder").click()
     page.locator("#file-operation-name").fill("archive")
     page.locator("#file-operation-form button[type=submit]").click()
