@@ -316,8 +316,13 @@ def supervise(commands: list[ChildCommand]) -> int:
     previous_sigterm = signal.getsignal(signal.SIGTERM)
     previous_sigint = signal.getsignal(signal.SIGINT)
 
-    def terminate(_signal: int, _frame: Any) -> None:
-        raise SystemExit(143)
+    # Defer shutdown until a newly spawned Child has been registered for cleanup.
+    stop_signal: int | None = None
+
+    def terminate(received_signal: int, _frame: Any) -> None:
+        nonlocal stop_signal
+        if stop_signal is None:
+            stop_signal = received_signal
 
     with selectors.DefaultSelector() as selector:
 
@@ -422,10 +427,15 @@ def supervise(commands: list[ChildCommand]) -> int:
             return True
 
         signal.signal(signal.SIGTERM, terminate)
+        signal.signal(signal.SIGINT, terminate)
         try:
             for command in commands:
                 spawn(command)
+                if stop_signal is not None:
+                    return 128 + stop_signal
             while True:
+                if stop_signal is not None:
+                    return 128 + stop_signal
                 for role, child in tuple(children.items()):
                     if children[role] is not child:
                         continue  # A sibling's shared-file Apply replaced it.
