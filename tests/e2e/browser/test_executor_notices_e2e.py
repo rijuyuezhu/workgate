@@ -405,7 +405,7 @@ def test_editor_operation_lock_and_partial_move_guidance(
       };
     }""")
     page.locator("#executor-integration-cancel").click()
-    page.wait_for_function("globalThis.__postMoveReads > 0")
+    page.wait_for_function("() => globalThis.__postMoveReads > 0")
     assert all("503" in error for error in h.console_errors), h.console_errors
     h.console_errors.clear()
     h.assert_clean_browser()

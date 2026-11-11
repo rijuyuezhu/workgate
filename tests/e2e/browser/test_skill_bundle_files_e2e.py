@@ -198,10 +198,10 @@ def test_auxiliary_file_read_refresh_race_chromium(
     }""")
     page.locator("#executor-skill-files-new").click()
     page.locator("#executor-skill-files-list").select_option("example.md")
-    page.wait_for_function("window.__skillReadBlocked === true")
+    page.wait_for_function("() => window.__skillReadBlocked === true")
     expect(page.locator("#executor-skill-files-save")).to_be_disabled()
     page.locator("#executor-skill-files-refresh").click()
-    page.wait_for_function("window.__skillListReturned === true")
+    page.wait_for_function("() => window.__skillListReturned === true")
     page.evaluate("window.__releaseSkillRead()")
     expect(page.locator("#executor-skill-files-content")).to_have_value(
         "First revision\n"

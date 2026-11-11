@@ -423,7 +423,7 @@ def run_live_workspace(harness: BrowserHarness) -> None:
             }, "*")"""
         )
         page.wait_for_function(
-            """window.__liveCalls.some((call) => call.name === "ui/message")"""
+            """() => window.__liveCalls.some((call) => call.name === "ui/message")"""
         )
         calls = page.evaluate("window.__liveCalls")
         continuation_calls = [
