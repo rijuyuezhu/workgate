@@ -36,7 +36,7 @@ function ManagementGroups({ groups, scope }: { groups: Group[]; scope: string })
   return <>{groups.map(group => <section key={`${scope}:${group.key}`}
     className="executor-manage-group" data-source-key={group.key}>
     <h4>{group.title}</h4>
-    {group.rows.map((row, index) => <ManagementRow key={`${row.title}:${index}`} row={row} />)}
+    {group.rows.map(row => <ManagementRow key={row.title} row={row} />)}
   </section>)}</>;
 }
 

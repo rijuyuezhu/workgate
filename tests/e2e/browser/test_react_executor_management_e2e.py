@@ -112,6 +112,13 @@ def test_executor_management_real_and_keyed_browser(
         "window.__mgmtNode === document.querySelector('#management-mcp-contract [data-source-key=\"executor-mcp\"]')"
     )
     assert page.evaluate("window.__mgmtButton === document.activeElement")
+    # Inserting a new row ahead of the focused MCP preserves its identity.
+    page.evaluate("""() => {
+      window.__mgmtModel.mcp[0].rows.unshift({title: 'earlier', status: 'Enabled'});
+      window.__mgmtView.render(window.__mgmtModel);
+    }""")
+    assert page.evaluate("window.__mgmtButton === document.activeElement")
+    expect(button).to_be_focused()
     expect(
         first.locator('.executor-manage-row[data-state="disabled"]')
     ).to_have_count(2)
@@ -130,7 +137,8 @@ def test_executor_management_real_and_keyed_browser(
     # Revoking a source's management permission removes its existing action.
     page.evaluate("""() => {
       const executor = window.__mgmtModel.mcp.find(group => group.key === 'executor-mcp');
-      executor.rows[0] = {...executor.rows[0], manage: undefined};
+      executor.rows = executor.rows.map(row => row.title === 'same'
+        ? {...row, manage: undefined} : row);
       window.__mgmtView.render(window.__mgmtModel);
     }""")
     expect(mcp.get_by_role("button", name="Manage")).to_have_count(0)
