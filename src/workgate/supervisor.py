@@ -316,17 +316,23 @@ def supervise(commands: list[ChildCommand]) -> int:
     previous_sigterm = signal.getsignal(signal.SIGTERM)
     previous_sigint = signal.getsignal(signal.SIGINT)
 
-    # Defer shutdown until a newly spawned Child has been registered for cleanup.
+    # Defer signals only while a newly started Child is not yet registered.
+    spawning = False
     stop_signal: int | None = None
 
     def terminate(received_signal: int, _frame: Any) -> None:
         nonlocal stop_signal
-        if stop_signal is None:
-            stop_signal = received_signal
+        if spawning:
+            if stop_signal is None:
+                stop_signal = received_signal
+            return
+        raise SystemExit(128 + received_signal)
 
     with selectors.DefaultSelector() as selector:
 
         def spawn(command: ChildCommand, *, status: str = "starting") -> None:
+            nonlocal spawning
+            spawning = True
             parent_sock, child_sock = socket.socketpair()
             try:
                 kwargs: dict[str, Any]
@@ -365,6 +371,9 @@ def supervise(commands: list[ChildCommand]) -> int:
             child = _Child(command, process, parent_sock, status=status)
             children[command.role] = child
             selector.register(parent_sock, selectors.EVENT_READ, command.role)
+            spawning = False
+            if stop_signal is not None:
+                raise SystemExit(128 + stop_signal)
 
         def retire(child: _Child) -> None:
             if child.channel.fileno() >= 0:
@@ -431,11 +440,7 @@ def supervise(commands: list[ChildCommand]) -> int:
         try:
             for command in commands:
                 spawn(command)
-                if stop_signal is not None:
-                    return 128 + stop_signal
             while True:
-                if stop_signal is not None:
-                    return 128 + stop_signal
                 for role, child in tuple(children.items()):
                     if children[role] is not child:
                         continue  # A sibling's shared-file Apply replaced it.
