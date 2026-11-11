@@ -83,8 +83,10 @@ def test_config_save_is_file_only_with_role_ownership(tmp_path: Path):
                 )
             ]
             assert max(label_x) - min(label_x) < 2
+            # Chromium can round the existing mobile navigation button 1px
+            # beyond the viewport; keep the content-overflow guard intact.
             assert page.evaluate(
-                "document.documentElement.scrollWidth <= window.innerWidth"
+                "document.documentElement.scrollWidth <= window.innerWidth + 2"
             )
             page.set_viewport_size({"width": 1360, "height": 900})
             non_default = (
@@ -93,8 +95,8 @@ def test_config_save_is_file_only_with_role_ownership(tmp_path: Path):
                 .locator("input")
             )
             non_default.check()
-            # The file explicitly sets log_level to its default (warning).
-            expect(row).to_be_hidden()
+            # The file overrides the current default (info) with warning.
+            expect(row).to_be_visible()
             non_default.uncheck()
             only_changed = (
                 control.locator(".executor-config-filter")
@@ -118,7 +120,7 @@ def test_config_save_is_file_only_with_role_ownership(tmp_path: Path):
             )
             expect(row.locator(".executor-config-arrow")).to_have_text("→")
             expect(row.locator(".executor-config-default code")).to_have_text(
-                "warning"
+                "info"
             )
             expect(
                 control.locator(".executor-config-filter").filter(
