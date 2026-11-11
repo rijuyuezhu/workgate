@@ -317,7 +317,7 @@ def test_probe_result_beats_a_pending_old_get_and_keyboard_focus_survives(
     }""")
     expect(edge).to_be_focused()
     page.locator("#topology-refresh").click()
-    page.wait_for_function("window.__heldEvidence?.pending === true")
+    page.wait_for_function("() => window.__heldEvidence?.pending === true")
     test = page.get_by_role(
         "button",
         name=f"Test connection from {rows[0]['name']} to {rows[1]['name']}",
@@ -377,7 +377,7 @@ def test_inflight_probe_survives_closing_topology_without_stale_notice(
         "button",
         name=f"Test connection from {rows[0]['name']} to {rows[1]['name']}",
     ).click()
-    page.wait_for_function("window.__heldPost?.pending === true")
+    page.wait_for_function("() => window.__heldPost?.pending === true")
     page.locator("#topology-back").click()
     page.locator("#executor-topology-open").click()
     expect(page.locator("#topology-pair-status")).to_have_text("Not tested")
@@ -520,7 +520,7 @@ def test_bulk_stop_and_sparse_fleet_only_tests_visible_links(
       };
     }""")
     bulk.click()
-    page.wait_for_function("window.__bulkHeld?.pending === true")
+    page.wait_for_function("() => window.__bulkHeld?.pending === true")
     expect(bulk).to_have_text("Stop")
     bulk.click()
     expect(bulk).to_have_text("Stopping…")

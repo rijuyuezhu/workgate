@@ -140,7 +140,7 @@ def test_logout_rejects_delayed_protected_audit_response(
         page.goto(f"{harness.base_url}/ui#audit", wait_until="domcontentloaded")
         expect(page.locator("#connection-state")).to_have_text("Connected")
         page.wait_for_function(
-            "window.__auditResponseHeld === true", timeout=10000
+            "() => window.__auditResponseHeld === true", timeout=10000
         )
         page.locator("#sign-out").click()
         expect(page.locator("#auth-panel")).to_be_visible()
