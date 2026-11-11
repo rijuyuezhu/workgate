@@ -17,6 +17,7 @@ import { filesNavigation } from "./react-files-navigation";
 import { filesPreview } from "./react-files-preview";
 import { configuration } from "./react-configuration";
 import { executorManagement } from "./react-executor-management";
+import { executorTopology } from "./react-executor-topology";
 import { createRoot } from "react-dom/client";
 import { Filemanager, Willow, type IEntity } from "@svar-ui/react-filemanager";
 import "@svar-ui/react-filemanager/all.css";
@@ -175,6 +176,7 @@ declare global {
     WorkgateReactFilesPreview?: typeof filesPreview;
     WorkgateReactConfiguration?: typeof configuration;
     WorkgateReactExecutorManagement?: typeof executorManagement;
+    WorkgateReactExecutorTopology?: typeof executorTopology;
   }
 }
 
@@ -199,3 +201,4 @@ window.WorkgateReactFilesNavigation = filesNavigation;
 window.WorkgateReactFilesPreview = filesPreview;
 window.WorkgateReactConfiguration = configuration;
 window.WorkgateReactExecutorManagement = executorManagement;
+window.WorkgateReactExecutorTopology = executorTopology;

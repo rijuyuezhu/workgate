@@ -309,6 +309,13 @@ def test_probe_result_beats_a_pending_old_get_and_keyboard_focus_survives(
     edge = page.locator("#topology-edges g[role=button]").first
     edge.focus()
     edge.press("Enter")
+    # Kept React keys prevent topology nodes/edges from remounting on refresh.
+    page.evaluate("""() => {
+      window.__stableTopologyEdge = document.querySelector('#topology-edges g');
+      window.__stableTopologyNode = document.querySelector('#topology-nodes button');
+      window.__stableTopologyDirection = document.querySelector('#topology-direction-rows button');
+    }""")
+    expect(edge).to_be_focused()
     page.locator("#topology-refresh").click()
     page.wait_for_function("window.__heldEvidence?.pending === true")
     test = page.get_by_role(
@@ -321,12 +328,22 @@ def test_probe_result_beats_a_pending_old_get_and_keyboard_focus_survives(
         "Direct OK one way"
     )
     expect(test).to_be_focused()
+    assert page.evaluate("""() =>
+      window.__stableTopologyEdge === document.querySelector('#topology-edges g') &&
+      window.__stableTopologyNode === document.querySelector('#topology-nodes button') &&
+      window.__stableTopologyDirection === document.querySelector('#topology-direction-rows button')
+    """)
     page.evaluate("window.__heldEvidence.release()")
     page.wait_for_timeout(250)
     expect(page.locator("#topology-pair-status")).to_have_text(
         "Direct OK one way"
     )
     expect(test).to_be_focused()
+    assert page.evaluate("""() =>
+      window.__stableTopologyEdge === document.querySelector('#topology-edges g') &&
+      window.__stableTopologyNode === document.querySelector('#topology-nodes button') &&
+      window.__stableTopologyDirection === document.querySelector('#topology-direction-rows button')
+    """)
     assert methods.count("POST") == 1
     h.assert_clean_browser()
 
