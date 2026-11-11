@@ -275,6 +275,7 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert "WorkgateReactTaskPlan" in react_bundle.text
     assert "WorkgateReactSessionIntegrations" in react_bundle.text
     assert "WorkgateReactTerminalRail" in react_bundle.text
+    assert "WorkgateReactFilesNavigation" in react_bundle.text
     assert "mountAuditDetails" in script.text
     assert "auditDetailViews" in script.text
     assert "mountAuditLists" in script.text
@@ -287,6 +288,12 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert "mountTaskPlan" in script.text
     assert "mountSessionIntegrations" in script.text
     assert "mountTerminalRail" in script.text
+    assert "mountFilesNavigation" in script.text
+    assert "mountFilesNavigation" in client.get("/ui/assets/files.js").text
+    assert (
+        "fileBreadcrumbs.replaceChildren"
+        not in client.get("/ui/assets/files.js").text
+    )
     assert "mountTerminalRail" in client.get("/ui/assets/terminal.js").text
     assert (
         "terminalList.replaceChildren"
