@@ -47,8 +47,9 @@ void (async () => {
   const mountTaskDetails = window.WorkgateReactTaskDetails?.mount;
   const mountTaskPlan = window.WorkgateReactTaskPlan?.mount;
   const mountSessionIntegrations = window.WorkgateReactSessionIntegrations?.mount;
+  const mountTerminalRail = window.WorkgateReactTerminalRail?.mount;
   if (typeof mountReactFiles !== "function" || typeof reactNavigation?.mount !== "function"
-      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function" || typeof mountOverviewLists !== "function" || typeof mountDashboardHealth !== "function" || typeof mountExecutorInventory !== "function" || typeof mountExecutorDetail !== "function" || typeof mountAuditLists !== "function" || typeof mountAuditDetails !== "function" || typeof mountTaskLists !== "function" || typeof mountTaskDetails !== "function" || typeof mountTaskPlan !== "function" || typeof mountSessionIntegrations !== "function") {
+      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function" || typeof mountOverviewLists !== "function" || typeof mountDashboardHealth !== "function" || typeof mountExecutorInventory !== "function" || typeof mountExecutorDetail !== "function" || typeof mountAuditLists !== "function" || typeof mountAuditDetails !== "function" || typeof mountTaskLists !== "function" || typeof mountTaskDetails !== "function" || typeof mountTaskPlan !== "function" || typeof mountSessionIntegrations !== "function" || typeof mountTerminalRail !== "function") {
     throw new Error("React UI failed to initialize");
   }
   const apiPrefix = String(config.apiPrefix || "/api/ui").replace(/\/$/, "");
@@ -427,6 +428,7 @@ void (async () => {
     request,
     text,
     encoder,
+    mountTerminalRail,
     onAuthenticationRequired: () => void load(),
     initialExecutorId: deepLink.executorId,
     initialSessionId: deepLink.sessionId,
