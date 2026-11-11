@@ -219,8 +219,10 @@ def test_executor_offline_and_reconnect_notice_matrix(
       )].find(group => group.querySelector('h4')?.textContent.startsWith('Control'));
     }""")
     h.stop_executor()
+    # A final in-flight 25s poll may refresh Control's 60s offline TTL;
+    # allow the subsequent 4s UI refresh and bounded CI scheduling headroom.
     expect(page.locator("#executor-detail-status")).to_have_text(
-        "offline", timeout=85000
+        "offline", timeout=120000
     )
     expect(
         page.locator("#executor-mcp-body .executor-manage-group").first
