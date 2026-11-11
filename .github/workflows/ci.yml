@@ -159,8 +159,10 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --locked --group dev
-      - name: Install locked Chromium revision
-        run: uv run playwright install --with-deps chromium
+      - name: Install and smoke-check locked Chromium revision
+        run: |
+          uv run playwright install chromium
+          uv run python -c 'from playwright.sync_api import sync_playwright; p = sync_playwright().start(); p.chromium.launch().close(); p.stop()'
       - name: Run branch coverage
         run: |
           find . -maxdepth 1 -name '.coverage*' -delete
@@ -197,8 +199,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes tmux
       - run: uv sync --locked --group dev
-      - name: Install locked Chromium revision
-        run: uv run playwright install --with-deps chromium
+      - name: Install and smoke-check locked Chromium revision
+        run: |
+          uv run playwright install chromium
+          uv run python -c 'from playwright.sync_api import sync_playwright; p = sync_playwright().start(); p.chromium.launch().close(); p.stop()'
       - name: Run structured browser tool E2E
         run: uv run pytest -q -m browser tests/webui/test_browser_service.py
       - name: Run real Chromium Human UI scenario
