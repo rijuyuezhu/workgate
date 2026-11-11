@@ -18,6 +18,7 @@ import { filesPreview } from "./react-files-preview";
 import { configuration } from "./react-configuration";
 import { executorManagement } from "./react-executor-management";
 import { executorTopology } from "./react-executor-topology";
+import { executorMcpEditor } from "./react-executor-mcp-editor";
 import { createRoot } from "react-dom/client";
 import { Filemanager, Willow, type IEntity } from "@svar-ui/react-filemanager";
 import "@svar-ui/react-filemanager/all.css";
@@ -177,6 +178,7 @@ declare global {
     WorkgateReactConfiguration?: typeof configuration;
     WorkgateReactExecutorManagement?: typeof executorManagement;
     WorkgateReactExecutorTopology?: typeof executorTopology;
+    WorkgateReactExecutorMcpEditor?: typeof executorMcpEditor;
   }
 }
 
@@ -202,3 +204,4 @@ window.WorkgateReactFilesPreview = filesPreview;
 window.WorkgateReactConfiguration = configuration;
 window.WorkgateReactExecutorManagement = executorManagement;
 window.WorkgateReactExecutorTopology = executorTopology;
+window.WorkgateReactExecutorMcpEditor = executorMcpEditor;
