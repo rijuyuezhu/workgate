@@ -7,6 +7,7 @@ export function createFilesController({
   initialPath = "",
   onNavigate = () => {},
   mountReactFiles,
+  mountFilesNavigation,
 }) {
   let reactFilesView = null;
   const controllerState = {
@@ -34,6 +35,26 @@ export function createFilesController({
       rename: true,
     },
   };
+
+  const filesNavigation = mountFilesNavigation(
+    document.getElementById("file-location-executors"), elements.fileBreadcrumbs,
+    {
+      executor: (executorId) => {
+        if (controllerState.fileMutationBusy || executorId === controllerState.fileExecutorId) return;
+        controllerState.fileExecutorPinned = false;
+        resetFileWorkspace(executorId);
+        renderFileLocations();
+        void refreshFiles();
+      },
+      path: (path) => void navigateFiles(path),
+    },
+  );
+  let fileLocationRows = [];
+  filesNavigation.renderLocations([], controllerState.fileExecutorId);
+
+  function renderFileLocations() {
+    filesNavigation.renderLocations(fileLocationRows, controllerState.fileExecutorId);
+  }
 
   function defaultFileMutations() {
     return {
@@ -73,8 +94,7 @@ export function createFilesController({
     const wasOnline = fileExecutorOnline();
     controllerState.fileExecutorStates = new Map();
     elements.fileExecutor.replaceChildren();
-    const locations = document.getElementById("file-location-executors");
-    locations.replaceChildren();
+    fileLocationRows = [];
     document.getElementById("file-location-count").textContent = String(available.length);
     let currentAvailable = false;
     for (const executor of available) {
@@ -85,32 +105,12 @@ export function createFilesController({
       const option = document.createElement("option");
       option.value = executorId;
       const label = text(executor.name, executorId);
+      fileLocationRows.push({ id: executorId, name: label, state: online ? "online" : text(executor.status, "offline") });
       option.textContent = online ? label : `${label} (${text(executor.status, "offline")})`;
       option.disabled = !online;
       option.selected = executorId === controllerState.fileExecutorId;
       if (option.selected && online) currentAvailable = true;
       elements.fileExecutor.append(option);
-      const location = document.createElement("button");
-      location.type = "button";
-      location.className = "file-location-row";
-      location.dataset.executorId = executorId;
-      location.setAttribute("aria-current", executorId === controllerState.fileExecutorId ? "true" : "false");
-      const dot = document.createElement("span");
-      dot.className = `file-location-dot ${online ? "online" : ""}`;
-      const name = document.createElement("span");
-      name.textContent = label;
-      location.append(dot, name);
-      location.disabled = !online;
-      location.addEventListener("click", () => {
-        if (controllerState.fileMutationBusy || executorId === controllerState.fileExecutorId) return;
-        controllerState.fileExecutorPinned = false;
-        resetFileWorkspace(executorId);
-        for (const item of locations.children) {
-          item.setAttribute("aria-current", String(item === location));
-        }
-        void refreshFiles();
-      });
-      locations.append(location);
     }
     if (!currentAvailable) {
       if (controllerState.fileExecutorPinned && controllerState.fileExecutorId) {
@@ -133,19 +133,19 @@ export function createFilesController({
         elements.fileState.textContent = `Executor unavailable (${controllerState.fileExecutorId})`;
         setFileControls();
         elements.fileRefresh.disabled = true;
+        renderFileLocations();
         return;
       }
       const firstOnline = available.find((item) => item.status === "online");
       const nextExecutorId = firstOnline?.executor_id || "";
       const changed = controllerState.fileExecutorId !== nextExecutorId;
       resetFileWorkspace(nextExecutorId);
-      for (const item of locations.children) {
-        item.setAttribute("aria-current", String(item.dataset.executorId === nextExecutorId));
-      }
+      renderFileLocations();
       if (changed && nextExecutorId) void refreshFiles();
       return;
     }
     elements.fileExecutor.value = controllerState.fileExecutorId;
+    renderFileLocations();
     if (!wasOnline) void refreshFiles();
     setFileControls();
   }
@@ -271,7 +271,6 @@ export function createFilesController({
   }
 
   function renderBreadcrumbs() {
-    elements.fileBreadcrumbs.replaceChildren();
     const path = controllerState.filePath.replace(/\\/g, "/");
     const absolute = path.startsWith("/");
     const parts = path.split("/").filter((part) => part && part !== ".");
@@ -281,14 +280,7 @@ export function createFilesController({
       current = current === "" ? `/${part}` : current === "." ? part : `${current}/${part}`;
       segments.push({ label: part, path: current });
     }
-    for (const segment of segments) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.textContent = segment.label;
-      button.disabled = controllerState.fileMutationBusy || segment.path === controllerState.filePath;
-      button.addEventListener("click", () => void navigateFiles(segment.path));
-      elements.fileBreadcrumbs.append(button);
-    }
+    filesNavigation.renderBreadcrumbs(segments, controllerState.filePath, controllerState.fileMutationBusy);
   }
 
   function renderClipboard() {
@@ -726,6 +718,7 @@ export function createFilesController({
     if (controllerState.fileMutationBusy) return;
     controllerState.fileExecutorPinned = false;
     resetFileWorkspace(elements.fileExecutor.value);
+    renderFileLocations();
     void refreshFiles();
   });
   elements.filePathForm.addEventListener("submit", (event) => {
