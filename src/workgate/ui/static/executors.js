@@ -19,6 +19,7 @@ export function createExecutorsController({
   mountExecutorDetail,
   mountConfiguration,
   mountExecutorManagement,
+  mountExecutorMcpEditor,
   mountTopology,
   onNavigate = () => {},
 }) {
@@ -67,6 +68,17 @@ export function createExecutorsController({
     document.getElementById("executor-detail-overview-root"),
     handleDetailAction,
   );
+
+  const mcpEditorView = mountExecutorMcpEditor(
+    elements.executorMcpSecretList,
+    elements.executorIntegrationTestResult,
+    (key) => {
+      if (globalThis.confirm(`Remove stored secret “${key}”?`))
+        void mutateAuth("delete_secret", {secret_name: key});
+    },
+  );
+  mcpEditorView.renderSecrets(null, true);
+  mcpEditorView.renderTest("");
 
   const topology = createExecutorTopology({
     request,
@@ -490,10 +502,10 @@ export function createExecutorsController({
       elements.executorIntegrationDelete, elements.executorIntegrationValidate,
       elements.executorIntegrationTest, elements.executorMcpSecretSet,
       elements.executorMcpOAuthClear, elements.executorMcpOAuthLogout, elements.executorMcpOAuthAuthorize,
-      elements.executorMcpOAuthCopy, elements.executorMcpOAuthCancel,
-      ...elements.executorMcpSecretList.querySelectorAll("button")]) {
+      elements.executorMcpOAuthCopy, elements.executorMcpOAuthCancel]) {
       button.disabled = !ready;
     }
+    mcpEditorView.renderSecrets(edit.secretNames ?? null, !ready);
     elements.executorSkillFilesOpen.disabled = !ready || !edit.filesReady;
     elements.executorIntegrationOwner.disabled = !ready;
     elements.executorIntegrationCancel.disabled = busy && edit.applying;
@@ -530,7 +542,8 @@ export function createExecutorsController({
     elements.executorMcpSecretName.value = "";
     elements.executorMcpSecretValue.value = "";
     elements.executorMcpSecretDetails.open = false;
-    elements.executorMcpSecretList.replaceChildren();
+    edit.secretNames = null;
+    mcpEditorView.renderSecrets(null, true);
     elements.executorMcpSecretSet.disabled = Boolean(item);
     elements.executorMcpOAuthClear.disabled = Boolean(item);
     elements.executorMcpOAuthLogout.disabled = Boolean(item);
@@ -538,7 +551,7 @@ export function createExecutorsController({
     elements.executorMcpAuthStatus.hidden = true;
     notice(elements.executorMcpAuthStatus, "");
     renderBrowserOAuth(edit);
-    notice(elements.executorIntegrationTestResult, "");
+    mcpEditorView.renderTest("");
     elements.executorIntegrationToggle.hidden = !item;
     elements.executorIntegrationDelete.hidden = !item;
     elements.executorIntegrationToggle.disabled = Boolean(item);
@@ -705,31 +718,8 @@ export function createExecutorsController({
         status.mode === "oauth" ? (status.authorized ? "✓ Connected" : "Not connected")
           : `Authorization: ${status.status || "unavailable"}`,
       );
-      const list = elements.executorMcpSecretList;
-      list.replaceChildren();
-      for (const key of result.secret_names || []) {
-        const line = document.createElement("div");
-        line.className = "executor-auth-secret-row";
-        const name = document.createElement("code");
-        name.textContent = key;
-        const label = document.createElement("span");
-        label.textContent = "Value hidden";
-        const remove = document.createElement("button");
-        remove.type = "button";
-        remove.textContent = "Remove";
-        remove.disabled = Boolean(edit.busy);
-        remove.addEventListener("click", () => {
-          if (globalThis.confirm(`Remove stored secret “${key}”?`)) void mutateAuth("delete_secret", {secret_name:key});
-        });
-        line.append(name, label, remove);
-        list.append(line);
-      }
-      if (!list.childElementCount) {
-        const empty = document.createElement("p");
-        empty.className = "muted";
-        empty.textContent = "No private secrets saved for this MCP.";
-        list.append(empty);
-      }
+      edit.secretNames = Array.isArray(result.secret_names) ? result.secret_names : [];
+      mcpEditorView.renderSecrets(edit.secretNames, Boolean(edit.busy || edit.needsInspection));
     } catch (error) {
       if (state.editor === edit && edit.authGeneration === generation) {
         elements.executorMcpAuthStatus.hidden = false;
@@ -851,7 +841,7 @@ export function createExecutorsController({
     const edit = state.editor;
     if (!edit || edit.kind !== "mcp" || !edit.item || edit.busy) return;
     setEditorBusy(edit, true);
-    notice(elements.executorIntegrationTestResult, "Testing saved MCP server…");
+    mcpEditorView.renderTest("Testing saved MCP server…");
     try {
       const result = await request("/integrations/test", {
         method: "POST",
@@ -860,20 +850,15 @@ export function createExecutorsController({
       });
       if (state.editor !== edit) return;
       const tools = Array.isArray(result.tools) ? result.tools : [];
-      notice(
-        elements.executorIntegrationTestResult,
+      mcpEditorView.renderTest(
         result.status === "available"
           ? `${tools.length} tools discovered (none called)`
           : `MCP ${result.status || "unavailable"}. Check the owning host.`,
         result.status === "available" ? "success" : "warning",
+        tools,
       );
-      for (const tool of tools) {
-        const line = document.createElement("div");
-        line.textContent = `${tool.name}${tool.description ? `: ${tool.description}` : ""}`;
-        elements.executorIntegrationTestResult.append(line);
-      }
     } catch (error) {
-      if (state.editor === edit) notice(elements.executorIntegrationTestResult, error instanceof Error ? error.message : String(error), "error");
+      if (state.editor === edit) mcpEditorView.renderTest(error instanceof Error ? error.message : String(error), "error");
     } finally {
       if (state.editor === edit) setEditorBusy(edit, false);
     }
