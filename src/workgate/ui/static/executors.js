@@ -17,6 +17,7 @@ export function createExecutorsController({
   mountDashboardResources,
   mountExecutorInventory,
   mountExecutorDetail,
+  mountConfiguration,
   onNavigate = () => {},
 }) {
   let diagnosticResources = null;
@@ -72,7 +73,7 @@ export function createExecutorsController({
   });
 
   const executorConfigView = createConfigurationView({
-    root: document.getElementById("executor-config-body"), request,
+    root: document.getElementById("executor-config-body"), request, mountConfiguration,
   });
 
   const skillFileEditor = createSkillFileEditor({
