@@ -12,6 +12,7 @@ import { taskLists } from "./react-task-lists";
 import { taskDetails } from "./react-task-details";
 import { taskPlan } from "./react-task-plan";
 import { sessionIntegrations } from "./react-session-integrations";
+import { terminalRail } from "./react-terminal-rail";
 import { createRoot } from "react-dom/client";
 import { Filemanager, Willow, type IEntity } from "@svar-ui/react-filemanager";
 import "@svar-ui/react-filemanager/all.css";
@@ -165,6 +166,7 @@ declare global {
     WorkgateReactTaskDetails?: typeof taskDetails;
     WorkgateReactTaskPlan?: typeof taskPlan;
     WorkgateReactSessionIntegrations?: typeof sessionIntegrations;
+    WorkgateReactTerminalRail?: typeof terminalRail;
   }
 }
 
@@ -184,3 +186,4 @@ window.WorkgateReactTaskLists = taskLists;
 window.WorkgateReactTaskDetails = taskDetails;
 window.WorkgateReactTaskPlan = taskPlan;
 window.WorkgateReactSessionIntegrations = sessionIntegrations;
+window.WorkgateReactTerminalRail = terminalRail;

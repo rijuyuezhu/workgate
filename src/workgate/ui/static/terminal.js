@@ -3,6 +3,7 @@ export function createTerminalController({
   request,
   text,
   encoder,
+  mountTerminalRail,
   onAuthenticationRequired,
   initialExecutorId = "",
   initialSessionId = "",
@@ -33,6 +34,31 @@ export function createTerminalController({
     terminalHistoryIndex: 0,
     terminalHistoryDraft: "",
   };
+
+  const terminalRail = mountTerminalRail(
+    document.getElementById("terminal-executor-locations"), elements.terminalList,
+    {
+      executor: (executorId) => {
+        if (executorId === controllerState.terminalExecutorId) return;
+        elements.terminalExecutor.value = executorId;
+        elements.terminalExecutor.dispatchEvent(new Event("change", { bubbles: true }));
+      },
+      shell: (shellId) => {
+        onNavigate("detail");
+        void connectTerminal(shellId);
+      },
+    },
+  );
+  let terminalLocationRows = [];
+  terminalRail.renderExecutors([], controllerState.terminalExecutorId);
+  terminalRail.renderSessions({
+    executorId: controllerState.terminalExecutorId,
+    selectedShellId: "", entries: [], emptyMessage: "Loading terminal sessions…",
+  });
+
+  function renderTerminalLocations() {
+    terminalRail.renderExecutors(terminalLocationRows, controllerState.terminalExecutorId);
+  }
 
   const terminalSpecialKeys = Object.freeze({
     escape: "\u001b",
@@ -318,8 +344,7 @@ export function createTerminalController({
     const wasOnline = terminalExecutorOnline();
     controllerState.terminalExecutorStates = new Map();
     elements.terminalExecutor.replaceChildren();
-    const locations = document.getElementById("terminal-executor-locations");
-    locations.replaceChildren();
+    terminalLocationRows = [];
     let currentAvailable = false;
     for (const executor of available) {
       const executorId = text(executor.executor_id, "");
@@ -329,28 +354,12 @@ export function createTerminalController({
       const option = document.createElement("option");
       option.value = executorId;
       const label = text(executor.name, executorId);
+      terminalLocationRows.push({ id: executorId, name: label, state });
       option.textContent = state === "online" ? label : `${label} (${state})`;
       option.disabled = state !== "online";
       option.selected = executorId === controllerState.terminalExecutorId;
       if (option.selected && state === "online") currentAvailable = true;
       elements.terminalExecutor.append(option);
-      const location = document.createElement("button");
-      location.type = "button";
-      location.className = "terminal-location-row";
-      location.dataset.executorId = executorId;
-      location.setAttribute("aria-current", String(option.selected));
-      location.disabled = state !== "online";
-      const dot = document.createElement("span");
-      dot.className = `terminal-location-dot ${state === "online" ? "online" : ""}`;
-      const title = document.createElement("span");
-      title.textContent = label;
-      location.append(dot, title);
-      location.addEventListener("click", () => {
-        if (executorId === controllerState.terminalExecutorId) return;
-        elements.terminalExecutor.value = executorId;
-        elements.terminalExecutor.dispatchEvent(new Event("change", { bubbles: true }));
-      });
-      locations.append(location);
     }
     if (!currentAvailable) {
       if (controllerState.terminalExecutorPinned && controllerState.terminalExecutorId) {
@@ -364,6 +373,7 @@ export function createTerminalController({
         if (wasOnline) resetTerminalWorkspace(controllerState.terminalExecutorId);
         elements.terminalExecutor.value = controllerState.terminalExecutorId;
         elements.terminalState.textContent = "Executor unavailable";
+        renderTerminalLocations();
         setTerminalControls(false);
         return;
       }
@@ -371,13 +381,12 @@ export function createTerminalController({
       const nextExecutorId = firstOnline?.executor_id || "";
       const changed = controllerState.terminalExecutorId !== nextExecutorId;
       resetTerminalWorkspace(nextExecutorId);
-      for (const item of locations.children) {
-        item.setAttribute("aria-current", String(item.dataset.executorId === nextExecutorId));
-      }
+      renderTerminalLocations();
       if (changed && nextExecutorId) refreshTerminalsInBackground({ force: true });
       return;
     }
     elements.terminalExecutor.value = controllerState.terminalExecutorId;
+    renderTerminalLocations();
     if (!wasOnline) refreshTerminalsInBackground({ force: true });
     setTerminalControls(controllerState.terminalSocket?.readyState === WebSocket.OPEN);
   }
@@ -392,50 +401,29 @@ export function createTerminalController({
       showTerminalMessage(`Select or create a terminal session on ${controllerState.terminalExecutorId}.`);
     }
 
-    elements.terminalList.replaceChildren();
     document.getElementById("terminal-count").textContent = String(controllerState.terminalSessions.length);
     const activeIndex = controllerState.terminalSessions.findIndex((item) => item.shell_id === controllerState.selectedShellId);
     document.getElementById("terminal-previous").disabled = activeIndex <= 0;
     document.getElementById("terminal-next").disabled = activeIndex < 0 || activeIndex >= controllerState.terminalSessions.length - 1;
+    const filter = document.getElementById("terminal-search").value.trim().toLocaleLowerCase();
+    const entries = controllerState.terminalSessions.flatMap((session) => {
+      const shellId = text(session.shell_id, "");
+      if (!shellId || (filter && !`${session.name || ""} ${shellId}`.toLocaleLowerCase().includes(filter))) return [];
+      return [{
+        id: shellId,
+        name: text(session.name, shellId),
+        title: [controllerState.terminalExecutorId, shellId, session.cwd, session.command].filter(Boolean).join(", "),
+      }];
+    });
+    terminalRail.renderSessions({
+      executorId: controllerState.terminalExecutorId,
+      selectedShellId: controllerState.selectedShellId,
+      entries,
+      emptyMessage: controllerState.terminalSessions.length ? "No matching sessions." : emptyMessage,
+    });
     if (!controllerState.terminalSessions.length) {
-      const empty = document.createElement("div");
-      empty.className = "empty-state";
-      empty.textContent = emptyMessage;
-      elements.terminalList.append(empty);
       setTerminalControls(false);
       return;
-    }
-
-    const filter = document.getElementById("terminal-search").value.trim().toLocaleLowerCase();
-    for (const session of controllerState.terminalSessions) {
-      const shellId = text(session.shell_id, "");
-      if (!shellId || (filter && !`${session.name || ""} ${shellId}`.toLocaleLowerCase().includes(filter))) continue;
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "terminal-session";
-      button.textContent = text(session.name, shellId);
-      const terminalIcon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-      terminalIcon.setAttribute("class", "terminal-session-icon");
-      terminalIcon.setAttribute("viewBox", "0 0 24 24");
-      terminalIcon.setAttribute("aria-hidden", "true");
-      const terminalPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      terminalPath.setAttribute("d", "M3 4h18v16H3z m4 5 3 3-3 3 M13 16h4");
-      terminalIcon.append(terminalPath);
-      button.prepend(terminalIcon);
-      const details = [controllerState.terminalExecutorId, shellId, session.cwd, session.command].filter(Boolean);
-      button.title = details.join(", ");
-      button.setAttribute("aria-current", shellId === controllerState.selectedShellId ? "true" : "false");
-      button.addEventListener("click", () => {
-        onNavigate("detail");
-        void connectTerminal(shellId);
-      });
-      elements.terminalList.append(button);
-    }
-    if (!elements.terminalList.children.length) {
-      const empty = document.createElement("div");
-      empty.className = "empty-state";
-      empty.textContent = "No matching sessions.";
-      elements.terminalList.append(empty);
     }
     setTerminalControls(controllerState.terminalSocket?.readyState === WebSocket.OPEN);
   }
@@ -763,9 +751,7 @@ export function createTerminalController({
     controllerState.terminalSessionId = "";
     controllerState.terminalAutoConnectShellId = "";
     resetTerminalWorkspace(elements.terminalExecutor.value);
-    for (const item of document.getElementById("terminal-executor-locations").children) {
-      item.setAttribute("aria-current", String(item.dataset.executorId === controllerState.terminalExecutorId));
-    }
+    renderTerminalLocations();
     refreshTerminalsInBackground({ force: true });
   });
   document.getElementById("terminal-search").addEventListener("input", () => {
