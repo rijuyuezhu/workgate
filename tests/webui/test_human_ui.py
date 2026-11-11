@@ -276,12 +276,14 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert "WorkgateReactSessionIntegrations" in react_bundle.text
     assert "WorkgateReactTerminalRail" in react_bundle.text
     assert "WorkgateReactFilesNavigation" in react_bundle.text
+    assert "WorkgateReactFilesPreview" in react_bundle.text
     assert "WorkgateReactExecutorManagement" in react_bundle.text
     assert "mountAuditDetails" in script.text
     assert "auditDetailViews" in script.text
     assert "mountAuditLists" in script.text
     assert "mountAuditLists" in client.get("/ui/assets/audit.js").text
     assert "mountAuditLists" in client.get("/ui/assets/tasks.js").text
+    assert "mountFilesPreview" in script.text
     assert "mountExecutorManagement" in script.text
     assert "mountTaskLists" in script.text
     assert "mountTaskLists" in client.get("/ui/assets/tasks.js").text

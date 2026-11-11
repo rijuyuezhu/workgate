@@ -8,6 +8,7 @@ export function createFilesController({
   onNavigate = () => {},
   mountReactFiles,
   mountFilesNavigation,
+  mountFilesPreview,
 }) {
   let reactFilesView = null;
   const controllerState = {
@@ -35,6 +36,11 @@ export function createFilesController({
       rename: true,
     },
   };
+
+  const previewView = mountFilesPreview(elements.filePreviewBody, (directory, path) => {
+    if (!controllerState.fileMutationBusy) void navigateFiles(directory, path);
+  });
+  previewView.render({kind: "message", message: "Select a file or directory."});
 
   const filesNavigation = mountFilesNavigation(
     document.getElementById("file-location-executors"), elements.fileBreadcrumbs,
@@ -244,15 +250,7 @@ export function createFilesController({
     elements.filePreviewTitle.textContent = title;
     // The detail is already rendered in the preview body; avoid repeating it.
     elements.filePreviewMeta.textContent = "";
-    const empty = document.createElement("div");
-    empty.className = "empty-state";
-    empty.textContent = detail || title;
-    elements.filePreviewBody.replaceChildren(empty);
-  }
-
-  function fileEntryLabel(entry) {
-    const icon = entry.type === "dir" ? "▰" : entry.type === "link" ? "↗" : "▤";
-    return `${icon} ${text(entry.name, entry.path)}`;
+    previewView.render({kind: "message", message: detail || title});
   }
 
   function visibleFileEntries() {
@@ -312,33 +310,6 @@ export function createFilesController({
     setFileControls();
   }
 
-  function renderDirectoryPreview(payload) {
-    const list = document.createElement("div");
-    list.className = "file-preview-directory";
-    const entries = (Array.isArray(payload.entries) ? payload.entries : []).filter(
-      (entry) => elements.fileShowHidden.checked || !entry.hidden,
-    );
-    if (!entries.length) {
-      const empty = document.createElement("div");
-      empty.className = "empty-state";
-      empty.textContent = "Directory is empty.";
-      list.append(empty);
-      return list;
-    }
-    for (const entry of entries.slice(0, 100)) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "file-preview-entry";
-      button.textContent = fileEntryLabel(entry);
-      button.title = entry.path;
-      button.addEventListener("click", () => {
-        if (!controllerState.fileMutationBusy) void navigateFiles(payload.path, entry.path);
-      });
-      list.append(button);
-    }
-    return list;
-  }
-
   function renderFilePreview(payload, entry) {
     clearFileEditor();
     elements.filePreviewTitle.textContent = text(entry.name, entry.path);
@@ -349,7 +320,10 @@ export function createFilesController({
 
     if (payload.kind === "directory") {
       elements.filePreviewMeta.textContent = `${payload.count || 0} entries${payload.is_truncated ? " (truncated)" : ""}`;
-      elements.filePreviewBody.replaceChildren(renderDirectoryPreview(payload));
+      const entries = (Array.isArray(payload.entries) ? payload.entries : [])
+        .filter((item) => elements.fileShowHidden.checked || !item.hidden)
+        .slice(0, 100);
+      previewView.render({kind: "directory", directory: payload.path, entries});
       return;
     }
     if (payload.kind === "image") {
@@ -357,30 +331,25 @@ export function createFilesController({
         showFilePreviewMessage(text(entry.name, entry.path), text(payload.message, "Image preview unavailable."));
         return;
       }
-      const image = document.createElement("img");
-      image.className = "file-preview-image";
-      image.alt = text(entry.name, "File image");
-      image.src = `data:${payload.media_type};base64,${payload.data_base64}`;
-      elements.filePreviewBody.replaceChildren(image);
+      previewView.render({kind: "image", imageAlt: text(entry.name, "File image"),
+        imageSrc: `data:${payload.media_type};base64,${payload.data_base64}`});
       return;
     }
 
-    const pre = document.createElement("pre");
-    pre.className = "file-preview-text";
     if (payload.kind === "binary") {
       const hex = String(payload.preview || "");
-      pre.textContent = (hex.match(/.{1,32}/g) || []).join("\n") || "No preview bytes.";
       elements.filePreviewMeta.textContent = `${formatFileBytes(payload.bytes)} (${payload.preview_bytes || 0} preview bytes, hex)`;
+      previewView.render({kind: "binary", source: (hex.match(/.{1,32}/g) || []).join("\n") || "No preview bytes."});
     } else {
       const source = text(payload.content, "");
       const language = window.WorkgateSyntax
         ? window.WorkgateSyntax.languageForPath(entry.path, payload.media_type)
         : "plain";
-      if (window.WorkgateSyntax && language !== "plain") window.WorkgateSyntax.render(pre, source, language);
-      else pre.textContent = source;
+      previewView.render({kind: "text", source, language,
+        tokens: window.WorkgateSyntax && language !== "plain"
+          ? window.WorkgateSyntax.tokenize(source, language) : null});
       if (payload.preview_truncated) elements.filePreviewMeta.textContent += " (preview truncated)";
     }
-    elements.filePreviewBody.replaceChildren(pre);
   }
 
   async function previewFile(entry) {
