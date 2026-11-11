@@ -14,6 +14,7 @@ import { taskPlan } from "./react-task-plan";
 import { sessionIntegrations } from "./react-session-integrations";
 import { terminalRail } from "./react-terminal-rail";
 import { filesNavigation } from "./react-files-navigation";
+import { filesPreview } from "./react-files-preview";
 import { configuration } from "./react-configuration";
 import { executorManagement } from "./react-executor-management";
 import { createRoot } from "react-dom/client";
@@ -171,6 +172,7 @@ declare global {
     WorkgateReactSessionIntegrations?: typeof sessionIntegrations;
     WorkgateReactTerminalRail?: typeof terminalRail;
     WorkgateReactFilesNavigation?: typeof filesNavigation;
+    WorkgateReactFilesPreview?: typeof filesPreview;
     WorkgateReactConfiguration?: typeof configuration;
     WorkgateReactExecutorManagement?: typeof executorManagement;
   }
@@ -194,5 +196,6 @@ window.WorkgateReactTaskPlan = taskPlan;
 window.WorkgateReactSessionIntegrations = sessionIntegrations;
 window.WorkgateReactTerminalRail = terminalRail;
 window.WorkgateReactFilesNavigation = filesNavigation;
+window.WorkgateReactFilesPreview = filesPreview;
 window.WorkgateReactConfiguration = configuration;
 window.WorkgateReactExecutorManagement = executorManagement;

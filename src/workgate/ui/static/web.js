@@ -49,10 +49,11 @@ void (async () => {
   const mountSessionIntegrations = window.WorkgateReactSessionIntegrations?.mount;
   const mountTerminalRail = window.WorkgateReactTerminalRail?.mount;
   const mountFilesNavigation = window.WorkgateReactFilesNavigation?.mount;
+  const mountFilesPreview = window.WorkgateReactFilesPreview?.mount;
   const mountConfiguration = window.WorkgateReactConfiguration?.mount;
   const mountExecutorManagement = window.WorkgateReactExecutorManagement?.mount;
   if (typeof mountReactFiles !== "function" || typeof reactNavigation?.mount !== "function"
-      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function" || typeof mountOverviewLists !== "function" || typeof mountDashboardHealth !== "function" || typeof mountExecutorInventory !== "function" || typeof mountExecutorDetail !== "function" || typeof mountAuditLists !== "function" || typeof mountAuditDetails !== "function" || typeof mountTaskLists !== "function" || typeof mountTaskDetails !== "function" || typeof mountTaskPlan !== "function" || typeof mountSessionIntegrations !== "function" || typeof mountTerminalRail !== "function" || typeof mountFilesNavigation !== "function" || typeof mountConfiguration !== "function" || typeof mountExecutorManagement !== "function") {
+      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function" || typeof mountOverviewLists !== "function" || typeof mountDashboardHealth !== "function" || typeof mountExecutorInventory !== "function" || typeof mountExecutorDetail !== "function" || typeof mountAuditLists !== "function" || typeof mountAuditDetails !== "function" || typeof mountTaskLists !== "function" || typeof mountTaskDetails !== "function" || typeof mountTaskPlan !== "function" || typeof mountSessionIntegrations !== "function" || typeof mountTerminalRail !== "function" || typeof mountFilesNavigation !== "function" || typeof mountFilesPreview !== "function" || typeof mountConfiguration !== "function" || typeof mountExecutorManagement !== "function") {
     throw new Error("React UI failed to initialize");
   }
   const apiPrefix = String(config.apiPrefix || "/api/ui").replace(/\/$/, "");
@@ -445,6 +446,7 @@ void (async () => {
     request,
     mountReactFiles,
     mountFilesNavigation,
+    mountFilesPreview,
     text,
     formatFileBytes,
     initialExecutorId: deepLink.executorId,
