@@ -1,7 +1,6 @@
 // Directional, cached-only peer evidence rendered as a small SVG/DOM graph.
 // GET reads never initiate a probe. Only a deliberately clicked Test button POSTs.
 const SMALL_LIMIT = 5;
-const SVG_NS = "http://www.w3.org/2000/svg";
 const UNKNOWN = Object.freeze({ status: "unknown" });
 const EVIDENCE_FRESH_MS = 300_000;
 const MAX_RESULTS = 512;
@@ -99,13 +98,11 @@ function nodePositions(rows, mode, focusId) {
   return positions;
 }
 
-export function createExecutorTopology({ request, onAuthenticationRequired = () => {}, onClose = () => {} }) {
+export function createExecutorTopology({ request, mountTopology, onAuthenticationRequired = () => {}, onClose = () => {} }) {
   const panel = document.getElementById("executors-panel");
   const root = document.getElementById("executor-topology");
   const graph = document.getElementById("topology-graph");
   const stage = document.getElementById("topology-stage");
-  const edgeLayer = document.getElementById("topology-edges");
-  const nodeLayer = document.getElementById("topology-nodes");
   const inspector = document.getElementById("topology-inspector");
   const directionRows = document.getElementById("topology-direction-rows");
   const source = document.getElementById("topology-source");
@@ -125,6 +122,10 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
     results: new Map(), pending: new Map(), revisions: new Map(),
     activeTest: "", bulk: null, requestGeneration: 0, renderedStatus: "",
   };
+
+  const topologyView = mountTopology(stage, directionRows, {
+    pickPair, focus, test: (a, b) => void testDirection(a, b),
+  });
 
   function names(id) {
     const row = state.rows.find((item) => item.executor_id === id);
@@ -193,12 +194,6 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
     void fetchVisible();
   }
 
-  function newSvg(name, attrs) {
-    const node = document.createElementNS(SVG_NS, name);
-    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
-    return node;
-  }
-
   function draw() {
     const rows = nodes();
     graph.dataset.layout = state.mode;
@@ -214,74 +209,36 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
       : state.mode === "focus" && !mobile && rings >= 3 ? `${rings * 270 + 100}px`
         : "";
     const positions = nodePositions(rows, state.mode, state.focusId);
-    edgeLayer.replaceChildren();
-    nodeLayer.replaceChildren();
     const currentPairs = pairs();
     state.renderedStatus = currentPairs.flatMap(([a, b]) => [observed(a, b).status, observed(b, a).status]).join("|");
     const width = 1000;
     const height = 660;
-    edgeLayer.setAttribute("viewBox", `0 0 ${width} ${height}`);
-    edgeLayer.setAttribute("preserveAspectRatio", "none");
-
-    if (state.mode !== "grid") {
-      for (const [a, b] of currentPairs) {
-        const start = positions.get(a);
-        const end = positions.get(b);
-        if (!start || !end) continue;
-        const line = newSvg("g", {
-          role: "button", tabindex: "0",
-          "aria-label": `Inspect connection between ${names(a)} and ${names(b)}`,
-          "data-pair": pairKey(a, b),
-          "data-status": edgeOutcome(a, b),
-        });
-        if (state.pair && pairKey(...state.pair) === pairKey(a, b)) line.classList.add("selected");
-        const coords = { x1: start.x * width, y1: start.y * height, x2: end.x * width, y2: end.y * height };
-        const visible = newSvg("line", { ...coords, class: "topology-edge-line" });
-        const hit = newSvg("line", { ...coords, class: "topology-edge-hit" });
-        const title = newSvg("title", {});
-        title.textContent = `${names(a)} ↔ ${names(b)}: ${readablePairStatus(edgeOutcome(a, b))}. Click to inspect.`;
-        line.append(visible, hit, title);
-        line.addEventListener("click", () => pickPair(a, b));
-        line.addEventListener("keydown", (event) => {
-          if (event.key !== "Enter" && event.key !== " ") return;
-          event.preventDefault();
-          pickPair(a, b);
-        });
-        edgeLayer.append(line);
-      }
-    }
-
-    for (const row of rows) {
+    const edges = state.mode === "grid" ? [] : currentPairs.flatMap(([a, b]) => {
+      const start = positions.get(a);
+      const end = positions.get(b);
+      if (!start || !end) return [];
+      const status = edgeOutcome(a, b);
+      return [{
+        key: pairKey(a, b), a, b, status,
+        selected: Boolean(state.pair && pairKey(...state.pair) === pairKey(a, b)),
+        label: `Inspect connection between ${names(a)} and ${names(b)}`,
+        title: `${names(a)} ↔ ${names(b)}: ${readablePairStatus(status)}. Click to inspect.`,
+        x1: start.x * width, y1: start.y * height,
+        x2: end.x * width, y2: end.y * height,
+      }];
+    });
+    const nodeRows = rows.map((row) => {
       const id = row.executor_id;
-      const name = row.name || id;
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "topology-node";
-      button.dataset.executorId = id;
-      button.dataset.online = String(Boolean(row.online) && !row.revoked_at);
-      button.setAttribute("aria-label", `Focus connections for ${name} (${row.online && !row.revoked_at ? "online" : "offline"})`);
-      button.setAttribute("aria-pressed", String(state.focusId === id && state.mode === "focus"));
-      const mark = document.createElement("span");
-      mark.className = "executor-band-mark";
-      mark.textContent = name.slice(0, 1).toUpperCase();
-      const label = document.createElement("span");
-      label.className = "topology-node-name";
-      label.textContent = name;
-      const presence = document.createElement("span");
-      presence.className = "topology-node-presence";
-      presence.textContent = row.revoked_at ? "Revoked" : row.online ? "Online" : "Offline";
-      button.append(mark, label, presence);
-      if (state.mode !== "grid") {
-        const at = positions.get(id);
-        if (at) {
-          button.style.left = (at.x * 100).toFixed(3) + "%";
-          button.style.top = (at.y * 100).toFixed(3) + "%";
-        }
-      }
-      button.addEventListener("click", () => focus(id));
-      nodeLayer.append(button);
-    }
-
+      const at = state.mode === "grid" ? null : positions.get(id);
+      return {
+        id, name: row.name || id, online: Boolean(row.online) && !row.revoked_at,
+        presence: row.revoked_at ? "Revoked" : row.online ? "Online" : "Offline",
+        focused: state.focusId === id && state.mode === "focus",
+        left: at ? (at.x * 100).toFixed(3) + "%" : undefined,
+        top: at ? (at.y * 100).toFixed(3) + "%" : undefined,
+      };
+    });
+    topologyView.renderGraph({edges, nodes: nodeRows});
     if (state.centerOnDraw) {
       state.centerOnDraw = false;
       if (pannable) {
@@ -303,53 +260,20 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
 
   function directionEvidence(from, to) {
     const row = observed(from, to);
-    const wrapper = document.createElement("div");
-    wrapper.className = "topology-direction";
-    wrapper.dataset.status = row.status;
-    const main = document.createElement("div");
-    main.className = "topology-direction-main";
-    const label = document.createElement("strong");
-    label.textContent = `${names(from)} → ${names(to)}`;
-    const status = document.createElement("span");
-    status.className = "topology-direction-status";
-    status.textContent = STATUS_TEXT[row.status] || STATUS_TEXT.unknown;
-    const heading = document.createElement("div");
-    heading.className = "topology-direction-title";
-    heading.append(label, status);
-    main.append(heading);
-    const details = [timestamp(row.tested_at),
-      row.reason && row.reason !== "measurement_expired" ? REASONS[row.reason] || String(row.reason).replaceAll("_", " ") : "",
-      row.fallback ? "Relay not tested" : ""].filter(Boolean);
-    if (details.length) {
-      const meta = document.createElement("div");
-      meta.className = "topology-direction-meta";
-      for (const item of details) {
-        const detail = document.createElement("span");
-        detail.textContent = item;
-        meta.append(detail);
-      }
-      main.append(meta);
-    }
-    const test = document.createElement("button");
-    test.type = "button";
-    test.textContent = "Test";
-    // Keep the keyboard focusable while a test is running; the handler guards repeats.
-    test.setAttribute("aria-disabled", String(Boolean(state.activeTest)));
-    test.dataset.source = from;
-    test.dataset.destination = to;
-    test.setAttribute("aria-label", `Test connection from ${names(from)} to ${names(to)}`);
-    test.addEventListener("click", () => void testDirection(from, to));
-    wrapper.append(main, test);
-    return wrapper;
+    return {
+      from, to, label: `${names(from)} → ${names(to)}`,
+      testLabel: `Test connection from ${names(from)} to ${names(to)}`,
+      status: row.status, statusLabel: STATUS_TEXT[row.status] || STATUS_TEXT.unknown,
+      details: [timestamp(row.tested_at),
+        row.reason && row.reason !== "measurement_expired" ? REASONS[row.reason] || String(row.reason).replaceAll("_", " ") : "",
+        row.fallback ? "Relay not tested" : ""].filter(Boolean),
+    };
   }
 
   function renderInspector() {
-    const focused = directionRows.contains(document.activeElement) ? document.activeElement : null;
-    const focusedDirection = focused?.dataset?.source && focused?.dataset?.destination
-      ? [focused.dataset.source, focused.dataset.destination] : null;
     inspector.hidden = !state.pair || !state.pair.every((id) => state.rows.some((row) => row.executor_id === id));
     if (inspector.hidden) {
-      directionRows.replaceChildren();
+      topologyView.renderDirections([], Boolean(state.activeTest));
       return;
     }
     const [a, b] = state.pair;
@@ -358,33 +282,16 @@ export function createExecutorTopology({ request, onAuthenticationRequired = () 
     const status = edgeOutcome(a, b);
     badge.dataset.status = status;
     badge.textContent = readablePairStatus(status);
-    directionRows.replaceChildren(directionEvidence(a, b), directionEvidence(b, a));
-    if (focusedDirection) {
-      const button = [...directionRows.querySelectorAll("button")].find((item) =>
-        item.dataset.source === focusedDirection[0] && item.dataset.destination === focusedDirection[1]);
-      button?.focus({ preventScroll: true });
-    }
+    topologyView.renderDirections([directionEvidence(a, b), directionEvidence(b, a)], Boolean(state.activeTest));
   }
 
   function render() {
     if (!state.open) return;
-    const focused = document.activeElement;
-    const focusedEdge = focused?.getAttribute?.("data-pair");
-    const focusedNode = focused?.getAttribute?.("data-executor-id");
     draw();
     renderInspector();
     choosePair.disabled = !source.value || !destination.value || source.value === destination.value;
     testAll.textContent = state.bulk ? state.bulk.cancelled ? "Stopping…" : "Stop" : "Test all links";
     testAll.disabled = state.bulk ? state.bulk.cancelled : Boolean(state.activeTest) || pairs().length === 0;
-    if (focusedEdge) {
-      const edge = [...edgeLayer.querySelectorAll("g[data-pair]")]
-        .find((item) => item.dataset.pair === focusedEdge);
-      edge?.focus({ preventScroll: true });
-    } else if (focusedNode) {
-      const node = [...nodeLayer.querySelectorAll(".topology-node")]
-        .find((item) => item.dataset.executorId === focusedNode);
-      node?.focus({ preventScroll: true });
-    }
   }
 
   function stopBulk() {

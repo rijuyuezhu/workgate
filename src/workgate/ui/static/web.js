@@ -52,8 +52,9 @@ void (async () => {
   const mountFilesPreview = window.WorkgateReactFilesPreview?.mount;
   const mountConfiguration = window.WorkgateReactConfiguration?.mount;
   const mountExecutorManagement = window.WorkgateReactExecutorManagement?.mount;
+  const mountTopology = window.WorkgateReactExecutorTopology?.mount;
   if (typeof mountReactFiles !== "function" || typeof reactNavigation?.mount !== "function"
-      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function" || typeof mountOverviewLists !== "function" || typeof mountDashboardHealth !== "function" || typeof mountExecutorInventory !== "function" || typeof mountExecutorDetail !== "function" || typeof mountAuditLists !== "function" || typeof mountAuditDetails !== "function" || typeof mountTaskLists !== "function" || typeof mountTaskDetails !== "function" || typeof mountTaskPlan !== "function" || typeof mountSessionIntegrations !== "function" || typeof mountTerminalRail !== "function" || typeof mountFilesNavigation !== "function" || typeof mountFilesPreview !== "function" || typeof mountConfiguration !== "function" || typeof mountExecutorManagement !== "function") {
+      || typeof mountDashboardResources !== "function" || typeof mountDashboardSystem !== "function" || typeof mountOverviewLists !== "function" || typeof mountDashboardHealth !== "function" || typeof mountExecutorInventory !== "function" || typeof mountExecutorDetail !== "function" || typeof mountAuditLists !== "function" || typeof mountAuditDetails !== "function" || typeof mountTaskLists !== "function" || typeof mountTaskDetails !== "function" || typeof mountTaskPlan !== "function" || typeof mountSessionIntegrations !== "function" || typeof mountTerminalRail !== "function" || typeof mountFilesNavigation !== "function" || typeof mountFilesPreview !== "function" || typeof mountConfiguration !== "function" || typeof mountExecutorManagement !== "function" || typeof mountTopology !== "function") {
     throw new Error("React UI failed to initialize");
   }
   const apiPrefix = String(config.apiPrefix || "/api/ui").replace(/\/$/, "");
@@ -536,6 +537,7 @@ void (async () => {
     mountExecutorDetail,
     mountConfiguration,
     mountExecutorManagement,
+    mountTopology,
     elements,
     request,
     mountDashboardResources,

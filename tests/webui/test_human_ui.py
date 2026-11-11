@@ -278,6 +278,7 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert "WorkgateReactFilesNavigation" in react_bundle.text
     assert "WorkgateReactFilesPreview" in react_bundle.text
     assert "WorkgateReactExecutorManagement" in react_bundle.text
+    assert "WorkgateReactExecutorTopology" in react_bundle.text
     assert "mountAuditDetails" in script.text
     assert "auditDetailViews" in script.text
     assert "mountAuditLists" in script.text
@@ -285,6 +286,7 @@ def test_human_ui_shell_is_public_but_api_requires_oauth(monkeypatch, tmp_path):
     assert "mountAuditLists" in client.get("/ui/assets/tasks.js").text
     assert "mountFilesPreview" in script.text
     assert "mountExecutorManagement" in script.text
+    assert "mountTopology" in script.text
     assert "mountTaskLists" in script.text
     assert "mountTaskLists" in client.get("/ui/assets/tasks.js").text
     assert "mountTaskDetails" in script.text

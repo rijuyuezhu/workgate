@@ -19,6 +19,7 @@ export function createExecutorsController({
   mountExecutorDetail,
   mountConfiguration,
   mountExecutorManagement,
+  mountTopology,
   onNavigate = () => {},
 }) {
   let diagnosticResources = null;
@@ -69,6 +70,7 @@ export function createExecutorsController({
 
   const topology = createExecutorTopology({
     request,
+    mountTopology,
     onAuthenticationRequired: () => void reloadApp(),
     onClose: () => onNavigate("list", {replace: true}),
   });
