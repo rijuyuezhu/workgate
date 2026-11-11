@@ -18,6 +18,7 @@ export function createExecutorsController({
   mountExecutorInventory,
   mountExecutorDetail,
   mountConfiguration,
+  mountExecutorManagement,
   onNavigate = () => {},
 }) {
   let diagnosticResources = null;
@@ -75,6 +76,10 @@ export function createExecutorsController({
   const executorConfigView = createConfigurationView({
     root: document.getElementById("executor-config-body"), request, mountConfiguration,
   });
+
+  const managementView = mountExecutorManagement(
+    elements.executorMcpBody, elements.executorSkillsBody,
+  );
 
   const skillFileEditor = createSkillFileEditor({
     request,
@@ -248,115 +253,6 @@ export function createExecutorsController({
     }
   }
 
-  function rowIcon(kind) {
-    if (!["http", "stdio", "skill", "project", "info"].includes(kind)) return null;
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.classList.add('executor-row-icon');
-    svg.setAttribute('viewBox', '0 0 24 24');
-    svg.setAttribute('fill', 'none');
-    svg.setAttribute('stroke', 'currentColor');
-    svg.setAttribute('stroke-width', '1.8');
-    svg.setAttribute('stroke-linecap', 'round');
-    svg.setAttribute('stroke-linejoin', 'round');
-    svg.setAttribute('aria-hidden', 'true');
-    const shapes = {
-      http: ['<circle cx="12" cy="12" r="9"/>', '<path d="M3 12h18M12 3c-5 5-5 13 0 18M12 3c5 5 5 13 0 18"/>'],
-      stdio: ['<path d="M5 7l5 5-5 5M12 17h7"/>'],
-      skill: ['<path d="M7 3h7l4 4v14H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM14 3v5h4M9 13h6M9 17h6"/>'],
-      project: ['<path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3z"/>'],
-      info: ['<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>'],
-    };
-    // All icon paths are static, independent of configuration content.
-    svg.innerHTML = shapes[kind].join('');
-    return svg;
-  }
-
-  function addGroup(container, title, rows, key, revision = 0) {
-    const signature = JSON.stringify([title, revision, rows.map((row) => [
-      row.title, row.detail, row.status, row.authState, row.authMode, row.notice,
-      row.icon, row.revision, row.warning, row.empty, Boolean(row.manage),
-    ])]);
-    const previous = Array.from(container.children).find((node) => node.dataset.sourceKey === key);
-    if (previous?.dataset.signature === signature) return;
-    const group = document.createElement("section");
-    group.dataset.sourceKey = key;
-    group.dataset.signature = signature;
-    group.className = "executor-manage-group";
-    const heading = document.createElement("h4");
-    heading.textContent = title;
-    group.append(heading);
-    for (const row of rows) {
-      if (row.notice) {
-        const message = document.createElement("p");
-        notice(message, row.title, row.notice);
-        group.append(message);
-        continue;
-      }
-      const item = document.createElement("div");
-      item.className = "executor-manage-row";
-      if (row.empty) item.classList.add("executor-manage-empty");
-      if (row.status === "Disabled") item.dataset.state = "disabled";
-      if (row.status === "Enabled") item.dataset.state = "enabled";
-      if (row.status === "Overridden") item.dataset.state = "overridden";
-      if (row.authState) item.dataset.auth = row.authState;
-      const icon = rowIcon(row.icon);
-      if (icon) {
-        const mark = document.createElement('span');
-        mark.className = 'executor-row-mark';
-        mark.dataset.kind = row.icon;
-        mark.append(icon);
-        item.append(mark);
-      }
-      if (row.status === "Overridden" || row.warning) {
-        const alert = document.createElement("span");
-        alert.className = "executor-row-warning";
-        alert.textContent = "!";
-        alert.setAttribute("aria-label", "Warning");
-        item.append(alert);
-      }
-      const text = document.createElement("div");
-      const name = document.createElement("strong");
-      name.textContent = row.title;
-      const detail = document.createElement("span");
-      detail.textContent = row.detail || "";
-      text.append(name);
-      if (row.detail) text.append(detail);
-      if (row.authState) {
-        const auth = document.createElement("span");
-        auth.className = "executor-row-auth";
-        auth.textContent = row.authMode === "secret"
-          ? (row.authState === "authorized" ? "✓ Secret configured" : "Secret required")
-          : (row.authState === "authorized" ? "✓ Authorized" : "Authorization required");
-        text.append(auth);
-      }
-      item.append(text);
-      const tail = document.createElement("div");
-      tail.className = "executor-manage-tail";
-      if (row.status) {
-        const badge = document.createElement("span");
-        badge.className = "executor-manage-pill";
-        if (row.status === 'Enabled') badge.dataset.state = 'enabled';
-        if (row.status === 'Disabled') badge.dataset.state = 'disabled';
-        if (row.status === 'Overridden') badge.dataset.state = 'overridden';
-        badge.dataset.enabled = String(row.status === "Enabled" || row.status === "Effective");
-        badge.textContent = row.status;
-        tail.append(badge);
-      }
-      if (row.manage) {
-        const edit = document.createElement("button");
-        edit.type = "button";
-        edit.className = "executor-manage-edit";
-        edit.textContent = "Manage";
-        edit.addEventListener("click", row.manage);
-        tail.append(edit);
-      }
-      item.append(tail);
-      group.append(item);
-    }
-    if (previous) previous.replaceWith(group);
-    else container.append(group);
-  }
-
   function renderDiagnosticCards(container, system) {
     if (!diagnosticResources) {
       const host = document.createElement("div");
@@ -431,17 +327,17 @@ export function createExecutorsController({
   }
 
   function renderManagement() {
-    const mcp = elements.executorMcpBody;
-    const skills = elements.executorSkillsBody;
+    const mcp = [];
+    const skills = [];
     const stateRows = (message) => [{ title: message, detail: "" }];
     const snap = state.controlAvailable ? state.management : null;
     const unavailable = state.controlAvailable ? null : {error: "Unavailable"};
-    const renderGroup = (container, title, result, owner, kind, shadowed = new Set()) => {
+    const renderGroup = (groups, title, result, owner, kind, shadowed = new Set()) => {
       const key = `${owner}-${kind}`;
       if (!result || result.error) {
-        addGroup(container, title, result?.error
+        groups.push({key, title, rows: result?.error
           ? [{title: result.error, notice: result.error === "Offline" ? "warning" : "error"}]
-          : stateRows("Loading…"), key);
+          : stateRows("Loading…")});
         return;
       }
       const label = result._stale
@@ -459,7 +355,7 @@ export function createExecutorsController({
         manage: canManageSource(result, owner)
           ? () => void openEditor({owner, kind, item}) : null,
       }));
-      addGroup(container, label, rows.length ? rows : stateRows("None"), key, result._updated);
+      groups.push({key, title: label, rows: rows.length ? rows : stateRows("None")});
     };
     if (!isControlSelected()) renderGroup(mcp, "Executor", unavailable || snap?.executorMcp, "executor", "mcp");
     const shadowedMcp = new Set((snap?.executorMcp?._stale ? [] : snap?.executorMcp?.servers || [])
@@ -476,9 +372,10 @@ export function createExecutorsController({
     ] : [];
     const globalStatus = !selectedExecutor()?.online ? "Offline"
       : !globalsAvailable ? "Unavailable" : "None";
-    if (!isControlSelected()) addGroup(skills, "User Global", readOnly.length ? readOnly
-      : globalStatus === "None" ? stateRows(globalStatus)
-      : [{title: globalStatus, notice: "warning"}], "user-global-skill");
+    if (!isControlSelected()) skills.push({key: "user-global-skill", title: "User Global",
+      rows: readOnly.length ? readOnly
+        : globalStatus === "None" ? stateRows(globalStatus)
+        : [{title: globalStatus, notice: "warning"}]});
     // Control is the lowest-priority source; a same-name Executor or global
     // Skill masks it. Project-specific overrides are resolved per Session.
     const shadowed = new Set([
@@ -486,21 +383,8 @@ export function createExecutorsController({
       ...(globalsAvailable ? (globalSkills?.selected || []).filter((skill) => skill.source === "global").map((skill) => skill.name) : []),
     ]);
     renderGroup(skills, "Control", unavailable || snap?.controlSkills, "control", "skill", shadowed);
-    // Preserve unrelated groups and their focused controls as each source resolves.
-    for (const [container, keys] of [
-      [mcp, isControlSelected() ? ["control-mcp"] : ["executor-mcp", "control-mcp"]],
-      [skills, isControlSelected() ? ["control-skill"] : ["executor-skill", "user-global-skill", "control-skill"]],
-    ]) {
-      const sections = new Map(Array.from(container.children).map((node) => [node.dataset.sourceKey, node]));
-      for (const [index, key] of keys.entries()) {
-        const node = sections.get(key);
-        if (node && container.children[index] !== node)
-          container.insertBefore(node, container.children[index] || null);
-      }
-      for (const node of Array.from(container.children)) {
-        if (!keys.includes(node.dataset.sourceKey)) node.remove();
-      }
-    }
+    // Stable React keys preserve unaffected source groups and focused Manage buttons.
+    managementView.render({scope: state.selectedId, mcp, skills});
 
     elements.executorSkillsAdd.disabled =
       !(canManageSource(snap?.skills, "executor") || canManageSource(snap?.controlSkills, "control"));

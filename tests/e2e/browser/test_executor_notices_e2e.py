@@ -130,6 +130,8 @@ def test_executor_notice_states_and_mobile(browser_harness: BrowserHarness):
         "stored"
     )
     assert_notice(page, "#executor-integration-status", "success", "✓")
+    # Discover tools is inside the Advanced disclosure.
+    page.locator("#executor-mcp-advanced-settings > summary").click()
     page.locator("#executor-integration-test").click()
     expect(page.locator("#executor-integration-test-result")).to_contain_text(
         "MCP unavailable"
@@ -310,6 +312,7 @@ def test_editor_operation_lock_and_partial_move_guidance(
           : original(...args);
       };
     }""")
+    page.locator("#executor-mcp-advanced-settings > summary").click()
     page.locator("#executor-integration-test").click()
     for selector in [
         "#executor-integration-save",

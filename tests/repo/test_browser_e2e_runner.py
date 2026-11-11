@@ -57,6 +57,7 @@ def test_browser_e2e_runner_forwards_contract_and_exit_status(
         "tests/e2e/browser/test_react_dashboard_health_e2e.py",
         "tests/e2e/browser/test_react_executor_inventory_e2e.py",
         "tests/e2e/browser/test_react_executor_detail_e2e.py",
+        "tests/e2e/browser/test_react_executor_management_e2e.py",
         "tests/e2e/browser/test_react_audit_lists_e2e.py",
         "tests/e2e/browser/test_react_audit_details_e2e.py",
         "tests/e2e/browser/test_react_task_lists_e2e.py",
