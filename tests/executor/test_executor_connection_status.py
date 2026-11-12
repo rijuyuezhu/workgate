@@ -17,6 +17,7 @@ from workgate.executor.service import (
     ExecutorServiceStatus,
 )
 from workgate.persistence import FileStateStore
+from workgate.platform.host import HostOS
 
 
 def _store(tmp_path: Path) -> ExecutorConnectionStatusStore:
@@ -78,6 +79,71 @@ def test_connection_status_does_not_trust_missing_corrupt_or_future_snapshots(
         encoding="utf-8",
     )
     assert store.describe() == "stale (no recent runtime report)"
+
+
+def test_windows_status_retries_transient_file_sharing_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path)
+    store.record("reconnecting", "TimeoutError")
+    monkeypatch.setattr(connection_status, "host_os", lambda: HostOS.WINDOWS)
+    delays: list[float] = []
+    monkeypatch.setattr(connection_status.time, "sleep", delays.append)
+
+    read_json = store.state_store.read_json
+    write_json = store.state_store.write_json
+    calls = {"read": 0, "write": 0}
+
+    def flaky_read(path: Path, *, max_bytes: int | None = None):
+        calls["read"] += 1
+        if calls["read"] == 1:
+            raise PermissionError("simulated transient Windows read lock")
+        return read_json(path, max_bytes=max_bytes)
+
+    def flaky_write(path: Path, value: object) -> None:
+        calls["write"] += 1
+        if calls["write"] == 1:
+            raise PermissionError("simulated transient Windows replace lock")
+        write_json(path, value)
+
+    monkeypatch.setattr(store.state_store, "read_json", flaky_read)
+    monkeypatch.setattr(store.state_store, "write_json", flaky_write)
+    store.record("connected")
+    assert calls == {"read": 3, "write": 2}
+    assert delays == [0.02, 0.02]
+    assert store.describe().startswith("connected; last contact ")
+
+
+@pytest.mark.parametrize(
+    ("system", "failures"),
+    [
+        (HostOS.LINUX, 1),
+        (HostOS.WINDOWS, 4),
+    ],
+)
+def test_connection_status_rejects_permanent_write_denial(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    system: HostOS,
+    failures: int,
+) -> None:
+    store = _store(tmp_path)
+    monkeypatch.setattr(connection_status, "host_os", lambda: system)
+    delays: list[float] = []
+    monkeypatch.setattr(connection_status.time, "sleep", delays.append)
+    attempts = 0
+
+    def deny_write(path: Path, value: object) -> None:
+        nonlocal attempts
+        attempts += 1
+        raise PermissionError("simulated permanent access denial")
+
+    monkeypatch.setattr(store.state_store, "write_json", deny_write)
+    with pytest.raises(PermissionError, match="permanent"):
+        store.record("connected")
+    assert attempts == failures
+    assert delays == [0.02] * (failures - 1)
+    assert not store.path.exists()
 
 
 def test_service_status_reports_connection_separately_from_running(

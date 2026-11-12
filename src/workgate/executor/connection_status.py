@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from ..persistence import StateStore
+from ..platform.host import HostOS, host_os
 
 type ConnectionPhase = Literal["connected", "reconnecting", "action-required"]
 _STATUS_MAX_BYTES = 1024
@@ -26,33 +27,45 @@ class ExecutorConnectionStatusStore:
     def record(
         self, phase: ConnectionPhase, error_class: str | None = None
     ) -> None:
-        now = time.time()
-        # Only the paired Executor writes this snapshot. Atomic replacement
-        # keeps reads consistent; no extra cross-process lock is needed.
-        try:
-            old = self.state_store.read_json(
-                self.path, max_bytes=_STATUS_MAX_BYTES
-            )
-        except ValueError:
-            # A damaged diagnostic must not prevent future status reports.
-            old = None
-        last_success = (
-            old.get("last_success_at") if isinstance(old, dict) else None
-        )
-        self.state_store.write_json(
-            self.path,
-            {
-                "phase": phase,
-                "updated_at": now,
-                "last_success_at": (
-                    now if phase == "connected" else last_success
-                ),
-                # Exception *class* only; never persist messages or bearers.
-                "error_class": None
-                if error_class is None
-                else error_class[:80],
-            },
-        )
+        # Windows readers can transiently block atomic replacement of the
+        # status file. Retry this small advisory snapshot before abandoning it.
+        for attempt in range(4):
+            try:
+                now = time.time()
+                # Only the paired Executor writes this snapshot. Atomic replacement
+                # keeps reads consistent; no extra cross-process lock is needed.
+                try:
+                    old = self.state_store.read_json(
+                        self.path, max_bytes=_STATUS_MAX_BYTES
+                    )
+                except ValueError:
+                    # A damaged diagnostic must not prevent future status reports.
+                    old = None
+                last_success = (
+                    old.get("last_success_at")
+                    if isinstance(old, dict)
+                    else None
+                )
+                self.state_store.write_json(
+                    self.path,
+                    {
+                        "phase": phase,
+                        "updated_at": now,
+                        "last_success_at": (
+                            now if phase == "connected" else last_success
+                        ),
+                        # Exception *class* only; never persist messages or bearers.
+                        "error_class": None
+                        if error_class is None
+                        else error_class[:80],
+                    },
+                )
+
+                return
+            except PermissionError:
+                if host_os() is not HostOS.WINDOWS or attempt == 3:
+                    raise
+                time.sleep(0.02)
 
     def describe(self) -> str:
         try:
