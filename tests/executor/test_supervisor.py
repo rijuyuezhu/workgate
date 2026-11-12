@@ -23,6 +23,16 @@ import json,sys
 from workgate.supervisor import ChildCommand,supervise
 import os, workgate.supervisor as supervisor
 if os.environ.get('SUPERVISOR_SHORT_APPLY'): supervisor._APPLY_TIMEOUT_SECONDS = 1
+if os.environ.get('SUPERVISOR_HOLD_CHILD_SPAWN'):
+    import subprocess,time
+    from pathlib import Path
+    class HeldPopen(subprocess.Popen):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            marker = Path(os.environ['SUPERVISOR_HOLD_CHILD_SPAWN'])
+            marker.write_text(str(self.pid))
+            while not marker.with_suffix('.release').exists(): time.sleep(0.01)
+    subprocess.Popen = HeldPopen
 roles = json.loads(sys.argv[1])
 raise SystemExit(supervise([ChildCommand(role,tuple(argv)) for role,argv in roles]))
 """
@@ -74,6 +84,7 @@ def _launch(
     short_apply: bool = False,
     split_configs: bool = False,
     delayed_ready_role: str = "",
+    hold_child_spawn: bool = False,
 ):
     config = tmp_path / "config.yaml"
     config.write_text("first")
@@ -106,6 +117,8 @@ def _launch(
         env["SUPERVISOR_SHORT_APPLY"] = "1"
     if delayed_ready_role:
         env["SUPERVISOR_DELAY_READY_ROLE"] = delayed_ready_role
+    if hold_child_spawn:
+        env["SUPERVISOR_HOLD_CHILD_SPAWN"] = str(tmp_path / "spawned.pid")
     env["PYTHONPATH"] = (
         str(ROOT / "src") + os.pathsep + env.get("PYTHONPATH", "")
     )
@@ -254,6 +267,35 @@ def test_parent_sigint_cleans_up_child_and_returns_130(tmp_path):
     stdout, stderr = process.communicate(timeout=12)
     assert process.returncode == 130, (stdout, stderr)
     _pid_gone(int(rows[0][1]))
+
+
+@pytest.mark.parametrize("stop_signal", [signal.SIGINT, signal.SIGTERM])
+def test_stop_during_child_spawn_registration_reaps_child(
+    tmp_path, stop_signal
+):
+    process, _record, _ = _launch(tmp_path, ("control",), hold_child_spawn=True)
+    marker = tmp_path / "spawned.pid"
+    child_pid: int | None = None
+    try:
+        deadline = time.monotonic() + 8
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert marker.exists(), "Child did not launch"
+        child_pid = int(marker.read_text())
+        process.send_signal(stop_signal)
+        time.sleep(0.05)
+        marker.with_suffix(".release").touch()
+        stdout, stderr = process.communicate(timeout=8)
+        assert process.returncode == 128 + stop_signal, (stdout, stderr)
+        _pid_gone(child_pid)
+    finally:
+        marker.with_suffix(".release").touch()
+        if process.poll() is None:
+            process.kill()
+        if child_pid is not None:
+            with suppress(ProcessLookupError):
+                os.kill(child_pid, signal.SIGKILL)
+        process.communicate(timeout=5)
 
 
 def test_parent_kills_unresponsive_child_after_bounded_grace(tmp_path):
