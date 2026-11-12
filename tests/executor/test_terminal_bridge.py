@@ -323,9 +323,11 @@ async def test_real_terminal_bridge_streams_raw_bytes_and_preserves_tmux_session
         check=True,
     )
 
-    async def read_until(marker: bytes, attachment_id: str) -> bytes:
+    async def read_until(
+        marker: bytes, attachment_id: str, initial: bytes = b""
+    ) -> bytes:
         deadline = time.monotonic() + 10
-        output = bytearray()
+        output = bytearray(initial)
         while time.monotonic() < deadline and marker not in output:
             chunk = await read_terminal_bridge_execute(
                 attachment_id, 65_536, 100
@@ -335,6 +337,22 @@ async def test_real_terminal_bridge_streams_raw_bytes_and_preserves_tmux_session
                 break
         assert marker in output, bytes(output[-4096:])
         return bytes(output)
+
+    async def initial_attach_output(attachment_id: str) -> bytes:
+        # As in a real terminal, read tmux's first output before answering its
+        # terminal queries. Sending replies during PTY attach startup can echo
+        # them as shell input instead of delivering them to tmux.
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            chunk = await read_terminal_bridge_execute(
+                attachment_id, 65_536, 100
+            )
+            received = base64.b64decode(chunk["data_b64"])
+            if received:
+                return received
+            if chunk["eof"]:
+                break
+        raise AssertionError("tmux attach did not produce terminal output")
 
     bridge_id = ""
     second_id = ""
@@ -355,11 +373,12 @@ async def test_real_terminal_bridge_streams_raw_bytes_and_preserves_tmux_session
             b"\x1b[4;532;738t"
             b"\x15\r"
         )
+        first_output = await initial_attach_output(bridge_id)
         await write_terminal_bridge_execute(
             bridge_id,
             base64.b64encode(terminal_responses).decode("ascii"),
         )
-        await read_until(ready_marker, bridge_id)
+        await read_until(ready_marker, bridge_id, first_output)
 
         command = b"printf '\\033[31mBRIDGE_RAW_OK\\033[0m\\n'\r"
         await write_terminal_bridge_execute(
@@ -389,11 +408,12 @@ async def test_real_terminal_bridge_streams_raw_bytes_and_preserves_tmux_session
         await resize_terminal_bridge_execute(bridge_id, 120, 35)
         await close_terminal_bridge_execute(bridge_id)
         bridge_id = ""
+        second_output = await initial_attach_output(second_id)
         await write_terminal_bridge_execute(
             second_id,
             base64.b64encode(terminal_responses).decode("ascii"),
         )
-        await read_until(ready_marker, second_id)
+        await read_until(ready_marker, second_id, second_output)
         await write_terminal_bridge_execute(
             second_id,
             base64.b64encode(b"printf 'MULTI-%s\\n' CLIENT_OK\r").decode(
