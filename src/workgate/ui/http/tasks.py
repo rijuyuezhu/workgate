@@ -40,7 +40,15 @@ def _runtime(request: Request) -> Any:
 # Avoid projecting any non-visible Session's activity during list refresh.
 _PAGE_CAP = 100
 _STATUSES = frozenset(
-    {"active", "blocked", "completed", "cancelled", "all", "unattached"}
+    {
+        "active",
+        "blocked",
+        "completed",
+        "cancelled",
+        "ready",
+        "all",
+        "unattached",
+    }
 )
 
 
@@ -165,7 +173,25 @@ async def api_tasks(request: Request) -> Response:
         summaries = await runtime.task_service.list_task_summaries()
         all_count = len(summaries)
         total_active = sum(task["status"] == "active" for task in summaries)
-        if status != "all":
+        if status == "ready":
+            # An actionable inbox, not another persisted Task status.
+            session_counts: dict[str, int] = {}
+            live_tasks: set[str] = set()
+            for record in records:
+                task_id = str(record.task_id or "")
+                if not task_id:
+                    continue
+                session_counts[task_id] = session_counts.get(task_id, 0) + 1
+                if record.status != "ended":
+                    live_tasks.add(task_id)
+            summaries = [
+                task
+                for task in summaries
+                if task["status"] in {"active", "blocked"}
+                and session_counts.get(task["task_id"], 0) > 0
+                and task["task_id"] not in live_tasks
+            ]
+        elif status != "all":
             summaries = [task for task in summaries if task["status"] == status]
         total = len(summaries)
         page, next_cursor = _page(
@@ -275,13 +301,26 @@ async def api_task_action(request: Request) -> Response:
         # Cookie-session CSRF is enforced by the shared WebUI middleware.
         _require_scopes(write=True)
         payload = await request.json()
-        if not isinstance(payload, dict) or set(payload) != {"task_id"}:
-            raise ValueError("Task action requires only task_id")
+        allow_guard = action == "finish" and set(payload) == {
+            "task_id",
+            "require_no_live_sessions",
+        }
+        if not isinstance(payload, dict) or (
+            set(payload) != {"task_id"} and not allow_guard
+        ):
+            raise ValueError(
+                "Task action requires task_id and optional finish guard"
+            )
+        if allow_guard and payload["require_no_live_sessions"] is not True:
+            raise ValueError("require_no_live_sessions must be true")
         try:
             task_id = str(_TASK_ID.validate_python(payload["task_id"]))
         except ValidationError as exc:
             raise ValueError("task_id must be a valid task_ id") from exc
-        result = await getattr(_runtime(request).task_service, method)(task_id)
+        kwargs = {"require_no_live_sessions": True} if allow_guard else {}
+        result = await getattr(_runtime(request).task_service, method)(
+            task_id, **kwargs
+        )
         return _json_ok(
             {
                 "task_id": task_id,
