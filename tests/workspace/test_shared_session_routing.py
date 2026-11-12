@@ -33,7 +33,8 @@ async def _wait_executor_online(control, executor_id: str) -> None:
         while not await control.executor_transport.is_online(executor_id):
             await asyncio.sleep(0.01)
 
-    await asyncio.wait_for(online(), timeout=1.0)
+    # Coverage-instrumented CI can delay the initial async hello handshake.
+    await asyncio.wait_for(online(), timeout=5.0)
 
 
 @pytest.mark.asyncio
