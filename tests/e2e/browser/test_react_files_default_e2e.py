@@ -1,6 +1,7 @@
 """Default React/SVAR Files view over real authenticated Control/Executor."""
 
 import os
+import re
 import time
 
 import pytest
@@ -38,6 +39,25 @@ def test_react_files_default_reuses_authenticated_files_api(
     prototype = page.locator(".wg-files-list")
     expect(prototype).to_be_visible(timeout=10000)
     expect(prototype).to_contain_text("notes.txt", timeout=10000)
+    # Pinned SVAR Filemanager renders icon-only mode buttons. Verify actual
+    # accessible names and keyboard operation, not pixel/DOM snapshots.
+    modes = page.locator("#file-list .wx-modes")
+    for name in ("List view", "Grid view", "Column view"):
+        control = modes.get_by_role("button", name=name, exact=True)
+        expect(control).to_be_visible()
+        expect(control).to_have_attribute("title", name)
+    modes.get_by_role("button", name="Grid view").focus()
+    page.keyboard.press("Enter")
+    expect(modes.get_by_role("button", name="Grid view")).to_have_class(
+        re.compile(r"\bwx-selected\b")
+    )
+    expect(modes.get_by_role("button", name="Grid view")).to_have_attribute(
+        "title", "Grid view"
+    )
+    modes.get_by_role("button", name="List view").click()
+    expect(modes.get_by_role("button", name="List view")).to_have_class(
+        re.compile(r"\bwx-selected\b")
+    )
     # Selecting uses WorkGate's existing preview and authenticated request path.
     preview_urls = []
 

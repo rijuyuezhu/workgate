@@ -82,6 +82,28 @@ function FilesView({ model, events }: { model: FilesModel; events: FilesEvents }
     () => window.matchMedia("(max-width: 780px)").matches,
   );
   const mousePressSelected = useRef(false);
+  const filesHost = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // SVAR 2.6 hardcodes icon-only mode controls with no accessible labels
+    // or override prop. Keep the fix scoped to this Filemanager instance.
+    const host = filesHost.current;
+    if (!host) return;
+    const names = ["List view", "Grid view", "Column view"];
+    const labelModes = () => {
+      const buttons = host.querySelectorAll<HTMLButtonElement>(
+        ".wx-modes .wx-segmented button",
+      );
+      if (buttons.length !== names.length) return;
+      buttons.forEach((button, i) => {
+        button.setAttribute("aria-label", names[i]);
+        button.setAttribute("title", names[i]);
+      });
+    };
+    labelModes();
+    const observer = new MutationObserver(labelModes);
+    observer.observe(host, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => {
     const media = window.matchMedia("(max-width: 780px)");
     const update = () => setMobile(media.matches);
@@ -94,7 +116,7 @@ function FilesView({ model, events }: { model: FilesModel; events: FilesEvents }
     entry,
   ]));
 
-  return <div className="wg-files-list" aria-label="Files"
+  return <div ref={filesHost} className="wg-files-list" aria-label="Files"
     onPointerDownCapture={(event) => {
       // When desktop grid focus scrolls the page between down/up, SVAR's
       // subsequent click can land on the list background. Select the row
