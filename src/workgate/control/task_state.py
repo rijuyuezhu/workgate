@@ -1126,6 +1126,7 @@ class ControlTaskService:
         task_id: str,
         *,
         action: Literal["block", "resume", "finish", "cancel"],
+        require_no_live_sessions: bool = False,
     ) -> TaskOutput:
         def mutate(
             document: TaskDocument,
@@ -1149,6 +1150,10 @@ class ControlTaskService:
                 if current not in {"active", "blocked"}:
                     raise ValueError(f"cannot finish a {current} task")
                 self._require_completable(document)
+                if require_no_live_sessions and self._has_live_session(task_id):
+                    raise ValueError(
+                        "cannot complete task while execution sessions remain active"
+                    )
                 document.status = "completed"
             else:
                 if current not in {"active", "blocked"}:
@@ -1164,8 +1169,14 @@ class ControlTaskService:
     async def resume_task(self, task_id: str) -> TaskOutput:
         return await self._set_status(task_id, action="resume")
 
-    async def finish_task(self, task_id: str) -> TaskOutput:
-        return await self._set_status(task_id, action="finish")
+    async def finish_task(
+        self, task_id: str, *, require_no_live_sessions: bool = False
+    ) -> TaskOutput:
+        return await self._set_status(
+            task_id,
+            action="finish",
+            require_no_live_sessions=require_no_live_sessions,
+        )
 
     async def cancel_task(self, task_id: str) -> TaskOutput:
         return await self._set_status(task_id, action="cancel")

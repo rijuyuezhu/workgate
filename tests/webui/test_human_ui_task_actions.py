@@ -225,3 +225,114 @@ async def test_deleting_task_detaches_but_does_not_end_retained_session(
             row["session_id"]
             for row in inventory.json()["data"]["unattached_sessions"]
         }
+
+
+@pytest.mark.asyncio
+async def test_session_reuse_ready_inbox_and_guarded_completion(
+    tmp_path, monkeypatch
+):
+    _configure(monkeypatch, tmp_path)
+    app, harness = build_paired_http_app(get_settings())
+    client = TestClient(app, base_url=BASE_URL)
+    task = await harness.control.task_service.create_task(
+        label="multi-executor work"
+    )
+    (tmp_path / "project").mkdir()
+
+    def start():
+        return client.post(
+            "/api/ui/sessions/start",
+            json={
+                "task_id": str(task.task_id),
+                "executor_id": harness.executor_id,
+                "workdir": "project",
+            },
+        )
+
+    first = start()
+    assert first.status_code == 200, first.text
+    sid = first.json()["data"]["session"]["session_id"]
+    assert first.json()["data"]["session"]["task_created"] is False
+    assert (
+        client.get("/api/ui/tasks", params={"status": "ready"}).json()["data"][
+            "total"
+        ]
+        == 0
+    )
+    guarded = {
+        "task_id": str(task.task_id),
+        "require_no_live_sessions": True,
+    }
+    assert (
+        "execution sessions remain active"
+        in client.post("/api/ui/tasks/finish", json=guarded).text
+    )
+
+    # A second execution context is still allowed for the same Task.
+    second = start()
+    assert second.status_code == 200, second.text
+    other_sid = second.json()["data"]["session"]["session_id"]
+    assert other_sid != sid
+    terminated = client.post(
+        "/api/ui/sessions/terminate", json={"session_id": sid}
+    )
+    assert terminated.status_code == 200, terminated.text
+    assert client.post("/api/ui/tasks/finish", json=guarded).status_code == 400
+    assert (
+        client.get("/api/ui/tasks", params={"status": "ready"}).json()["data"][
+            "total"
+        ]
+        == 0
+    )
+
+    assert (
+        client.post(
+            "/api/ui/sessions/terminate", json={"session_id": other_sid}
+        ).status_code
+        == 200
+    )
+    inbox = client.get("/api/ui/tasks", params={"status": "ready"}).json()[
+        "data"
+    ]
+    assert [row["task_id"] for row in inbox["tasks"]] == [str(task.task_id)]
+    assert client.post("/api/ui/tasks/finish", json=guarded).status_code == 200
+    assert (
+        client.get("/api/ui/tasks", params={"status": "ready"}).json()["data"][
+            "total"
+        ]
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_guarded_finish_rejects_unfinished_plan_and_bad_payload(
+    tmp_path, monkeypatch
+):
+    _configure(monkeypatch, tmp_path)
+    app, harness = build_paired_http_app(get_settings())
+    client = TestClient(app, base_url=BASE_URL)
+    service = harness.control.task_service
+    task = await service.create_task(label="waiting for Plan")
+    await service.update_plan(
+        str(task.task_id),
+        steps=[{"id": "one", "content": "not done", "status": "pending"}],
+    )
+    guarded = {"task_id": str(task.task_id), "require_no_live_sessions": True}
+    assert (
+        "unfinished plan steps"
+        in client.post("/api/ui/tasks/finish", json=guarded).text
+    )
+    for bad in (
+        {"task_id": str(task.task_id), "require_no_live_sessions": False},
+        {"task_id": str(task.task_id), "require_no_live_sessions": "true"},
+        [],
+        {"task_id": str(task.task_id), "extra": 1},
+    ):
+        assert client.post("/api/ui/tasks/finish", json=bad).status_code == 400
+    assert (
+        client.post(
+            "/api/ui/sessions/start",
+            json={"task_id": "bad", "executor_id": harness.executor_id},
+        ).status_code
+        == 400
+    )

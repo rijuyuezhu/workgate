@@ -4,11 +4,13 @@ import asyncio
 from typing import Any
 
 from fastapi import HTTPException
+from pydantic import TypeAdapter, ValidationError
 from starlette.requests import Request
 from starlette.responses import Response
 
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
 from ...oauth.core.scopes import SCOPE_SHELL_READ, SCOPE_SHELL_WRITE
+from ...protocol.ids import TaskId
 from .common import bounded_text, json_error
 from .common import json_ok as _json_ok
 
@@ -90,7 +92,7 @@ async def api_session_action(request: Request) -> Response:
     """Apply one explicit control-plane action to an execution session."""
     try:
         action = str(request.path_params.get("action") or "").casefold()
-        if action != "terminate":
+        if action not in {"terminate", "start"}:
             return json_error(
                 ValueError(f"unsupported session action: {action}"),
                 status_code=404,
@@ -98,6 +100,37 @@ async def api_session_action(request: Request) -> Response:
         payload = await request.json()
         if not isinstance(payload, dict):
             raise ValueError("session action body must be a JSON object")
+        if action == "start":
+            if (
+                set(payload) - {"task_id", "executor_id", "workdir"}
+                or "task_id" not in payload
+            ):
+                raise ValueError(
+                    "session start requires task_id, optional executor_id/workdir"
+                )
+            try:
+                task_id = str(
+                    TypeAdapter(TaskId).validate_python(payload["task_id"])
+                )
+            except ValidationError as exc:
+                raise ValueError("task_id must be a valid task_ id") from exc
+            executor_id = payload.get("executor_id")
+            workdir = payload.get("workdir")
+            if not isinstance(executor_id, str) or not executor_id:
+                raise ValueError("executor_id is required")
+            if workdir is not None and not isinstance(workdir, str):
+                raise ValueError("workdir must be a string")
+            _require_scopes(write=True)
+            result = await _control_runtime(
+                request
+            ).session_coordinator.start_session(
+                task_id=task_id,
+                executor_id=executor_id,
+                workdir=workdir or None,
+            )
+            return _json_ok(
+                {"session": result}, message="Session started in Task"
+            )
         session_id = bounded_text(
             payload.get("session_id"),
             field="session_id",
@@ -135,6 +168,8 @@ async def api_session_action(request: Request) -> Response:
         raise
     except ValueError as exc:
         return json_error(exc, status_code=400)
+    except PermissionError as exc:
+        return json_error(exc, status_code=403)
     except RuntimeError as exc:
         return json_error(exc, status_code=502)
     except Exception as exc:

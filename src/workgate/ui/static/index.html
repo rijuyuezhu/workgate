@@ -440,6 +440,7 @@ description: My Skill
           <select id="tasks-filter">
             <option value="active">Active</option>
             <option value="blocked">Blocked</option>
+            <option value="ready">Needs review (no active Session)</option>
             <option value="completed">Completed</option>
             <option value="cancelled">Cancelled</option>
             <option value="all">All tasks</option>
@@ -503,6 +504,17 @@ description: My Skill
           <div id="task-panel-sessions" class="task-tab-panel" role="tabpanel" aria-labelledby="task-tab-sessions" hidden>
             <div class="task-sessions-layout">
           <section class="session-resource session-executions">
+            <button id="task-session-start-open" type="button" disabled>New Session in this Task</button>
+            <form id="task-session-start-form" hidden>
+              <label for="task-session-executor">Executor
+                <select id="task-session-executor" required></select>
+              </label>
+              <label for="task-session-workdir">Working directory (optional)
+                <input id="task-session-workdir" type="text" autocomplete="off" placeholder="Executor default">
+              </label>
+              <button type="submit">Create Session</button>
+              <button id="task-session-start-cancel" type="button">Cancel</button>
+            </form>
             <nav id="session-list" class="task-session-list" aria-label="Execution sessions for selected task" aria-live="polite"></nav>
           </section>
           <div class="task-sessions-main">
@@ -513,7 +525,8 @@ description: My Skill
               <div class="session-detail-actions">
                 <button id="session-gui-open" type="button" disabled>Open GUI</button>
                 <button id="session-integrations-open" type="button" disabled>MCP / Skills</button>
-                <button id="session-terminate" class="danger-action" type="button" disabled>Terminate immediately</button>
+                <button id="session-terminate" class="danger-action" type="button" disabled>End Session</button>
+                <button id="session-finish-task" type="button" disabled>End Session &amp; Complete Task</button>
               </div>
             </div>
             <details class="task-session-metadata">

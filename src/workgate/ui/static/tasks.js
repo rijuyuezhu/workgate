@@ -188,6 +188,18 @@ export function createTasksController({
     controllerState.executorTargets = new Map(
       targets.map((item) => [item.executor_id, item]),
     );
+    const previousExecutor = elements.taskSessionExecutor.value;
+    elements.taskSessionExecutor.replaceChildren();
+    for (const target of targets) {
+      if (target.status !== "online") continue;
+      const option = document.createElement("option");
+      option.value = target.executor_id;
+      option.textContent = text(target.name, target.executor_id);
+      elements.taskSessionExecutor.append(option);
+    }
+    if (controllerState.executorTargets.get(previousExecutor)?.status === "online") {
+      elements.taskSessionExecutor.value = previousExecutor;
+    }
     // React updates executor identity in place without replacing focused rows.
     if (controllerState.inventorySignature) {
       renderTaskList();
@@ -264,6 +276,17 @@ export function createTasksController({
     elements.tasksRefresh.disabled = controllerState.workspaceLoading || controllerState.todoMutationBusy || controllerState.taskMutationBusy || controllerState.sessionTerminating;
     elements.sessionTerminate.disabled =
       controllerState.workspaceLoading || controllerState.sessionTerminating || !sessionReady || executorOffline || sessionTerminated(session);
+    const otherLiveSessions = controllerState.sessions.filter(
+      (item) => item.status !== "ended" && item.session_id !== session?.session_id,
+    );
+    elements.sessionFinishTask.disabled =
+      elements.sessionTerminate.disabled || session?.status !== "active" ||
+      !taskReady || !["active", "blocked"].includes(taskStatus) ||
+      unfinished || controllerState.todoDirty || controllerState.todoMutationBusy ||
+      otherLiveSessions.length > 0;
+    elements.taskSessionStartOpen.disabled =
+      !taskReady || taskStatus !== "active" || controllerState.taskMutationBusy ||
+      controllerState.workspaceLoading || controllerState.sessionTerminating;
     elements.todoRefresh.disabled = controllerState.todoMutationBusy || controllerState.taskMutationBusy || !taskReady;
     elements.todoAdd.disabled = controllerState.todoMutationBusy || controllerState.taskMutationBusy || !taskMutable || controllerState.todoItems.length >= controllerState.todoLimits.todos;
     elements.todoSave.disabled = controllerState.todoMutationBusy || controllerState.taskMutationBusy || !taskMutable || !controllerState.todoDirty;
@@ -730,17 +753,52 @@ export function createTasksController({
     }
   }
 
-  async function terminateSelectedSession() {
+  async function startSessionInTask(event) {
+    event.preventDefault();
+    const taskId = selectedTaskId();
+    if (!taskId || controllerState.workspaceLoading || controllerState.sessionTerminating) return;
+    const executorId = elements.taskSessionExecutor.value;
+    if (!executorId || controllerState.executorTargets.get(executorId)?.status !== "online") return;
+    controllerState.sessionTerminating = true;
+    syncControls();
+    try {
+      const result = await request("/sessions/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task_id: taskId, executor_id: executorId,
+          workdir: elements.taskSessionWorkdir.value.trim() || null,
+        }),
+      });
+      elements.taskSessionStartForm.hidden = true;
+      controllerState.sessionId = result.session.session_id;
+      showTab("sessions");
+      await refreshWorkspace();
+      onNavigate("session");
+      elements.tasksState.textContent = "Session created in existing Task";
+    } catch (error) {
+      elements.tasksState.textContent = error instanceof Error ? error.message : String(error);
+    } finally {
+      controllerState.sessionTerminating = false;
+      syncControls();
+    }
+  }
+
+  async function terminateSelectedSession({ finishTask = false } = {}) {
     const session = selectedSession();
     if (
       !session ||
       sessionTerminated(session) ||
       controllerState.sessionTerminating
     ) return;
+    const taskId = selectedTaskId();
+    if (finishTask && (!taskId || elements.sessionFinishTask.disabled)) return;
     const label = sessionOptionLabel(session);
     if (
       !globalThis.confirm(
-        `Immediately terminate ${label}? Any later model tool call for this session will be told to stop all work.`,
+        finishTask
+          ? `End ${label} and complete Task ${taskId}? This will stop Session work and finish the Task if no other Sessions are running.`
+          : `Immediately terminate ${label}? Any later model tool call for this session will be told to stop all work.`,
       )
     ) return;
     controllerState.sessionTerminating = true;
@@ -753,8 +811,18 @@ export function createTasksController({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session_id: session.session_id }),
       });
+      if (finishTask) {
+        await request("/tasks/finish", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ task_id: taskId, require_no_live_sessions: true }),
+        });
+      }
       await refreshWorkspace();
+      if (finishTask) elements.tasksState.textContent = "Session ended; Task completed";
     } catch (error) {
+      // A failed Task transition must not conceal a successful Session ending.
+      await refreshWorkspace();
       elements.tasksState.textContent =
         error instanceof Error ? error.message : String(error);
     } finally {
@@ -1175,6 +1243,20 @@ export function createTasksController({
       "click",
       () => void terminateSelectedSession(),
     );
+    elements.sessionFinishTask.addEventListener(
+      "click",
+      () => void terminateSelectedSession({ finishTask: true }),
+    );
+    elements.taskSessionStartOpen.addEventListener("click", () => {
+      elements.taskSessionStartForm.hidden = !elements.taskSessionStartForm.hidden;
+      if (!elements.taskSessionStartForm.hidden) elements.taskSessionExecutor.focus();
+    });
+    elements.taskSessionStartCancel.addEventListener("click", () => {
+      elements.taskSessionStartForm.hidden = true;
+    });
+    elements.taskSessionStartForm.addEventListener("submit", (event) => {
+      void startSessionInTask(event);
+    });
     elements.sessionAuditFilterForm.addEventListener("submit", (event) => {
       event.preventDefault();
       void refreshSessionAudit();
