@@ -8,7 +8,7 @@ Workgate is a Python 3.14 application with an MCP Control plane and machine-side
 - **Executor** in src/workgate/executor: filesystem, shell, jobs, browser and desktop operations.
 - **Shared contracts** in src/workgate/protocol and schemas: messages crossing the Control/Executor boundary.
 - **Tool registry** in src/workgate/tools/registry: public tools and their definitions.
-- **WebUI** in src/workgate/ui and ui-terminal: interface assets and the JavaScript terminal component.
+- **WebUI** in src/workgate/ui/static and ui-terminal: JavaScript page controllers, React/TypeScript views, SVAR Files and xterm terminal assets.
 - **Installation and validation** in deploy and scripts: deployment commands and platform checks.
 
 Follow current call sites and tests for precise behavior. This overview is a map, not a second specification.
@@ -18,7 +18,7 @@ Follow current call sites and tests for precise behavior. This overview is a map
 1. **Make the simplest change that solves the problem (KISS).** Reuse an existing mechanism rather than adding a new abstraction, state store, protocol, background worker or compatibility layer. Keep fixes focused and features cohesive.
 2. **Honor ownership boundaries.** Control owns authorization and coordination; Executors own machine operations. Shared contracts should not depend on Executor internals. Extend the declarative tool registry for ordinary tools.
 3. **Treat source code and tests as authoritative.** Check actual behavior before designing a fix. Avoid duplicating implementation rules, schemas, CLI flags or parameter defaults in prose.
-4. **Use the repository's existing languages and tooling.** Core and tests: Python 3.14, using modern syntax directly (no postponed-annotation compatibility import). Terminal WebUI component: JavaScript/ES modules. Deployment scripts: Shell and PowerShell where appropriate. Keep cross-platform behavior in shared Python code unless a native backend is needed.
+4. **Use the repository's existing languages and tooling.** Core and tests: Python 3.14, using modern syntax directly (no postponed-annotation compatibility import). WebUI controllers: JavaScript/ES modules; React views: TypeScript/TSX. Deployment scripts: Shell and PowerShell where appropriate. Keep cross-platform behavior in shared Python code unless a native backend is needed.
 5. **Verify changes in layers.** Run targeted tests, then related suites and static checks. For platform-specific code, use native platform tests. Inspect the full diff again for correctness, scope, duplicated logic and unnecessary mechanisms (Cold + KISS review). Fix substantive findings before merge.
 6. **Protect deployed services and user data.** Test changes in isolated state and services. Preserve saved configuration, credentials and pairing when upgrading. Do not deploy, restart running services, release, or merge without the applicable approval.
 
@@ -46,6 +46,17 @@ uv run pre-commit run --all-files
 ~~~
 
 For Windows-native, browser and other OS-specific behavior, use the relevant tests and scripts under the repository's tests and scripts/validation directories.
+
+For WebUI changes, JavaScript controllers under `src/workgate/ui/static` coordinate authenticated API calls and page navigation; React/TypeScript views under `ui-terminal/src` handle presentation and component-local state. The generated static assets include the SVAR Files view and xterm. Build them from source rather than editing bundles directly:
+
+~~~sh
+cd ui-terminal
+npm ci
+npm run build
+npm run check
+~~~
+
+Commit any changed generated assets under `src/workgate/ui/static`, then run the relevant WebUI and browser tests.
 
 ## Documentation principles
 
