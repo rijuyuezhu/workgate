@@ -1,6 +1,7 @@
 """Opt-in wait-then-detach must use one existing session-owned tracked job."""
 
 import asyncio
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -307,6 +308,8 @@ def test_durable_script_cleanup_ignores_unowned_metadata(tmp_path: Path):
 async def test_real_control_dispatches_persisted_bash_and_python(
     tmp_path: Path, monkeypatch
 ):
+    # This real tmux job test must not share the runner's default tmux server.
+    monkeypatch.setenv("TMUX_TMPDIR", tempfile.gettempdir())
     from tests.support.paired import build_paired_control_harness
     from tests.support.responses import mcp_structured
     from workgate.control.mcp.app import build_mcp
