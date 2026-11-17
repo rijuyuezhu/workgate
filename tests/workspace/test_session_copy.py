@@ -197,6 +197,44 @@ async def test_shared_session_copy_packs_and_unpacks_directory(
 
 
 @pytest.mark.asyncio
+async def test_same_executor_directory_cleanup_failure_hides_error_details(
+    tmp_path, monkeypatch
+):
+    (tmp_path / "src" / "tree").mkdir(parents=True)
+    (tmp_path / "src" / "tree" / "note.txt").write_text(
+        "hello", encoding="utf-8"
+    )
+    harness, src_id, dst_id = await _paired_sessions(tmp_path, monkeypatch)
+    original_call = harness.control.executor_transport.call
+
+    async def fail_archive_cleanup(executor_id, op, args=None, **kwargs):
+        if op == "transfer_delete_temp_path":
+            raise RuntimeError(
+                "private executor path /secret/source/archive.tar.gz"
+            )
+        return await original_call(executor_id, op, args, **kwargs)
+
+    monkeypatch.setattr(
+        harness.control.executor_transport, "call", fail_archive_cleanup
+    )
+    result = await harness.control.session_copy_service.copy(
+        src_session_id=src_id,
+        src_path="tree",
+        dst_session_id=dst_id,
+        dst_path="tree-copy",
+        kind="dir",
+    )
+
+    assert result.relation.route == "same_executor"
+    assert result.cleanup_errors == [
+        "source archive cleanup failed: RuntimeError"
+    ]
+    assert (tmp_path / "dst" / "tree-copy" / "note.txt").read_text(
+        encoding="utf-8"
+    ) == "hello"
+
+
+@pytest.mark.asyncio
 async def test_shared_session_copy_rejects_kind_mismatch(tmp_path, monkeypatch):
     (tmp_path / "src").mkdir(parents=True)
     (tmp_path / "src" / "payload.txt").write_text("file", encoding="utf-8")

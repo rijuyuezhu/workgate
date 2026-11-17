@@ -558,19 +558,19 @@ class ControlSessionCopyService:
             cleanup_path=pack.archive_path,
         )
 
-    async def _cleanup_prepared_cross_executor_source(
+    async def _cleanup_source_archive(
         self,
         src: ControlSessionRecord,
-        prepared: _PreparedCrossExecutorSource,
+        cleanup_path: str | None,
         cleanup_errors: list[str],
     ) -> None:
-        if prepared.cleanup_path is None:
+        if cleanup_path is None:
             return
         try:
             await self._call(
                 src,
                 "transfer_delete_temp_path",
-                {"path": prepared.cleanup_path},
+                {"path": cleanup_path},
             )
         except Exception as exc:
             cleanup_errors.append(
@@ -704,8 +704,8 @@ class ControlSessionCopyService:
             selected_metrics["fallbacks"] = fallbacks
             return selected_kind, selected_metrics, selected_route
         finally:
-            await self._cleanup_prepared_cross_executor_source(
-                src, prepared, cleanup_errors
+            await self._cleanup_source_archive(
+                src, prepared.cleanup_path, cleanup_errors
             )
             current = self._checkpoints.load(transfer_id)
             if current is not None and cleanup_errors != current.cleanup_errors:
@@ -1984,14 +1984,9 @@ class ControlSessionCopyService:
                 "cleanup_errors": cleanup_errors,
             }
         finally:
-            try:
-                await self._call(
-                    src,
-                    "transfer_delete_temp_path",
-                    {"path": pack.archive_path},
-                )
-            except Exception as exc:
-                cleanup_errors.append(f"source archive cleanup failed: {exc}")
+            await self._cleanup_source_archive(
+                src, pack.archive_path, cleanup_errors
+            )
 
     async def _call(
         self,
