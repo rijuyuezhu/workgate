@@ -2230,7 +2230,7 @@ def _resumable_unpack_archive(
                 _remove_existing_path(backup)
             except OSError as exc:
                 cleanup_errors.append(
-                    f"could not remove replaced destination backup {backup}: {exc}"
+                    f"could not remove replaced destination backup: {type(exc).__name__}"
                 )
             else:
                 backup_deleted = True
@@ -2241,7 +2241,7 @@ def _resumable_unpack_archive(
                 archive.unlink(missing_ok=True)
             except OSError as exc:
                 cleanup_errors.append(
-                    f"could not remove transfer archive {archive}: {exc}"
+                    f"could not remove transfer archive: {type(exc).__name__}"
                 )
             else:
                 archive_deleted = not archive.exists()
@@ -2414,7 +2414,7 @@ def transfer_unpack_archive(
                 _remove_existing_path(backup)
             except OSError as exc:
                 cleanup_errors.append(
-                    f"could not remove replaced destination backup {backup}: {exc}"
+                    f"could not remove replaced destination backup: {type(exc).__name__}"
                 )
             else:
                 backup = None
@@ -2426,7 +2426,7 @@ def transfer_unpack_archive(
                 archive.unlink(missing_ok=True)
             except OSError as exc:
                 cleanup_errors.append(
-                    f"could not remove transfer archive {archive}: {exc}"
+                    f"could not remove transfer archive: {type(exc).__name__}"
                 )
             else:
                 archive_deleted = not archive.exists()

@@ -483,8 +483,10 @@ def test_unpack_entry_limit_preserves_existing_destination(
     assert (destination / "important.txt").read_text(encoding="utf-8") == "keep"
 
 
-def test_unpack_commits_before_reporting_backup_cleanup_failure(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("transfer_id", [None, "cleanup-redaction-replay"])
+@pytest.mark.parametrize("failed_cleanup", ["backup", "archive"])
+def test_unpack_commits_before_reporting_cleanup_failure_without_paths(
+    tmp_path, monkeypatch, transfer_id, failed_cleanup
 ):
     root = _workspace(tmp_path, monkeypatch)
     destination = root / "dst"
@@ -493,31 +495,70 @@ def test_unpack_commits_before_reporting_backup_cleanup_failure(
     archive = root / "new.tar"
     _archive_with_files(archive, {"new.txt": b"new"})
     original_remove = transfer_ops._remove_existing_path
+    original_unlink = Path.unlink
 
     def fail_backup_cleanup(path):
-        if ".backup-" in path.name:
-            raise OSError("simulated cleanup failure")
-        original_remove(path)
+        if failed_cleanup == "backup" and ".backup-" in path.name:
+            raise PermissionError("private backup path SECRET_BACKUP")
+        return original_remove(path)
+
+    def fail_archive_cleanup(path, *args, **kwargs):
+        if failed_cleanup == "archive" and path == archive:
+            raise PermissionError("private archive path SECRET_ARCHIVE")
+        return original_unlink(path, *args, **kwargs)
 
     monkeypatch.setattr(
         transfer_ops, "_remove_existing_path", fail_backup_cleanup
     )
+    monkeypatch.setattr(Path, "unlink", fail_archive_cleanup)
 
     result = transfer_unpack_archive(
-        "new.tar", "dst", overwrite=True, cleanup_archive=True
+        "new.tar",
+        "dst",
+        overwrite=True,
+        cleanup_archive=True,
+        transfer_id=transfer_id,
     )
-
+    expected = (
+        "could not remove replaced destination backup: PermissionError"
+        if failed_cleanup == "backup"
+        else "could not remove transfer archive: PermissionError"
+    )
     assert result.completed is True
-    assert result.backup_deleted is False
-    assert (
-        result.cleanup_errors
-        and "simulated cleanup failure" in result.cleanup_errors[0]
-    )
+    assert result.cleanup_errors == [expected]
+    assert result.backup_deleted is (failed_cleanup != "backup")
+    assert result.archive_deleted is (failed_cleanup != "archive")
     assert (destination / "new.txt").read_bytes() == b"new"
-    assert not archive.exists()
-    backups = list(root.glob(".dst.backup-*"))
-    assert len(backups) == 1
-    original_remove(backups[0])
+    assert str(root) not in result.cleanup_errors[0]
+    assert "SECRET_" not in result.cleanup_errors[0]
+
+    # A durable commit can be replayed after the failed post-commit cleanup.
+    monkeypatch.setattr(transfer_ops, "_remove_existing_path", original_remove)
+    monkeypatch.setattr(Path, "unlink", original_unlink)
+    if transfer_id is not None:
+        receipt_path = transfer_ops._unpack_receipt_path(
+            _context(), transfer_id
+        )
+        persisted = _context().store.state_store.read_json(receipt_path)
+        assert persisted is not None
+        assert persisted["cleanup_errors"] == [expected]
+        recovered = transfer_unpack_archive(
+            "new.tar",
+            "dst",
+            overwrite=True,
+            cleanup_archive=True,
+            transfer_id=transfer_id,
+        )
+        assert recovered.resumed is True
+        assert recovered.completed is True
+        assert recovered.backup_deleted is True
+        assert recovered.archive_deleted is True
+        assert recovered.cleanup_errors == []
+    else:
+        for backup in root.glob(".dst.backup-*"):
+            original_remove(backup)
+        if archive.exists():
+            original_unlink(archive)
 
 
 def test_transfer_temp_pruning_preserves_recent_active_files(
