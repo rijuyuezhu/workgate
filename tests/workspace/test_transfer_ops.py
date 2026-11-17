@@ -2449,6 +2449,76 @@ def test_abandon_receiving_write_retries_persisted_discard_temp(
     assert not receipt_path.exists()
 
 
+@pytest.mark.parametrize("status", ["receiving", "committing"])
+def test_abandon_pending_write_retries_after_receipt_remove_failure(
+    tmp_path, monkeypatch, status
+):
+    root = _workspace(tmp_path, monkeypatch)
+    context = _context()
+    transfer_id = f"abandon-crash-{status}"
+    destination = root / "dest.bin"
+    destination.write_bytes(b"old!")
+    transfer_begin_write(
+        "dest.bin", overwrite=True, expected_bytes=4, transfer_id=transfer_id
+    )
+    transfer_ops.transfer_write_bytes(
+        "dest.bin", transfer_id, 0, b"data", context=context
+    )
+    receipt_path = transfer_ops._write_receipt_path(context, transfer_id)
+    if status == "committing":
+        receipt = context.store.state_store.read_json(receipt_path)
+        assert isinstance(receipt, dict)
+        receipt.update(
+            status="committing",
+            final_bytes=4,
+            final_sha256=hashlib.sha256(b"data").hexdigest(),
+        )
+        context.store.state_store.write_json(receipt_path, receipt)
+
+    temporary = transfer_ops._transfer_temp_path(destination, transfer_id)
+    metadata_path = transfer_ops._transfer_metadata_path(temporary)
+    original_remove = context.store.state_store.remove
+    crashed = False
+
+    def fail_once_removing_receipt(path):
+        nonlocal crashed
+        if path == receipt_path and not crashed:
+            crashed = True
+            raise OSError("simulated receipt removal failure")
+        return original_remove(path)
+
+    monkeypatch.setattr(
+        context.store.state_store, "remove", fail_once_removing_receipt
+    )
+    with pytest.raises(OSError, match="simulated receipt removal failure"):
+        transfer_ops.transfer_abandon_import(
+            transfer_id, "file", context=context
+        )
+
+    persisted = context.store.state_store.read_json(receipt_path)
+    assert persisted is not None
+    assert persisted["status"] == status
+    assert persisted["abandonment_status"] == "discard_temp"
+    assert not temporary.exists()
+    assert not metadata_path.exists()
+    assert destination.read_bytes() == b"old!"
+
+    monkeypatch.setattr(context.store.state_store, "remove", original_remove)
+    result = transfer_ops.transfer_abandon_import(
+        transfer_id, "file", context=context
+    )
+    assert result["safe_to_forget"] is True
+    assert result["write_reconciled"] is True
+    assert destination.read_bytes() == b"old!"
+    assert not receipt_path.exists()
+    assert (
+        transfer_ops.transfer_abandon_import(
+            transfer_id, "file", context=context
+        )["write_reconciled"]
+        is False
+    )
+
+
 def test_abandon_archive_retries_persisted_discard_destination(
     tmp_path, monkeypatch
 ):
