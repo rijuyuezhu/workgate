@@ -11464,7 +11464,7 @@
       "annotations": {
         "destructiveHint": true,
         "idempotentHint": false,
-        "openWorldHint": false,
+        "openWorldHint": true,
         "readOnlyHint": false
       },
       "description": "End exactly one Session from an eligible retention preview, after independently rechecking its last activity and owned resources. A changed, busy, recent, or unconfirmed Session is preserved. Never force release.",
