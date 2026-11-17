@@ -493,6 +493,36 @@ class ControlSessionCoordinator:
             else None,
         }
 
+    async def cleanup_retained_session(
+        self, session_id: str, *, expected_last_active_at: float
+    ) -> dict[str, Any]:
+        """End one previewed idle Session only if authoritative state still matches."""
+        record = self._state.snapshot_sessions().get(session_id)
+        if record is None:
+            raise ValueError(f"unknown session_id {session_id!r}")
+        reason = "ineligible_or_changed"
+        if self._agent_session_retention_s == 0:
+            reason = "retention_disabled"
+        elif record.status != "active":
+            reason = "not_active"
+        else:
+            cutoff = self._clock() - self._agent_session_retention_s
+            if record.created_at >= cutoff:
+                reason = "too_new"
+            elif await self._auto_end_if_eligible(
+                record,
+                cutoff=cutoff,
+                expected_last_active_at=expected_last_active_at,
+            ):
+                reason = "ended"
+        return {
+            "session_id": session_id,
+            "executor_id": str(record.executor_id),
+            "task_id": str(record.task_id) if record.task_id else None,
+            "ended": reason == "ended",
+            "reason": reason,
+        }
+
     async def reap_expired_sessions(self) -> None:
         """Safely expire a bounded slice of idle sessions even without new admissions."""
         if self._agent_session_retention_s == 0:
@@ -582,6 +612,16 @@ class ControlSessionCoordinator:
             if (
                 self._auto_cleanup_blocked is not None
                 and await self._auto_cleanup_blocked(session_id)
+            ):
+                return False
+            # An expected activity observation requires a fresh Executor check
+            # when a cached missing hint might otherwise support expiration.
+            if (
+                expected_last_active_at is not None
+                and current.status == "active"
+                and session_id
+                in self._missing_by_executor.get(str(current.executor_id), {})
+                and await self._lookup_session_summary(current) is None
             ):
                 return False
             observed_activity = await self._cleanup_activity_before_cutoff(

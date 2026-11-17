@@ -29,6 +29,7 @@ _SESSION_CONTROL_TOOLS = frozenset(
         "session_end",
         "session_copy",
         "session_retention_preview",
+        "session_retention_cleanup",
     }
 )
 _EXECUTOR_CONTROL_TOOLS = frozenset({"executor"})
@@ -86,6 +87,14 @@ class ControlToolRouter:
                 ),
                 name=None if args.get("name") is None else str(args["name"]),
             )
+        if tool_name == "session_retention_cleanup":
+            result = await self._sessions.cleanup_retained_session(
+                str(args["session_id"]),
+                expected_last_active_at=float(args["expected_last_active_at"]),
+            )
+            if result["ended"]:
+                self._agent_bridge.invalidate_discovery(str(args["session_id"]))
+            return result
         if tool_name == "session_retention_preview":
             return await self._sessions.retention_preview(
                 limit=int(args.get("limit", 16)),

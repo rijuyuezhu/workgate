@@ -1532,6 +1532,172 @@ async def test_retention_preview_disabled_or_invalid_is_read_only(
 
 
 @pytest.mark.asyncio
+async def test_retention_cleanup_revalidates_preview_and_preserves_task(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    executor, session_id, task_id = (
+        new_executor_id(),
+        new_session_id(),
+        new_task_id(),
+    )
+    _trust(state, executor)
+    state.put_session(
+        _active_record(executor, session_id).model_copy(
+            update={"task_id": task_id}
+        )
+    )
+    transport = FakeTransport()
+    transport.online.add(executor)
+
+    async def execute(_executor, op, _args, requested, _timeout):
+        assert requested == session_id
+        if op == "session.lookup":
+            return _ok(
+                {
+                    "session_id": session_id,
+                    "workdir": "/workspace/project",
+                    "last_active_at": 1.0,
+                    "has_persistent_shells": False,
+                    "has_active_jobs": False,
+                }
+            )
+        assert op == "session.terminate"
+        assert state.snapshot_sessions()[session_id].status == "terminating"
+        return _ok({"session_id": session_id, "absent": True})
+
+    transport.call_impl = execute
+    coordinator = _coordinator(
+        state, transport, agent_session_retention_s=10, clock=lambda: 100.0
+    )  # type: ignore[arg-type]
+    preview = await coordinator.retention_preview()
+    assert len(preview["rows"]) == 1
+    eligible = preview["rows"][0]
+    assert eligible["reason"] == "eligible_at_check"
+    result = await coordinator.cleanup_retained_session(
+        session_id, expected_last_active_at=eligible["last_active_at"]
+    )
+    assert result == {
+        "session_id": str(session_id),
+        "executor_id": str(executor),
+        "task_id": str(task_id),
+        "ended": True,
+        "reason": "ended",
+    }
+    assert state.snapshot_sessions()[session_id].status == "ended"
+    assert state.snapshot_sessions()[session_id].task_id == task_id
+    assert state.snapshot_sessions()[session_id].executor_absence_confirmed
+    assert [call[1] for call in transport.calls] == [
+        "session.lookup",
+        "session.lookup",
+        "session.terminate",
+    ]
+    second = await coordinator.cleanup_retained_session(
+        session_id, expected_last_active_at=eligible["last_active_at"]
+    )
+    assert second["reason"] == "not_active"
+    assert len(transport.calls) == 3
+
+
+@pytest.mark.parametrize(
+    ("condition", "reason"),
+    [
+        ("recently_created", "too_new"),
+        ("disabled", "retention_disabled"),
+        ("ended", "not_active"),
+        ("offline", "ineligible_or_changed"),
+        ("control_job", "ineligible_or_changed"),
+        ("shell", "ineligible_or_changed"),
+        ("job", "ineligible_or_changed"),
+        ("activity_unknown", "ineligible_or_changed"),
+        ("recent_activity", "ineligible_or_changed"),
+        ("activity_changed", "ineligible_or_changed"),
+        ("mismatched_lookup", "ineligible_or_changed"),
+        ("session_missing", "ineligible_or_changed"),
+        ("cached_missing", "ineligible_or_changed"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_retention_cleanup_skips_unsafe_session(
+    tmp_path: Path, condition: str, reason: str
+) -> None:
+    state = _state(tmp_path)
+    executor, session_id = new_executor_id(), new_session_id()
+    _trust(state, executor)
+    record = _active_record(executor, session_id)
+    if condition == "recently_created":
+        record = record.model_copy(
+            update={"created_at": 95.0, "updated_at": 95.0}
+        )
+    elif condition == "ended":
+        record = record.model_copy(update={"status": "ended"})
+    state.put_session(record)
+    transport = FakeTransport()
+    if condition != "offline":
+        transport.online.add(executor)
+
+    async def execute(_executor, op, _args, requested, _timeout):
+        assert requested == session_id
+        assert op == "session.lookup", "unsafe session must never terminate"
+        if condition == "session_missing" or condition == "cached_missing":
+            return _ok(None)
+        return _ok(
+            {
+                "session_id": new_session_id()
+                if condition == "mismatched_lookup"
+                else session_id,
+                "workdir": "/workspace/project",
+                "last_active_at": (
+                    None
+                    if condition == "activity_unknown"
+                    else 99.0
+                    if condition == "recent_activity"
+                    else 2.0
+                    if condition == "activity_changed"
+                    else 1.0
+                ),
+                "has_persistent_shells": condition == "shell",
+                "has_active_jobs": condition == "job",
+            }
+        )
+
+    transport.call_impl = execute
+    coordinator = _coordinator(
+        state,
+        transport,
+        agent_session_retention_s=0 if condition == "disabled" else 10,
+        clock=lambda: 100.0,
+    )  # type: ignore[arg-type]
+    if condition == "cached_missing":
+        coordinator._missing_by_executor[str(executor)] = {str(session_id): 1.0}
+
+    async def blocked(_session_id: str) -> bool:
+        return condition == "control_job"
+
+    async def stop(_session_id: str) -> list[str]:
+        pytest.fail("unsafe Session must never be terminated")
+
+    coordinator.set_control_resource_hooks(
+        auto_cleanup_blocked=blocked, before_terminate=stop
+    )
+    result = await coordinator.cleanup_retained_session(
+        str(session_id), expected_last_active_at=1.0
+    )
+    assert not result["ended"]
+    assert result["reason"] == reason
+    assert state.snapshot_sessions()[str(session_id)].status == record.status
+    assert all(call[1] == "session.lookup" for call in transport.calls)
+    if condition in {
+        "recently_created",
+        "disabled",
+        "ended",
+        "offline",
+        "control_job",
+    }:
+        assert not transport.calls
+
+
+@pytest.mark.asyncio
 async def test_retention_sweep_is_bounded_and_rotates_without_starvation(
     tmp_path: Path,
 ) -> None:
