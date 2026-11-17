@@ -105,3 +105,20 @@ OptionalSessionIdArg = Annotated[
         description="Optional execution session_id used by internal transfer primitives.",
     ),
 ]
+
+
+SessionRetentionLimitArg = Annotated[
+    int,
+    Field(
+        ge=1,
+        le=32,
+        description="At most 32 age-eligible Session checks per call.",
+    ),
+]
+SessionRetentionOffsetArg = Annotated[
+    int,
+    Field(
+        ge=0,
+        description="Zero-based offset through oldest age-eligible Sessions.",
+    ),
+]

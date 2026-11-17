@@ -10,6 +10,8 @@ from ...schemas.input_models.session import (
     SessionExecutorIdArg,
     SessionIdArg,
     SessionLabelArg,
+    SessionRetentionLimitArg,
+    SessionRetentionOffsetArg,
     SessionStartWorkdirArg,
     SessionTaskIdArg,
     SessionWorkdirArg,
@@ -18,6 +20,7 @@ from ...schemas.result_models.jobs import JobStartOutput
 from ...schemas.result_models.session import (
     SessionCopyOutput,
     SessionEndOutput,
+    SessionRetentionPreviewOutput,
     SessionStartOutput,
 )
 from ..contracts import McpToolContext
@@ -91,6 +94,20 @@ async def session_end(
 ) -> SessionEndOutput:
     """Stop owned work and end an execution session."""
     raise _unrouted_session_tool("session_end")
+
+
+@session_tool(
+    annotations="read_only",
+    oauth_scopes=("shell:read",),
+)
+async def session_retention_preview(
+    limit: SessionRetentionLimitArg = 16,
+    offset: SessionRetentionOffsetArg = 0,
+    executor_id: SessionExecutorIdArg = None,
+) -> SessionRetentionPreviewOutput:
+    """Inspect age-eligible Sessions with skip reasons using live Executor checks. Bounded and read-only; eligibility is a snapshot, not permission to terminate. Use offset for further pages."""
+    del limit, offset, executor_id
+    raise _unrouted_session_tool("session_retention_preview")
 
 
 @session_tool(

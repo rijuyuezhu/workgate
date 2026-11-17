@@ -29,6 +29,7 @@ LOCAL_MCP_TOOL_NAMES = {
     "session_start",
     "session_change_workdir",
     "session_end",
+    "session_retention_preview",
     "session_copy",
     "version",
     "run_python_code",
@@ -116,6 +117,46 @@ async def test_session_copy_public_defaults_are_safe_and_tracked(
 
 
 @pytest.mark.asyncio
+async def test_session_retention_preview_is_read_only_and_routed(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+    app = _build_paired_surface_http_app()
+    tools = {
+        t.name: t
+        for t in await build_mcp(runtime=app.state.control_runtime).list_tools()
+    }
+    tool = tools["session_retention_preview"]
+    assert tool.annotations is not None
+    assert tool.annotations.read_only_hint is True
+    assert tool.input_schema["properties"]["limit"]["maximum"] == 32
+    assert "session_id" not in tool.input_schema.get("required", [])
+    before = app.state.control_runtime.control_state.snapshot_sessions()
+    response = await build_mcp(runtime=app.state.control_runtime).call_tool(
+        "session_retention_preview", {"limit": 1}
+    )
+    assert isinstance(response, CallToolResult)
+    assert isinstance(response.structured_content, dict)
+    assert response.structured_content["age_candidate_count"] == 0
+    assert response.structured_content["rows"] == []
+    assert app.state.control_runtime.control_state.snapshot_sessions() == before
+
+
+@pytest.mark.asyncio
+async def test_retention_preview_registry_stub_requires_control_router() -> (
+    None
+):
+    from workgate.tools.registry.session import session_retention_preview
+
+    with pytest.raises(RuntimeError, match="control-plane session router"):
+        await session_retention_preview.func()
+
+
+@pytest.mark.asyncio
 async def test_browser_actions_are_structured_and_bounded(
     tmp_path, monkeypatch
 ):
@@ -175,6 +216,7 @@ async def test_model_facing_tools_require_explicit_semantic_identity(
         "image_show",
         "executor",
         "session_start",
+        "session_retention_preview",
         "task",
         "version",
     }
