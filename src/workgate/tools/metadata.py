@@ -50,6 +50,7 @@ _OPEN_WORLD_TOOL_NAMES = frozenset(
         "session_change_workdir",
         "session_copy",
         "session_end",
+        "session_retention_cleanup",
         "session_start",
     }
 )

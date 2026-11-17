@@ -179,6 +179,7 @@ async def test_session_retention_cleanup_requires_explicit_activity_and_is_guard
     assert tool.annotations is not None
     assert tool.annotations.read_only_hint is False
     assert tool.annotations.destructive_hint is True
+    assert tool.annotations.open_world_hint is True
     assert set(tool.input_schema["required"]) == {
         "session_id",
         "expected_last_active_at",
