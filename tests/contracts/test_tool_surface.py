@@ -147,6 +147,16 @@ async def test_session_retention_preview_is_read_only_and_routed(
 
 
 @pytest.mark.asyncio
+async def test_retention_preview_registry_stub_requires_control_router() -> (
+    None
+):
+    from workgate.tools.registry.session import session_retention_preview
+
+    with pytest.raises(RuntimeError, match="control-plane session router"):
+        await session_retention_preview.func()
+
+
+@pytest.mark.asyncio
 async def test_browser_actions_are_structured_and_bounded(
     tmp_path, monkeypatch
 ):
