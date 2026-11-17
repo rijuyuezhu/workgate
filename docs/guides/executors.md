@@ -41,7 +41,13 @@ Use the read-only retention preview to inspect old Sessions and why each one is 
 workgate call session_retention_preview --json '{"limit":16}'
 ~~~
 
-The response reports the total number of age-eligible Sessions and, for each checked Session, whether it was idle at the moment of inspection or retained due to a live shell, Job, recent activity, an offline Executor, or unavailable evidence. Use `offset` to inspect another page and `executor_id` to focus on one machine. A preview does not end Sessions; use **End Session** in the WebUI for an explicitly chosen Session after confirming its work is complete.
+The response reports the total number of age-eligible Sessions and, for each checked Session, whether it was idle at the moment of inspection or retained due to a live shell, Job, recent activity, an offline Executor, or unavailable evidence. Use `offset` to inspect another page and `executor_id` to focus on one machine. A preview does not end Sessions. To clean up one Session classified as `eligible_at_check`, copy its `session_id` and `last_active_at` into the guarded cleanup command:
+
+~~~sh
+workgate call session_retention_cleanup --json '{"session_id":"<session_id>","expected_last_active_at":<last_active_at>}'
+~~~
+
+Control rechecks the Executor and resource state; it ends the Session only when the same activity observation is still eligible. If work has resumed or confirmation fails, inspect a new preview. This operation does not directly delete the attached Task, its Plan, or audit history. Use **End Session** in the WebUI only when you intentionally want to stop the selected Session's work regardless of idle eligibility.
 
 ## Use local capabilities
 

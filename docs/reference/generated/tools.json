@@ -1,11 +1,11 @@
 {
-  "count": 62,
+  "count": 63,
   "sections": [
     {
       "body": [
         "Generated tool count: ",
         {
-          "code": "62"
+          "code": "63"
         },
         "."
       ],
@@ -1666,6 +1666,30 @@
             ]
           },
           "End one execution session and stop its owned work. An attached task remains available; files are not deleted."
+        ],
+        [
+          {
+            "code": "session_retention_cleanup"
+          },
+          {
+            "items": [
+              {
+                "description": "Exact last_active_at from an eligible row in session_retention_preview; cleanup rechecks this observation.",
+                "head": {
+                  "code": "expected_last_active_at"
+                },
+                "note": "(number, required)"
+              },
+              {
+                "description": "Opaque execution session_id returned by session_start.",
+                "head": {
+                  "code": "session_id"
+                },
+                "note": "(string, required)"
+              }
+            ]
+          },
+          "End exactly one Session from an eligible retention preview, after independently rechecking its last activity and owned resources. A changed, busy, recent, or unconfirmed Session is preserved. Never force release."
         ],
         [
           {
@@ -11422,6 +11446,99 @@
           "ended"
         ],
         "title": "SessionEndOutput",
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read",
+              "shell:execute"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "End exactly one Session from an eligible retention preview, after independently rechecking its last activity and owned resources. A changed, busy, recent, or unconfirmed Session is preserved. Never force release.",
+      "inputSchema": {
+        "properties": {
+          "expected_last_active_at": {
+            "description": "Exact last_active_at from an eligible row in session_retention_preview; cleanup rechecks this observation.",
+            "minimum": 0,
+            "title": "Expected Last Active At",
+            "type": "number"
+          },
+          "session_id": {
+            "description": "Opaque execution session_id returned by session_start.",
+            "maxLength": 128,
+            "minLength": 8,
+            "pattern": "^(?:sess_[A-Za-z0-9_-]{22,}|[A-Za-z0-9]{8})$",
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "expected_last_active_at"
+        ],
+        "title": "session_retention_cleanupArguments",
+        "type": "object"
+      },
+      "name": "session_retention_cleanup",
+      "outputSchema": {
+        "description": "Outcome of an explicitly selected, revalidated idle Session cleanup.",
+        "properties": {
+          "ended": {
+            "title": "Ended",
+            "type": "boolean"
+          },
+          "executor_id": {
+            "title": "Executor Id",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "ended",
+              "retention_disabled",
+              "not_active",
+              "too_new",
+              "ineligible_or_changed"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Task Id"
+          }
+        },
+        "required": [
+          "session_id",
+          "executor_id",
+          "ended",
+          "reason"
+        ],
+        "title": "SessionRetentionCleanupOutput",
         "type": "object"
       }
     },

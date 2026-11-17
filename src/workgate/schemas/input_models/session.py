@@ -107,6 +107,15 @@ OptionalSessionIdArg = Annotated[
 ]
 
 
+SessionRetentionObservedActivityArg = Annotated[
+    float,
+    Field(
+        ge=0,
+        allow_inf_nan=False,
+        description="Exact last_active_at from an eligible row in session_retention_preview; cleanup rechecks this observation.",
+    ),
+]
+
 SessionRetentionLimitArg = Annotated[
     int,
     Field(

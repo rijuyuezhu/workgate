@@ -30,6 +30,7 @@ LOCAL_MCP_TOOL_NAMES = {
     "session_change_workdir",
     "session_end",
     "session_retention_preview",
+    "session_retention_cleanup",
     "session_copy",
     "version",
     "run_python_code",
@@ -154,6 +155,109 @@ async def test_retention_preview_registry_stub_requires_control_router() -> (
 
     with pytest.raises(RuntimeError, match="control-plane session router"):
         await session_retention_preview.func()
+
+
+@pytest.mark.asyncio
+async def test_session_retention_cleanup_requires_explicit_activity_and_is_guarded(
+    tmp_path, monkeypatch
+) -> None:
+    from workgate.tools.registry.session import session_retention_cleanup
+
+    with pytest.raises(RuntimeError, match="control-plane session router"):
+        await session_retention_cleanup.func("sess_AAAAAAAAAAAAAAAAAAAAAA", 1.0)
+
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+    app = _build_paired_surface_http_app()
+    tool = {
+        t.name: t
+        for t in await build_mcp(runtime=app.state.control_runtime).list_tools()
+    }["session_retention_cleanup"]
+    assert tool.annotations is not None
+    assert tool.annotations.read_only_hint is False
+    assert tool.annotations.destructive_hint is True
+    assert tool.annotations.open_world_hint is True
+    assert set(tool.input_schema["required"]) == {
+        "session_id",
+        "expected_last_active_at",
+    }
+    assert "force" not in tool.input_schema["properties"]
+    assert session_retention_cleanup.required_oauth_scopes() == (
+        "shell:read",
+        "shell:execute",
+    )
+    client = TestClient(app)
+    session = client.post("/tools/session_start", json={}).json()[
+        "structuredContent"
+    ]
+    sid = session["session_id"]
+    before = app.state.control_runtime.control_state.snapshot_sessions()[sid]
+    response = client.post(
+        "/tools/session_retention_cleanup",
+        json={"session_id": sid, "expected_last_active_at": 0.0},
+    )
+    assert response.status_code == 200
+    body = response.json()["structuredContent"]
+    assert body["ended"] is False
+    assert body["reason"] == "too_new"
+    after = app.state.control_runtime.control_state.snapshot_sessions()[sid]
+    assert before == after
+    bad = client.post(
+        "/tools/session_retention_cleanup", json={"session_id": sid}
+    )
+    assert bad.status_code == 200
+    assert bad.json()["isError"] is True
+
+
+@pytest.mark.asyncio
+async def test_retention_preview_then_cleanup_on_paired_executor(
+    tmp_path, monkeypatch
+) -> None:
+    import time
+
+    monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
+    monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
+    monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
+    monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
+    clear_settings_cache()
+    app = _build_paired_surface_http_app()
+    client = TestClient(app)
+    started = client.post("/tools/session_start", json={}).json()[
+        "structuredContent"
+    ]
+    session_id, task_id = started["session_id"], started["task_id"]
+    coordinator = app.state.control_runtime.session_coordinator
+    coordinator._agent_session_retention_s = 10
+    coordinator._clock = lambda: time.time() + 60
+
+    preview = client.post("/tools/session_retention_preview", json={}).json()[
+        "structuredContent"
+    ]
+    row = next(
+        row for row in preview["rows"] if row["session_id"] == session_id
+    )
+    assert row["eligible"] and row["reason"] == "eligible_at_check"
+    assert row["task_id"] == task_id
+    assert row["last_active_at"] is not None
+    result = client.post(
+        "/tools/session_retention_cleanup",
+        json={
+            "session_id": session_id,
+            "expected_last_active_at": row["last_active_at"],
+        },
+    )
+    assert result.status_code == 200
+    assert result.json()["isError"] is False
+    assert result.json()["structuredContent"]["reason"] == "ended"
+    retained = app.state.control_runtime.control_state.snapshot_sessions()[
+        session_id
+    ]
+    assert retained.status == "ended"
+    assert retained.executor_absence_confirmed
+    assert str(retained.task_id) == task_id
 
 
 @pytest.mark.asyncio

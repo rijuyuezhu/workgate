@@ -11,6 +11,7 @@ from ...schemas.input_models.session import (
     SessionIdArg,
     SessionLabelArg,
     SessionRetentionLimitArg,
+    SessionRetentionObservedActivityArg,
     SessionRetentionOffsetArg,
     SessionStartWorkdirArg,
     SessionTaskIdArg,
@@ -20,6 +21,7 @@ from ...schemas.result_models.jobs import JobStartOutput
 from ...schemas.result_models.session import (
     SessionCopyOutput,
     SessionEndOutput,
+    SessionRetentionCleanupOutput,
     SessionRetentionPreviewOutput,
     SessionStartOutput,
 )
@@ -108,6 +110,18 @@ async def session_retention_preview(
     """Inspect age-eligible Sessions with skip reasons using live Executor checks. Bounded and read-only; eligibility is a snapshot, not permission to terminate. Use offset for further pages."""
     del limit, offset, executor_id
     raise _unrouted_session_tool("session_retention_preview")
+
+
+@session_tool(
+    oauth_scopes=("shell:read", "shell:execute"),
+)
+async def session_retention_cleanup(
+    session_id: SessionIdArg,
+    expected_last_active_at: SessionRetentionObservedActivityArg,
+) -> SessionRetentionCleanupOutput:
+    """End exactly one Session from an eligible retention preview, after independently rechecking its last activity and owned resources. A changed, busy, recent, or unconfirmed Session is preserved. Never force release."""
+    del session_id, expected_last_active_at
+    raise _unrouted_session_tool("session_retention_cleanup")
 
 
 @session_tool(

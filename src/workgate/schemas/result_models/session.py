@@ -269,6 +269,22 @@ class SessionRetentionPreviewOutput(BaseModel):
     next_offset: int | None = None
 
 
+class SessionRetentionCleanupOutput(BaseModel):
+    """Outcome of an explicitly selected, revalidated idle Session cleanup."""
+
+    session_id: str
+    executor_id: str
+    task_id: str | None = None
+    ended: bool
+    reason: Literal[
+        "ended",
+        "retention_disabled",
+        "not_active",
+        "too_new",
+        "ineligible_or_changed",
+    ]
+
+
 class SessionCopyEndpoint(BaseModel):
     """One endpoint in a session-to-session copy."""
 
