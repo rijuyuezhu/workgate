@@ -33,6 +33,16 @@ Use the **Executors** page to check connectivity, review capabilities or revoke 
 
 After a temporary connection outage, the Executor reconnects with its saved pairing. If the owner revoked the device, pair it again.
 
+## Review retained Sessions
+
+Use the read-only retention preview to inspect old Sessions and why each one is still retained:
+
+~~~sh
+workgate call session_retention_preview --json '{"limit":16}'
+~~~
+
+The response reports the total number of age-eligible Sessions and, for each checked Session, whether it was idle at the moment of inspection or retained due to a live shell, Job, recent activity, an offline Executor, or unavailable evidence. Use `offset` to inspect another page and `executor_id` to focus on one machine. A preview does not end Sessions; use **End Session** in the WebUI for an explicitly chosen Session after confirming its work is complete.
+
 ## Use local capabilities
 
 - **Files and shell:** on the selected Executor.

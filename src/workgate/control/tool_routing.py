@@ -23,7 +23,13 @@ from .task_state import ControlTaskService
 
 _MACHINE_TOOL_NAMES = MACHINE_TOOL_NAMES
 _SESSION_CONTROL_TOOLS = frozenset(
-    {"session_start", "session_change_workdir", "session_end", "session_copy"}
+    {
+        "session_start",
+        "session_change_workdir",
+        "session_end",
+        "session_copy",
+        "session_retention_preview",
+    }
 )
 _EXECUTOR_CONTROL_TOOLS = frozenset({"executor"})
 _DOWNLOAD_CONTROL_TOOLS = frozenset(
@@ -79,6 +85,12 @@ class ControlToolRouter:
                     else str(args["executor_id"])
                 ),
                 name=None if args.get("name") is None else str(args["name"]),
+            )
+        if tool_name == "session_retention_preview":
+            return await self._sessions.retention_preview(
+                limit=int(args.get("limit", 16)),
+                offset=int(args.get("offset", 0)),
+                executor_id=args.get("executor_id"),
             )
         if tool_name == "session_start":
             task_id = args.get("task_id")

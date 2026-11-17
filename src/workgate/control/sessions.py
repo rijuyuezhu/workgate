@@ -386,6 +386,113 @@ class ControlSessionCoordinator:
             "stopped_browsers": payload.get("stopped_browsers", []),
         }
 
+    async def retention_preview(
+        self,
+        *,
+        limit: int = 16,
+        offset: int = 0,
+        executor_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Inspect bounded retention candidates without ending any Session."""
+        if not 1 <= limit <= _RETENTION_SWEEP_BATCH_SIZE or offset < 0:
+            raise ValueError("invalid retention preview pagination")
+        if (
+            executor_id is not None
+            and executor_id not in self._state.snapshot_executors()
+        ):
+            raise ValueError(f"unknown executor_id {executor_id!r}")
+        retention = self._agent_session_retention_s
+        cutoff = self._clock() - retention if retention else None
+        records = tuple(
+            r
+            for r in self._state.snapshot_sessions().values()
+            if executor_id is None or str(r.executor_id) == executor_id
+        )
+        status_counts = {
+            status: sum(r.status == status for r in records)
+            for status in ("creating", "active", "terminating", "ended")
+        }
+        candidates = (
+            sorted(
+                (
+                    r
+                    for r in records
+                    if r.status == "active" and r.created_at < cutoff
+                ),
+                key=lambda r: (r.created_at, str(r.session_id)),
+            )
+            if cutoff is not None
+            else []
+        )
+        semaphore = asyncio.Semaphore(4)
+
+        async def inspect(record: ControlSessionRecord) -> dict[str, Any]:
+            async with semaphore:
+                assert cutoff is not None
+                session_id = str(record.session_id)
+                target = str(record.executor_id)
+                reason = "unconfirmed"
+                last_active_at: float | None = None
+                try:
+                    if not await self._transport.is_online(target):
+                        reason = "executor_offline"
+                    elif (
+                        self._auto_cleanup_blocked is not None
+                        and await self._auto_cleanup_blocked(session_id)
+                    ):
+                        reason = "control_job_active"
+                    else:
+                        summary = await self._lookup_session_summary(record)
+                        if summary is None:
+                            # A cached missing hint may be stale after reconnect.
+                            reason = "unconfirmed"
+                        else:
+                            last_active_at = summary.last_active_at
+                            if self._cleanup_eligible(summary, cutoff=cutoff):
+                                reason = "eligible_at_check"
+                            elif summary.has_persistent_shells:
+                                reason = "persistent_shell_active"
+                            elif summary.has_active_jobs:
+                                reason = "executor_job_active"
+                            elif summary.last_active_at is None:
+                                reason = "activity_unknown"
+                            elif summary.last_active_at >= cutoff:
+                                reason = "recent_activity"
+                except Exception:
+                    logger.exception(
+                        "Retention preview failed for %s", session_id
+                    )
+                    reason = "unconfirmed"
+                return {
+                    "session_id": session_id,
+                    "executor_id": target,
+                    "task_id": str(record.task_id) if record.task_id else None,
+                    "created_at": record.created_at,
+                    "last_active_at": last_active_at,
+                    "reason": reason,
+                    "eligible": reason == "eligible_at_check",
+                }
+
+        rows = await asyncio.gather(
+            *(inspect(record) for record in candidates[offset : offset + limit])
+        )
+        next_offset = offset + len(rows)
+        return {
+            "retention_s": retention,
+            "cutoff": cutoff,
+            "executor_id": executor_id,
+            "status_counts": status_counts,
+            "too_new_count": status_counts["active"] - len(candidates)
+            if cutoff is not None
+            else 0,
+            "age_candidate_count": len(candidates),
+            "offset": offset,
+            "rows": rows,
+            "next_offset": next_offset
+            if next_offset < len(candidates)
+            else None,
+        }
+
     async def reap_expired_sessions(self) -> None:
         """Safely expire a bounded slice of idle sessions even without new admissions."""
         if self._agent_session_retention_s == 0:
@@ -543,6 +650,11 @@ class ControlSessionCoordinator:
         try:
             summary = SessionInventorySummary.model_validate(result.result)
         except Exception:
+            return None
+        if str(summary.session_id) != session_id:
+            logger.warning(
+                "Executor returned mismatched session lookup for %s", session_id
+            )
             return None
         missing = self._missing_by_executor.get(executor_id)
         if missing is not None:

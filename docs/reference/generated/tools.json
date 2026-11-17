@@ -1,11 +1,11 @@
 {
-  "count": 61,
+  "count": 62,
   "sections": [
     {
       "body": [
         "Generated tool count: ",
         {
-          "code": "61"
+          "code": "62"
         },
         "."
       ],
@@ -1666,6 +1666,37 @@
             ]
           },
           "End one execution session and stop its owned work. An attached task remains available; files are not deleted."
+        ],
+        [
+          {
+            "code": "session_retention_preview"
+          },
+          {
+            "items": [
+              {
+                "description": "Optional stable executor_id. Omit only when exactly one eligible executor is online.",
+                "head": {
+                  "code": "executor_id"
+                },
+                "note": "(string / null, optional)"
+              },
+              {
+                "description": "At most 32 age-eligible Session checks per call.",
+                "head": {
+                  "code": "limit"
+                },
+                "note": "(integer, optional)"
+              },
+              {
+                "description": "Zero-based offset through oldest age-eligible Sessions.",
+                "head": {
+                  "code": "offset"
+                },
+                "note": "(integer, optional)"
+              }
+            ]
+          },
+          "Inspect age-eligible Sessions with skip reasons using live Executor checks. Bounded and read-only; eligibility is a snapshot, not permission to terminate. Use offset for further pages."
         ],
         [
           {
@@ -11391,6 +11422,213 @@
           "ended"
         ],
         "title": "SessionEndOutput",
+        "type": "object"
+      }
+    },
+    {
+      "_meta": {
+        "securitySchemes": [
+          {
+            "scopes": [
+              "shell:read"
+            ],
+            "type": "oauth2"
+          }
+        ]
+      },
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Inspect age-eligible Sessions with skip reasons using live Executor checks. Bounded and read-only; eligibility is a snapshot, not permission to terminate. Use offset for further pages.",
+      "inputSchema": {
+        "properties": {
+          "executor_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "pattern": "^exec_[A-Za-z0-9_-]{22,}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional stable executor_id. Omit only when exactly one eligible executor is online.",
+            "title": "Executor Id"
+          },
+          "limit": {
+            "default": 16,
+            "description": "At most 32 age-eligible Session checks per call.",
+            "maximum": 32,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "description": "Zero-based offset through oldest age-eligible Sessions.",
+            "minimum": 0,
+            "title": "Offset",
+            "type": "integer"
+          }
+        },
+        "title": "session_retention_previewArguments",
+        "type": "object"
+      },
+      "name": "session_retention_preview",
+      "outputSchema": {
+        "$defs": {
+          "SessionRetentionPreviewRow": {
+            "description": "One bounded, authoritative read-only retention observation.",
+            "properties": {
+              "created_at": {
+                "title": "Created At",
+                "type": "number"
+              },
+              "eligible": {
+                "title": "Eligible",
+                "type": "boolean"
+              },
+              "executor_id": {
+                "title": "Executor Id",
+                "type": "string"
+              },
+              "last_active_at": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Last Active At"
+              },
+              "reason": {
+                "enum": [
+                  "eligible_at_check",
+                  "executor_offline",
+                  "control_job_active",
+                  "unconfirmed",
+                  "persistent_shell_active",
+                  "executor_job_active",
+                  "activity_unknown",
+                  "recent_activity"
+                ],
+                "title": "Reason",
+                "type": "string"
+              },
+              "session_id": {
+                "title": "Session Id",
+                "type": "string"
+              },
+              "task_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Task Id"
+              }
+            },
+            "required": [
+              "session_id",
+              "executor_id",
+              "created_at",
+              "reason",
+              "eligible"
+            ],
+            "title": "SessionRetentionPreviewRow",
+            "type": "object"
+          }
+        },
+        "description": "Snapshot of age-eligible Sessions; eligibility must be rechecked before cleanup.",
+        "properties": {
+          "age_candidate_count": {
+            "title": "Age Candidate Count",
+            "type": "integer"
+          },
+          "cutoff": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cutoff"
+          },
+          "executor_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Executor Id"
+          },
+          "next_offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Offset"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "retention_s": {
+            "title": "Retention S",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/$defs/SessionRetentionPreviewRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "status_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Status Counts",
+            "type": "object"
+          },
+          "too_new_count": {
+            "title": "Too New Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "retention_s",
+          "cutoff",
+          "status_counts",
+          "too_new_count",
+          "age_candidate_count",
+          "offset",
+          "rows"
+        ],
+        "title": "SessionRetentionPreviewOutput",
         "type": "object"
       }
     },

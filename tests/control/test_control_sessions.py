@@ -1341,6 +1341,197 @@ async def test_periodic_unlimited_retention_protects_busy_and_offline_sessions(
 
 
 @pytest.mark.asyncio
+async def test_retention_preview_classifies_live_resources_without_ending_sessions(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    online, offline = new_executor_id(), new_executor_id()
+    _trust(state, online)
+    _trust(state, offline)
+    ids = {
+        name: new_session_id()
+        for name in (
+            "eligible",
+            "shell",
+            "job",
+            "copy",
+            "fresh",
+            "unknown",
+            "missing",
+            "mismatch",
+            "offline",
+            "recent",
+        )
+    }
+    for name, session_id in ids.items():
+        executor = offline if name == "offline" else online
+        record = _active_record(executor, session_id)
+        if name == "recent":
+            record = record.model_copy(
+                update={"created_at": 95.0, "updated_at": 95.0}
+            )
+        state.put_session(record)
+    before = state.snapshot_sessions()
+    transport = FakeTransport()
+    transport.online.add(online)
+
+    async def lookup(_executor, op, _args, session_id, _timeout):
+        assert op == "session.lookup"
+        if session_id == ids["missing"]:
+            return _ok(None)
+        if session_id == ids["mismatch"]:
+            return _ok(
+                {
+                    "session_id": new_session_id(),
+                    "workdir": "/workspace/project",
+                    "last_active_at": 1.0,
+                    "has_persistent_shells": False,
+                    "has_active_jobs": False,
+                }
+            )
+        return _ok(
+            {
+                "session_id": session_id,
+                "workdir": "/workspace/project",
+                "last_active_at": None
+                if session_id == ids["unknown"]
+                else (99.0 if session_id == ids["fresh"] else 1.0),
+                "has_persistent_shells": session_id == ids["shell"],
+                "has_active_jobs": session_id == ids["job"],
+            }
+        )
+
+    transport.call_impl = lookup
+    coordinator = _coordinator(
+        state, transport, agent_session_retention_s=10, clock=lambda: 100.0
+    )  # type: ignore[arg-type]
+
+    async def blocked(session_id: str) -> bool:
+        return session_id == ids["copy"]
+
+    async def fail_if_terminated(_session_id: str) -> list[str]:
+        pytest.fail("read-only preview must never terminate work")
+
+    coordinator.set_control_resource_hooks(
+        auto_cleanup_blocked=blocked, before_terminate=fail_if_terminated
+    )
+    page = await coordinator.retention_preview(limit=32)
+    reasons = {
+        name: next(
+            row["reason"]
+            for row in page["rows"]
+            if row["session_id"] == str(session_id)
+        )
+        for name, session_id in ids.items()
+        if name != "recent"
+    }
+    assert reasons == {
+        "eligible": "eligible_at_check",
+        "shell": "persistent_shell_active",
+        "job": "executor_job_active",
+        "copy": "control_job_active",
+        "fresh": "recent_activity",
+        "unknown": "activity_unknown",
+        "missing": "unconfirmed",
+        "mismatch": "unconfirmed",
+        "offline": "executor_offline",
+    }
+    assert page["status_counts"]["active"] == 10
+    assert page["too_new_count"] == 1
+    assert page["age_candidate_count"] == 9
+    assert page["next_offset"] is None
+    assert sum(row["eligible"] for row in page["rows"]) == 1
+    # Offline and Control-managed copy Sessions do not incur Executor lookups.
+    assert len(transport.calls) == 7
+    assert all(call[1] == "session.lookup" for call in transport.calls)
+    assert state.snapshot_sessions() == before
+    first = await coordinator.retention_preview(
+        limit=2, offset=0, executor_id=online
+    )
+    second = await coordinator.retention_preview(
+        limit=2, offset=2, executor_id=online
+    )
+    assert first["next_offset"] == 2
+    assert (
+        len({row["session_id"] for row in first["rows"] + second["rows"]}) == 4
+    )
+    assert first["age_candidate_count"] == 8
+
+
+@pytest.mark.asyncio
+async def test_retention_preview_limits_concurrent_executor_checks(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    executor = new_executor_id()
+    _trust(state, executor)
+    ids = [new_session_id() for _ in range(12)]
+    for session_id in ids:
+        state.put_session(_active_record(executor, session_id))
+    transport = FakeTransport()
+    transport.online.add(executor)
+    in_flight = 0
+    max_in_flight = 0
+
+    async def lookup(_executor, op, _args, session_id, _timeout):
+        nonlocal in_flight, max_in_flight
+        assert op == "session.lookup" and session_id in ids
+        in_flight += 1
+        max_in_flight = max(max_in_flight, in_flight)
+        await asyncio.sleep(0.01)
+        in_flight -= 1
+        return _ok(
+            {
+                "session_id": session_id,
+                "workdir": "/workspace/project",
+                "last_active_at": 1.0,
+                "has_persistent_shells": False,
+                "has_active_jobs": False,
+            }
+        )
+
+    transport.call_impl = lookup
+    coordinator = _coordinator(
+        state, transport, agent_session_retention_s=10, clock=lambda: 100.0
+    )  # type: ignore[arg-type]
+    preview = await coordinator.retention_preview(limit=12)
+    assert len(preview["rows"]) == 12
+    assert max_in_flight == 4
+    assert all(row["eligible"] for row in preview["rows"])
+    assert all(
+        row.status == "active" for row in state.snapshot_sessions().values()
+    )
+
+
+@pytest.mark.asyncio
+async def test_retention_preview_disabled_or_invalid_is_read_only(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    executor = new_executor_id()
+    _trust(state, executor)
+    session_id = new_session_id()
+    state.put_session(_active_record(executor, session_id))
+    transport = FakeTransport()
+    coordinator = _coordinator(
+        state, transport, agent_session_retention_s=0, clock=lambda: 100.0
+    )  # type: ignore[arg-type]
+    preview = await coordinator.retention_preview()
+    assert preview["retention_s"] == 0
+    assert preview["cutoff"] is None
+    assert preview["age_candidate_count"] == 0
+    assert preview["too_new_count"] == 0
+    assert preview["rows"] == []
+    assert not transport.calls
+    with pytest.raises(ValueError, match="pagination"):
+        await coordinator.retention_preview(limit=33)
+    with pytest.raises(ValueError, match="pagination"):
+        await coordinator.retention_preview(offset=-1)
+    with pytest.raises(ValueError, match="unknown executor"):
+        await coordinator.retention_preview(executor_id=new_executor_id())
+
+
+@pytest.mark.asyncio
 async def test_retention_sweep_is_bounded_and_rotates_without_starvation(
     tmp_path: Path,
 ) -> None:

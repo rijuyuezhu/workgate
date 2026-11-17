@@ -234,6 +234,41 @@ class SessionEndOutput(BaseModel):
     )
 
 
+class SessionRetentionPreviewRow(BaseModel):
+    """One bounded, authoritative read-only retention observation."""
+
+    session_id: str
+    executor_id: str
+    task_id: str | None = None
+    created_at: float
+    last_active_at: float | None = None
+    reason: Literal[
+        "eligible_at_check",
+        "executor_offline",
+        "control_job_active",
+        "unconfirmed",
+        "persistent_shell_active",
+        "executor_job_active",
+        "activity_unknown",
+        "recent_activity",
+    ]
+    eligible: bool
+
+
+class SessionRetentionPreviewOutput(BaseModel):
+    """Snapshot of age-eligible Sessions; eligibility must be rechecked before cleanup."""
+
+    retention_s: int
+    cutoff: float | None
+    executor_id: str | None = None
+    status_counts: dict[str, int]
+    too_new_count: int
+    age_candidate_count: int
+    offset: int
+    rows: list[SessionRetentionPreviewRow]
+    next_offset: int | None = None
+
+
 class SessionCopyEndpoint(BaseModel):
     """One endpoint in a session-to-session copy."""
 
