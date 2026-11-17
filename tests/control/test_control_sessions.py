@@ -1384,6 +1384,58 @@ async def test_retention_sweep_is_bounded_and_rotates_without_starvation(
 
 
 @pytest.mark.asyncio
+async def test_retention_sweep_skips_recent_sessions_without_spending_lookup_budget(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    executor = new_executor_id()
+    _trust(state, executor)
+    recent = [new_session_id() for _ in range(70)]
+    for session_id in recent:
+        state.put_session(
+            _active_record(executor, session_id).model_copy(
+                update={"created_at": 95.0}
+            )
+        )
+    expired = new_session_id()
+    state.put_session(_active_record(executor, expired))
+    transport = FakeTransport()
+    transport.online.add(executor)
+
+    async def execute(_executor_id, op, _args, session_id, _timeout):
+        assert session_id == expired
+        if op == "session.lookup":
+            return _ok(
+                {
+                    "session_id": session_id,
+                    "workdir": "/workspace/project",
+                    "last_active_at": 1.0,
+                    "has_persistent_shells": False,
+                    "has_active_jobs": False,
+                }
+            )
+        assert op == "session.terminate"
+        return _ok({"session_id": session_id, "absent": True})
+
+    transport.call_impl = execute
+    coordinator = _coordinator(
+        state,
+        transport,  # type: ignore[arg-type]
+        agent_session_retention_s=10,
+        clock=lambda: 100.0,
+    )
+    await coordinator.reap_expired_sessions()
+    assert state.snapshot_sessions()[expired].status == "ended"
+    assert all(
+        state.snapshot_sessions()[item].status == "active" for item in recent
+    )
+    assert [call[1] for call in transport.calls] == [
+        "session.lookup",
+        "session.terminate",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_periodic_cleanup_does_not_end_ambiguous_creating_sessions(
     tmp_path: Path,
 ) -> None:

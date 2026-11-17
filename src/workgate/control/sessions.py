@@ -393,17 +393,19 @@ class ControlSessionCoordinator:
         # A creating session may still have an unconfirmed remote create.
         # Periodic cleanup only reaps active sessions after an authoritative
         # Executor activity/resource lookup; leave ambiguous creates alone.
+        cutoff = self._clock() - self._agent_session_retention_s
+        # A Session cannot have been idle since before its Control creation.
+        # Recent Sessions must not consume the bounded hourly lookup budget.
         records = tuple(
             record
             for record in self._cleanup_records()
-            if record.status == "active"
+            if record.status == "active" and record.created_at < cutoff
         )
         if not records:
             return
         count = min(len(records), _RETENTION_SWEEP_BATCH_SIZE)
         start = self._retention_scan_offset % len(records)
         self._retention_scan_offset = (start + count) % len(records)
-        cutoff = self._clock() - self._agent_session_retention_s
         for index in range(count):
             record = records[(start + index) % len(records)]
             try:
