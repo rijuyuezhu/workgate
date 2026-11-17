@@ -864,10 +864,17 @@ class ControlTaskService:
             ),
         )
         remaining = {str(task.task_id) for task in tasks}
+        # Skip known-protected Tasks without repeatedly scanning all Sessions.
+        # _remove_retained_terminal still rechecks live attachments before deletion.
+        protected = {
+            str(record.task_id)
+            for record in self._state.snapshot_sessions().values()
+            if record.task_id is not None and record.status != "ended"
+        }
         stale_before = time.time() - _TASK_TERMINAL_RETENTION_S
         for task in terminal:
             task_id = str(task.task_id)
-            if task.document.updated_at >= stale_before:
+            if task.document.updated_at >= stale_before or task_id in protected:
                 continue
             if self._remove_retained_terminal(
                 task_id, stale_before=stale_before
@@ -881,7 +888,7 @@ class ControlTaskService:
         if terminal_count > _TASK_HISTORY_LIMIT_PER_PRINCIPAL:
             for task in terminal:
                 task_id = str(task.task_id)
-                if task_id not in remaining:
+                if task_id not in remaining or task_id in protected:
                     continue
                 if self._remove_retained_terminal(task_id):
                     terminal_count -= 1

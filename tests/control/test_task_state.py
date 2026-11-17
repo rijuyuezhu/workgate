@@ -6,14 +6,14 @@ import pytest
 from tests.support.paired import build_paired_control_harness
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.runtime import build_control_runtime
-from workgate.control.state import ExecutorTrustRecord
+from workgate.control.state import ControlSessionRecord, ExecutorTrustRecord
 from workgate.oauth.core.context import bind_oauth_claims, reset_oauth_claims
 from workgate.protocol.credentials import (
     executor_credential_verifier,
     new_executor_credential,
 )
 from workgate.protocol.executor import SESSION_CREATE_OP
-from workgate.protocol.ids import new_executor_id
+from workgate.protocol.ids import new_executor_id, new_session_id
 
 
 def _configure(monkeypatch, tmp_path) -> None:
@@ -524,6 +524,83 @@ async def test_task_retention_never_prunes_terminal_task_with_live_session(
     assert replacement.label == "replacement"
     with pytest.raises(ValueError, match="unknown task_id"):
         await service.read_task(task.task_id)
+
+
+@pytest.mark.asyncio
+async def test_task_prune_skips_known_live_task_without_repeated_rechecks(
+    tmp_path, monkeypatch
+) -> None:
+    _settings, harness, task_id, session_id = await _task_with_session(
+        monkeypatch, tmp_path
+    )
+    monkeypatch.setattr(
+        "workgate.control.task_state._TASK_HISTORY_LIMIT_PER_PRINCIPAL", 0
+    )
+    monkeypatch.setattr(
+        "workgate.control.task_state._TASK_TERMINAL_RETENTION_S", 0
+    )
+    service = harness.control.task_service
+    await service.cancel_task(task_id)
+    attempted: list[str] = []
+    original = service._remove_retained_terminal
+
+    def record(task_id: str, *, stale_before: float | None = None) -> bool:
+        attempted.append(task_id)
+        return original(task_id, stale_before=stale_before)
+
+    monkeypatch.setattr(service, "_remove_retained_terminal", record)
+    await service.create_task(label="next task")
+    assert task_id not in attempted
+    assert (await service.read_task(task_id)).session_ids == [session_id]
+
+    await harness.control.session_coordinator.end_session(session_id)
+    await service.create_task(label="after Session end")
+    assert task_id in attempted
+    with pytest.raises(ValueError, match="unknown task_id"):
+        await service.read_task(task_id)
+
+
+@pytest.mark.asyncio
+async def test_task_prune_rechecks_session_attached_after_fast_snapshot(
+    tmp_path, monkeypatch
+) -> None:
+    _settings, harness = _harness(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        "workgate.control.task_state._TASK_HISTORY_LIMIT_PER_PRINCIPAL", 0
+    )
+    monkeypatch.setattr(
+        "workgate.control.task_state._TASK_TERMINAL_RETENTION_S", 0
+    )
+    service = harness.control.task_service
+    task = await service.create_task(label="to protect during prune")
+    await service.cancel_task(task.task_id)
+    original = service._remove_retained_terminal
+    attached = False
+
+    def attach_just_before_deletion(
+        task_id: str, *, stale_before: float | None = None
+    ) -> bool:
+        nonlocal attached
+        if task_id == task.task_id and not attached:
+            attached = True
+            harness.control.control_state.put_session(
+                ControlSessionRecord(
+                    session_id=new_session_id(),
+                    executor_id=harness.executor_id,
+                    task_id=task.task_id,
+                    status="active",
+                    created_at=1.0,
+                    updated_at=1.0,
+                )
+            )
+        return original(task_id, stale_before=stale_before)
+
+    monkeypatch.setattr(
+        service, "_remove_retained_terminal", attach_just_before_deletion
+    )
+    await service.create_task(label="new work")
+    assert attached
+    assert (await service.read_task(task.task_id)).status == "cancelled"
 
 
 @pytest.mark.asyncio
