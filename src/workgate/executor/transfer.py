@@ -703,24 +703,14 @@ def _abandon_final_write_receipt(
             metadata_path.unlink(missing_ok=True)
             context.store.state_store.remove(receipt_path)
             return True
-        if current.status == "receiving":
-            current = current.model_copy(
-                update={
-                    "abandonment_status": "discard_temp",
-                    "updated_at": time.time(),
-                }
-            )
-            _write_write_receipt(
-                context,
-                receipt_path,
-                current.model_dump(mode="python", exclude_none=True),
-            )
-            temporary.unlink(missing_ok=True)
-            metadata_path.unlink(missing_ok=True)
-            context.store.state_store.remove(receipt_path)
-            return True
-        if current.status == "committing" and temporary.exists():
-            if discard_committed_destination and os.path.lexists(destination):
+        if current.status == "receiving" or (
+            current.status == "committing" and temporary.exists()
+        ):
+            if (
+                current.status == "committing"
+                and discard_committed_destination
+                and os.path.lexists(destination)
+            ):
                 raise RuntimeError(
                     "transfer archive destination changed before commit"
                 )
