@@ -1700,6 +1700,39 @@ async def test_periodic_retention_rechecks_a_previously_missing_session(
 
 
 @pytest.mark.asyncio
+async def test_periodic_retention_rejects_mismatched_executor_lookup(
+    tmp_path: Path,
+) -> None:
+    state = _state(tmp_path)
+    executor = new_executor_id()
+    _trust(state, executor)
+    session_id = new_session_id()
+    state.put_session(_active_record(executor, session_id))
+    transport = FakeTransport()
+    transport.online.add(executor)
+
+    async def mismatched(_executor, op, _args, requested, _timeout):
+        assert op == "session.lookup" and requested == session_id
+        return _ok(
+            {
+                "session_id": new_session_id(),
+                "workdir": "/workspace/project",
+                "last_active_at": 1.0,
+                "has_persistent_shells": False,
+                "has_active_jobs": False,
+            }
+        )
+
+    transport.call_impl = mismatched
+    coordinator = _coordinator(
+        state, transport, agent_session_retention_s=10, clock=lambda: 100.0
+    )  # type: ignore[arg-type]
+    await coordinator.reap_expired_sessions()
+    assert state.snapshot_sessions()[session_id].status == "active"
+    assert [call[1] for call in transport.calls] == ["session.lookup"]
+
+
+@pytest.mark.asyncio
 async def test_periodic_retention_keeps_sessions_still_missing_on_executor(
     tmp_path: Path,
 ) -> None:
