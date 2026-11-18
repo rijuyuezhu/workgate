@@ -15,6 +15,9 @@ type TaskModel = {
   unattached: SessionRow[];
   selectedTaskId: string;
   selectedSessionId: string;
+  selectionMode?: boolean;
+  selectedTaskIds?: string[];
+  selectionDisabled?: boolean;
   emptyMessage: string;
 };
 type SessionModel = {
@@ -24,6 +27,7 @@ type SessionModel = {
 };
 type Events = {
   task: (id: string) => void;
+  taskSelection: (id: string, checked: boolean) => void;
   unattached: (id: string) => void;
   session: (id: string) => void;
 };
@@ -52,16 +56,28 @@ function TaskList({ model, events }: { model: TaskModel; events: Events }) {
   if (!model.tasks.length && !model.unattached.length) {
     return <div className="empty-state">{model.emptyMessage}</div>;
   }
+  const selection = new Set(model.selectedTaskIds || []);
   return <>
-    {model.tasks.map((task) => <button type="button" key={`task:${task.id}`}
-      className="session-entry task-entry" data-task-id={task.id}
-      aria-current={task.id === model.selectedTaskId} onClick={() => events.task(task.id)}>
-      <span className="task-entry-heading">
-        <strong>{task.title}</strong>
-        <span className="task-entry-status" data-status={task.status}>{task.status}</span>
-      </span>
-      <span className="session-entry-meta">{task.meta}</span>
-    </button>)}
+    {model.tasks.map((task) => {
+      const button = <button type="button" key={`task:${task.id}`}
+        className="session-entry task-entry" data-task-id={task.id}
+        aria-current={task.id === model.selectedTaskId} onClick={() => events.task(task.id)}>
+        <span className="task-entry-heading">
+          <strong>{task.title}</strong>
+          <span className="task-entry-status" data-status={task.status}>{task.status}</span>
+        </span>
+        <span className="session-entry-meta">{task.meta}</span>
+      </button>;
+      if (!model.selectionMode) return button;
+      return <div key={`review:${task.id}`} className="task-select-row">
+        <label className="task-select-control">
+          <input type="checkbox" aria-label={`Select Task ${task.title}`}
+            checked={selection.has(task.id)} disabled={model.selectionDisabled}
+            onChange={(event) => events.taskSelection(task.id, event.target.checked)} />
+        </label>
+        {button}
+      </div>;
+    })}
     {model.unattached.length ? <div className="session-group-label">Unattached sessions</div> : null}
     {model.unattached.map((session) => <SessionRowButton key={`session:${session.id}`} row={session}
       unattached selected={!model.selectedTaskId && session.id === model.selectedSessionId}

@@ -2651,6 +2651,18 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
   .task-page-buttons { margin-left: 0; }
 }
 
+/* Explicit, page-scoped Task review without changing existing list navigation. */
+.task-batch-actions:not([hidden]) {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 9px 16px; border-bottom: 1px solid var(--line);
+}
+.task-batch-actions button { padding: 5px 9px; font-size: 11px; }
+#tasks-batch-state { font-size: 11px; overflow-wrap: anywhere; }
+.task-select-row { display: flex; align-items: stretch; gap: 6px; min-width: 0; }
+.task-select-row > .task-entry { flex: 1; min-width: 0; }
+.task-select-control { display: flex; align-items: center; cursor: pointer; padding: 0 6px; }
+.task-select-control input { width: 16px; height: 16px; }
+
 /* Task actions use the existing status machine; keep errors visible below controls. */
 .task-lifecycle-actions {
   display: flex; flex-wrap: wrap; align-items: center; gap: 7px;

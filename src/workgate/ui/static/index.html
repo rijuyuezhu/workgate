@@ -453,6 +453,11 @@ description: My Skill
           <button id="tasks-next" type="button" disabled>Next</button>
         </div>
       </div>
+      <div id="tasks-batch-actions" class="task-batch-actions" hidden>
+        <button id="tasks-select-page" type="button">Select page</button>
+        <button id="tasks-complete-selected" type="button" disabled>Complete selected (0)</button>
+        <span id="tasks-batch-state" role="status" aria-live="polite"></span>
+      </div>
       <div class="tasks-layout">
         <nav id="task-list" class="session-list" aria-label="Semantic tasks" aria-live="polite"></nav>
         <article class="tasks-workspace">
