@@ -25,7 +25,7 @@ In **Tasks and Sessions**, select a Task and open **Sessions → New Session in 
 
 When the final execution Session is finished, use **End Session & Complete Task** to close both. Use **End Session** alone when the Task will continue later. Completing a Task requires its Plan steps to be completed or skipped, and the combined action checks again that no Sessions remain active.
 
-Use the **Needs review** filter for Tasks that have retained Sessions but none still running. Review their Plan and choose **Complete** or **Resume**; these Tasks stay available until you explicitly finish them.
+Use the **Needs review** filter for Tasks that have retained Sessions but none still running. Review their Plan and choose **Complete** or **Resume**; these Tasks stay available until you explicitly finish them. You can also select reviewed Tasks on the current page and use **Complete selected**. Each Task is checked independently: active Sessions and unfinished Plan steps keep that Task open and report an error.
 
 ## Transfer files
 
