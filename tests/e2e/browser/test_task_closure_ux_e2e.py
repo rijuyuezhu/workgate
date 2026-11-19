@@ -1,4 +1,4 @@
-"""Real browser: Task reuse, ready inbox, and explicit Session+Task closure."""
+"""Real browser: Task reuse, focused controls, and explicit Session+Task closure."""
 
 import os
 
@@ -60,7 +60,7 @@ def test_task_reuse_and_explicit_finish_after_last_session(
     ).to_be_visible()
 
     # Reopening preserves the Task identity; ending a Session alone puts it
-    # in the ready-to-close inbox, but never auto-completes it.
+    # available for later work, without falsely completing it.
     page.locator("#task-tab-progress").click()
     page.locator('[data-task-action="resume"]').click()
     expect(page.locator("#task-status")).to_have_text("active")
@@ -72,10 +72,11 @@ def test_task_reuse_and_explicit_finish_after_last_session(
     expect(page.locator("#session-list .session-entry")).to_have_count(2)
     expect(page.locator("#session-terminate")).to_be_enabled()
     page.once("dialog", lambda dialog: dialog.accept())
+    page.locator(".session-end-options summary").click()
     page.locator("#session-terminate").click()
     expect(page.locator("#session-terminate")).to_be_disabled()
     expect(page.locator("#task-status")).to_have_text("active")
-    page.locator("#tasks-filter").select_option("ready")
+    page.locator("#tasks-filter").select_option("active")
     expect(
         page.locator(f'#task-list [data-task-id="{task_id}"]')
     ).to_be_visible()
@@ -84,19 +85,14 @@ def test_task_reuse_and_explicit_finish_after_last_session(
     expect(page.locator("#task-status")).to_have_text("active")
 
 
-def test_review_inbox_batch_complete_keeps_unfinished_and_new_live_sessions(
+def test_single_task_finish_guard_without_batch_toolbar(
     browser_harness: BrowserHarness,
 ) -> None:
     harness = browser_harness
     harness.login()
     harness.wait_executor_online()
     ids = []
-    for label in (
-        "review-done-a",
-        "review-done-b",
-        "review-unfinished",
-        "review-restarted",
-    ):
+    for label in ("review-done", "review-unfinished", "review-restarted"):
         created = harness.api(
             "POST", "/tools/task", body={"action": "create", "label": label}
         )
@@ -119,7 +115,7 @@ def test_review_inbox_batch_complete_keeps_unfinished_and_new_live_sessions(
             body={
                 "session_id": started["payload"]["data"]["session"][
                     "session_id"
-                ],
+                ]
             },
         )
         assert ended["status"] == 200, ended
@@ -128,7 +124,7 @@ def test_review_inbox_batch_complete_keeps_unfinished_and_new_live_sessions(
         "PUT",
         "/api/ui/todos",
         body={
-            "task_id": ids[2],
+            "task_id": ids[1],
             "todos": [
                 {
                     "id": "one",
@@ -140,61 +136,40 @@ def test_review_inbox_batch_complete_keeps_unfinished_and_new_live_sessions(
         },
     )
     assert plan["status"] == 200, plan
+
     page = harness.page
-    page.goto(f"{harness.base_url}/ui#tasks")
+    page.goto(f"{harness.base_url}/ui?task_id={ids[0]}#tasks")
     expect(page.locator("#connection-state")).to_have_text("Connected")
-    page.locator("#tasks-filter").select_option("ready")
-    expect(page.locator("#task-list input[type=checkbox]")).to_have_count(4)
-    first_checkbox = page.locator("#task-list input[type=checkbox]").first
-    first_checkbox.check()
-    expect(page.locator("#tasks-complete-selected")).to_have_text(
-        "Complete selected (1)"
-    )
-    assert "task_id=" not in page.url  # Checkbox does not open Task details.
-    first_checkbox.uncheck()
-    expect(page.locator("#tasks-complete-selected")).to_have_text(
-        "Complete selected (0)"
-    )
-    page.locator("#tasks-select-page").click()
-    expect(page.locator("#tasks-complete-selected")).to_have_text(
-        "Complete selected (4)"
-    )
+    expect(page.locator("#tasks-filter option[value=ready]")).to_have_count(0)
+    expect(page.locator("#task-list input[type=checkbox]")).to_have_count(0)
+    expect(page.locator("#tasks-complete-selected")).to_have_count(0)
+    expect(page.locator("#task-status")).to_have_text("active")
+    page.screenshot(path=str(harness.artifacts / "simple-task-list.png"))
 
-    page.screenshot(path=str(harness.artifacts / "review-selected.png"))
-
-    # A second agent starts working after the inbox was loaded. The server
-    # must reject finishing that Task even though its checkbox is still selected.
+    # Other agents may start working again while an operator reviews a Task.
     restarted = harness.api(
         "POST",
         "/api/ui/sessions/start",
         body={
-            "task_id": ids[3],
+            "task_id": ids[2],
             "executor_id": harness.executor_id,
             "workdir": ".",
         },
     )
     assert restarted["status"] == 200, restarted
-    page.once("dialog", lambda dialog: dialog.dismiss())
-    page.locator("#tasks-complete-selected").click()
-    expect(page.locator("#tasks-complete-selected")).to_have_text(
-        "Complete selected (4)"
-    )
-    page.once("dialog", lambda dialog: dialog.accept())
-    page.locator("#tasks-complete-selected").click()
-    expect(page.locator("#tasks-batch-state")).to_contain_text(
-        "Completed 2 of 4; 2 kept for review", timeout=20000
-    )
-    page.screenshot(path=str(harness.artifacts / "review-partial.png"))
-    for task_id in ids[:2]:
-        state = harness.api("GET", f"/api/ui/tasks/detail?task_id={task_id}")
-        assert state["payload"]["data"]["task"]["status"] == "completed"
-    for task_id in ids[2:]:
-        state = harness.api("GET", f"/api/ui/tasks/detail?task_id={task_id}")
-        assert state["payload"]["data"]["task"]["status"] == "active"
-    expect(page.locator("#task-list input[type=checkbox]")).to_have_count(1)
-    page.locator("#tasks-filter").select_option("active")
-    page.locator("#tasks-filter").select_option("ready")
-    expect(page.locator("#tasks-complete-selected")).to_have_text(
-        "Complete selected (0)"
-    )
-    assert page.locator("#tasks-batch-actions").is_visible()
+
+    def guarded_finish(task_id: str) -> dict:
+        return harness.api(
+            "POST",
+            "/api/ui/tasks/finish",
+            body={"task_id": task_id, "require_no_live_sessions": True},
+        )
+
+    assert guarded_finish(ids[0])["status"] == 200
+    assert guarded_finish(ids[1])["status"] == 400
+    assert guarded_finish(ids[2])["status"] == 400
+    for task_id, expected_status in zip(
+        ids, ("completed", "active", "active"), strict=True
+    ):
+        detail = harness.api("GET", f"/api/ui/tasks/detail?task_id={task_id}")
+        assert detail["payload"]["data"]["task"]["status"] == expected_status

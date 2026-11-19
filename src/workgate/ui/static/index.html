@@ -440,7 +440,6 @@ description: My Skill
           <select id="tasks-filter">
             <option value="active">Active</option>
             <option value="blocked">Blocked</option>
-            <option value="ready">Needs review (no active Session)</option>
             <option value="completed">Completed</option>
             <option value="cancelled">Cancelled</option>
             <option value="all">All tasks</option>
@@ -452,11 +451,6 @@ description: My Skill
           <button id="tasks-prev" type="button" disabled>Previous</button>
           <button id="tasks-next" type="button" disabled>Next</button>
         </div>
-      </div>
-      <div id="tasks-batch-actions" class="task-batch-actions" hidden>
-        <button id="tasks-select-page" type="button">Select page</button>
-        <button id="tasks-complete-selected" type="button" disabled>Complete selected (0)</button>
-        <span id="tasks-batch-state" role="status" aria-live="polite"></span>
       </div>
       <div class="tasks-layout">
         <nav id="task-list" class="session-list" aria-label="Semantic tasks" aria-live="polite"></nav>
@@ -474,9 +468,12 @@ description: My Skill
             <div class="task-lifecycle-actions" aria-label="Task lifecycle actions">
               <button type="button" data-task-action="finish">Complete</button>
               <button type="button" data-task-action="resume">Reopen</button>
-              <button type="button" data-task-action="block">Block</button>
-              <button type="button" data-task-action="cancel">Cancel</button>
-              <button type="button" data-task-action="delete">Delete</button>
+              <details class="task-more-actions">
+                <summary>More</summary>
+                <button type="button" data-task-action="block">Block</button>
+                <button type="button" data-task-action="cancel">Cancel</button>
+                <button type="button" data-task-action="delete">Delete</button>
+              </details>
               <span id="task-action-state" class="muted" role="status" aria-live="polite"></span>
             </div>
             <dl class="session-task-grid"></dl>
@@ -530,8 +527,11 @@ description: My Skill
               <div class="session-detail-actions">
                 <button id="session-gui-open" type="button" disabled>Open GUI</button>
                 <button id="session-integrations-open" type="button" disabled>MCP / Skills</button>
-                <button id="session-terminate" class="danger-action" type="button" disabled>End Session</button>
-                <button id="session-finish-task" type="button" disabled>End Session &amp; Complete Task</button>
+                <button id="session-finish-task" class="primary-action" type="button" disabled>Finish work</button>
+                <details class="session-end-options">
+                  <summary>More</summary>
+                  <button id="session-terminate" class="danger-action" type="button" disabled>End session only</button>
+                </details>
               </div>
             </div>
             <details class="task-session-metadata">
