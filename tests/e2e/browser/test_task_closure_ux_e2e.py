@@ -85,6 +85,63 @@ def test_task_reuse_and_explicit_finish_after_last_session(
     expect(page.locator("#task-status")).to_have_text("active")
 
 
+def test_finish_work_waits_for_other_live_session(
+    browser_harness: BrowserHarness,
+) -> None:
+    harness = browser_harness
+    harness.login()
+    harness.wait_executor_online()
+    created = harness.api(
+        "POST",
+        "/tools/task",
+        body={"action": "create", "label": "two-live-sessions"},
+    )
+    assert created["status"] == 200, created
+    task_id = created["payload"]["structuredContent"]["result"]["task_id"]
+    session_ids = []
+    for _ in range(2):
+        started = harness.api(
+            "POST",
+            "/api/ui/sessions/start",
+            body={
+                "task_id": task_id,
+                "executor_id": harness.executor_id,
+                "workdir": ".",
+            },
+        )
+        assert started["status"] == 200, started
+        session_ids.append(started["payload"]["data"]["session"]["session_id"])
+
+    page = harness.page
+    page.goto(f"{harness.base_url}/ui?task_id={task_id}#tasks")
+    expect(page.locator("#task-status")).to_have_text("active")
+    page.locator("#task-tab-sessions").click()
+    expect(page.locator("#session-list .session-entry")).to_have_count(2)
+    page.locator(
+        f'#session-list .session-entry[data-session-id="{session_ids[0]}"]'
+    ).click()
+    expect(page.locator("#session-finish-task")).to_be_disabled()
+
+    # End one execution context without completing the shared Task.
+    page.locator(".session-end-options summary").click()
+    page.once("dialog", lambda dialog: dialog.accept())
+    page.locator("#session-terminate").click()
+    expect(page.locator("#task-status")).to_have_text("active")
+    page.locator(
+        f'#session-list .session-entry[data-session-id="{session_ids[1]}"]'
+    ).click()
+    expect(page.locator("#session-finish-task")).to_be_enabled()
+    page.once("dialog", lambda dialog: dialog.accept())
+    page.locator("#session-finish-task").click()
+    expect(page.locator("#task-status")).to_have_text("completed")
+
+    detail = harness.api("GET", f"/api/ui/tasks/detail?task_id={task_id}")
+    assert detail["status"] == 200, detail
+    sessions = detail["payload"]["data"]["task"]["sessions"]
+    assert {row["session_id"] for row in sessions} == set(session_ids)
+    assert all(row["status"] == "ended" for row in sessions)
+
+
 def test_single_task_finish_guard_without_batch_toolbar(
     browser_harness: BrowserHarness,
 ) -> None:

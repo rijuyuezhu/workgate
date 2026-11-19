@@ -158,6 +158,46 @@ async def test_managed_source_stages_then_dispatches_once_and_new_hello_clears(
 
 
 @pytest.mark.asyncio
+async def test_blocked_source_reconnects_after_control_catches_up_on_restart(
+    source, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime, calls, config = source
+    monkeypatch.setattr(
+        ExecutorServiceManager, "verified_source_checkout", lambda _self: None
+    )
+    assert (
+        await runtime._handle_runtime_policy(_policy())
+        is RuntimePolicyAction.BLOCK
+    )
+    state = runtime.runtime_state_store.load()
+    assert state is not None
+    assert state.update_status is ExecutorRuntimeUpdateStatus.REQUIRED
+    assert calls == []
+
+    # The native service is restarted after Control has reached the same
+    # version. A compatible Hello clears the former owner-action state.
+    from workgate.version import __version__
+
+    restarted = build_executor_runtime(
+        config,
+        enable_control_connection=False,
+        managed_service=True,
+        runtime_ownership=ExecutorRuntimeOwnership.SOURCE,
+    )
+    assert (
+        await restarted._handle_runtime_policy(
+            _policy(__version__, required=False)
+        )
+        is RuntimePolicyAction.CONTINUE
+    )
+    cleared = restarted.runtime_state_store.load()
+    assert cleared is not None
+    assert cleared.update_status is ExecutorRuntimeUpdateStatus.IDLE
+    assert cleared.update_target_version is None
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_busy_source_defers_and_retries_without_restaging(
     source, monkeypatch: pytest.MonkeyPatch
 ) -> None:
