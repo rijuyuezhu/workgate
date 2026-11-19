@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 
 import pytest
 
@@ -19,6 +20,8 @@ from workgate.protocol.ids import new_executor_id, new_session_id
 def _configure(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     monkeypatch.setenv("WORKGATE_STATE_DIR", str(tmp_path / ".state"))
+    if "WORKGATE_TASK_IDLE_BLOCK_AFTER_S" not in os.environ:
+        monkeypatch.setenv("WORKGATE_TASK_IDLE_BLOCK_AFTER_S", "86400")
     monkeypatch.setenv("WORKGATE_AGENT_BRIDGE_ENABLED", "false")
     monkeypatch.setenv("WORKGATE_AUTH_MODE", "none")
     clear_settings_cache()
@@ -1075,7 +1078,7 @@ async def test_idle_policy_blocks_only_after_confirmed_24h(
     settings, harness = _harness(monkeypatch, tmp_path)
     service = harness.control.task_service
     task = await service.create_task(label="idle")
-    assert settings.task_idle_block_after_s == 24 * 60 * 60
+    assert settings.task_idle_block_after_s == 86400
     assert await service.sweep_idle_tasks(now=task.updated_at + 86400 - 1) == 0
     assert await service.sweep_idle_tasks(now=task.updated_at + 86401) == 1
     blocked = await service.read_task(task.task_id)
@@ -1776,3 +1779,9 @@ async def test_active_tasks_do_not_consume_terminal_history_budget(
     created = await service.create_task(label="new")
     assert created.label == "new"
     assert (await service.read_task(terminal.task_id)).label == "just completed"
+
+
+def test_idle_task_auto_block_is_opt_in_by_default():
+    from workgate.config.settings import Settings
+
+    assert Settings.model_fields["task_idle_block_after_s"].default == 0

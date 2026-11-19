@@ -1088,6 +1088,7 @@ def run_files_todos_audit(harness: BrowserHarness) -> None:
             f'#session-list .session-entry[data-session-id="{session_id}"]'
         )
     ).to_have_attribute("aria-current", "true")
+    page.locator(".session-end-options summary").click()
     page.once("dialog", lambda dialog: dialog.accept())
     page.locator("#session-terminate").click()
     expect(page.locator("#session-detail-status")).to_contain_text(

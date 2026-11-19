@@ -203,10 +203,8 @@ class Settings(BaseSettings):
     """Maximum tree-view entries."""
     max_todos: _PositiveInt = 1_000
     """Todo-list item limit."""
-    task_idle_block_after_s: int = Field(
-        default=24 * 60 * 60, ge=0, le=365 * 24 * 60 * 60
-    )
-    """Auto-block confirmed idle active Tasks after this interval; 0 disables."""
+    task_idle_block_after_s: int = Field(default=0, ge=0, le=365 * 24 * 60 * 60)
+    """Optional auto-block of idle Tasks; disabled by default."""
     max_todo_bytes: _PositiveInt = 1_000_000
     """Todo-list total byte limit."""
     max_http_request_bytes: _NonNegativeInt = 16_000_000

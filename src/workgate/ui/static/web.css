@@ -2651,24 +2651,16 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
   .task-page-buttons { margin-left: 0; }
 }
 
-/* Explicit, page-scoped Task review without changing existing list navigation. */
-.task-batch-actions:not([hidden]) {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding: 9px 16px; border-bottom: 1px solid var(--line);
-}
-.task-batch-actions button { padding: 5px 9px; font-size: 11px; }
-#tasks-batch-state { font-size: 11px; overflow-wrap: anywhere; }
-.task-select-row { display: flex; align-items: stretch; gap: 6px; min-width: 0; }
-.task-select-row > .task-entry { flex: 1; min-width: 0; }
-.task-select-control { display: flex; align-items: center; cursor: pointer; padding: 0 6px; }
-.task-select-control input { width: 16px; height: 16px; }
-
 /* Task actions use the existing status machine; keep errors visible below controls. */
 .task-lifecycle-actions {
   display: flex; flex-wrap: wrap; align-items: center; gap: 7px;
   padding: 12px 20px 0;
 }
 .task-lifecycle-actions button { padding: 6px 10px; font-size: 11px; }
+.task-more-actions summary, .session-end-options summary {
+  cursor: pointer; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 11px;
+}
+.task-more-actions button, .session-end-options button { margin: 4px 3px 0 0; }
 .task-lifecycle-actions [data-task-action="delete"] { color: light-dark(#a4414e, #dd9ca5); }
 .task-lifecycle-actions #task-action-state { flex-basis: 100%; font-size: 11px; overflow-wrap: anywhere; }
 .task-lifecycle-actions #task-action-state:empty { display: none; }

@@ -40,8 +40,6 @@ export function createTasksController({
     inventorySignature: "",
     sessionTerminating: false,
     taskMutationBusy: false,
-    batchBusy: false,
-    batchSelectedIds: new Set(),
     task: null,
     todoItems: [],
     todoGeneration: 0,
@@ -72,16 +70,6 @@ export function createTasksController({
   auditListView.render([], "", "Select a session to load its Audit records.");
   const taskLists = mountTaskLists(elements.taskList, elements.sessionList, {
     task: (id) => void selectTask(id),
-    taskSelection: (id, checked) => {
-      if (controllerState.taskFilter !== "ready" || controllerState.batchBusy ||
-          controllerState.workspaceLoading || controllerState.taskMutationBusy ||
-          !controllerState.tasks.some((task) => task.task_id === id)) return;
-      if (checked) controllerState.batchSelectedIds.add(id);
-      else controllerState.batchSelectedIds.delete(id);
-      elements.tasksBatchState.textContent = "";
-      renderTaskList();
-      syncControls();
-    },
     unattached: (id) => void selectUnattachedSession(id),
     session: (id) => {
       if (id === controllerState.sessionId) onNavigate("session");
@@ -279,17 +267,15 @@ export function createTasksController({
               : action === "cancel" && (taskStatus === "active" || taskStatus === "blocked");
       button.disabled = !taskReady || !controllerState.task || !allowed ||
         controllerState.taskMutationBusy || controllerState.workspaceLoading ||
-        controllerState.todoMutationBusy || controllerState.todoDirty || controllerState.batchBusy;
+        controllerState.todoMutationBusy || controllerState.todoDirty;
       button.title = action === "finish" && unfinished ? "Complete or skip all Plan steps first" : "";
     }
-    elements.tasksFilter.disabled = controllerState.workspaceLoading || controllerState.taskMutationBusy || controllerState.batchBusy;
-    elements.tasksSelectPage.disabled = controllerState.workspaceLoading || controllerState.batchBusy || !controllerState.tasks.length;
-    elements.tasksCompleteSelected.disabled = controllerState.workspaceLoading || controllerState.batchBusy || controllerState.todoDirty || controllerState.todoMutationBusy || controllerState.taskMutationBusy || !controllerState.batchSelectedIds.size;
-    elements.tasksPrev.disabled = controllerState.workspaceLoading || controllerState.taskMutationBusy || controllerState.batchBusy || !controllerState.taskCursorStack.length;
-    elements.tasksNext.disabled = controllerState.workspaceLoading || controllerState.taskMutationBusy || controllerState.batchBusy || !controllerState.taskNextCursor;
-    elements.tasksRefresh.disabled = controllerState.workspaceLoading || controllerState.todoMutationBusy || controllerState.taskMutationBusy || controllerState.batchBusy || controllerState.sessionTerminating;
+    elements.tasksFilter.disabled = controllerState.workspaceLoading || controllerState.taskMutationBusy;
+    elements.tasksPrev.disabled = controllerState.workspaceLoading || controllerState.taskMutationBusy || !controllerState.taskCursorStack.length;
+    elements.tasksNext.disabled = controllerState.workspaceLoading || controllerState.taskMutationBusy || !controllerState.taskNextCursor;
+    elements.tasksRefresh.disabled = controllerState.workspaceLoading || controllerState.todoMutationBusy || controllerState.taskMutationBusy || controllerState.sessionTerminating;
     elements.sessionTerminate.disabled =
-      controllerState.workspaceLoading || controllerState.sessionTerminating || controllerState.batchBusy || !sessionReady || executorOffline || sessionTerminated(session);
+      controllerState.workspaceLoading || controllerState.sessionTerminating || !sessionReady || executorOffline || sessionTerminated(session);
     const otherLiveSessions = controllerState.sessions.filter(
       (item) => item.status !== "ended" && item.session_id !== session?.session_id,
     );
@@ -300,15 +286,15 @@ export function createTasksController({
       otherLiveSessions.length > 0;
     elements.taskSessionStartOpen.disabled =
       !taskReady || taskStatus !== "active" || controllerState.taskMutationBusy ||
-      controllerState.workspaceLoading || controllerState.sessionTerminating || controllerState.batchBusy;
-    elements.todoRefresh.disabled = controllerState.todoMutationBusy || controllerState.taskMutationBusy || controllerState.batchBusy || !taskReady;
-    elements.todoAdd.disabled = controllerState.todoMutationBusy || controllerState.taskMutationBusy || controllerState.batchBusy || !taskMutable || controllerState.todoItems.length >= controllerState.todoLimits.todos;
-    elements.todoSave.disabled = controllerState.todoMutationBusy || controllerState.taskMutationBusy || controllerState.batchBusy || !taskMutable || !controllerState.todoDirty;
+      controllerState.workspaceLoading || controllerState.sessionTerminating;
+    elements.todoRefresh.disabled = controllerState.todoMutationBusy || controllerState.taskMutationBusy || !taskReady;
+    elements.todoAdd.disabled = controllerState.todoMutationBusy || controllerState.taskMutationBusy || !taskMutable || controllerState.todoItems.length >= controllerState.todoLimits.todos;
+    elements.todoSave.disabled = controllerState.todoMutationBusy || controllerState.taskMutationBusy || !taskMutable || !controllerState.todoDirty;
     elements.sessionAuditRefresh.disabled = controllerState.sessionAuditLoading || !sessionReady;
     for (const control of elements.sessionAuditFilterForm.querySelectorAll("input, select")) {
       control.disabled = controllerState.sessionAuditLoading || !sessionReady;
     }
-    const planDisabled = controllerState.todoMutationBusy || controllerState.taskMutationBusy || controllerState.batchBusy || !taskMutable;
+    const planDisabled = controllerState.todoMutationBusy || controllerState.taskMutationBusy || !taskMutable;
     for (const control of elements.todoList.querySelectorAll("input, select, button")) {
       if (control.disabled !== planDisabled) control.disabled = planDisabled;
     }
@@ -397,9 +383,6 @@ export function createTasksController({
     controllerState.workspaceLoading = false;
     controllerState.sessionTerminating = false;
     controllerState.taskMutationBusy = false;
-    controllerState.batchBusy = false;
-    controllerState.batchSelectedIds.clear();
-    elements.tasksBatchState.textContent = "";
     taskLists.renderTasks({
       tasks: [], unattached: [], selectedTaskId: "", selectedSessionId: "",
       emptyMessage: "Loading tasks…",
@@ -507,16 +490,6 @@ export function createTasksController({
     document.getElementById("task-count-total").textContent = String(controllerState.taskOverallCount);
     elements.tasksPageState.textContent = `Page ${controllerState.taskCursorStack.length + 1} (${controllerState.taskPageCount} of ${controllerState.taskTotal})`;
     document.getElementById("tasks-panel").dataset.taskFilter = controllerState.taskFilter;
-    const ready = controllerState.taskFilter === "ready";
-    elements.tasksBatchActions.hidden = !ready;
-    const visibleIds = new Set(controllerState.tasks.map((task) => task.task_id));
-    for (const id of controllerState.batchSelectedIds) {
-      if (!ready || !visibleIds.has(id)) controllerState.batchSelectedIds.delete(id);
-    }
-    elements.tasksSelectPage.textContent = controllerState.tasks.length &&
-      controllerState.batchSelectedIds.size === controllerState.tasks.length
-      ? "Clear page" : "Select page";
-    elements.tasksCompleteSelected.textContent = `Complete selected (${controllerState.batchSelectedIds.size})`;
     taskLists.renderTasks({
       tasks: controllerState.tasks.map((task) => ({
         id: text(task.task_id, ""),
@@ -527,9 +500,6 @@ export function createTasksController({
       unattached: controllerState.unattachedSessions.map((session) => sessionRow(session, true)),
       selectedTaskId: controllerState.taskId,
       selectedSessionId: controllerState.sessionId,
-      selectionMode: ready,
-      selectedTaskIds: [...controllerState.batchSelectedIds],
-      selectionDisabled: controllerState.batchBusy || controllerState.workspaceLoading || controllerState.taskMutationBusy,
       emptyMessage: "Nothing matches this filter.",
     });
   }
@@ -624,7 +594,7 @@ export function createTasksController({
   async function selectTask(next) {
     if (
       !next ||
-      controllerState.todoMutationBusy || controllerState.taskMutationBusy || controllerState.batchBusy ||
+      controllerState.todoMutationBusy || controllerState.taskMutationBusy ||
       controllerState.workspaceLoading
     ) return;
     if (next === controllerState.taskId && !controllerState.sessionId) {
@@ -664,7 +634,7 @@ export function createTasksController({
   async function selectUnattachedSession(next) {
     if (
       !next ||
-      controllerState.todoMutationBusy || controllerState.taskMutationBusy || controllerState.batchBusy ||
+      controllerState.todoMutationBusy || controllerState.taskMutationBusy ||
       controllerState.workspaceLoading
     ) return;
     if (
@@ -861,47 +831,9 @@ export function createTasksController({
     }
   }
 
-  async function completeSelectedTasks() {
-    const ids = [...controllerState.batchSelectedIds];
-    if (controllerState.taskFilter !== "ready" || !ids.length ||
-        controllerState.batchBusy || controllerState.workspaceLoading ||
-        controllerState.todoDirty || controllerState.todoMutationBusy || controllerState.taskMutationBusy) return;
-    if (!globalThis.confirm(`Complete ${ids.length} selected Tasks? Each Task must have a completed Plan and no active execution Sessions. Unfinished Tasks will be kept.`)) return;
-    controllerState.batchBusy = true;
-    controllerState.selectionRevision += 1;
-    syncControls();
-    let completed = 0;
-    const failed = [];
-    try {
-      for (const id of ids) {
-        elements.tasksBatchState.textContent = `Completing ${completed + failed.length + 1} of ${ids.length}…`;
-        try {
-          await request("/tasks/finish", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ task_id: id, require_no_live_sessions: true }),
-          });
-          controllerState.batchSelectedIds.delete(id);
-          completed += 1;
-        } catch (error) {
-          failed.push(`${id}: ${error instanceof Error ? error.message : String(error)}`);
-        }
-      }
-      await refreshWorkspace();
-      const examples = failed.slice(0, 3).join("; ");
-      elements.tasksBatchState.textContent = failed.length
-        ? `Completed ${completed} of ${ids.length}; ${failed.length} kept for review. ${examples}${failed.length > 3 ? "; and more" : ""}`
-        : `Completed ${completed} Tasks.`;
-    } finally {
-      controllerState.batchBusy = false;
-      renderTaskList();
-      syncControls();
-    }
-  }
-
   async function mutateSelectedTask(action) {
     const taskId = selectedTaskId();
-    if (!taskId || !controllerState.task || controllerState.taskMutationBusy || controllerState.batchBusy ||
+    if (!taskId || !controllerState.task || controllerState.taskMutationBusy ||
         controllerState.workspaceLoading || controllerState.todoMutationBusy || controllerState.todoDirty) return;
     const button = document.querySelector(`[data-task-action="${action}"]`);
     if (!button || button.disabled) return;
@@ -1254,7 +1186,6 @@ export function createTasksController({
     controllerState.workspaceRefreshing = false;
     controllerState.todoGeneration += 1;
     controllerState.todoDirty = false;
-    controllerState.batchSelectedIds.clear();
   }
 
   function bind() {
@@ -1276,18 +1207,6 @@ export function createTasksController({
     }
     showTab(activeTab);
     updateTaskTabs();
-    elements.tasksSelectPage.addEventListener("click", () => {
-      if (controllerState.taskFilter !== "ready" || controllerState.batchBusy) return;
-      if (controllerState.batchSelectedIds.size === controllerState.tasks.length) {
-        controllerState.batchSelectedIds.clear();
-      } else {
-        controllerState.batchSelectedIds = new Set(controllerState.tasks.map((task) => task.task_id));
-      }
-      elements.tasksBatchState.textContent = "";
-      renderTaskList();
-      syncControls();
-    });
-    elements.tasksCompleteSelected.addEventListener("click", () => void completeSelectedTasks());
     elements.tasksFilter.addEventListener("change", () => {
       if (controllerState.todoDirty && !globalThis.confirm("Discard unsaved Plan changes?")) {
         elements.tasksFilter.value = controllerState.taskFilter;
@@ -1295,8 +1214,6 @@ export function createTasksController({
       }
       controllerState.todoDirty = false;
       controllerState.taskFilter = elements.tasksFilter.value;
-      controllerState.batchSelectedIds.clear();
-      elements.tasksBatchState.textContent = "";
       controllerState.taskCursor = "";
       controllerState.taskCursorStack = [];
       controllerState.selectionRevision += 1;
@@ -1304,8 +1221,6 @@ export function createTasksController({
     });
     elements.tasksNext.addEventListener("click", () => {
       if (!controllerState.taskNextCursor || controllerState.workspaceLoading) return;
-      controllerState.batchSelectedIds.clear();
-      elements.tasksBatchState.textContent = "";
       controllerState.taskCursorStack.push(controllerState.taskCursor);
       controllerState.taskCursor = controllerState.taskNextCursor;
       controllerState.selectionRevision += 1;
@@ -1313,8 +1228,6 @@ export function createTasksController({
     });
     elements.tasksPrev.addEventListener("click", () => {
       if (!controllerState.taskCursorStack.length || controllerState.workspaceLoading) return;
-      controllerState.batchSelectedIds.clear();
-      elements.tasksBatchState.textContent = "";
       controllerState.taskCursor = controllerState.taskCursorStack.pop();
       controllerState.selectionRevision += 1;
       void refreshWorkspace();

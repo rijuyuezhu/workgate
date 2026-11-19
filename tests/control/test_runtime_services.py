@@ -351,3 +351,69 @@ async def test_shutdown_waits_for_in_flight_session_retention_cleanup(
     released.set()
     await asyncio.wait_for(closing, timeout=3)
     assert finished.is_set()
+
+
+@pytest.mark.asyncio
+async def test_maintenance_runs_opted_in_task_sweep_and_session_retention(
+    tmp_path, monkeypatch
+):
+    import asyncio
+
+    runtime = build_control_runtime(
+        Settings(
+            auth_mode="none",
+            state_dir=tmp_path / "combined-maintenance",
+            task_idle_block_after_s=86400,
+            agent_session_retention_s=86400,
+        )
+    )
+    task_called = asyncio.Event()
+    session_called = asyncio.Event()
+
+    async def task_sweep():
+        task_called.set()
+
+    async def session_sweep():
+        session_called.set()
+
+    monkeypatch.setattr(runtime.task_service, "sweep_idle_tasks", task_sweep)
+    monkeypatch.setattr(
+        runtime.session_coordinator, "reap_expired_sessions", session_sweep
+    )
+    async with runtime.lifespan():
+        await asyncio.wait_for(task_called.wait(), timeout=3)
+        await asyncio.wait_for(session_called.wait(), timeout=3)
+
+
+@pytest.mark.asyncio
+async def test_shutdown_waits_for_in_flight_opted_in_task_sweep(
+    tmp_path, monkeypatch
+):
+    import asyncio
+
+    runtime = build_control_runtime(
+        Settings(
+            auth_mode="none",
+            state_dir=tmp_path / "task-sweep-shutdown",
+            task_idle_block_after_s=86400,
+            agent_session_retention_s=0,
+        )
+    )
+    entered = asyncio.Event()
+    released = asyncio.Event()
+    finished = asyncio.Event()
+
+    async def task_sweep():
+        entered.set()
+        await released.wait()
+        finished.set()
+
+    monkeypatch.setattr(runtime.task_service, "sweep_idle_tasks", task_sweep)
+    await runtime.start()
+    await asyncio.wait_for(entered.wait(), timeout=3)
+    closing = asyncio.create_task(runtime.aclose())
+    await asyncio.sleep(0)
+    assert not closing.done()
+    released.set()
+    await asyncio.wait_for(closing, timeout=3)
+    assert finished.is_set()

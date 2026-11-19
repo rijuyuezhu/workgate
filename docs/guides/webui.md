@@ -19,13 +19,13 @@ Sign in to see the controls available to your account.
 
 The available panels depend on permissions and the selected Executor's capabilities.
 
-## Keep Tasks organized
+## Finish work
 
-In **Tasks and Sessions**, select a Task and open **Sessions → New Session in this Task** to continue work on another Executor without creating a separate Task. A Task can have several execution Sessions.
+A Task records what you want to accomplish; its Sessions are the execution environments. Most Tasks use one Session, but a longer Task can use several.
 
-When the final execution Session is finished, use **End Session & Complete Task** to close both. Use **End Session** alone when the Task will continue later. Completing a Task requires its Plan steps to be completed or skipped, and the combined action checks again that no Sessions remain active.
+For an ordinary single-Session Task, select its Session and choose **Finish work** after completing the Plan steps. This ends the Session and completes the Task. If you want to keep working on the Task later, open **More → End session only** instead. Use **New Session in this Task** to continue on another Executor.
 
-Use the **Needs review** filter for Tasks that have retained Sessions but none still running. Review their Plan and choose **Complete** or **Resume**; these Tasks stay available until you explicitly finish them. You can also select reviewed Tasks on the current page and use **Complete selected**. Each Task is checked independently: active Sessions and unfinished Plan steps keep that Task open and report an error.
+Explicit **Block** and **Complete** actions remain available in the Task's Progress panel. An idle Task does not become blocked automatically unless the operator enables that policy.
 
 ## Transfer files
 
