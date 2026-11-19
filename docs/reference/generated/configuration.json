@@ -1195,9 +1195,9 @@
           },
           "integer",
           {
-            "code": "86400"
+            "code": "0"
           },
-          "Auto-block confirmed idle active Tasks after this interval; 0 disables."
+          "Optional auto-block of idle Tasks; disabled by default."
         ],
         [
           {
@@ -2804,9 +2804,9 @@
     {
       "choices": [],
       "cli": "--task-idle-block-after-s",
-      "default": 86400,
-      "default_display": "86400",
-      "description": "Auto-block confirmed idle active Tasks after this interval; 0 disables.",
+      "default": 0,
+      "default_display": "0",
+      "description": "Optional auto-block of idle Tasks; disabled by default.",
       "env": "WORKGATE_TASK_IDLE_BLOCK_AFTER_S",
       "name": "task_idle_block_after_s",
       "nullable": false,
