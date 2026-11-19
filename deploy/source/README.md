@@ -28,9 +28,9 @@ For an Executor-only installation, select the Executor role, provide the Control
 
 **Before changing an existing service**, record its current version and config paths, back up its private configuration and state, and make sure any active work can be interrupted.
 
-1. **Prepare** the published target release alongside the current one.
-2. **Switch** the existing managed service to the prepared version.
-3. **Check** that the service is running and a real operation reaches Control.
+1. **Prepare** the published target release on Control and every Executor, alongside the current version.
+2. **Switch Control** (or Colocate) first, then switch each Executor to that same version. Executors may temporarily disconnect while their versions differ.
+3. **Check** each Executor reports `Connection: connected` and `Runtime: current`, then run a real operation through Control.
 4. **Keep** the previous prepared release so you can switch back if needed.
 
 From a checkout containing the deployment scripts, on Linux:
@@ -53,7 +53,9 @@ On native Windows:
 
 Use -Role control or -Role colocate and the corresponding existing configuration paths when updating those services.
 
-The switch uses the existing paired identity and service definition. Check online status and run a small workspace command after switching; a running operating-system service by itself only confirms the process is active.
+The switch uses the existing paired identity and service definition. Check status with the Executor service's existing configuration (`workgate executor status --config PATH`); a running operating-system service alone does not confirm Control connectivity.
+
+If an Executor reports `action-required (RuntimePolicyBlock)` after a version mismatch, confirm that Control and the Executor now use the **same release**. Then restart that Executor's **existing** native service (`workgate executor restart --config PATH`) to initiate a new Hello. An already dispatched or failed native cutover needs its systemd, launchd or Windows Task Scheduler result checked before another switch attempt. Keep its paired profile and previous release intact.
 
 ## Roll back
 
