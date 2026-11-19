@@ -25,6 +25,7 @@ def run_task_lifecycle_ui(harness: BrowserHarness) -> None:
     cancel = page.locator('[data-task-action="cancel"]')
     delete = page.locator('[data-task-action="delete"]')
     expect(page.locator("#task-status")).to_have_text("active")
+    page.locator(".task-more-actions summary").click()
     expect(reopen).to_be_disabled()
     expect(delete).to_be_disabled()
     expect(block).to_be_enabled()
