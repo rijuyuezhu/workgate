@@ -151,7 +151,7 @@ class Settings(BaseSettings):
     """Base control-owned MCP/HTTP tool watchdog timeout in seconds."""
     run_shell_default_timeout_s: _PositiveInt = 10
     """Default timeout for bounded shell command calls in seconds."""
-    run_shell_max_timeout_s: _PositiveInt = 120
+    run_shell_max_timeout_s: _PositiveInt = 3600
     """Maximum timeout accepted by bounded shell command calls in seconds."""
     subprocess_env_blocklist: _StringList = Field(default_factory=list)
     """Additional exact environment variable names withheld from user-launched subprocesses."""

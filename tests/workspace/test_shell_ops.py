@@ -937,7 +937,16 @@ def test_tmux_session_name_strips_invalid_edges_and_has_safe_fallback():
 
 
 @pytest.mark.asyncio
-async def test_bash_rejects_timeout_above_public_cap(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("tool", "payload"),
+    [
+        ("bash", {"command": "echo ok"}),
+        ("run_python_code", {"code": "print('ok')"}),
+    ],
+)
+async def test_bounded_tool_timeout_at_and_above_public_cap(
+    tmp_path, monkeypatch, tool, payload
+):
     monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
 
@@ -945,16 +954,16 @@ async def test_bash_rejects_timeout_above_public_cap(tmp_path, monkeypatch):
     session = mcp_structured(
         await mcp.call_tool("session_start", {"workdir": "."})
     )
-
-    with pytest.raises(ToolError, match="timeout_s must be <= 120 seconds"):
-        await mcp.call_tool(
-            "bash",
-            {
-                "session_id": session["session_id"],
-                "command": "echo ok",
-                "timeout_s": 3600,
-            },
-        )
+    cap = get_settings().run_shell_max_timeout_s
+    assert cap == 3600
+    args = {"session_id": session["session_id"], **payload}
+    result = mcp_structured(
+        await mcp.call_tool(tool, {**args, "timeout_s": cap})
+    )
+    assert result["result"]["ok"] is True
+    assert "ok" in result["result"]["stdout"]
+    with pytest.raises(ToolError, match=f"timeout_s must be <= {cap} seconds"):
+        await mcp.call_tool(tool, {**args, "timeout_s": cap + 1})
 
 
 def test_control_tool_watchdog_ignores_executor_shell_policy(
@@ -976,6 +985,9 @@ def test_control_tool_watchdog_ignores_executor_shell_policy(
     # Explicit bounded command timeouts get a shared cleanup margin.
     assert tool_timeout_s("bash", args={"timeout_s": 120}) == 135
     assert tool_timeout_s("run_python_code", args={"timeout_s": 120}) == 135
+    for name in ("bash", "run_python_code", "browser_run_script"):
+        assert tool_timeout_s(name, args={"timeout_s": 3600}) == 3615
+        assert tool_timeout_s(name, args={"timeout_s": 3601}) == 3615
     assert tool_timeout_s("browser_run_script", args={"timeout_s": 120}) == 135
     assert tool_timeout_s("browser_run_script", args={}) == 75
     assert (
@@ -1156,6 +1168,12 @@ def test_run_shell_command_timeout_allows_explicit_cap(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKGATE_DEFAULT_WORKDIR", str(tmp_path))
     clear_settings_cache()
 
+    config = _executor_config()
+    assert run_shell_command_timeout(config, None) == 10
+    assert run_shell_command_timeout(config, 3600) == 3600
+
+    monkeypatch.setenv("WORKGATE_RUN_SHELL_MAX_TIMEOUT_S", "120")
+    clear_settings_cache()
     assert run_shell_command_timeout(_executor_config(), 120) == 120
 
 

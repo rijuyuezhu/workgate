@@ -752,7 +752,7 @@
           },
           "integer",
           {
-            "code": "120"
+            "code": "3600"
           },
           "Maximum timeout accepted by bounded shell command calls in seconds."
         ],
@@ -2512,8 +2512,8 @@
     {
       "choices": [],
       "cli": "--run-shell-max-timeout-s",
-      "default": 120,
-      "default_display": "120",
+      "default": 3600,
+      "default_display": "3600",
       "description": "Maximum timeout accepted by bounded shell command calls in seconds.",
       "env": "WORKGATE_RUN_SHELL_MAX_TIMEOUT_S",
       "name": "run_shell_max_timeout_s",
