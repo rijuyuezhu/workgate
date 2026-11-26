@@ -9,7 +9,7 @@ from pydantic import TypeAdapter, ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from ...errors import GuiStaleStateError
+from ...errors import GuiStaleStateError, GuiUnavailableError
 from ...oauth.core.context import MissingOAuthScopeError, require_oauth_scopes
 from ...oauth.core.scopes import SCOPE_GUI_USE
 from ...schemas.input_models.gui import GuiActionsArg, GuiStateIdArg
@@ -155,14 +155,24 @@ async def api_gui_windows(request: Request) -> Response:
     """Enumerate GUI windows only on the explicitly selected active session."""
     try:
         runtime, session_id = _authorized_session(request)
-        payload = await runtime.session_coordinator.call_session_tool(
-            "gui_list", {"session_id": session_id}
-        )
+        try:
+            payload = await runtime.session_coordinator.call_session_tool(
+                "gui_list", {"session_id": session_id}
+            )
+        except GuiUnavailableError as exc:
+            return _ok(
+                {
+                    "available": False,
+                    "reason": str(exc),
+                    "windows": [],
+                    "capabilities": {},
+                }
+            )
         if not isinstance(payload, dict) or not isinstance(
             payload.get("windows"), list
         ):
             raise RuntimeError("Malformed native GUI window inventory")
-        return _ok(payload)
+        return _ok({**payload, "available": True})
     except HTTPException:
         raise
     except Exception as exc:

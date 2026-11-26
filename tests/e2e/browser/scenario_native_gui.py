@@ -19,6 +19,7 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
     window_id = "window_gui_e2e"
     actions = []
     states = []
+    desktop_available = [False]
     pointer_enabled = [True]
     reject_input = [False]
     observation_ttl = [30]
@@ -111,6 +112,19 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
                     }
                 )
             elif path == "gui/windows":
+                if not desktop_available[0]:
+                    route.fulfill(
+                        json={
+                            "ok": True,
+                            "data": {
+                                "available": False,
+                                "reason": "No graphical desktop",
+                                "windows": [],
+                                "capabilities": {},
+                            },
+                        }
+                    )
+                    return
                 route.fulfill(
                     json={
                         "ok": True,
@@ -183,6 +197,16 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
         assert response is not None and response.status == 200
         expect(page.locator("#session-gui-open")).to_be_enabled()
         page.locator("#session-gui-open").click()
+        expect(page.locator("#session-gui-state")).to_contain_text(
+            "No graphical desktop"
+        )
+        expect(page.locator("#session-gui-state")).to_contain_text(
+            "active graphical desktop"
+        )
+        expect(page.locator("#session-gui-capture")).to_be_disabled()
+        expect(page.locator("#session-gui-live")).to_be_disabled()
+        desktop_available[0] = True
+        page.locator("#session-gui-load").click()
         expect(page.locator("#session-gui-windows option")).to_have_count(2)
         page.locator("#session-gui-windows").select_option(window_id)
         page.locator("#session-gui-capture").click()
@@ -565,7 +589,17 @@ def run_native_gui_manual(harness: BrowserHarness) -> None:
         assert (
             len(actions) == count_before_stream
         )  # No per-action REST tool call.
-        page.locator("#session-gui-live").click()
+        desktop_available[0] = False
+        page.locator("#session-gui-load").click()
+        expect(page.locator("#session-gui-state")).to_contain_text(
+            "No graphical desktop"
+        )
+        expect(page.locator("#session-gui-image")).to_be_hidden()
+        expect(page.locator("#session-gui-manual-controls")).to_be_hidden()
+        expect(page.locator("#session-gui-manual")).to_be_disabled()
+        expect(page.locator("#session-gui-capture")).to_be_disabled()
+        expect(page.locator("#session-gui-live")).to_be_disabled()
+        expect(page.locator("#session-gui-load")).to_be_enabled()
         expect(page.locator("#session-gui-live")).to_have_text("Start live")
         assert page.evaluate("window.fakeDesktopClosed === true")
         assert page.evaluate(

@@ -234,6 +234,18 @@ export function createGuiViewer({ request, onOpen = () => {} }) {
       const data = await request(`/gui/windows?${new URLSearchParams({ session_id: currentSession })}`);
       if (revision !== generation || sessionId !== currentSession) return;
       if (!Array.isArray(data?.windows)) throw new Error("Invalid native GUI window list");
+      if (data.available === false) {
+        windows.replaceChildren(new Option("Select a window", ""));
+        stopLive();
+        clearImage();
+        windows.disabled = true;
+        capture.disabled = true;
+        liveButton.disabled = true;
+        manual.disabled = true;
+        load.disabled = false;
+        state.textContent = `${data.reason || "Native desktop unavailable"}. Select a session on an executor with an active graphical desktop.`;
+        return;
+      }
       windows.replaceChildren(new Option("Select a window", ""));
       for (const window of data.windows) {
         const id = String(window.id || "");
