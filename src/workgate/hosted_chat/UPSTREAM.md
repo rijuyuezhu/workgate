@@ -93,3 +93,22 @@ provider deletion guard; deleting an Agent does not rewrite old conversations.
 Graph, Actions, machine ACL, memory, Skills, and resource fields are introduced
 by their own integration units. No authoring selection itself grants tool
 access, and these repository helpers register no HTTP routes.
+
+Generation ownership and protocol negotiation use the final pinned upstream:
+
+| Workgate file | Upstream source at the pin | Git blob |
+| --- | --- | --- |
+| `generation_actor_lease.py` | `src/local_shell_mcp/webui/generation_actor_lease.py` (lease primitives) | `c14feb325a56ad29585050ce747c20f3b6bacc0b` |
+| `generation_protocol.py` | `src/local_shell_mcp/webui/generation_protocol.py` | `9af2e8be0ad4ac8e11de081f4d949cee328b46a7` |
+| `tests/hosted_chat/test_generation_actor_lease.py` | `tests/test_webui_generation_actor_lease.py` (lease primitives) | `e539bbadad0a5c5f10b2f88ff4f8902fde0b35d1` |
+| `tests/hosted_chat/test_generation_protocol.py` | `tests/test_webui_generation_protocol.py` (negotiation cases) | `b578a4b662f5e3f2acbb0e3a134052c86f18ec35` |
+| `tests/fixtures/hosted_chat/protocol.cjs` | `tests/fixtures/librechat/protocol.cjs` | `f4774d9b698cd0d073d0d9fe191e0238f0ad6e6d` |
+
+Lease claims and renewals take their clock sample after acquiring the write
+transaction. The same owner, live run, token and expiration fence renewal,
+validation and active-run discovery. Callers performing durable mutations
+must validate the matching lease within their own write transaction. The
+pinned negotiation header and downgrade-only behavior are retained. Run
+storage, authenticated SSE recovery, checkpoints and runner lifecycle tests
+follow in their corresponding integration units; no actor or heartbeat is
+started merely by importing these modules.
