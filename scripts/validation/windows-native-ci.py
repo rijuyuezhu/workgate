@@ -24,6 +24,7 @@ def main() -> None:
     if not modules:
         raise RuntimeError("No native Windows test modules found")
     run("-m", "pytest", "-q", *(str(p) for p in modules))
+    run("-m", "pytest", "-q", "tests/hosted_chat")
 
     # These integration smokes require deliberate ordering and/or setup.
     # Do not run every windows-*-smoke.py by glob: some need special hardware.
