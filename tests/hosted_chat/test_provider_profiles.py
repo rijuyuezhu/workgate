@@ -132,10 +132,8 @@ def test_reference_protection_rename_delete_and_recreation(profiles):
     profiles.delete(name="renamed", force=True)
     with pytest.raises(ValueError, match="Unknown model channel"):
         profiles.profile("renamed")
-    assert (
-        repo.conversation("owner", conversation["conversationId"])["endpoint"]
-        == "renamed"
-    )
+    current = repo.conversation("owner", conversation["conversationId"])
+    assert current is not None and current["endpoint"] == "renamed"
     with pytest.raises(ChannelConflict, match="history"):
         profiles.save(body(name="renamed", api_key="new-key"))
 

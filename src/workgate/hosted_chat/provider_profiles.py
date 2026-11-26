@@ -162,12 +162,7 @@ def _validate(body: dict) -> dict:
     name = body.get("name")
     if kind == "openai-responses" and name is None:
         raise ValueError("Responses channels require a channel name")
-    if name is not None and (
-        not isinstance(name, str)
-        or not _NAME.fullmatch(name)
-        or name != name.strip()
-        or (name.lower() in _RESERVED or name.lower().endswith("assistants"))
-    ):
+    if name is not None and not _valid_name(name):
         raise ValueError("Invalid or reserved channel name")
     keyless = body.get("keyless", False)
     if type(keyless) is not bool or (
@@ -430,13 +425,18 @@ class ProviderRepository:
         name = value.get("name")
         if old_name is not None and (not _valid_name(old_name) or name is None):
             raise ValueError("Invalid previous channel name")
+        assert old_name is None or isinstance(old_name, str)
         renaming = old_name is not None and old_name != name
         key = (
             _CHANNEL_PREFIX + name
             if name is not None
             else _PREFIX + value["provider"]
         )
-        previous_key = _CHANNEL_PREFIX + old_name if renaming else key
+        previous_key = (
+            _CHANNEL_PREFIX + old_name
+            if old_name is not None and renaming
+            else key
+        )
         supplied = value.pop("api_key")
         if supplied:
             # Initialize outside the profile transaction: the key identity
@@ -461,7 +461,7 @@ class ProviderRepository:
                     raise ChannelConflict(
                         "Channel name is retained by saved history; select another name"
                     )
-            if renaming:
+            if old_name is not None and renaming:
                 if previous is None:
                     raise KeyError("Original channel no longer exists")
                 if self._read(db, key) is not None:
@@ -494,9 +494,12 @@ class ProviderRepository:
             else:
                 secret = ""
             if secret:
-                value["api_key_ciphertext"] = self.cipher.seal(
-                    {"api_key": secret}, binding=self._binding(value)
-                )
+                if supplied is None and not renaming:
+                    value["api_key_ciphertext"] = previous["api_key_ciphertext"]
+                else:
+                    value["api_key_ciphertext"] = self.cipher.seal(
+                        {"api_key": secret}, binding=self._binding(value)
+                    )
             if value["model_sampling"] is None:
                 value["model_sampling"] = {
                     model: sampling
