@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from mcp.types import ListToolsResult, Tool
+from mcp.types import ListToolsResult, Tool, ToolListChangedNotification
 
 import workgate.agent_bridge.mcp as agent_mcp_module
 import workgate.agent_bridge.service as agent_service
@@ -103,7 +103,7 @@ def test_stdio_connections_end_after_each_discovery_or_call(monkeypatch):
             events.append("exit")
 
     class FakeClientSession:
-        def __init__(self, *_streams):
+        def __init__(self, *_streams, message_handler=None):
             pass
 
         async def __aenter__(self):
@@ -262,7 +262,7 @@ async def test_client_manager_list_tools_accumulates_paginated_pages(
     session = FakeSession()
 
     @asynccontextmanager
-    async def fake_session(name, session_server):
+    async def fake_session(name, session_server, **_kwargs):
         assert name == "docs"
         assert session_server is server
         yield session
@@ -297,7 +297,7 @@ async def test_client_manager_call_tool_uses_session_and_normalizes_result(
     session = FakeSession()
 
     @asynccontextmanager
-    async def fake_session(name, session_server):
+    async def fake_session(name, session_server, **_kwargs):
         assert name == "docs"
         assert session_server is server
         yield session
@@ -330,7 +330,7 @@ async def test_client_manager_list_tools_cleans_up_session_on_use_error(
     server = AgentMcpServerConfig(type="http", url="https://example.test/mcp")
 
     @asynccontextmanager
-    async def fake_session(name, session_server):
+    async def fake_session(name, session_server, **_kwargs):
         assert name == "docs"
         assert session_server is server
         events.append("enter")
@@ -650,3 +650,52 @@ def test_build_agent_registry_records_timeout_without_hanging(tmp_path):
     assert (
         "timeout" in record.error.lower() or "timed out" in record.error.lower()
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("keep_changing", [False, True])
+async def test_list_changed_discards_mixed_generation_catalog(
+    monkeypatch, keep_changing
+):
+    manager = AgentMcpClientManager(call_timeout_s=1)
+    server = AgentMcpServerConfig(type="http", url="https://example.test/mcp")
+    calls = []
+
+    @asynccontextmanager
+    async def fake_session(name, config, *, message_handler):
+        class FakeSession:
+            generation = 0
+
+            async def list_tools(self, *, params=None):
+                cursor = params.cursor if params else None
+                calls.append(cursor)
+                if cursor is None:
+                    self.generation += 1
+                    return ListToolsResult(
+                        tools=[
+                            Tool(
+                                name=f"first-{self.generation}", input_schema={}
+                            )
+                        ],
+                        next_cursor="next",
+                    )
+                if self.generation == 1 or keep_changing:
+                    await message_handler(ToolListChangedNotification())
+                return ListToolsResult(
+                    tools=[
+                        Tool(name=f"second-{self.generation}", input_schema={})
+                    ]
+                )
+
+        yield FakeSession()
+
+    monkeypatch.setattr(manager, "_session", fake_session)
+    if keep_changing:
+        with pytest.raises(RuntimeError, match="changed repeatedly"):
+            await manager.list_tools("docs", server)
+        assert calls == [None, "next"] * 3
+    else:
+        assert [
+            tool.name for tool in await manager.list_tools("docs", server)
+        ] == ["first-2", "second-2"]
+        assert calls == [None, "next"] * 2

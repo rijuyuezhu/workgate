@@ -987,7 +987,7 @@ async def test_stdio_transport_receives_resolved_secret_env(
 
     monkeypatch.setattr(mcp_module, "stdio_client", fake_stdio)
     monkeypatch.setattr(
-        mcp_module, "ClientSession", lambda *_args: FakeSession()
+        mcp_module, "ClientSession", lambda *_args, **_kwargs: FakeSession()
     )
 
     manager = AgentMcpClientManager(1, store)
@@ -1043,7 +1043,7 @@ async def test_http_transport_receives_resolved_secret_header(
     monkeypatch.setattr(mcp_module.httpx2, "AsyncClient", FakeHttpClient)
     monkeypatch.setattr(mcp_module, "streamable_http_client", fake_streamable)
     monkeypatch.setattr(
-        mcp_module, "ClientSession", lambda *_args: FakeSession()
+        mcp_module, "ClientSession", lambda *_args, **_kwargs: FakeSession()
     )
 
     manager = AgentMcpClientManager(1, store)

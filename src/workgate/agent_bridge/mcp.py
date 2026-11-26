@@ -9,9 +9,14 @@ from typing import Any
 
 import httpx2
 from mcp import ClientSession, StdioServerParameters
+from mcp.client.session import MessageHandlerFnT
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
-from mcp.types import PaginatedRequestParams
+from mcp.types import (
+    PaginatedRequestParams,
+    ServerNotification,
+    ToolListChangedNotification,
+)
 
 from ..utils.serialization import to_jsonable
 from .auth import (
@@ -253,7 +258,11 @@ class AgentMcpClientManager:
 
     @asynccontextmanager
     async def _session(
-        self, name: str, server: AgentMcpServerConfig
+        self,
+        name: str,
+        server: AgentMcpServerConfig,
+        *,
+        message_handler: MessageHandlerFnT | None = None,
     ) -> AsyncGenerator[ClientSession]:
         """Open and initialize the transport-specific MCP client session for one configured server."""
         env, headers = self.resolved_maps(name, server)
@@ -272,7 +281,11 @@ class AgentMcpClientManager:
                 )
                 async with (
                     stdio_client(params) as (read_stream, write_stream),
-                    ClientSession(read_stream, write_stream) as session,
+                    ClientSession(
+                        read_stream,
+                        write_stream,
+                        message_handler=message_handler,
+                    ) as session,
                 ):
                     await session.initialize()
                     yield session
@@ -287,7 +300,11 @@ class AgentMcpClientManager:
                         read_stream,
                         write_stream,
                     ),
-                    ClientSession(read_stream, write_stream) as session,
+                    ClientSession(
+                        read_stream,
+                        write_stream,
+                        message_handler=message_handler,
+                    ) as session,
                 ):
                     await session.initialize()
                     yield session
@@ -301,9 +318,24 @@ class AgentMcpClientManager:
     ) -> list[AgentMcpTool]:
         """Page through an upstream server's tool list within the configured call timeout."""
 
+        changed = asyncio.Event()
+
+        async def on_message(message: ServerNotification | Exception) -> None:
+            if isinstance(message, ToolListChangedNotification):
+                changed.set()
+
         async def _list_tools() -> list[AgentMcpTool]:
-            async with self._session(name, server) as session:
-                return await _list_session_tools(session)
+            async with self._session(
+                name, server, message_handler=on_message
+            ) as session:
+                for _ in range(3):
+                    changed.clear()
+                    tools = await _list_session_tools(session)
+                    if not changed.is_set():
+                        return tools
+                raise RuntimeError(
+                    "MCP tool catalog changed repeatedly during discovery"
+                )
 
         return await asyncio.wait_for(
             _list_tools(), timeout=self.call_timeout_s

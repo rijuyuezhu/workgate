@@ -317,3 +317,39 @@ async def test_scoped_discovery_probes_only_selected_stdio_server(
     finally:
         await harness.executor.aclose()
         await harness.control.aclose()
+
+
+@pytest.mark.asyncio
+async def test_real_stdio_list_changed_retries_discovery(
+    tmp_path: Path,
+) -> None:
+    from workgate.agent_bridge.mcp import AgentMcpClientManager
+    from workgate.agent_bridge.models import AgentMcpServerConfig
+
+    script = tmp_path / "changing_catalog.py"
+    script.write_text(
+        """from mcp.server.mcpserver import MCPServer
+from mcp.types import ListToolsResult, Tool
+
+class ChangingServer(MCPServer):
+    generation = 0
+    async def _handle_list_tools(self, ctx, params):
+        cursor = params.cursor if params else None
+        if cursor is None:
+            self.generation += 1
+            return ListToolsResult(tools=[Tool(name=f'first-{self.generation}', input_schema={"type": "object"})], next_cursor='next')
+        if self.generation == 1:
+            await ctx.session.send_tool_list_changed()
+        return ListToolsResult(tools=[Tool(name=f'second-{self.generation}', input_schema={"type": "object"})])
+
+ChangingServer('changing-catalog').run(transport='stdio')
+""",
+        encoding="utf-8",
+    )
+    manager = AgentMcpClientManager(call_timeout_s=15)
+    config = AgentMcpServerConfig(
+        type="stdio", command=sys.executable, args=[str(script)]
+    )
+    assert [
+        tool.name for tool in await manager.list_tools("changing", config)
+    ] == ["first-2", "second-2"]
