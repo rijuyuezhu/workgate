@@ -7,7 +7,9 @@ See LICENSE.upstream.
 
 import json
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
+from .account_credentials import access_token
 from .mcp_projection import (
     HARD_MAX_TOOL_RESULT_CHARS,
     project_artifact_messages,
@@ -24,6 +26,7 @@ from .provider_common import (
     complete_tool_batch,
     provider_http_client,
     provider_scope,
+    validate_account_config,
 )
 from .provider_multimodal import inline_media
 from .result_projection import truncate_approval_result
@@ -287,24 +290,32 @@ def _metadata_item(item: dict) -> dict | None:
 
 @asynccontextmanager
 async def _response_stream(client, config, body, headers):
-    """Resolve account credentials just before use; retry only a pre-stream 401."""
-    if not config.account_id:
-        async with client.stream("POST", config.url, json=body, headers=headers) as response:
+    """Pinned account request contract: resolve at dispatch, retry pre-stream 401 once."""
+    if not validate_account_config(config):
+        async with client.stream(
+            "POST", config.url, json=body, headers=headers
+        ) as response:
             yield response
         return
-    from .model_oauth import access_token, adapter
-    from .routes import _repo
-    if config.url != adapter(config.auth_method).base_url + "/responses":
-        raise ValueError("Account authorization cannot be used at a different API endpoint")
-    database = _repo().database
-    token = await access_token(database, config.account_channel, config.account_id)
+    repo, name, identity = (
+        config.account_repository,
+        config.account_channel,
+        config.account_id,
+    )
+    assert repo is not None and name is not None and identity is not None
+    token = await access_token(repo, name, identity)
     for attempt in range(2):
-        async with client.stream("POST", config.url, json=body,
-                                 headers={**headers, "Authorization": "Bearer " + token}) as response:
+        async with client.stream(
+            "POST",
+            config.url,
+            json=body,
+            headers={**headers, "Authorization": "Bearer " + token},
+        ) as response:
             if response.status_code != 401 or attempt:
                 yield response
                 return
-        token = await access_token(database, config.account_channel, config.account_id, rejected=token)
+        token = await access_token(repo, name, identity, rejected=token)
+
 
 async def stream_responses(
     config: ProviderConfig,
@@ -359,9 +370,7 @@ async def stream_responses(
     terminal = None
     async with (
         provider_http_client(config) as client,
-        client.stream(
-            "POST", config.url, json=body, headers=headers
-        ) as response,
+        _response_stream(client, config, body, headers) as response,
     ):
         response.raise_for_status()
         async for frame in _data_frames(response):
