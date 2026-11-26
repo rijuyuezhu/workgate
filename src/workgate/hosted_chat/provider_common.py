@@ -1,5 +1,9 @@
 """Shared final provider types, SSE framing and request primitives.
 
+Source: upstream v6.0.3 (f0ecf8f8039345f24d0de4402983766787f4574e),
+webui/providers.py (03a0f270a4f315f3ac0a473dd60a15cfc58250f2).
+See LICENSE.upstream.
+
 Extracted from pinned upstream providers.py to preserve a one-way dependency
 graph between the provider protocol adapters.
 """

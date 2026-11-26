@@ -1,4 +1,9 @@
-"""Final model streaming adapters, using explicit Workgate provider profiles."""
+"""Final model streaming adapters, using explicit Workgate provider profiles.
+
+Source: upstream v6.0.3 (f0ecf8f8039345f24d0de4402983766787f4574e),
+webui/providers.py (03a0f270a4f315f3ac0a473dd60a15cfc58250f2).
+See LICENSE.upstream.
+"""
 
 import json
 from collections.abc import AsyncIterator

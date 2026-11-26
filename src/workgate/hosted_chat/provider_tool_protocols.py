@@ -1,5 +1,9 @@
 """Strict Anthropic/Gemini wire projections for the shared canonical message DTO.
 
+Source: upstream v6.0.3 (f0ecf8f8039345f24d0de4402983766787f4574e),
+webui/provider_tool_protocols.py (7fdbc1811f6611a3b162fa91d219332b8a6f2412).
+See LICENSE.upstream.
+
 Sources: LibreChat @librechat/agents 4.0.1 source and its pinned
 @langchain/anthropic/@langchain/google-genai adapters. Do not serialize
 checkpoint-local raw_result, UI metadata or unsupported content blocks.

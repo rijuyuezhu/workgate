@@ -1,4 +1,9 @@
-"""Stateless OpenAI Responses transport for the existing LSM model harness."""
+"""Stateless OpenAI Responses transport for the Workgate model harness.
+
+Source: upstream v6.0.3 (f0ecf8f8039345f24d0de4402983766787f4574e),
+webui/provider_responses.py (1c3bce5dd03631be909cf2ae5f58ba392896e592).
+See LICENSE.upstream.
+"""
 
 import json
 from collections.abc import AsyncIterator
