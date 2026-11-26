@@ -112,3 +112,20 @@ pinned negotiation header and downgrade-only behavior are retained. Run
 storage, authenticated SSE recovery, checkpoints and runner lifecycle tests
 follow in their corresponding integration units; no actor or heartbeat is
 started merely by importing these modules.
+
+The ordinary generation store follows the final pinned generation repository:
+
+| Workgate file | Upstream source at the pin | Git blob |
+| --- | --- | --- |
+| `generations.py` | `src/local_shell_mcp/webui/generations.py` (admission, event replay and terminal persistence) | `afc6ca41ea27925af48cc4d7b4af0a5bf1a154fc` |
+| `tests/hosted_chat/test_generations.py` | `tests/test_webui_generations.py` (repository cases) | `a0eef99f6f97519f13b6c546a9ac0f2e936fbb64` |
+
+Admission resolves the stored channel without decrypting credentials in the
+same transaction as run, request, message and conversation writes. Ownership
+and parent-message references are checked before publication. The first
+negotiated protocol is immutable on retry. Generic public text/reasoning
+and step events and terminal writes require the matching live actor lease.
+Tool completions, human actions, steering, attachment admission and checkpoint
+recovery remain their own transactional contracts; this private unit registers
+no generation routes or startup execution. Runner-level total output and
+resource budgets remain part of runtime acceptance.
