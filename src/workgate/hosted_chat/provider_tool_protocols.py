@@ -325,6 +325,7 @@ async def stream_native_tools(
     usage_snapshot = None
     finish_reason = None
     terminal = False
+    closed_tools: set[int] = set()
     async with (
         provider_http_client(config) as client,
         client.stream(
@@ -356,11 +357,14 @@ async def stream_native_tools(
                 kind = event.get("type")
                 if kind == "message_stop":
                     terminal = True
+                    break
                 if kind == "message_delta":
                     reason = (event.get("delta") or {}).get("stop_reason")
                     if isinstance(reason, str):
                         finish_reason = reason
                 index = event.get("index")
+                if kind == "content_block_stop" and index in pending:
+                    closed_tools.add(index)
                 if kind == "content_block_start":
                     block = event.get("content_block") or {}
                     if block.get("type") == "tool_use":
@@ -400,9 +404,13 @@ async def stream_native_tools(
                             provider_data={"scope": provider_scope(config)},
                         )
                     elif change == "input_json_delta":
-                        if index not in pending:
+                        if (
+                            index not in pending
+                            or index in closed_tools
+                            or finish_reason is not None
+                        ):
                             raise ValueError(
-                                "Tool arguments arrived before tool declaration"
+                                "Tool arguments outside an open tool block"
                             )
                         pending[index]["arguments"] += (
                             delta.get("partial_json") or ""
@@ -446,9 +454,16 @@ async def stream_native_tools(
                                     "scope": provider_scope(config),
                                 },
                             }
-    complete = finish_reason == (
-        "tool_use" if config.provider == "anthropic" else "STOP"
-    ) or (terminal and finish_reason is None)
+    if config.provider == "anthropic":
+        complete = (
+            terminal
+            and finish_reason == "tool_use"
+            and closed_tools == pending.keys()
+        )
+    else:
+        complete = finish_reason == "STOP" or (
+            terminal and finish_reason is None
+        )
     if pending and not complete:
         raise ValueError("Model stream ended without a complete tool batch")
     calls = []

@@ -482,6 +482,8 @@ def _openai_call(index, identity, args):
         (None, [{"choices": [{"finish_reason": "length"}]}, "[DONE]"]),
         (_openai_call(1, "first", "{}"), ["[DONE]"]),
         (_openai_call(1, "second", "[]"), ["[DONE]"]),
+        (_openai_call(1, "second", ""), ["[DONE]"]),
+        (_openai_call(1, "second", {}), ["[DONE]"]),
         (_openai_call(1, "second", '{"x": NaN}'), ["[DONE]"]),
     ],
 )
@@ -671,3 +673,35 @@ async def test_openai_text_stream_options(monkeypatch):
     body = json.loads(captured["request"].content)
     assert body["max_completion_tokens"] == 10
     assert body["temperature"] == 0.1 and body["top_p"] == 0.8
+
+
+async def test_openai_tool_fragments_after_finish_are_not_released(monkeypatch):
+    from workgate.hosted_chat.providers import (
+        ModelToolCall,
+        stream_model_with_tools,
+    )
+
+    _mock_frames(
+        monkeypatch,
+        [
+            (
+                200,
+                [
+                    _openai_call(0, "first", "{}"),
+                    {"choices": [{"finish_reason": "tool_calls"}]},
+                    _openai_call(1, "second", "{}"),
+                    "[DONE]",
+                ],
+            )
+        ],
+    )
+    cfg = ProviderConfig(
+        "openai", "model", "https://provider.test/chat/completions", "secret"
+    )
+    seen = []
+    with pytest.raises(ValueError, match="after model finish"):
+        async for event in stream_model_with_tools(
+            cfg, [], tools=[{"type": "function", "function": {"name": "read"}}]
+        ):
+            seen.append(event)
+    assert not any(isinstance(event, ModelToolCall) for event in seen)

@@ -115,7 +115,9 @@ async def test_native_tool_roundtrip_preserves_protocol_and_credentials(
                         "partial_json": '"a.txt"}',
                     },
                 },
-                "[DONE]",
+                {"type": "content_block_stop", "index": 1},
+                {"type": "message_delta", "delta": {"stop_reason": "tool_use"}},
+                {"type": "message_stop"},
             ]
         )
     else:
@@ -264,9 +266,17 @@ async def test_anthropic_rejects_invalid_partial_tool_calls(transport, case):
         start["content_block"]["name"] = ""
         events[:] = [start]
     else:
-        events[:] = [{**start, "index": index} for index in range(5)] + [
-            "[DONE]"
-        ]
+        events[:] = (
+            [{**start, "index": index} for index in range(5)]
+            + [
+                {"type": "content_block_stop", "index": index}
+                for index in range(5)
+            ]
+            + [
+                {"type": "message_delta", "delta": {"stop_reason": "tool_use"}},
+                {"type": "message_stop"},
+            ]
+        )
         with pytest.raises(ValueError, match="duplicate"):
             await collect("anthropic", events)
         return
@@ -547,3 +557,45 @@ async def test_anthropic_thoughts_usage_and_finish(transport):
         ModelUsage("anthropic", 8, 3),
         ModelFinish("anthropic", "end_turn"),
     ]
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        [
+            {"type": "message_delta", "delta": {"stop_reason": "tool_use"}},
+            {"type": "message_stop"},
+        ],
+        [
+            {"type": "content_block_stop", "index": 0},
+            {"type": "message_delta", "delta": {"stop_reason": "tool_use"}},
+        ],
+        [
+            {"type": "content_block_stop", "index": 0},
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": "{}"},
+            },
+            {"type": "message_delta", "delta": {"stop_reason": "tool_use"}},
+            {"type": "message_stop"},
+        ],
+    ],
+)
+async def test_anthropic_incomplete_or_late_tool_block(transport, tail):
+    events, _ = transport
+    events[:] = [
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {
+                "type": "tool_use",
+                "id": "id",
+                "name": "file_read",
+                "input": {},
+            },
+        },
+        *tail,
+    ]
+    with pytest.raises(ValueError):
+        await collect("anthropic", events)

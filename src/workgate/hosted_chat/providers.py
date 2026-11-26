@@ -359,9 +359,14 @@ async def stream_model_with_tools(
                 config.provider, event, usage_snapshot
             )
             for choice in event.get("choices", [])[:1]:
-                if isinstance(choice.get("finish_reason"), str):
-                    finish_reason = choice["finish_reason"]
+                reason = choice.get("finish_reason")
                 delta = choice.get("delta") or {}
+                if finish_reason is not None and delta.get("tool_calls"):
+                    raise ValueError("Tool fragment arrived after model finish")
+                if isinstance(reason, str):
+                    if finish_reason is not None and reason != finish_reason:
+                        raise ValueError("Conflicting model finish reasons")
+                    finish_reason = reason
                 for thought in _openai_reasoning_fragments(delta):
                     yield ModelThought("thinking", text=thought)
                 content = delta.get("content")
@@ -383,11 +388,16 @@ async def stream_model_with_tools(
                     tool = pending.setdefault(
                         index, {"id": "", "name": "", "arguments": ""}
                     )
-                    if fragment.get("id"):
-                        tool["id"] += str(fragment["id"])
                     function = fragment.get("function") or {}
-                    tool["name"] += str(function.get("name") or "")
-                    tool["arguments"] += str(function.get("arguments") or "")
+                    for key, value in (
+                        ("id", fragment.get("id")),
+                        ("name", function.get("name")),
+                        ("arguments", function.get("arguments")),
+                    ):
+                        if value is not None:
+                            if not isinstance(value, str):
+                                raise ValueError("Invalid model tool fragment")
+                            tool[key] += value
                     if len(tool["id"]) > 1024 or len(tool["name"]) > 1024:
                         raise ValueError(
                             "Model tool identity exceeds size limit"
@@ -406,7 +416,7 @@ async def stream_model_with_tools(
         if not tool["id"] or not tool["name"]:
             raise ValueError("Incomplete model tool call")
         try:
-            params = json.loads(tool["arguments"] or "{}")
+            params = json.loads(tool["arguments"])
         except json.JSONDecodeError as exc:
             raise ValueError("Invalid JSON in model tool call") from exc
         if not isinstance(params, dict):

@@ -378,6 +378,8 @@ async def stream_responses(
                     or not isinstance(item, dict)
                 ):
                     raise ValueError("Invalid Responses output item")
+                if index in done and done[index] != item:
+                    raise ValueError("Conflicting Responses completed item")
                 done[index] = item
             elif kind in {"response.completed", "response.incomplete"}:
                 terminal = event
@@ -396,6 +398,19 @@ async def stream_responses(
         raise RuntimeError("Responses provider failed generation")
     output = response.get("output")
     if isinstance(output, list):
+        # A completed tool item and terminal output must describe the same
+        # proposal. Ignore unrelated provider-only metadata changes.
+        for index, item in done.items():
+            if item.get("type") != "function_call":
+                continue
+            final = output[index] if index < len(output) else None
+            keys = ("type", "call_id", "name", "arguments")
+            if not isinstance(final, dict) or any(
+                final.get(key) != item.get(key) for key in keys
+            ):
+                raise ValueError(
+                    "Responses terminal tool proposal disagrees with completed item"
+                )
         items = list(enumerate(output))
     elif output is None:
         items = sorted(done.items())

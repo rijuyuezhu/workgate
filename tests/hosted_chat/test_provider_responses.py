@@ -510,3 +510,50 @@ async def test_terminal_replay_scoped_to_exact_channel(transport):
             responses_input(other, history)
         )
     assert requests[0][2]["store"] is False
+
+
+@pytest.mark.parametrize(
+    "events",
+    [
+        [
+            {
+                "type": "response.output_item.done",
+                "output_index": 0,
+                "item": CALL,
+            },
+            complete([{**CALL, "arguments": "{}"}]),
+        ],
+        [
+            {
+                "type": "response.output_item.done",
+                "output_index": 0,
+                "item": CALL,
+            },
+            {
+                "type": "response.output_item.done",
+                "output_index": 0,
+                "item": {**CALL, "call_id": "other"},
+            },
+            complete([CALL]),
+        ],
+        [
+            {
+                "type": "response.output_item.done",
+                "output_index": 0,
+                "item": CALL,
+            },
+            complete([]),
+        ],
+    ],
+)
+async def test_conflicting_terminal_tool_proposals_are_rejected(
+    transport, events
+):
+    transport[0].append(events)
+    seen = []
+    with pytest.raises(ValueError, match="Conflicting|disagrees"):
+        async for event in stream_model_with_tools(
+            PROFILE, [USER], tools=TOOLS
+        ):
+            seen.append(event)
+    assert not any(isinstance(event, ModelToolCall) for event in seen)
