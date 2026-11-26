@@ -47,7 +47,7 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --locked --group dev
-      - run: uv run pyright
+      - run: uv run --locked --extra hosted-chat pyright
 
   test:
     name: Test (macos-latest)
@@ -64,7 +64,9 @@ jobs:
       - run: brew install tmux
       - run: uv run pytest -q -m "not topology"
       - name: Verify optional Hosted Chat dependencies
-        run: uv run --locked --extra hosted-chat --no-build-package tiktoken python scripts/validation/check-hosted-chat-deps.py
+        run: |
+          uv run --locked --extra hosted-chat --no-build-package tiktoken python scripts/validation/check-hosted-chat-deps.py
+          uv run --locked --extra hosted-chat --no-build-package tiktoken pytest -q tests/hosted_chat/test_tokenizer.py
 
   windows-arm64-dependencies:
     name: Native Windows ARM64 clean dependency sync
@@ -81,7 +83,9 @@ jobs:
       - run: uv run --locked python scripts/release/smoke_arm64_crypto_wheel.py
       - run: uv run --locked workgate --version
       - name: Verify optional Hosted Chat dependencies
-        run: uv run --locked --extra hosted-chat --no-build-package tiktoken python scripts/validation/check-hosted-chat-deps.py
+        run: |
+          uv run --locked --extra hosted-chat --no-build-package tiktoken python scripts/validation/check-hosted-chat-deps.py
+          uv run --locked --extra hosted-chat --no-build-package tiktoken pytest -q tests/hosted_chat/test_tokenizer.py
 
   windows-native:
     name: Native Windows tests (x86-64, Python 3.14)
@@ -125,7 +129,9 @@ jobs:
           uv pip install --python (Join-Path $environment 'Scripts/python.exe') $wheel
           & (Join-Path $environment 'Scripts/workgate.exe') --version
       - name: Verify optional Hosted Chat dependencies
-        run: uv run --locked --extra hosted-chat --no-build-package tiktoken python scripts/validation/check-hosted-chat-deps.py
+        run: |
+          uv run --locked --extra hosted-chat --no-build-package tiktoken python scripts/validation/check-hosted-chat-deps.py
+          uv run --locked --extra hosted-chat --no-build-package tiktoken pytest -q tests/hosted_chat/test_tokenizer.py
 
 
   topology:
@@ -172,7 +178,7 @@ jobs:
       - name: Run branch coverage
         run: |
           find . -maxdepth 1 -name '.coverage*' -delete
-          uv run python -m coverage run -m pytest -q -m "not topology"
+          uv run --locked --extra hosted-chat python -m coverage run -m pytest -q -m "not topology"
           uv run python -m coverage combine
           uv run python -m coverage json
           uv run python -m coverage xml
@@ -234,7 +240,9 @@ jobs:
           enable-cache: true
       - run: uv sync --locked --group dev
       - name: Verify optional Hosted Chat dependencies
-        run: uv run --locked --extra hosted-chat --no-build-package tiktoken python scripts/validation/check-hosted-chat-deps.py
+        run: |
+          uv run --locked --extra hosted-chat --no-build-package tiktoken python scripts/validation/check-hosted-chat-deps.py
+          uv run --locked --extra hosted-chat --no-build-package tiktoken pytest -q tests/hosted_chat/test_tokenizer.py
       - run: uv build --out-dir dist
       - name: Check universal wheel and source distribution
         run: python scripts/validation/check-python-dist.py dist
