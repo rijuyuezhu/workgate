@@ -75,6 +75,7 @@ function FieldRow({ field, action, visible, editable, editing, onEdit, onStage, 
   onCancel: () => void; onInvalid: () => void;
 }) {
   const expected = field.file_present ? field.file_value : field.default_value;
+  const overridden = field.source === "env" || field.source === "cli";
   return <div className={`executor-config-row${action ? " executor-config-changed" : ""}`} hidden={!visible}>
     <span className="executor-config-name" title={field.description || ""}>{field.name}</span>
     <div className="executor-config-info">
@@ -90,10 +91,10 @@ function FieldRow({ field, action, visible, editable, editing, onEdit, onStage, 
           </code>
         </span>
       </div>
-      {differs(field.effective_value, expected) && <div className="executor-config-effective">
+      {(overridden || differs(field.effective_value, expected)) && <div className="executor-config-effective">
         <span className="executor-config-live-label">In use</span>
         <span className="executor-config-values"><code>{display(field.effective_value)}</code>
-          <span className="executor-config-source">{field.source}</span></span>
+          <span className="executor-config-source" title={overridden ? "Overrides the saved file; change the Parent process environment or CLI to change the running value." : undefined}>{field.source}</span></span>
       </div>}
     </div>
     <div className="executor-config-default"><span className="executor-config-mobile-heading">Default</span>
@@ -107,6 +108,7 @@ function FieldRow({ field, action, visible, editable, editing, onEdit, onStage, 
 function Inspector({ data, events, notice }: { data: Configuration; events: Events; notice: string }) {
   const [pending, setPending] = useState<Map<string, Action>>(new Map());
   const [editing, setEditing] = useState("");
+  const [search, setSearch] = useState("");
   const [changedOnly, setChangedOnly] = useState(false);
   const [nonDefaultOnly, setNonDefaultOnly] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -115,9 +117,13 @@ function Inspector({ data, events, notice }: { data: Configuration; events: Even
   const [confirmed, setConfirmed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [applying, setApplying] = useState(false);
-  const filtering = changedOnly || nonDefaultOnly;
-  const visible = (field: Field) => (!changedOnly || pending.has(field.name)) &&
-    (!nonDefaultOnly || nonDefault(field, pending.get(field.name)));
+  const tokens = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const filtering = tokens.length > 0 || changedOnly || nonDefaultOnly;
+  const visible = (field: Field) => {
+    const metadata = [field.name, field.name.replaceAll("_", " "), field.section, field.description, field.source].join(" ").toLowerCase();
+    return tokens.every(token => metadata.includes(token)) && (!changedOnly || pending.has(field.name)) &&
+      (!nonDefaultOnly || nonDefault(field, pending.get(field.name)));
+  };
   const nonDefaultCount = data.fields.filter((field) => nonDefault(field, pending.get(field.name))).length;
   const visibleCount = data.fields.filter(visible).length;
   const groups = new Map<string, Field[]>();
@@ -175,6 +181,7 @@ function Inspector({ data, events, notice }: { data: Configuration; events: Even
       {!data.editable && data.edit_reason && <span className="muted">{data.edit_reason}</span>}
     </div>
     <div className="executor-config-filters">
+      <input type="search" className="executor-config-search" aria-label="Search settings" placeholder="Search settings" value={search} onChange={event => setSearch(event.currentTarget.value)} />
       <label className="executor-config-filter" hidden={!data.editable}>
         <input type="checkbox" checked={changedOnly} onChange={(event) => setChangedOnly(event.currentTarget.checked)} />
         <span>Only changed ({pending.size})</span>
@@ -215,7 +222,7 @@ function Inspector({ data, events, notice }: { data: Configuration; events: Even
       })}
     </div>
     <p className="executor-config-empty" hidden={!filtering || visibleCount > 0}>
-      {changedOnly && !nonDefaultOnly ? "No unsaved changes" : "No matching settings"}
+      {changedOnly && !nonDefaultOnly && !tokens.length ? "No unsaved changes" : "No matching settings"}
     </p>
   </>;
 }

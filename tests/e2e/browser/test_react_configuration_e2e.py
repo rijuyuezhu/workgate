@@ -45,13 +45,13 @@ def test_react_configuration_real_and_staged(
         generation: 1, state: 'ready', data: {
           status: 'running', editable: true, config_path: '/tmp/safe.json',
           fields: [
-            {name: 'max_jobs', section: 'Safety', type: 'int', file_present: false,
+            {name: 'max_jobs', section: 'Safety', description: 'Concurrent job limit', type: 'int', file_present: false,
               default_value: 10, effective_value: 11},
             {name: '<img src=x onerror="window.__configXss=1">', section: 'Safety',
               type: 'str', file_present: true, file_value: '<script>bad</script>',
               default_value: 'safe', effective_value: 'safe'},
             {name: 'enabled', section: 'General', type: 'bool', file_present: true,
-              file_value: true, default_value: true, effective_value: true}
+              file_value: true, default_value: true, effective_value: true, source: 'env'}
           ]
         },
         events: {
@@ -73,6 +73,17 @@ def test_react_configuration_real_and_staged(
     expect(row).to_be_visible()
     root.locator(".executor-config-section").first.locator("summary").click()
     expect(row).to_be_hidden()
+    search = root.get_by_role("searchbox", name="Search settings")
+    search.fill("CONCURRENT limit")
+    expect(row).to_be_visible()
+    expect(root.locator(".executor-config-row:visible")).to_have_count(1)
+    search.fill("no such setting")
+    expect(root).to_contain_text("No matching settings")
+    search.fill("")
+    expect(row).to_be_hidden()
+    expect(
+        root.locator(".executor-config-source").filter(has_text="env")
+    ).to_be_visible()
     # Filtering expands matching sections and restores the user's choice.
     non_default = (
         root.locator(".executor-config-filter")
@@ -104,6 +115,11 @@ def test_react_configuration_real_and_staged(
     )
     changed_only.check()
     expect(root.locator(".executor-config-row:visible")).to_have_count(1)
+    search.fill("enabled")
+    expect(root).to_contain_text("No matching settings")
+    search.fill("max jobs")
+    expect(row).to_be_visible()
+    search.fill("")
     changed_only.uncheck()
     root.get_by_role("button", name="Save changes").click()
     expect(root.locator(".executor-config-actions").first).to_contain_text(
