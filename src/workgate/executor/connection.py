@@ -16,6 +16,7 @@ from ..errors import tool_error_payload
 from ..protocol.errors import ProtocolErrorCode
 from ..protocol.executor import (
     EXECUTOR_CAPABILITY_GUI,
+    JOB_START_RESERVED_OP,
     ExecutorCommand,
     ExecutorHeartbeatResponse,
     ExecutorHelloRequest,
@@ -110,6 +111,7 @@ def _affects_reconnect_inventory(command: ExecutorCommand) -> bool:
         "session.create",
         "session.terminate",
         "session.change_workdir",
+        JOB_START_RESERVED_OP,
         "start_persistent_shell",
         "send_persistent_shell_input",
         "resize_persistent_shell",
@@ -121,7 +123,9 @@ def _affects_reconnect_inventory(command: ExecutorCommand) -> bool:
         return True
     if command.op in {"bash", "run_python_code"}:
         return bool(
-            command.args.get("async_", False) or command.args.get("pty", False)
+            command.args.get("async_", False)
+            or command.args.get("pty", False)
+            or command.args.get("persist_on_timeout", False)
         )
     return False
 
