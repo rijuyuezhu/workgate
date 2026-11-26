@@ -1,0 +1,525 @@
+"""Stateless OpenAI Responses transport for the Workgate model harness.
+
+Source: upstream v6.0.3 (f0ecf8f8039345f24d0de4402983766787f4574e),
+webui/provider_responses.py (1c3bce5dd03631be909cf2ae5f58ba392896e592).
+See LICENSE.upstream.
+"""
+
+import json
+from collections.abc import AsyncIterator
+
+from .mcp_projection import (
+    HARD_MAX_TOOL_RESULT_CHARS,
+    project_artifact_messages,
+)
+from .provider_common import (
+    MAX_TOOL_ARGUMENTS,
+    ModelFinish,
+    ModelThought,
+    ModelToolCall,
+    ModelUsage,
+    ProviderConfig,
+    _data_frames,
+    _usage_frame,
+    complete_tool_batch,
+    provider_http_client,
+    provider_scope,
+)
+from .provider_multimodal import inline_media
+from .result_projection import truncate_approval_result
+
+PROTOCOL = "openai-responses"
+
+
+def _parts(content, *, assistant=False) -> list[dict]:
+    if isinstance(content, str):
+        return (
+            [
+                {
+                    "type": "output_text" if assistant else "input_text",
+                    "text": content,
+                }
+            ]
+            if content
+            else []
+        )
+    if content is None:
+        return []
+    if not isinstance(content, list):
+        raise ValueError("Invalid Responses message content")
+    result = []
+    for part in content:
+        if not isinstance(part, dict):
+            raise ValueError("Invalid Responses content part")
+        kind = part.get("type")
+        if kind == "text" and isinstance(part.get("text"), str):
+            result.extend(_parts(part["text"], assistant=assistant))
+        elif not assistant and kind == "image_url":
+            image = part.get("image_url")
+            if (
+                not isinstance(image, dict)
+                or inline_media(image.get("url"), kind="image_url") is None
+            ):
+                raise ValueError("Invalid Responses image")
+            result.append(
+                {
+                    "type": "input_image",
+                    "image_url": image["url"],
+                    "detail": image.get("detail", "auto"),
+                }
+            )
+        elif not assistant and kind == "file":
+            file = part.get("file")
+            if not isinstance(file, dict):
+                raise ValueError("Invalid Responses file")
+            fields = {
+                k: file[k]
+                for k in ("file_data", "filename")
+                if isinstance(file.get(k), str)
+            }
+            if inline_media(fields.get("file_data"), kind="file") is None:
+                raise ValueError("Invalid Responses file")
+            result.append({"type": "input_file", **fields})
+        else:
+            raise ValueError("Unsupported Responses content part")
+    return result
+
+
+def _text(item: dict) -> str:
+    return "".join(
+        part.get("text", "")
+        if part.get("type") == "output_text"
+        else part.get("refusal", "")
+        if part.get("type") == "refusal"
+        else ""
+        for part in item.get("content") or []
+        if isinstance(part, dict)
+    )
+
+
+def _call_item(call: dict) -> dict:
+    fn = call["function"]
+    arguments = fn["arguments"]
+    if not isinstance(arguments, str):
+        arguments = json.dumps(arguments, ensure_ascii=False)
+    return {
+        "type": "function_call",
+        "call_id": call["id"],
+        "name": fn["name"],
+        "arguments": arguments,
+    }
+
+
+def _assistant_items(message: dict, scope: str) -> list[dict]:
+    """Replay completed provider output order only if it still matches canonical history.
+
+    Tool arguments always come from the canonical, permission-checked history.
+    If text has been edited or compacted, omit stale native metadata.
+    """
+    content = _parts(message.get("content"), assistant=True)
+    calls = message.get("tool_calls") or []
+    fallback = (
+        [
+            {
+                "role": "assistant",
+                "content": "".join(part["text"] for part in content),
+            }
+        ]
+        if content
+        else []
+    ) + [_call_item(c) for c in calls]
+    metadata = [
+        part
+        for part in message.get("reasoning") or []
+        if part.get("type") == "responses_item" and part.get("scope") == scope
+    ]
+    if not metadata:
+        return fallback
+    items: dict[int, dict] = {}
+    expected_calls: dict[int, str] = {}
+    for part in metadata:
+        index, item = part.get("index"), part.get("item")
+        if (
+            type(index) is not int
+            or index < 0
+            or index in items
+            or not isinstance(item, dict)
+        ):
+            return fallback
+        if item.get("type") == "function_call":
+            if index in expected_calls or not isinstance(
+                item.get("call_id"), str
+            ):
+                return fallback
+            expected_calls[index] = item["call_id"]
+            continue
+        if index in expected_calls:
+            return fallback
+        if item.get("type") == "reasoning":
+            # Encrypted reasoning is opaque; preserve it only for the originating connection.
+            if not item.get("encrypted_content"):
+                continue
+        elif item.get("type") != "message":
+            return fallback
+        items[index] = item
+    original_text = "".join(
+        _text(item)
+        for _, item in sorted(items.items())
+        if item["type"] == "message"
+    )
+    if original_text != "".join(part["text"] for part in content):
+        return fallback
+    for call in calls:
+        data = call.get("provider_data") or {}
+        index = data.get("responses_index")
+        if (
+            data.get("responses_scope") != scope
+            or type(index) is not int
+            or index < 0
+            or index in items
+            or expected_calls.pop(index, None) != call["id"]
+        ):
+            return fallback
+        items[index] = _call_item(call)
+    # Do not replay a half-persisted or preempted tool batch.
+    if expected_calls:
+        return fallback
+    return [item for _, item in sorted(items.items())]
+
+
+def responses_input(config: ProviderConfig, messages: list[dict]) -> list[dict]:
+    result = []
+    scope = provider_scope(config)
+    for message in project_artifact_messages(messages, PROTOCOL):
+        role = message.get("role")
+        if role == "assistant":
+            result.extend(_assistant_items(message, scope))
+        elif role == "tool":
+            identity = message.get("tool_call_id")
+            if not isinstance(identity, str) or not identity:
+                raise ValueError("Responses tool result missing call ID")
+            content = message.get("content", "")
+            output = (
+                truncate_approval_result(content, HARD_MAX_TOOL_RESULT_CHARS)
+                if isinstance(content, str)
+                else _parts(content)
+            )
+            result.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": identity,
+                    "output": output,
+                }
+            )
+        elif role in {"system", "developer", "user"}:
+            content = _parts(message.get("content"))
+            if content:
+                result.append(
+                    {
+                        "role": "developer"
+                        if role == "system" and config.auth_method == "chatgpt"
+                        else role,
+                        "content": content,
+                    }
+                )
+        else:
+            raise ValueError("Unsupported Responses message role")
+    if config.auth_method == "chatgpt":
+        calls = {}
+        for item in result:
+            if item.get("type") == "function_call":
+                item["namespace"] = "lsm"
+                calls[item["call_id"]] = item["name"]
+            elif (
+                item.get("type") == "function_call_output"
+                and item.get("call_id") in calls
+            ):
+                item["namespace"] = "lsm"
+                item["name"] = calls[item["call_id"]]
+    return result
+
+
+def _tools(tools: list[dict]) -> list[dict]:
+    result = []
+    for tool in tools:
+        if tool.get("type") != "function" or not isinstance(
+            tool.get("function"), dict
+        ):
+            raise ValueError("Unsupported Responses tool declaration")
+        fn = tool["function"]
+        result.append(
+            {
+                "type": "function",
+                "name": fn["name"],
+                **{
+                    key: fn[key]
+                    for key in ("description", "parameters")
+                    if key in fn
+                },
+                # Chat Completions schemas are not necessarily strict-compatible.
+                "strict": fn.get("strict", False),
+            }
+        )
+    return result
+
+
+def _metadata_item(item: dict) -> dict | None:
+    """Keep only supported replay fields, never arbitrary provider extensions."""
+    if item.get("type") == "reasoning" and isinstance(
+        item.get("encrypted_content"), str
+    ):
+        return {
+            key: item[key]
+            for key in ("type", "id", "summary", "encrypted_content", "status")
+            if key in item
+        }
+    if item.get("type") == "message" and item.get("role") == "assistant":
+        return {
+            key: item[key]
+            for key in ("type", "id", "role", "content", "phase", "status")
+            if key in item
+        }
+    if item.get("type") == "function_call":
+        # Record identity/order only: canonical tool calls own arguments.
+        return {"type": "function_call", "call_id": item["call_id"]}
+    return None
+
+
+async def stream_responses(
+    config: ProviderConfig,
+    messages: list[dict],
+    *,
+    tools: list[dict],
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    emit_finish_reason: bool = False,
+) -> AsyncIterator[
+    str | ModelThought | ModelToolCall | ModelUsage | ModelFinish
+]:
+    scope = provider_scope(config)
+    headers = {
+        "accept": "text/event-stream",
+        "content-type": "application/json",
+    }
+    if config.token:
+        headers["Authorization"] = f"Bearer {config.token}"
+    body = {
+        "model": config.model,
+        "input": responses_input(config, messages),
+        "stream": True,
+        "store": False,
+        "include": ["reasoning.encrypted_content"],
+    }
+    if tools:
+        wire_tools = _tools(tools)
+        if config.auth_method == "chatgpt":
+            # Namespaces are required by ChatGPT plan usage; keep function names stable.
+            wire_tools = [
+                {
+                    "type": "namespace",
+                    "name": "lsm",
+                    "description": "Local tools",
+                    "tools": wire_tools,
+                }
+            ]
+        body.update(
+            tools=wire_tools, tool_choice="auto", parallel_tool_calls=True
+        )
+    for key, value in (
+        ("max_output_tokens", max_tokens),
+        ("temperature", temperature),
+        ("top_p", top_p),
+    ):
+        if value is not None and config.auth_method != "chatgpt":
+            body[key] = value
+    done: dict[int, dict] = {}
+    seen_text: dict[int, str] = {}
+    terminal = None
+    async with (
+        provider_http_client(config) as client,
+        client.stream(
+            "POST", config.url, json=body, headers=headers
+        ) as response,
+    ):
+        response.raise_for_status()
+        async for frame in _data_frames(response):
+            if frame == "[DONE]":
+                break
+            try:
+                event = json.loads(frame)
+            except json.JSONDecodeError as exc:
+                raise ValueError("Invalid Responses SSE frame") from exc
+            if not isinstance(event, dict):
+                raise ValueError("Invalid Responses SSE event")
+            kind = event.get("type")
+            if kind in {"error", "response.failed", "response.cancelled"}:
+                raise RuntimeError(
+                    "Responses provider rejected or cancelled generation"
+                )
+            if kind in {"response.output_text.delta", "response.refusal.delta"}:
+                delta, index = event.get("delta"), event.get("output_index")
+                if (
+                    not isinstance(delta, str)
+                    or type(index) is not int
+                    or index < 0
+                ):
+                    raise ValueError("Invalid Responses text delta")
+                seen_text[index] = seen_text.get(index, "") + delta
+                if delta:
+                    yield delta
+            elif kind in {
+                "response.reasoning_summary_text.delta",
+                "response.reasoning_text.delta",
+            }:
+                delta = event.get("delta")
+                if isinstance(delta, str) and delta:
+                    yield ModelThought("thinking", text=delta)
+            elif kind == "response.output_item.done":
+                index, item = event.get("output_index"), event.get("item")
+                if (
+                    type(index) is not int
+                    or index < 0
+                    or not isinstance(item, dict)
+                ):
+                    raise ValueError("Invalid Responses output item")
+                if index in done and done[index] != item:
+                    raise ValueError("Conflicting Responses completed item")
+                done[index] = item
+            elif kind in {"response.completed", "response.incomplete"}:
+                terminal = event
+                break
+    if terminal is None:
+        # A dropped stream must never execute partially observed tool calls.
+        raise RuntimeError("Responses stream ended without a terminal event")
+    response = terminal.get("response")
+    if not isinstance(response, dict):
+        raise ValueError("Responses terminal event missing response")
+    incomplete = (
+        terminal["type"] == "response.incomplete"
+        or response.get("status") == "incomplete"
+    )
+    if response.get("status") in {"failed", "cancelled"}:
+        raise RuntimeError("Responses provider failed generation")
+    output = response.get("output")
+    if isinstance(output, list):
+        # A completed tool item and terminal output must describe the same
+        # proposal. Ignore unrelated provider-only metadata changes.
+        for index, item in done.items():
+            if item.get("type") != "function_call":
+                continue
+            final = output[index] if index < len(output) else None
+            keys = ("type", "call_id", "name", "arguments")
+            if not isinstance(final, dict) or any(
+                final.get(key) != item.get(key) for key in keys
+            ):
+                raise ValueError(
+                    "Responses terminal tool proposal disagrees with completed item"
+                )
+        items = list(enumerate(output))
+    elif output is None:
+        items = sorted(done.items())
+    else:
+        raise ValueError("Invalid Responses output")
+    if seen_text.keys() - {
+        index
+        for index, item in items
+        if isinstance(item, dict) and item.get("type") == "message"
+    }:
+        raise ValueError("Responses terminal output is missing streamed text")
+    calls = []
+    replay = []
+    identities = set()
+    for index, item in items:
+        if not isinstance(item, dict):
+            raise ValueError("Invalid Responses output item")
+        kind = item.get("type")
+        if kind == "message":
+            text = _text(item)
+            streamed = seen_text.get(index, "")
+            if not text.startswith(streamed):
+                raise ValueError(
+                    "Responses final text disagrees with streamed text"
+                )
+            if len(text) > len(streamed):
+                yield text[len(streamed) :]
+        elif kind == "function_call":
+            if incomplete or item.get("status") not in {None, "completed"}:
+                raise RuntimeError(
+                    "Responses generation ended with an incomplete tool call"
+                )
+            identity, name, args = (
+                item.get("call_id"),
+                item.get("name"),
+                item.get("arguments"),
+            )
+            if config.auth_method == "chatgpt" and item.get(
+                "namespace"
+            ) not in {None, "lsm"}:
+                raise ValueError("Invalid Responses function namespace")
+            if (
+                not tools
+                or not isinstance(identity, str)
+                or not identity
+                or identity in identities
+                or not isinstance(name, str)
+                or not name
+            ):
+                raise ValueError("Invalid Responses function call")
+            if not isinstance(args, str) or len(args) > MAX_TOOL_ARGUMENTS:
+                raise ValueError("Invalid Responses function arguments")
+            try:
+                arguments = json.loads(args)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    "Invalid JSON in Responses function arguments"
+                ) from exc
+            if not isinstance(arguments, dict):
+                raise ValueError(
+                    "Responses function arguments must be an object"
+                )
+            identities.add(identity)
+            calls.append(
+                ModelToolCall(
+                    identity,
+                    name,
+                    arguments,
+                    {"responses_index": index, "responses_scope": scope},
+                )
+            )
+        elif kind != "reasoning":
+            raise ValueError("Unsupported Responses output item")
+        native = _metadata_item(item)
+        if native is not None and not incomplete:
+            replay.append(
+                ModelThought(
+                    "responses_item",
+                    provider_data={
+                        "scope": scope,
+                        "index": index,
+                        "item": native,
+                    },
+                )
+            )
+    # Usage is emitted even for incomplete text responses. No side-effecting
+    # calls are released until the complete response is validated.
+    usage = _usage_frame("openai", response)
+    if usage is not None:
+        yield ModelUsage(PROTOCOL, usage.input_tokens, usage.output_tokens)
+    if incomplete and not emit_finish_reason:
+        raise RuntimeError("Responses generation was incomplete")
+    complete_tool_batch(calls)
+    for item in replay:
+        yield item
+    for call in calls:
+        yield call
+    if emit_finish_reason:
+        details = response.get("incomplete_details") or {}
+        yield ModelFinish(
+            PROTOCOL,
+            "max_output_tokens"
+            if incomplete and details.get("reason") == "max_output_tokens"
+            else "incomplete"
+            if incomplete
+            else "stop",
+        )

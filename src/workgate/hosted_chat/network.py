@@ -236,7 +236,10 @@ class ProviderHTTPTransport(httpx.AsyncHTTPTransport):
 
 
 def provider_client(
-    base_url: str, *, allow_private_http: bool = False, timeout: float = 10
+    base_url: str,
+    *,
+    allow_private_http: bool = False,
+    timeout: float | httpx.Timeout = 10,
 ) -> httpx.AsyncClient:
     """No ambient proxy, redirect or cross-origin credential forwarding."""
     return httpx.AsyncClient(
