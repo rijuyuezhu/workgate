@@ -101,6 +101,29 @@ def test_invalid_values_never_written(tmp_path, value):
     assert not (tmp_path / "control.yaml.bak").exists()
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"port: 8001\n1: value\n",
+        b"port: [private-test-value\n",
+        b"port: \xff\n",
+    ],
+)
+def test_malformed_config_never_written(tmp_path, content):
+    path = tmp_path / "control.yaml"
+    path.write_text("port: 8001\n")
+    snap = snapshot(path)
+    path.write_bytes(content)
+    with pytest.raises(ConfigEditError, match="^InvalidConfigFile$"):
+        save_config(
+            snap,
+            revision=current_revision(snap),
+            changes=set_field("port", 8002),
+        )
+    assert path.read_bytes() == content
+    assert not (tmp_path / "control.yaml.bak").exists()
+
+
 def test_role_ownership_and_unsafe_path(tmp_path):
     path = tmp_path / "control.yaml"
     path.write_text("port: 8001\n")
