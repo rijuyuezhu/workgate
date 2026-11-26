@@ -153,8 +153,13 @@ initial, unreleased schema includes the nullable native Session identity.
 Job creation uses one reserved native ID and recovery uses exact native poll,
 not another start. A positively absent parent Session permits cleanup without
 fabricating a Job receipt. Cancelling a Job does not terminate an otherwise
-reused Session. Persistent Shell creation, Job retry, managed copy, and runtime
-lifecycle wiring remain separate integration units.
+reused Session. PTY creation shares the same native resource ledger and uses
+an exact owner-checked Shell lookup. The private `chat-shell-...` identity
+includes 128 bits of entropy and an optional bounded human-readable prefix;
+public starts cannot reuse that generated namespace. Cleanup records positive
+native evidence before killing a Shell, so a lost kill reply can be reconciled
+without terminating an unrelated Shell or its reused parent Session. Job retry,
+managed copy, and runtime lifecycle wiring remain separate integration units.
 
 
 Agent authoring starts with the final upstream repository and validators.

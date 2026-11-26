@@ -14,7 +14,7 @@ from pydantic import (
     model_validator,
 )
 
-from .ids import CommandId, ReservedJobId, SessionId
+from .ids import CommandId, ReservedJobId, ReservedShellId, SessionId
 
 EXECUTOR_PAIR_START_PATH = "/executor/v1/pair/start"
 EXECUTOR_PAIR_POLL_PATH = "/executor/v1/pair/poll"
@@ -34,13 +34,14 @@ SESSION_LOOKUP_OP = "session.lookup"
 SESSION_TERMINATE_OP = "session.terminate"
 SESSION_CHANGE_WORKDIR_OP = "session.change_workdir"
 JOB_START_RESERVED_OP = "job.start_reserved"
+SHELL_START_RESERVED_OP = "shell.start_reserved"
+SHELL_LOOKUP_RESERVED_OP = "shell.lookup_reserved"
 
 
-class ReservedJobStartRequest(BaseModel):
-    """Internal tracked Bash/Python request; never accepted as a public tool argument."""
+class ReservedExecutionRequest(BaseModel):
+    """Shared private execution arguments for reserved native resources."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
-    job_id: ReservedJobId
     tool: Literal["bash", "run_python_code"]
     command: str | None = None
     code: str | None = None
@@ -48,6 +49,23 @@ class ReservedJobStartRequest(BaseModel):
     timeout_s: int | None = None
     max_output_bytes: int | None = None
     env: dict[str, str] | None = None
+
+    @model_validator(mode="after")
+    def validate_command(self) -> Self:
+        if self.tool == "bash":
+            if self.command is None or self.code is not None:
+                raise ValueError(
+                    "Reserved Bash execution requires command only"
+                )
+        elif self.code is None or self.command is not None:
+            raise ValueError("Reserved Python execution requires code only")
+        return self
+
+
+class ReservedJobStartRequest(ReservedExecutionRequest):
+    """Internal tracked Bash/Python request; not a public tool argument."""
+
+    job_id: ReservedJobId
     async_: bool = False
     persist_on_timeout: bool = False
     name: str | None = None
@@ -56,12 +74,23 @@ class ReservedJobStartRequest(BaseModel):
     def validate_mode(self) -> Self:
         if not (self.async_ or self.persist_on_timeout):
             raise ValueError("Reserved Job creation requires tracked execution")
-        if self.tool == "bash":
-            if self.command is None or self.code is not None:
-                raise ValueError("Reserved Bash Job requires command only")
-        elif self.code is None or self.command is not None:
-            raise ValueError("Reserved Python Job requires code only")
         return self
+
+
+class ReservedShellStartRequest(ReservedExecutionRequest):
+    """Internal PTY request with the exact private native Shell handle."""
+
+    shell_id: ReservedShellId
+
+
+class ReservedShellLookupRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    shell_id: ReservedShellId
+
+
+class ReservedShellLookupResult(ReservedShellLookupRequest):
+    session_id: SessionId
+    present: bool
 
 
 class ExecutorRuntimeOwnership(StrEnum):

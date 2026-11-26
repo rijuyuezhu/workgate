@@ -64,8 +64,11 @@ async def bash_execute(
     persist_on_timeout: bool = False,
     job_wait: JobWaiter | None = None,
     job_script_path: str | None = None,
+    preallocated_shell_id: str | None = None,
 ) -> ShellExecutionOutput:
     """Run a shell command under explicit executor-owned session authority."""
+    if preallocated_shell_id is not None and not pty:
+        raise ValueError("Private Shell reservation requires PTY mode")
     if pty:
         async with session_lifecycle_lock(session_id):
             session = store.touch_session(session_id)
@@ -82,6 +85,11 @@ async def bash_execute(
                 command_with_env,
                 owner_session_id=session_id,
                 forbidden_shell_ids=forbidden_shell_ids,
+                **(
+                    {"preallocated_shell_id": preallocated_shell_id}
+                    if preallocated_shell_id is not None
+                    else {}
+                ),
             )
             try:
                 store.register_persistent_shell(session_id, result.shell_id)
@@ -193,6 +201,7 @@ async def run_python_code_execute(
     python_executable: str | None = None,
     persist_on_timeout: bool = False,
     job_wait: JobWaiter | None = None,
+    preallocated_shell_id: str | None = None,
 ) -> RunPythonCodeOutput:
     """Write Python code to a temporary file and execute it through shell modes."""
     session = store.touch_session(session_id)
@@ -236,6 +245,7 @@ async def run_python_code_execute(
             pty,
             name,
             job_start=job_start,
+            preallocated_shell_id=preallocated_shell_id,
             forbidden_shell_ids=forbidden_shell_ids,
             persist_on_timeout=persist_on_timeout,
             job_wait=job_wait,

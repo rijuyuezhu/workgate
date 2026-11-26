@@ -9,7 +9,12 @@ from ..errors import PublicToolValueError
 from ..hosted_chat.durable_tasks import DurableTaskRepository
 from ..jobs.state import CONFIRMED_TERMINAL_STATUSES
 from ..oauth.core.context import bind_oauth_claims, reset_oauth_claims
+from ..protocol.executor import (
+    SHELL_LOOKUP_RESERVED_OP,
+    ReservedShellLookupResult,
+)
 from ..schemas.result_models.jobs import JobOutput
+from ..schemas.result_models.shell import KillPersistentShellOutput
 from .execution_context import control_execution_context
 from .runtime import ControlRuntime
 
@@ -66,7 +71,52 @@ async def _stop_job(
     return "stopped" if job.status in CONFIRMED_TERMINAL_STATUSES else "pending"
 
 
-async def _stop(runtime: ControlRuntime, row: dict) -> CleanupOutcome:
+async def _stop_shell(
+    runtime: ControlRuntime,
+    repository: DurableTaskRepository,
+    row: dict,
+    key: str,
+) -> CleanupOutcome:
+    session_id = row["native_session_id"]
+    if not session_id:
+        return "pending"
+    record = runtime.control_state.snapshot_sessions().get(session_id)
+    if record is None or record.executor_id != row["machine"]:
+        return "pending"
+    if record.status == "ended":
+        return "absent" if record.executor_absence_confirmed else "pending"
+    if record.status != "active":
+        return "pending"
+    receipt = ReservedShellLookupResult.model_validate(
+        await runtime.session_coordinator.call_session_tool(
+            SHELL_LOOKUP_RESERVED_OP,
+            {"session_id": session_id, "shell_id": key},
+        )
+    )
+    if receipt.session_id != session_id or receipt.shell_id != key:
+        return "pending"
+    if not receipt.present:
+        # A previously observed Shell is gone; an unobserved start might still
+        # be in flight. Absence alone must not manufacture its receipt.
+        return "absent" if row["native_id"] == key else "pending"
+    if not repository.record_cleanup_receipt(row["id"], key):
+        return "pending"
+    row["native_id"] = key
+    result = KillPersistentShellOutput.model_validate(
+        await runtime.session_coordinator.call_session_tool(
+            "kill_persistent_shell", {"session_id": session_id, "shell_id": key}
+        )
+    )
+    return (
+        "stopped"
+        if result.shell_id == key and result.killed is True
+        else "pending"
+    )
+
+
+async def _stop(
+    runtime: ControlRuntime, repository: DurableTaskRepository, row: dict
+) -> CleanupOutcome:
     # IDs were allocated by the private ledger before the one dispatch claim.
     # Never stop an arbitrary ID from a provider response or a listing.
     key = row["idempotency_key"]
@@ -74,6 +124,8 @@ async def _stop(runtime: ControlRuntime, row: dict) -> CleanupOutcome:
         return "pending"
     if row["kind"] == "job":
         return await _stop_job(runtime, row, key)
+    if row["kind"] == "shell":
+        return await _stop_shell(runtime, repository, row, key)
     if row["kind"] == "session":
         stopped = await runtime.session_coordinator.end_reserved_session(
             key, executor_id=row["machine"]
@@ -126,7 +178,7 @@ async def sweep_native_cancellations(
             ):
                 try:
                     outcome = await asyncio.wait_for(
-                        _stop(runtime, row), timeout=30
+                        _stop(runtime, repository, row), timeout=30
                     )
                 except Exception as exc:
                     logger.debug(

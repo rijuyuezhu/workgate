@@ -14,6 +14,8 @@ from workgate.control.hosted_chat_native_creation import (
     NativeCreationUncertain,
     create_native,
 )
+from workgate.executor import shell as shell_ops
+from workgate.executor import shell_service
 from workgate.executor.jobs import shell as job_shell
 from workgate.hosted_chat.database import SQLiteDatabase
 from workgate.hosted_chat.durable_tasks import DurableTaskRepository
@@ -27,6 +29,8 @@ from workgate.protocol.executor import (
     JOB_START_RESERVED_OP,
     SESSION_CREATE_OP,
     SESSION_LOOKUP_OP,
+    SHELL_LOOKUP_RESERVED_OP,
+    SHELL_START_RESERVED_OP,
 )
 from workgate.schemas.result_models.shell import (
     KillPersistentShellOutput,
@@ -588,3 +592,250 @@ async def test_missing_tracked_job_receipt_never_reoffers(
     row = intent_rows(repo)["missing-job"]
     assert row["state"] == "unknown" and row["native_id"] is None
     assert offered == [session_id] and not started
+
+
+@pytest.fixture
+def reserved_shell_backend(monkeypatch):
+    started = {}
+    killed = []
+
+    async def start(
+        _config,
+        _store,
+        cwd,
+        name,
+        command,
+        *,
+        owner_session_id=None,
+        shell_id=None,
+        forbidden_shell_ids=frozenset(),
+    ):
+        assert shell_id is not None and owner_session_id is not None
+        assert shell_id not in started and shell_id not in forbidden_shell_ids
+        started[shell_id] = owner_session_id
+        return StartPersistentShellOutput(
+            shell_id=shell_id, cwd=cwd, command=command, backend="fake"
+        )
+
+    async def owned(_config, _store, session_id):
+        return [key for key, owner in started.items() if owner == session_id]
+
+    async def kill(_config, store, shell_id):
+        assert shell_id in started
+        killed.append(shell_id)
+        del started[shell_id]
+        store.release_persistent_shell(shell_id)
+        return KillPersistentShellOutput(
+            shell_id=shell_id, killed=True, backend="fake"
+        )
+
+    monkeypatch.setattr(shell_ops, "_start_persistent_shell_locked", start)
+    monkeypatch.setattr(
+        shell_service, "list_owned_persistent_shell_ids_execute", owned
+    )
+    monkeypatch.setattr(shell_service, "kill_persistent_shell_execute", kill)
+    return started, killed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool,body",
+    [
+        ("bash", {"command": "shell"}),
+        ("run_python_code", {"code": "print('hello')"}),
+    ],
+)
+async def test_reserved_shell_lost_response_recovers_exact_owner(
+    bound, reserved_shell_backend, monkeypatch, tool, body
+):
+    harness, repo, lease, generation = bound
+    started, _ = reserved_shell_backend
+    _, sid = await native_session(harness, repo, lease)
+    transport = harness.control.executor_transport
+    original = transport.call
+    offers = []
+
+    async def lost(
+        executor_id, op, args=None, *, session_id=None, timeout_s=None
+    ):
+        result = await original(
+            executor_id, op, args, session_id=session_id, timeout_s=timeout_s
+        )
+        if op == SHELL_START_RESERVED_OP:
+            assert result.ok and args is not None
+            offers.append(args["shell_id"])
+            raise TimeoutError("Shell response lost")
+        return result
+
+    monkeypatch.setattr(transport, "call", lost)
+    call = ModelToolCall(
+        "pty",
+        tool,
+        {"session_id": sid, "pty": True, "name": "my terminal", **body},
+    )
+    with pytest.raises(TimeoutError):
+        await invoke(harness, repo, lease, call)
+    result = await invoke(harness, repo, lease, call)
+    key = result["result"]["shell_id"]
+    assert key.startswith("chat-shell-my-terminal-")
+    assert (
+        result["recovered"] is True
+        and offers == [key]
+        and started == {key: sid}
+    )
+    assert repo.owned(
+        lease.owner,
+        generation.conversation_id,
+        "shell",
+        key,
+        machine=harness.executor_id,
+        session_id=sid,
+    )
+    assert not repo.owned(
+        lease.owner,
+        generation.conversation_id,
+        "shell",
+        key,
+        machine=harness.executor_id,
+    )
+    other = await harness.control.session_coordinator.start_session(
+        executor_id=harness.executor_id
+    )
+    foreign = await harness.call(
+        harness.executor_id,
+        SHELL_LOOKUP_RESERVED_OP,
+        {"shell_id": key},
+        session_id=other["session_id"],
+    )
+    assert foreign.ok and foreign.result["present"] is False
+    duplicate = await harness.call(
+        harness.executor_id,
+        SHELL_START_RESERVED_OP,
+        {"shell_id": key, "tool": "bash", "command": "duplicate"},
+        session_id=sid,
+    )
+    assert not duplicate.ok
+    spoof = await harness.call(
+        harness.executor_id,
+        "bash",
+        {"pty": True, "command": "spoof", "name": key},
+        session_id=other["session_id"],
+    )
+    assert not spoof.ok and started == {key: sid}
+
+
+@pytest.mark.asyncio
+async def test_reserved_shell_missing_receipt_and_invalid_mode_never_start(
+    bound, reserved_shell_backend, monkeypatch
+):
+    harness, repo, lease, _ = bound
+    started, _ = reserved_shell_backend
+    _, sid = await native_session(harness, repo, lease)
+    args = {"session_id": sid, "pty": True, "command": "never starts"}
+    for extra in (
+        {"async_": True},
+        {"persist_on_timeout": True},
+        {"shell_id": "forged"},
+    ):
+        with pytest.raises(ValueError):
+            await invoke(
+                harness,
+                repo,
+                lease,
+                ModelToolCall("invalid", "bash", args | extra),
+            )
+    with pytest.raises(PermissionError):
+        await invoke(
+            harness,
+            repo,
+            lease,
+            ModelToolCall("no-execute", "bash", args),
+            scopes={"shell:read", "shell:write"},
+        )
+    original = harness.control.executor_transport.call
+    offers = []
+
+    async def missing(
+        executor_id, op, args=None, *, session_id=None, timeout_s=None
+    ):
+        if op == SHELL_START_RESERVED_OP:
+            offers.append(session_id)
+            raise TimeoutError("Shell response lost")
+        return await original(
+            executor_id, op, args, session_id=session_id, timeout_s=timeout_s
+        )
+
+    monkeypatch.setattr(harness.control.executor_transport, "call", missing)
+    call = ModelToolCall("missing-pty", "bash", args)
+    with pytest.raises(TimeoutError):
+        await invoke(harness, repo, lease, call)
+    with pytest.raises(NativeCreationUncertain):
+        await invoke(harness, repo, lease, call)
+    assert (
+        offers == [sid]
+        and not started
+        and intent_rows(repo)["missing-pty"]["native_id"] is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_shell_cleanup_lost_kill_receipt_keeps_reused_session(
+    bound, reserved_shell_backend, monkeypatch
+):
+    harness, repo, lease, generation = bound
+    started, killed = reserved_shell_backend
+    task_id, sid = await native_session(harness, repo, lease)
+    store = GenerationStore(repo.database)
+    assert store.finish(
+        lease.owner,
+        generation.run_id,
+        status="complete",
+        text="ready",
+        actor_lease=lease,
+    )
+    next_run, _ = store.begin(
+        lease.owner,
+        {"text": "next", "conversationId": generation.conversation_id},
+    )
+    next_lease = ActorLease.claim(repo.database, lease.owner, next_run.run_id)
+    assert next_lease is not None
+    original = harness.control.executor_transport.call
+
+    async def lost(
+        executor_id, op, args=None, *, session_id=None, timeout_s=None
+    ):
+        result = await original(
+            executor_id, op, args, session_id=session_id, timeout_s=timeout_s
+        )
+        if op in {SHELL_START_RESERVED_OP, "kill_persistent_shell"}:
+            assert result.ok
+            raise TimeoutError("Shell mutation response lost")
+        return result
+
+    monkeypatch.setattr(harness.control.executor_transport, "call", lost)
+    call = ModelToolCall(
+        "cancel-pty",
+        "bash",
+        {"session_id": sid, "pty": True, "command": "shell"},
+    )
+    with pytest.raises(TimeoutError):
+        await invoke(harness, repo, next_lease, call)
+    key = next(iter(started))
+    repo.cancel_run(next_lease.owner, next_run.run_id)
+    assert await sweep_native_cancellations(harness.control, repo) == 0
+    row = intent_rows(repo)["cancel-pty"]
+    assert (
+        row["state"] == "cancel_pending"
+        and row["native_id"] == key
+        and killed == [key]
+        and not started
+    )
+    with repo.database.connect() as db:
+        db.execute("UPDATE agent_durable_tasks SET next_attempt_at=NULL")
+    assert await sweep_native_cancellations(harness.control, repo) == 1
+    assert intent_rows(repo)["cancel-pty"]["state"] == "stopped"
+    assert harness.executor.sessions.lookup(sid) is not None
+    assert (
+        await harness.control.task_service.read_task(task_id)
+    ).status == "active"
+    assert killed == [key]

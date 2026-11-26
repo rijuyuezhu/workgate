@@ -7,6 +7,9 @@ from ..config.executor import ExecutorConfig
 from ..protocol.executor import (
     JobInventorySummary,
     ReservedJobStartRequest,
+    ReservedShellLookupRequest,
+    ReservedShellLookupResult,
+    ReservedShellStartRequest,
     ShellInventorySummary,
 )
 from ..schemas.result_models.shell import ListPersistentShellsOutput
@@ -23,6 +26,7 @@ from .shell import (
     send_persistent_shell_input_execute,
     start_persistent_shell_execute,
 )
+from .tool_session.lifecycle import session_lifecycle_lock
 from .tool_session.store import ToolSessionStore
 
 
@@ -35,7 +39,11 @@ class ShellService:
         self.jobs = ExecutorJobService(config, store)
 
     async def bash(
-        self, args: dict[str, Any], *, reserved_job_id: str | None = None
+        self,
+        args: dict[str, Any],
+        *,
+        reserved_job_id: str | None = None,
+        preallocated_shell_id: str | None = None,
     ) -> Any:
         pty = bool(args.get("pty", False))
         return await bash_execute(
@@ -54,6 +62,7 @@ class ShellService:
             if reserved_job_id is not None
             else self.jobs.start,
             job_wait=self.jobs.wait,
+            preallocated_shell_id=preallocated_shell_id,
             persist_on_timeout=args.get("persist_on_timeout", False),
             forbidden_shell_ids=(
                 self.jobs.reserved_shell_ids() if pty else frozenset()
@@ -61,7 +70,11 @@ class ShellService:
         )
 
     async def run_python_code(
-        self, args: dict[str, Any], *, reserved_job_id: str | None = None
+        self,
+        args: dict[str, Any],
+        *,
+        reserved_job_id: str | None = None,
+        preallocated_shell_id: str | None = None,
     ) -> Any:
         pty = bool(args.get("pty", False))
         return await run_python_code_execute(
@@ -80,6 +93,7 @@ class ShellService:
             if reserved_job_id is not None
             else self.jobs.start,
             job_wait=self.jobs.wait,
+            preallocated_shell_id=preallocated_shell_id,
             persist_on_timeout=args.get("persist_on_timeout", False),
             forbidden_shell_ids=(
                 self.jobs.reserved_shell_ids() if pty else frozenset()
@@ -97,6 +111,38 @@ class ShellService:
         payload["session_id"] = session_id
         handler = self.bash if request.tool == "bash" else self.run_python_code
         return await handler(payload, reserved_job_id=request.job_id)
+
+    async def start_reserved_shell(
+        self, session_id: str, args: dict[str, Any]
+    ) -> Any:
+        request = ReservedShellStartRequest.model_validate(args)
+        payload = request.model_dump(
+            exclude={"shell_id", "tool"}, exclude_none=True
+        )
+        payload.update(session_id=session_id, pty=True)
+        handler = self.bash if request.tool == "bash" else self.run_python_code
+        return await handler(payload, preallocated_shell_id=request.shell_id)
+
+    async def lookup_reserved_shell(
+        self, session_id: str, args: dict[str, Any]
+    ) -> ReservedShellLookupResult:
+        request = ReservedShellLookupRequest.model_validate(args)
+        async with session_lifecycle_lock(session_id):
+            self.store.admit_active_session(session_id)
+            owned = await list_owned_persistent_shell_ids_execute(
+                self.config, self.store, session_id
+            )
+            if owned is None:
+                raise RuntimeError("Persistent Shell ownership is uncertain")
+            if request.shell_id in self.jobs.reserved_shell_ids():
+                raise ValueError(
+                    "Private Shell handle belongs to a tracked Job"
+                )
+            return ReservedShellLookupResult(
+                session_id=session_id,
+                shell_id=request.shell_id,
+                present=request.shell_id in owned,
+            )
 
     async def start(self, args: dict[str, Any]) -> Any:
         session_id = args.get("session_id")

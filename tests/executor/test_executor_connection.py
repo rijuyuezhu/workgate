@@ -724,6 +724,7 @@ async def test_transient_poll_failure_reconnects_with_fresh_hello_without_replay
         ("job", {"list_jobs": True}),
         ("session.create", {"workdir": None}),
         ("job.start_reserved", {"async_": True}),
+        ("shell.start_reserved", {"tool": "bash"}),
         ("bash", {"persist_on_timeout": True}),
         ("run_python_code", {"persist_on_timeout": True}),
     ],
