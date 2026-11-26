@@ -9,7 +9,12 @@ import sys
 import time
 from pathlib import Path
 
-from switch import _old_python, _staged_python, _write_launcher
+from switch import (
+    _old_python,
+    _staged_python,
+    _wait_for_controller_poll,
+    _write_launcher,
+)
 
 _TAG = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+(?:[abrc][0-9]+)?\Z")
 _LABEL = "com.workgate.executor"
@@ -134,7 +139,9 @@ def _install(python: Path, config: Path) -> None:
     )
 
 
-def switch(*, root: Path, tag: str, config: Path) -> None:
+def switch(
+    *, root: Path, tag: str, config: Path, require_controller_poll: bool = False
+) -> None:
     if sys.platform != "darwin":
         raise RuntimeError("macOS LaunchAgent cutover requires macOS")
     if not _TAG.fullmatch(tag):
@@ -160,9 +167,16 @@ def switch(*, root: Path, tag: str, config: Path) -> None:
     if any(candidate.get(key) != before.get(key) for key in ("Service", "Log")):
         raise RuntimeError("staged Executor resolves a different native state")
     try:
+        started_at = time.time()
         _install(new, config)
         if _wait_for_binding(new, config) != profile:
             raise RuntimeError("new Executor service uses a different identity")
+        if require_controller_poll:
+            _wait_for_controller_poll(new, profile, started_at)
+            if _binding(new, config, current=True) != profile:
+                raise RuntimeError(
+                    "candidate Executor binding changed during poll verification"
+                )
         if profile.read_bytes() != identity:
             raise RuntimeError(
                 "Executor pairing identity changed during cutover"
@@ -195,10 +209,16 @@ def main() -> None:
     parser.add_argument("--tag", required=True)
     parser.add_argument("--install-root", type=Path, required=True)
     parser.add_argument("--executor-config", type=Path, required=True)
+    parser.add_argument(
+        "--require-controller-poll", action="store_true", help=argparse.SUPPRESS
+    )
     args = parser.parse_args()
     try:
         switch(
-            root=args.install_root, tag=args.tag, config=args.executor_config
+            root=args.install_root,
+            tag=args.tag,
+            config=args.executor_config,
+            require_controller_poll=args.require_controller_poll,
         )
     except (
         OSError,

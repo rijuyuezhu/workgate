@@ -1,6 +1,9 @@
 """Small private, secret-free snapshot for managed Executor connection status."""
 
+import hashlib
 import math
+import os
+import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,7 +28,11 @@ class ExecutorConnectionStatusStore:
         return self.state_store.layout.executor_dir / "connection.json"
 
     def record(
-        self, phase: ConnectionPhase, error_class: str | None = None
+        self,
+        phase: ConnectionPhase,
+        error_class: str | None = None,
+        *,
+        poll_completed: bool = False,
     ) -> None:
         # Windows readers can transiently block atomic replacement of the
         # status file. Retry this small advisory snapshot before abandoning it.
@@ -46,11 +53,29 @@ class ExecutorConnectionStatusStore:
                     if isinstance(old, dict)
                     else None
                 )
+                runtime_id = hashlib.sha256(
+                    os.path.normcase(
+                        str(Path(sys.executable).absolute().parent)
+                    ).encode("utf-8")
+                ).hexdigest()
+                process_id = os.getpid()
+                previous_poll = (
+                    old.get("last_poll_at")
+                    if isinstance(old, dict)
+                    and old.get("runtime_id") == runtime_id
+                    and old.get("process_id") == process_id
+                    else None
+                )
                 self.state_store.write_json(
                     self.path,
                     {
                         "phase": phase,
                         "updated_at": now,
+                        "runtime_id": runtime_id,
+                        "process_id": process_id,
+                        "last_poll_at": now
+                        if poll_completed
+                        else previous_poll,
                         "last_success_at": (
                             now if phase == "connected" else last_success
                         ),
@@ -66,6 +91,10 @@ class ExecutorConnectionStatusStore:
                 if host_os() is not HostOS.WINDOWS or attempt == 3:
                     raise
                 time.sleep(0.02)
+
+    def record_poll(self) -> None:
+        """Record successful command delivery, distinct from Hello/heartbeat."""
+        self.record("connected", poll_completed=True)
 
     def describe(self) -> str:
         try:

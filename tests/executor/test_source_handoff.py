@@ -80,6 +80,7 @@ def test_handoff_uses_transient_user_service_not_executor_cgroup(
         str(checkout.parent.parent),
         "--executor-config",
         str(config),
+        "--require-controller-poll",
     ]
     assert "--scope" not in command
     assert kwargs == {"timeout": 30}

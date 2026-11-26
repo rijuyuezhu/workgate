@@ -129,6 +129,35 @@ def test_macos_switch_preserves_identity_and_changes_stable_launcher(
     assert stable.read_text() == str(new)
 
 
+@pytest.mark.parametrize("confirmed", [True, False])
+def test_automatic_mac_switch_requires_candidate_poll(
+    switcher, installation, monkeypatch, confirmed
+):
+    root, config, old, new, _plist, profile, stable, state = installation
+
+    def wait(python, paired_profile, started_at):
+        assert (python, paired_profile) == (new, profile)
+        assert state["active"] == new
+        assert stable.read_text() == "old stable cli"
+        assert started_at > 0
+        if not confirmed:
+            raise RuntimeError("candidate poll timeout")
+
+    monkeypatch.setattr(switcher, "_wait_for_controller_poll", wait)
+    args = dict(
+        root=root, tag="v5.0.0a99", config=config, require_controller_poll=True
+    )
+    if confirmed:
+        switcher.switch(**args)
+        assert state["active"] == new
+        assert stable.read_text() == str(new)
+    else:
+        with pytest.raises(RuntimeError, match="old service restored"):
+            switcher.switch(**args)
+        assert state["active"] == old
+        assert stable.read_text() == str(old)
+
+
 def test_macos_failed_install_restores_old_runtime(switcher, installation):
     root, config, old, new, _plist, profile, stable, state = installation
     state["fail_new"] = True

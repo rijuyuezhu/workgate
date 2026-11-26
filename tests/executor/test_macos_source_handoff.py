@@ -71,6 +71,7 @@ def test_one_shot_launchd_agent_never_restarts(
             str(checkout.parent.parent),
             "--executor-config",
             str(config),
+            "--require-controller-poll",
         ],
         "RunAtLoad": True,
         "KeepAlive": False,

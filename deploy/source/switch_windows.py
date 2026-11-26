@@ -7,10 +7,11 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from prepare import _check_launcher, _default_root, _write_launcher
-from switch import _staged_python
+from switch import _staged_python, _wait_for_controller_poll
 
 _TASKS = {
     "control": ("Workgate Control", "Managed by Workgate: control"),
@@ -301,6 +302,7 @@ def _switch_executor(
     config: Path,
     *,
     adopt_legacy: bool = False,
+    require_controller_poll: bool = False,
 ) -> None:
     profile = _executor_binding(
         old,
@@ -326,9 +328,16 @@ def _switch_executor(
     try:
         _stop(old, "executor")
         _ensure_stopped(old, "executor")
+        started_at = time.time()
         _executor_install(new, config)
         if _executor_binding(new, config, current=True) != profile:
             raise RuntimeError("new Executor moved its pairing identity")
+        if require_controller_poll:
+            _wait_for_controller_poll(new, profile, started_at)
+            if _executor_binding(new, config, current=True) != profile:
+                raise RuntimeError(
+                    "candidate Executor binding changed during poll verification"
+                )
         if profile.read_bytes() != original_identity:
             raise RuntimeError("new Executor changed its pairing identity")
         _write_launcher(root, new)
@@ -377,6 +386,7 @@ def switch(
     executor_config: Path | None = None,
     service_dir: Path | None = None,
     adopt_legacy_executor: bool = False,
+    require_controller_poll: bool = False,
 ) -> None:
     if sys.platform != "win32":
         raise RuntimeError("Windows Task Scheduler is required")
@@ -387,6 +397,10 @@ def switch(
     if role not in _TASKS:
         raise ValueError(
             "Windows switch supports Control, Colocate and Executor"
+        )
+    if require_controller_poll and role != "executor":
+        raise ValueError(
+            "Control poll verification requires a standalone Executor"
         )
     if adopt_legacy_executor and role != "executor":
         raise ValueError(
@@ -440,6 +454,7 @@ def switch(
             tag,
             executor_config,
             adopt_legacy=adopt_legacy_executor,
+            require_controller_poll=require_controller_poll,
         )
         return
     assert control_config is not None
@@ -525,6 +540,9 @@ def main() -> None:
     parser.add_argument("--control-config", type=Path)
     parser.add_argument("--executor-config", type=Path)
     parser.add_argument(
+        "--require-controller-poll", action="store_true", help=argparse.SUPPRESS
+    )
+    parser.add_argument(
         "--adopt-legacy-executor",
         action="store_true",
         help="Explicit first cutover of a previously paired non-versioned Windows Executor",
@@ -538,6 +556,7 @@ def main() -> None:
             control_config=args.control_config,
             executor_config=args.executor_config,
             adopt_legacy_executor=args.adopt_legacy_executor,
+            require_controller_poll=args.require_controller_poll,
         )
     except (
         OSError,

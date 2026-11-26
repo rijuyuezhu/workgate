@@ -1,11 +1,14 @@
 """Explicit staged Linux Control/Colocate/Executor source cutover; no uv sync."""
 
 import argparse
+import hashlib
+import json
 import os
 import re
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from prepare import (
@@ -211,8 +214,64 @@ def _executor_binding(
     return service, profile
 
 
+def _controller_poll_confirmed(
+    python: Path, profile: Path, started_at: float
+) -> bool:
+    """Read the candidate's private delivery evidence, not its Hello alone."""
+    path = profile.with_name("connection.json")
+    try:
+        if path.is_symlink() or not path.is_file():
+            return False
+        with path.open("rb") as file:
+            raw = file.read(1025)
+        if len(raw) > 1024:
+            return False
+        report = json.loads(raw)
+    except OSError, UnicodeError, ValueError:
+        return False
+    if not isinstance(report, dict):
+        return False
+    runtime_id = hashlib.sha256(
+        os.path.normcase(str(python.absolute().parent)).encode("utf-8")
+    ).hexdigest()
+    poll_at = report.get("last_poll_at")
+    updated_at = report.get("updated_at")
+    now = time.time()
+    return (
+        report.get("runtime_id") == runtime_id
+        and report.get("phase") == "connected"
+        and type(report.get("process_id")) is int
+        and report["process_id"] > 0
+        and isinstance(poll_at, (int, float))
+        and not isinstance(poll_at, bool)
+        and isinstance(updated_at, (int, float))
+        and not isinstance(updated_at, bool)
+        and started_at <= poll_at <= updated_at <= now
+        and now - updated_at <= 90
+    )
+
+
+def _wait_for_controller_poll(
+    python: Path, profile: Path, started_at: float
+) -> None:
+    """Bound candidate acceptance; the caller owns the native rollback."""
+    deadline = time.monotonic() + 90
+    while not _controller_poll_confirmed(python, profile, started_at):
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                "candidate Executor did not complete a Control poll"
+            )
+        time.sleep(0.5)
+
+
 def _switch_executor(
-    root: Path, old: Path, new: Path, tag: str, config: Path
+    root: Path,
+    old: Path,
+    new: Path,
+    tag: str,
+    config: Path,
+    *,
+    require_controller_poll: bool = False,
 ) -> None:
     unit, profile = _executor_binding(old, config, current=True)
     # Check that the new CLI resolves the same persistent service and state.
@@ -246,11 +305,18 @@ def _switch_executor(
         )
 
     try:
+        started_at = time.time()
         install(new)
         if _executor_binding(new, config, current=True) != (unit, profile):
             raise RuntimeError(
                 "new Executor bound to another service or identity directory"
             )
+        if require_controller_poll:
+            _wait_for_controller_poll(new, profile, started_at)
+            if _executor_binding(new, config, current=True) != (unit, profile):
+                raise RuntimeError(
+                    "candidate Executor binding changed during poll verification"
+                )
         if profile.read_bytes() != identity:
             raise RuntimeError(
                 "Executor pairing identity changed during cutover"
@@ -287,6 +353,7 @@ def switch(
     control_config: Path | None = None,
     role: str = "control",
     executor_config: Path | None = None,
+    require_controller_poll: bool = False,
 ) -> None:
     if sys.platform != "linux":
         raise RuntimeError(
@@ -295,6 +362,10 @@ def switch(
     if role not in {"control", "colocate", "executor"}:
         raise ValueError(
             "explicit Linux cutover supports Control, Colocate and Executor"
+        )
+    if require_controller_poll and role != "executor":
+        raise ValueError(
+            "Control poll verification requires a standalone Executor"
         )
     if not _TAG.fullmatch(tag):
         raise ValueError("select an explicit released version tag")
@@ -318,7 +389,14 @@ def switch(
             )
         old_python = _old_python(root)
         new_python = _staged_python(root, tag)
-        _switch_executor(root, old_python, new_python, tag, paired_config)
+        _switch_executor(
+            root,
+            old_python,
+            new_python,
+            tag,
+            paired_config,
+            require_controller_poll=require_controller_poll,
+        )
         return
     if config is None or not config.is_file():
         raise RuntimeError(f"missing durable Control config: {config}")
@@ -405,6 +483,9 @@ def main() -> None:
     parser.add_argument("--install-root", type=Path, default=_default_root())
     parser.add_argument("--control-config", type=Path)
     parser.add_argument("--executor-config", type=Path)
+    parser.add_argument(
+        "--require-controller-poll", action="store_true", help=argparse.SUPPRESS
+    )
     args = parser.parse_args()
     try:
         switch(
@@ -413,6 +494,7 @@ def main() -> None:
             control_config=args.control_config,
             role=args.role,
             executor_config=args.executor_config,
+            require_controller_poll=args.require_controller_poll,
         )
     except (
         OSError,
