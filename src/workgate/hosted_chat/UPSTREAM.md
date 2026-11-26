@@ -129,6 +129,24 @@ are integrated in their respective units; importing these helpers does
 not start a service or send a request.
 
 
+Native Task/Session intent ownership adapts the final durable task source:
+
+| Workgate file | Upstream source at the pin | Git blob |
+| --- | --- | --- |
+| `durable_tasks.py` | `src/local_shell_mcp/webui/durable_tasks.py` (reservation, ownership and cancellation) | `9b50208b63aac266387b4e3b6b8e9ce6128b17e4` |
+| `tests/hosted_chat/test_durable_tasks.py` | `tests/test_webui_durable_tasks.py` (intent, ownership and cancellation cases) | `b079a14a09425775c2d47b6ae7ec7c35fd9babfc` |
+
+The ledger reuses the pinned durable-task and run-cancellation tables. Native
+Control Task/Session IDs are reserved before dispatch; a transactionally
+claimed intent is uncertain until an exact native response or read-only lookup
+confirms it. Replaying the proposal cannot claim dispatch again, change its
+identity, widen the stored grant, or adopt another conversation's native work.
+A late positive receipt does not clear a cancellation latch. The direct
+upstream Job/Shell dispatch and cancellation sweeper tests require the native
+Workgate resource adapter and remain in that integration unit. This storage
+unit neither invokes native tools nor starts a cleanup worker.
+
+
 Agent authoring starts with the final upstream repository and validators.
 
 | Workgate file | Upstream source at the pin | Git blob |
