@@ -1,7 +1,5 @@
 """Optional authenticated build provenance."""
 
-from __future__ import annotations
-
 import subprocess
 from pathlib import Path
 

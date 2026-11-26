@@ -4,8 +4,6 @@ Only report build fields backed by deployment metadata or the actual source
 checkout. A commit timestamp is not a build timestamp.
 """
 
-from __future__ import annotations
-
 import os
 import re
 import subprocess
