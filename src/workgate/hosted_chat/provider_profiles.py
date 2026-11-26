@@ -4,14 +4,15 @@ Storage and validation only. The Control route/transport must authorize access
 and enforce the configured network policy before making provider requests.
 """
 
-import ipaddress
 import json
 import re
 import sqlite3
+import time
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit, urlunsplit
 
 from .database import SQLiteDatabase
+from .network import validate_provider_endpoint
 from .sampling import validate_sampling
 
 if TYPE_CHECKING:
@@ -76,57 +77,6 @@ def _valid_name(name: object) -> bool:
     )
 
 
-def _validate_endpoint(value: str, *, allow_private_http: bool = False) -> None:
-    """Syntax validation only; transport must validate resolved addresses."""
-    if (
-        type(allow_private_http) is not bool
-        or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in value)
-        or "\\" in value
-    ):
-        raise ValueError("Invalid model provider URL")
-    try:
-        parsed = urlsplit(value)
-        host = parsed.hostname
-        port = parsed.port
-    except ValueError:
-        raise ValueError("Invalid model provider URL") from None
-    if (
-        not host
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.fragment
-        or parsed.query
-        or port == 0
-        or "%" in host
-    ):
-        raise ValueError("Invalid model provider URL")
-    if parsed.scheme == "https":
-        return
-    if parsed.scheme == "http" and (
-        host in {"localhost", "127.0.0.1", "::1"} or allow_private_http
-    ):
-        # Private HTTP is an explicit operator opt-in. A DNS name may be
-        # configured, but its resolved address must be verified at dispatch.
-        try:
-            address = ipaddress.ip_address(host)
-        except ValueError:
-            return
-        if address.is_loopback or any(
-            address in ipaddress.ip_network(net)
-            for net in (
-                "10.0.0.0/8",
-                "172.16.0.0/12",
-                "192.168.0.0/16",
-                "100.64.0.0/10",
-                "fc00::/7",
-            )
-        ):
-            return
-    raise ValueError(
-        "A model provider must use HTTPS or an explicitly allowed private HTTP endpoint"
-    )
-
-
 def validate_connection(body: dict) -> tuple[str, str, str | None]:
     kind = body.get("provider")
     if not isinstance(kind, str) or kind not in _PROTOCOLS:
@@ -135,18 +85,9 @@ def validate_connection(body: dict) -> tuple[str, str, str | None]:
     if not isinstance(base, str) or not base.strip() or len(base) > 2048:
         raise ValueError("A model provider base URL is required")
     base = base.strip().rstrip("/")
-    _validate_endpoint(
+    validate_provider_endpoint(
         base, allow_private_http=body.get("allow_private_http", False)
     )
-    parsed = urlsplit(base)
-    try:
-        invalid_port = parsed.port is not None and parsed.port == 0
-    except ValueError as exc:
-        raise ValueError("Invalid model provider base URL") from exc
-    if any(ord(char) <= 32 for char in base) or invalid_port:
-        raise ValueError("Invalid model provider base URL")
-    if parsed.query:
-        raise ValueError("A model provider base URL must not contain a query")
     key = body.get("api_key")
     if key is not None and (
         not isinstance(key, str)
@@ -325,6 +266,54 @@ class ChannelConflict(ValueError):
         self.can_force = can_force
 
 
+_SYNC_ERROR = (
+    "Unable to refresh model information. Last successful data is retained."
+)
+
+
+def _apply_catalog(value: dict, catalog: dict, overrides: dict) -> None:
+    models = catalog["models"]
+    reported = {
+        m: n for m, n in catalog["model_contexts"].items() if m in models
+    }
+    overrides = {m: n for m, n in overrides.items() if m in models}
+    value.update(
+        models=models,
+        discovered_model_contexts=reported,
+        model_context_overrides=overrides,
+        model_contexts={**reported, **overrides},
+        model_sync_at=time.time(),
+        model_sync_error=None,
+    )
+    # Only active models need defaults in the editable catalog. Historical
+    # conversations and Agent references are not rewritten.
+    value["model_sampling"] = {
+        m: v
+        for m, v in (value.get("model_sampling") or {}).items()
+        if m in models
+    }
+
+
+def apply_auto_save(value: dict, previous: dict, catalog: dict | None) -> None:
+    overrides = value["model_contexts"]
+    if catalog is not None:
+        _apply_catalog(value, catalog, overrides)
+        return
+    if previous.get("auto_discover") is True:
+        reported = previous.get("discovered_model_contexts") or {}
+    else:
+        # An old/manual list is a valid fallback, not discovered metadata.
+        reported = {}
+        overrides = {**(previous.get("model_contexts") or {}), **overrides}
+    _apply_catalog(
+        value,
+        {"models": previous["models"], "model_contexts": reported},
+        overrides,
+    )
+    value["model_sync_at"] = previous.get("model_sync_at")
+    value["model_sync_error"] = _SYNC_ERROR
+
+
 class ProviderRepository:
     def __init__(
         self, database: SQLiteDatabase, cipher: CredentialCipher
@@ -413,14 +402,8 @@ class ProviderRepository:
             )
         return {"providers": entries}
 
-    def save(self, body: dict) -> dict:
-        value = _validate(body)
-        # Catalog probes and OAuth will be wired in the final discovery unit;
-        # do not persist a fabricated automatic catalog in the meantime.
-        if value["auto_discover"]:
-            raise ValueError(
-                "Automatic discovery requires the model discovery service"
-            )
+    @staticmethod
+    def _save_keys(body: dict, value: dict) -> tuple[str | None, str, str]:
         old_name = body.get("previous_name")
         name = value.get("name")
         if old_name is not None and (not _valid_name(old_name) or name is None):
@@ -437,6 +420,26 @@ class ProviderRepository:
             if old_name is not None and renaming
             else key
         )
+        return old_name, key, previous_key
+
+    def save(self, body: dict) -> dict:
+        value = _validate(body)
+        if value["auto_discover"]:
+            raise ValueError(
+                "Automatic discovery requires the model discovery service"
+            )
+        return self._save_validated(body, value)
+
+    def _save_validated(
+        self,
+        body: dict,
+        value: dict,
+        *,
+        prepared: tuple[str | None, dict | None] | None = None,
+    ) -> dict:
+        old_name, key, previous_key = self._save_keys(body, value)
+        name = value.get("name")
+        renaming = old_name is not None and old_name != name
         supplied = value.pop("api_key")
         if supplied:
             # Initialize outside the profile transaction: the key identity
@@ -444,7 +447,16 @@ class ProviderRepository:
             self.cipher.initialize()
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            previous = self._read(db, previous_key)
+            row = db.execute(
+                "SELECT value FROM settings WHERE owner=? AND key=?",
+                (_OWNER, previous_key),
+            ).fetchone()
+            raw = row[0] if row is not None else None
+            if prepared is not None and raw != prepared[0]:
+                raise ChannelConflict(
+                    "Channel changed during discovery; retry saving"
+                )
+            previous = json.loads(raw) if raw is not None else None
             if name is not None:
                 existing = self._stored_channels(db)
                 if any(
@@ -506,8 +518,10 @@ class ProviderRepository:
                     for model, sampling in (
                         previous.get("model_sampling") or {}
                     ).items()
-                    if model in value["models"]
+                    if value["auto_discover"] or model in value["models"]
                 }
+            if prepared is not None:
+                apply_auto_save(value, previous, prepared[1])
             db.execute(
                 "INSERT INTO settings(owner,key,value) VALUES(?,?,?) ON CONFLICT(owner,key) DO UPDATE SET value=excluded.value",
                 (_OWNER, key, json.dumps(value)),
