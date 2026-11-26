@@ -3301,7 +3301,7 @@
           },
           "result": {
             "additionalProperties": true,
-            "description": "Structured result from the selected shell mode: bounded command output, async job metadata with owning execution session_id and job_id, or PTY metadata with shell_id for persistent-shell companion tools.",
+            "description": "Structured result from the selected shell mode: bounded command output, async job metadata with owning execution session_id and job_id, or PTY metadata with shell_id for persistent-shell companion tools. Successful non-truncated bounded public results may omit nested command/cwd identical to the outer fields, empty stderr, and false timed_out/truncated flags.",
             "title": "Result",
             "type": "object"
           }
@@ -3978,7 +3978,7 @@
           },
           "result": {
             "additionalProperties": true,
-            "description": "Structured result from the selected shell mode: bounded command output, async job metadata with owning execution session_id and job_id, or PTY metadata with shell_id for persistent-shell companion tools.",
+            "description": "Structured result from the selected shell mode: bounded command output, async job metadata with owning execution session_id and job_id, or PTY metadata with shell_id for persistent-shell companion tools. Successful non-truncated bounded public results may omit nested command/cwd identical to the outer fields, empty stderr, and false timed_out/truncated flags.",
             "title": "Result",
             "type": "object"
           },
@@ -9548,7 +9548,7 @@
           },
           "result": {
             "additionalProperties": true,
-            "description": "Structured result from the selected shell mode: bounded command output, async job metadata with owning execution session_id and job_id, or PTY metadata with shell_id for persistent-shell companion tools.",
+            "description": "Structured result from the selected shell mode: bounded command output, async job metadata with owning execution session_id and job_id, or PTY metadata with shell_id for persistent-shell companion tools. Successful non-truncated bounded public results may omit nested command/cwd identical to the outer fields, empty stderr, and false timed_out/truncated flags.",
             "title": "Result",
             "type": "object"
           },
