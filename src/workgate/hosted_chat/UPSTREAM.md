@@ -141,10 +141,14 @@ Control Task/Session IDs are reserved before dispatch; a transactionally
 claimed intent is uncertain until an exact native response or read-only lookup
 confirms it. Replaying the proposal cannot claim dispatch again, change its
 identity, widen the stored grant, or adopt another conversation's native work.
-A late positive receipt does not clear a cancellation latch. The direct
-upstream Job/Shell dispatch and cancellation sweeper tests require the native
-Workgate resource adapter and remain in that integration unit. This storage
-unit neither invokes native tools nor starts a cleanup worker.
+A late positive receipt does not clear a cancellation latch. The final
+upstream revocation/reconciliation functions also have a Control-owned
+Task/Session adapter in `control/hosted_chat_cancellation.py`, with paired
+tests in `tests/hosted_chat/test_native_cancellation.py`. Cleanup uses the
+reserved native identity and never force-releases an offline Session. An
+unclaimed reservation can stop without native evidence; a claimed reservation
+requires positive termination evidence. Native Job/Shell-specific receipt
+handling and runtime lifecycle wiring remain separate integration units.
 
 
 Agent authoring starts with the final upstream repository and validators.
