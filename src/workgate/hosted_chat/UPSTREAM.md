@@ -147,8 +147,14 @@ Task/Session adapter in `control/hosted_chat_cancellation.py`, with paired
 tests in `tests/hosted_chat/test_native_cancellation.py`. Cleanup uses the
 reserved native identity and never force-releases an offline Session. An
 unclaimed reservation can stop without native evidence; a claimed reservation
-requires positive termination evidence. Native Job/Shell-specific receipt
-handling and runtime lifecycle wiring remain separate integration units.
+requires positive termination evidence. Tracked Bash/Python Jobs retain the
+exact native Session and Executor binding in the private intent ledger; the
+initial, unreleased schema includes the nullable native Session identity.
+Job creation uses one reserved native ID and recovery uses exact native poll,
+not another start. A positively absent parent Session permits cleanup without
+fabricating a Job receipt. Cancelling a Job does not terminate an otherwise
+reused Session. Persistent Shell creation, Job retry, managed copy, and runtime
+lifecycle wiring remain separate integration units.
 
 
 Agent authoring starts with the final upstream repository and validators.

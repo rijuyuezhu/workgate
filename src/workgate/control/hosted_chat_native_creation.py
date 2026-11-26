@@ -11,13 +11,23 @@ from ..audit import (
     audit_tool_call_start,
     new_audit_call_id,
 )
-from ..errors import PublicToolValueError
-from ..hosted_chat.durable_tasks import DurableTaskRepository, Intent
+from ..errors import PublicToolError, PublicToolValueError
+from ..hosted_chat.durable_tasks import (
+    DurableTaskRepository,
+    Intent,
+    reserved_job_request,
+)
 from ..hosted_chat.generation_actor_lease import ActorLease
 from ..hosted_chat.provider_common import ModelToolCall, complete_tool_batch
 from ..oauth.core.context import current_oauth_claims
 from ..oauth.core.scopes import scope_set
+from ..protocol.executor import JOB_START_RESERVED_OP
+from ..schemas.result_models.jobs import JobOutput
 from ..schemas.result_models.session import SessionStartOutput
+from ..schemas.result_models.shell import (
+    RunPythonCodeOutput,
+    ShellExecutionOutput,
+)
 from .execution_context import control_execution_context
 from .runtime import ControlRuntime
 from .tool_timeouts import tool_timeout_s
@@ -58,6 +68,72 @@ def _registered(runtime: ControlRuntime) -> tuple[str, ...]:
     )
 
 
+async def _native_job_result(
+    runtime: ControlRuntime,
+    intent: Intent,
+    call: ModelToolCall,
+    *,
+    dispatch: bool,
+) -> tuple[str, dict]:
+    session_id = intent.session_id
+    if session_id is None:
+        raise PermissionError("Missing native Job Session reservation")
+    coordinator = runtime.session_coordinator
+    record = coordinator.require_session_status(session_id, {"active"})
+    if record.executor_id != intent.machine:
+        raise PermissionError("Native Job Session binding mismatch")
+    if dispatch:
+        request = reserved_job_request(call, intent.key)
+        payload = await coordinator.call_session_tool(
+            JOB_START_RESERVED_OP,
+            request.model_dump(mode="json") | {"session_id": session_id},
+        )
+        model = (
+            ShellExecutionOutput if call.name == "bash" else RunPythonCodeOutput
+        )
+        result = model.model_validate(payload)
+        if (
+            result.mode != "job"
+            or result.result.get("job_id") != intent.key
+            or result.result.get("session_id") != session_id
+        ):
+            raise NativeCreationUncertain(
+                "Native Job response has a mismatched identity"
+            )
+        return intent.key, result.model_dump(mode="json")
+
+    try:
+        receipt = JobOutput.model_validate(
+            await coordinator.call_session_tool(
+                "job",
+                {"session_id": session_id, "poll": [intent.key], "lines": 200},
+            )
+        )
+    except PublicToolError, RuntimeError, ValueError, KeyError, TimeoutError:
+        raise NativeCreationUncertain(
+            "Native Job creation is unconfirmed"
+        ) from None
+    if receipt.operation != "poll" or len(receipt.outputs) != 1:
+        raise NativeCreationUncertain("Native Job creation is unconfirmed")
+    tail = receipt.outputs[0]
+    if (
+        tail.job.job_id != intent.key
+        or tail.job.session_id != session_id
+        or tail.job.kind != "shell"
+    ):
+        raise NativeCreationUncertain(
+            "Native Job receipt has a mismatched identity"
+        )
+    return intent.key, {
+        "mode": "job",
+        "command": tail.job.command,
+        "cwd": tail.job.cwd,
+        "result": tail.job.model_dump(mode="json") | {"stdout": tail.output},
+        "recovered": True,
+        "message": "Existing Job creation confirmed by native poll; reuse this job_id.",
+    }
+
+
 async def _native_result(
     runtime: ControlRuntime,
     intent: Intent,
@@ -66,6 +142,10 @@ async def _native_result(
     dispatch: bool,
 ) -> tuple[str, dict]:
     arguments = call.arguments
+    if call.name in {"bash", "run_python_code"}:
+        return await _native_job_result(
+            runtime, intent, call, dispatch=dispatch
+        )
     if call.name == "task":
         if dispatch:
             result = await runtime.task_service.create_task(
@@ -131,7 +211,7 @@ async def create_native(
     scopes: set[str],
     expires: int | None,
 ) -> dict[str, Any]:
-    """Create once or recover a reserved Task/Session using the authenticated principal."""
+    """Create once or recover reserved native work using the authenticated principal."""
     if repository.database.root != runtime.config.state_dir / "hosted-chat":
         raise PermissionError(
             "Native intent belongs to another Control runtime"
@@ -177,7 +257,9 @@ async def create_native(
             with audit_call_context(audit_id, sessions, tasks):
                 native_id, result = await asyncio.wait_for(
                     _native_result(runtime, intent, call, dispatch=dispatch),
-                    timeout=tool_timeout_s(call.name, config=runtime.config),
+                    timeout=tool_timeout_s(
+                        call.name, config=runtime.config, args=call.arguments
+                    ),
                 )
             confirmed = repository.bind(lease, intent, native_id)
             if confirmed.state != "active":

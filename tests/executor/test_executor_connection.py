@@ -718,10 +718,20 @@ async def test_transient_poll_failure_reconnects_with_fresh_hello_without_replay
         await connection.aclose()
 
 
-@pytest.mark.parametrize("operation", ("job", "session.create"))
+@pytest.mark.parametrize(
+    ("operation", "arguments"),
+    [
+        ("job", {"list_jobs": True}),
+        ("session.create", {"workdir": None}),
+        ("job.start_reserved", {"async_": True}),
+        ("bash", {"persist_on_timeout": True}),
+        ("run_python_code", {"persist_on_timeout": True}),
+    ],
+)
 @pytest.mark.asyncio
 async def test_reconnect_waits_for_offered_inventory_mutation_execution(
     operation: str,
+    arguments: dict,
 ) -> None:
     command_started = asyncio.Event()
     release_command = asyncio.Event()
@@ -749,9 +759,7 @@ async def test_reconnect_waits_for_offered_inventory_mutation_execution(
                     id=new_command_id(),
                     op=operation,
                     session_id="sess_0000000000000000000001",
-                    args={"list_jobs": True}
-                    if operation == "job"
-                    else {"workdir": None},
+                    args=arguments,
                 )
             if self.poll_calls == 2:
                 await command_started.wait()
