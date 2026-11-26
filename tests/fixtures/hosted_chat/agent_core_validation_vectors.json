@@ -1,0 +1,1178 @@
+{
+  "source_hashes": {
+    "packages/api/src/agents/validation.ts": "942f86026c5877c03e84b321a1f292d22c872fbbce77a9c555df8c053eb99837",
+    "packages/api/src/agents/parameters.ts": "e54365f18bd8832a84bc2f10033938e08202e3a3383c1af5fd89718740aecfbe"
+  },
+  "cases": [
+    {
+      "create": false,
+      "payload": {}
+    },
+    {
+      "create": false,
+      "payload": {
+        "provider": "openAI",
+        "model": null
+      }
+    },
+    {
+      "create": true,
+      "payload": {}
+    },
+    {
+      "create": true,
+      "payload": {
+        "provider": "openAI",
+        "model": null
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "name": null
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "name": false
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "name": true
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "name": 0
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "name": 1.5
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "name": ""
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "name": "value"
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "name": []
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "name": {}
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "name": [
+          "selected"
+        ]
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "description": null
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "description": false
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "description": true
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "description": 0
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "description": 1.5
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "description": ""
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "description": "value"
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "description": []
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "description": {}
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "description": [
+          "selected"
+        ]
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "instructions": null
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "instructions": false
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "instructions": true
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "instructions": 0
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "instructions": 1.5
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "instructions": ""
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "instructions": "value"
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "instructions": []
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "instructions": {}
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "instructions": [
+          "selected"
+        ]
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "model_parameters": null
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "model_parameters": false
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "model_parameters": true
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "model_parameters": 0
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "model_parameters": 1.5
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "model_parameters": ""
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "model_parameters": "value"
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "model_parameters": []
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "model_parameters": {}
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "model_parameters": [
+          "selected"
+        ]
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "tools": null
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "tools": false
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "tools": true
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "tools": 0
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "tools": 1.5
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "tools": ""
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "tools": "value"
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "tools": []
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "tools": {}
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "tools": [
+          "selected"
+        ]
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "conversation_starters": null
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "conversation_starters": false
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "conversation_starters": true
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "conversation_starters": 0
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "conversation_starters": 1.5
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "conversation_starters": ""
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "conversation_starters": "value"
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "conversation_starters": []
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "conversation_starters": {}
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "conversation_starters": [
+          "selected"
+        ]
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "category": null
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "category": false
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "category": true
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "category": 0
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "category": 1.5
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "category": ""
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "category": "value"
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "category": []
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "category": {}
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "category": [
+          "selected"
+        ]
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "provider": null
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "provider": false
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "provider": true
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "provider": 0
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "provider": 1.5
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "provider": ""
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "provider": "value"
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "provider": []
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "provider": {}
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "provider": [
+          "selected"
+        ]
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "model": null
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "model": false
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "model": true
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "model": 0
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "model": 1.5
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "model": ""
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "model": "value"
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "model": []
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "model": {}
+      }
+    },
+    {
+      "create": false,
+      "payload": {
+        "model": [
+          "selected"
+        ]
+      }
+    },
+    {
+      "create": true,
+      "payload": {
+        "provider": null,
+        "model": null
+      }
+    },
+    {
+      "create": true,
+      "payload": {
+        "provider": false,
+        "model": null
+      }
+    },
+    {
+      "create": true,
+      "payload": {
+        "provider": true,
+        "model": null
+      }
+    },
+    {
+      "create": true,
+      "payload": {
+        "provider": 0,
+        "model": null
+      }
+    },
+    {
+      "create": true,
+      "payload": {
+        "provider": 1.5,
+        "model": null
+      }
+    },
+    {
+      "create": true,
+      "payload": {
+        "provider": "",
+        "model": null
+      }
+    },
+    {
+      "create": true,
+      "payload": {
+        "provider": "value",
+        "model": null
+      }
+    },
+    {
+      "create": true,
+      "payload": {
+        "provider": [],
+        "model": null
+      }
+    },
+    {
+      "create": true,
+      "payload": {
+        "provider": {},
+        "model": null
+      }
+    },
+    {
+      "create": true,
+      "payload": {
+        "provider": [
+          "selected"
+        ],
+        "model": null
+      }
+    },
+    {
+      "create": true,
+      "payload": {
+        "provider": "openAI",
+        "model": null
+      }
+    },
+    {
+      "create": true,
+      "payload": {
+        "provider": "openAI",
+        "model": false
+      }
+    },
+    {
+      "create": true,
+      "payload": {
+        "provider": "openAI",
+        "model": true
+      }
+    },
+    {
+      "create": true,
+      "payload": {
+        "provider": "openAI",
+        "model": 0
+      }
+    },
+    {
+      "create": true,
+      "payload": {
+        "provider": "openAI",
+        "model": 1.5
+      }
+    },
+    {
+      "create": true,
+      "payload": {
+        "provider": "openAI",
+        "model": ""
+      }
+    },
+    {
+      "create": true,
+      "payload": {
+        "provider": "openAI",
+        "model": "value"
+      }
+    },
+    {
+      "create": true,
+      "payload": {
+        "provider": "openAI",
+        "model": []
+      }
+    },
+    {
+      "create": true,
+      "payload": {
+        "provider": "openAI",
+        "model": {}
+      }
+    },
+    {
+      "create": true,
+      "payload": {
+        "provider": "openAI",
+        "model": [
+          "selected"
+        ]
+      }
+    }
+  ],
+  "expected": [
+    {
+      "ok": true,
+      "value": {}
+    },
+    {
+      "ok": true,
+      "value": {
+        "provider": "openAI",
+        "model": null
+      }
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": true,
+      "value": {
+        "tools": [],
+        "provider": "openAI",
+        "model": null
+      }
+    },
+    {
+      "ok": true,
+      "value": {
+        "name": null
+      }
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": true,
+      "value": {
+        "name": ""
+      }
+    },
+    {
+      "ok": true,
+      "value": {
+        "name": "value"
+      }
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": true,
+      "value": {
+        "description": null
+      }
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": true,
+      "value": {
+        "description": ""
+      }
+    },
+    {
+      "ok": true,
+      "value": {
+        "description": "value"
+      }
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": true,
+      "value": {
+        "instructions": null
+      }
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": true,
+      "value": {
+        "instructions": ""
+      }
+    },
+    {
+      "ok": true,
+      "value": {
+        "instructions": "value"
+      }
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": true,
+      "value": {
+        "model_parameters": {}
+      }
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": true,
+      "value": {
+        "tools": []
+      }
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": true,
+      "value": {
+        "tools": [
+          "selected"
+        ]
+      }
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": true,
+      "value": {
+        "conversation_starters": []
+      }
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": true,
+      "value": {
+        "conversation_starters": [
+          "selected"
+        ]
+      }
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": true,
+      "value": {
+        "category": ""
+      }
+    },
+    {
+      "ok": true,
+      "value": {
+        "category": "value"
+      }
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": true,
+      "value": {
+        "provider": ""
+      }
+    },
+    {
+      "ok": true,
+      "value": {
+        "provider": "value"
+      }
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": true,
+      "value": {
+        "model": null
+      }
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": true,
+      "value": {
+        "model": ""
+      }
+    },
+    {
+      "ok": true,
+      "value": {
+        "model": "value"
+      }
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": true,
+      "value": {
+        "tools": [],
+        "provider": "",
+        "model": null
+      }
+    },
+    {
+      "ok": true,
+      "value": {
+        "tools": [],
+        "provider": "value",
+        "model": null
+      }
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": true,
+      "value": {
+        "tools": [],
+        "provider": "openAI",
+        "model": null
+      }
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": true,
+      "value": {
+        "tools": [],
+        "provider": "openAI",
+        "model": ""
+      }
+    },
+    {
+      "ok": true,
+      "value": {
+        "tools": [],
+        "provider": "openAI",
+        "model": "value"
+      }
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    },
+    {
+      "ok": false
+    }
+  ]
+}
