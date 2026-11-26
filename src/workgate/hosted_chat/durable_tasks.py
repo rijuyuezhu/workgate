@@ -12,10 +12,14 @@ from dataclasses import dataclass
 
 from pydantic import TypeAdapter
 
-from ..protocol.executor import ReservedJobStartRequest
+from ..protocol.executor import (
+    ReservedJobStartRequest,
+    ReservedShellStartRequest,
+)
 from ..protocol.ids import (
     SessionId,
     new_reserved_job_id,
+    new_reserved_shell_id,
     new_session_id,
     new_task_id,
 )
@@ -59,6 +63,31 @@ def reserved_job_request(
             "tool": call.name,
             **arguments,
         }
+    )
+
+
+def reserved_shell_request(
+    call: ModelToolCall, key: str
+) -> ReservedShellStartRequest:
+    """Validate a PTY proposal against the native private start contract."""
+    arguments = dict(call.arguments)
+    if arguments.keys() & {"shell_id", "job_id", "tool", "idempotency_key"}:
+        raise ValueError("Shell identity is allocated by Control")
+    TypeAdapter(SessionId).validate_python(
+        arguments.pop("session_id", None), strict=True
+    )
+    if (
+        arguments.pop("pty", False) is not True
+        or arguments.pop("async_", False) is not False
+        or arguments.pop("persist_on_timeout", False) is not False
+    ):
+        raise ValueError("Reserved Shell requires PTY mode only")
+    for field in ("name", "purpose"):
+        value = arguments.pop(field, None)
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"Invalid Shell {field}")
+    return ReservedShellStartRequest.model_validate(
+        {"shell_id": key, "tool": call.name, **arguments}
     )
 
 
@@ -140,7 +169,7 @@ class DurableTaskRepository:
             run["owner"],
             authorization_id,
             machine,
-            "execute" if kind == "job" else "read",
+            "execute" if kind in {"job", "shell"} else "read",
             agent=agent,
             scopes=scopes,
             expires=expires,
@@ -160,7 +189,7 @@ class DurableTaskRepository:
         machine: str | None = None,
         session_id: str | None = None,
     ) -> bool:
-        if kind == "job" and session_id is None:
+        if kind in {"job", "shell"} and session_id is None:
             return False
         if kind != "task" and machine is None:
             return False
@@ -196,7 +225,7 @@ class DurableTaskRepository:
             raise PermissionError(
                 "Native Task does not belong to this conversation"
             )
-        if kind == "job" and not self._owned(
+        if kind in {"job", "shell"} and not self._owned(
             db,
             run["owner"],
             run["conversation_id"],
@@ -240,17 +269,24 @@ class DurableTaskRepository:
                     "Session reservation requires an explicit Executor and Task"
                 )
         elif call.name in {"bash", "run_python_code"}:
-            kind = "job"
+            kind = "shell" if arguments.get("pty") is True else "job"
             session_id = arguments.get("session_id")
         else:
             raise ValueError("Not a supported native creation")
-        key = {
-            "task": new_task_id,
-            "session": new_session_id,
-            "job": new_reserved_job_id,
-        }[kind]()
-        if kind == "job":
-            reserved_job_request(call, key)
+        if kind == "shell":
+            name = arguments.get("name")
+            if name is not None and not isinstance(name, str):
+                raise ValueError("Invalid Shell name")
+            key = new_reserved_shell_id(name)
+            reserved_shell_request(call, key)
+        else:
+            key = {
+                "task": new_task_id,
+                "session": new_session_id,
+                "job": new_reserved_job_id,
+            }[kind]()
+            if kind == "job":
+                reserved_job_request(call, key)
         identity = _fingerprint(
             "native-intent",
             {
@@ -318,7 +354,11 @@ class DurableTaskRepository:
                     machine,
                     session_id,
                     json.dumps(
-                        {machine: "execute" if kind == "job" else "read"}
+                        {
+                            machine: "execute"
+                            if kind in {"job", "shell"}
+                            else "read"
+                        }
                     ),
                     fingerprint,
                     key,
@@ -566,6 +606,19 @@ class DurableTaskRepository:
                 )
                 pending.append(dict(row))
         return pending
+
+    def record_cleanup_receipt(self, identity: str, native_id: str) -> bool:
+        """Persist exact positive lookup before a cleanup mutation can lose its reply."""
+        with self.database.connect() as db:
+            return (
+                db.execute(
+                    "UPDATE agent_durable_tasks SET native_id=?,updated_at=? "
+                    "WHERE id=? AND state='cancel_pending' AND idempotency_key=? "
+                    "AND (native_id IS NULL OR native_id=?)",
+                    (native_id, _now(), identity, native_id, native_id),
+                ).rowcount
+                == 1
+            )
 
     def finish_cancellation(
         self, identity: str, *, stopped: bool, native_confirmed: bool = True

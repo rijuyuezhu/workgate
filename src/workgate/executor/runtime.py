@@ -20,6 +20,8 @@ from ..protocol.executor import (
     SESSION_CREATE_OP,
     SESSION_LOOKUP_OP,
     SESSION_TERMINATE_OP,
+    SHELL_LOOKUP_RESERVED_OP,
+    SHELL_START_RESERVED_OP,
     ExecutorRuntimeOwnership,
 )
 from .agent import ExecutorAgentBridgeService
@@ -802,6 +804,16 @@ class ExecutorRuntime:
             return await self.shell.start_reserved_job(
                 str(command.session_id), dict(command.args)
             )
+
+        if command.op in {SHELL_START_RESERVED_OP, SHELL_LOOKUP_RESERVED_OP}:
+            if command.session_id is None:
+                raise ValueError("Reserved Shell operation requires session_id")
+            handler = (
+                self.shell.start_reserved_shell
+                if command.op == SHELL_START_RESERVED_OP
+                else self.shell.lookup_reserved_shell
+            )
+            return await handler(str(command.session_id), dict(command.args))
 
         args = dict(command.args)
         if command.session_id is not None:

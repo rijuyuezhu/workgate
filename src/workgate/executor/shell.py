@@ -30,6 +30,7 @@ from ..platform.shell import (
     shell_env_prefix,
     shell_join_argv,
 )
+from ..protocol.ids import is_reserved_shell_id
 from ..protocol.terminal import (
     PERSISTENT_SHELL_MAX_COLUMNS,
     PERSISTENT_SHELL_MAX_ROWS,
@@ -884,15 +885,28 @@ async def start_persistent_shell_execute(
     *,
     owner_session_id: str | None = None,
     forbidden_shell_ids: frozenset[str] = frozenset(),
+    preallocated_shell_id: str | None = None,
 ) -> StartPersistentShellOutput:
     """Start one persistent shell without racing the configured capacity."""
     async with (
         _persistent_shell_creation_lock(),
         _persistent_shell_admission_lock(),
     ):
-        reserved_shell_id = (
-            _tmux_session_name(name) if owner_session_id is not None else None
-        )
+        if preallocated_shell_id is not None:
+            if owner_session_id is None or not is_reserved_shell_id(
+                preallocated_shell_id
+            ):
+                raise ValueError("Invalid private Shell reservation")
+            reserved_shell_id = preallocated_shell_id
+        else:
+            normalized = _tmux_session_name(name)
+            if is_reserved_shell_id(normalized):
+                raise ValueError(
+                    "Shell id belongs to the private Chat namespace"
+                )
+            reserved_shell_id = (
+                normalized if owner_session_id is not None else None
+            )
         if (
             reserved_shell_id is not None
             and reserved_shell_id in forbidden_shell_ids
@@ -910,6 +924,8 @@ async def start_persistent_shell_execute(
                 reserved_shell_id,
                 exclusive=True,
             )
+            if preallocated_shell_id is not None and not reservation_added:
+                raise ValueError("Private Shell identity is already reserved")
         try:
             token = _PERSISTENT_SHELL_PRESERVE_IDS.set(
                 frozenset(

@@ -16,12 +16,18 @@ from ..hosted_chat.durable_tasks import (
     DurableTaskRepository,
     Intent,
     reserved_job_request,
+    reserved_shell_request,
 )
 from ..hosted_chat.generation_actor_lease import ActorLease
 from ..hosted_chat.provider_common import ModelToolCall, complete_tool_batch
 from ..oauth.core.context import current_oauth_claims
 from ..oauth.core.scopes import scope_set
-from ..protocol.executor import JOB_START_RESERVED_OP
+from ..protocol.executor import (
+    JOB_START_RESERVED_OP,
+    SHELL_LOOKUP_RESERVED_OP,
+    SHELL_START_RESERVED_OP,
+    ReservedShellLookupResult,
+)
 from ..schemas.result_models.jobs import JobOutput
 from ..schemas.result_models.session import SessionStartOutput
 from ..schemas.result_models.shell import (
@@ -134,6 +140,60 @@ async def _native_job_result(
     }
 
 
+async def _native_shell_result(
+    runtime: ControlRuntime,
+    intent: Intent,
+    call: ModelToolCall,
+    *,
+    dispatch: bool,
+) -> tuple[str, dict]:
+    session_id = intent.session_id
+    if session_id is None:
+        raise PermissionError("Missing native Shell Session reservation")
+    coordinator = runtime.session_coordinator
+    record = coordinator.require_session_status(session_id, {"active"})
+    if record.executor_id != intent.machine:
+        raise PermissionError("Native Shell Session binding mismatch")
+    if dispatch:
+        request = reserved_shell_request(call, intent.key)
+        payload = await coordinator.call_session_tool(
+            SHELL_START_RESERVED_OP,
+            request.model_dump(mode="json") | {"session_id": session_id},
+        )
+        model = (
+            ShellExecutionOutput if call.name == "bash" else RunPythonCodeOutput
+        )
+        result = model.model_validate(payload)
+        if result.mode != "pty" or result.result.get("shell_id") != intent.key:
+            raise NativeCreationUncertain(
+                "Native Shell response has a mismatched identity"
+            )
+        return intent.key, result.model_dump(mode="json")
+    try:
+        receipt = ReservedShellLookupResult.model_validate(
+            await coordinator.call_session_tool(
+                SHELL_LOOKUP_RESERVED_OP,
+                {"session_id": session_id, "shell_id": intent.key},
+            )
+        )
+    except PublicToolError, RuntimeError, ValueError, KeyError, TimeoutError:
+        raise NativeCreationUncertain(
+            "Native Shell creation is unconfirmed"
+        ) from None
+    if (
+        receipt.session_id != session_id
+        or receipt.shell_id != intent.key
+        or not receipt.present
+    ):
+        raise NativeCreationUncertain("Native Shell creation is unconfirmed")
+    return intent.key, {
+        "mode": "pty",
+        "result": {"shell_id": intent.key},
+        "recovered": True,
+        "message": "Existing Shell creation confirmed by native lookup; reuse this shell_id.",
+    }
+
+
 async def _native_result(
     runtime: ControlRuntime,
     intent: Intent,
@@ -143,6 +203,10 @@ async def _native_result(
 ) -> tuple[str, dict]:
     arguments = call.arguments
     if call.name in {"bash", "run_python_code"}:
+        if arguments.get("pty") is True:
+            return await _native_shell_result(
+                runtime, intent, call, dispatch=dispatch
+            )
         return await _native_job_result(
             runtime, intent, call, dispatch=dispatch
         )

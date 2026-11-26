@@ -1,5 +1,6 @@
 """Opaque identifiers used by the control/executor protocol."""
 
+import re
 import secrets
 from typing import Annotated
 
@@ -21,6 +22,11 @@ TaskId = Annotated[
     str,
     StringConstraints(pattern=r"^task_[A-Za-z0-9_-]{22,}$", max_length=128),
 ]
+_RESERVED_SHELL_PATTERN = r"^chat-shell-(?:[A-Za-z0-9_-]{1,18}-)?[a-f0-9]{32}$"
+ReservedShellId = Annotated[
+    str, StringConstraints(pattern=_RESERVED_SHELL_PATTERN)
+]
+
 ReservedJobId = Annotated[
     str,
     StringConstraints(pattern=r"^job_[a-f0-9]{32}$"),
@@ -70,6 +76,17 @@ def new_task_id() -> str:
 def new_reserved_job_id() -> str:
     """Return a private preallocated native Job identity."""
     return "job_" + secrets.token_hex(_OPAQUE_ID_BYTES)
+
+
+def is_reserved_shell_id(shell_id: str) -> bool:
+    return re.fullmatch(_RESERVED_SHELL_PATTERN, shell_id) is not None
+
+
+def new_reserved_shell_id(name: str | None = None) -> str:
+    """Private native Shell handle; keep an optional bounded display prefix."""
+    label = re.sub(r"[^A-Za-z0-9_-]", "-", name or "").strip("-_")[:18]
+    prefix = f"chat-shell-{label}-" if label else "chat-shell-"
+    return prefix + secrets.token_hex(_OPAQUE_ID_BYTES)
 
 
 def new_command_id() -> str:
