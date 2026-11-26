@@ -1475,6 +1475,10 @@ def test_oauth_authorize_form_is_mobile_friendly(tmp_path, monkeypatch):
     assert "Unknown client" in body
     assert 'autocomplete="one-time-code"' in body
     assert "overflow-wrap: anywhere" in body
+    assert 'name="color-scheme" content="light dark"' in body
+    assert "@media (prefers-color-scheme: dark)" in body
+    assert 'aria-describedby="pin-hint"' in body
+    assert "Client ID:" in body and "Resource:" in body and "Scopes:" in body
 
 
 def test_oauth_authorize_form_escapes_reflected_fields(tmp_path, monkeypatch):
