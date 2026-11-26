@@ -133,10 +133,9 @@ async def test_discovery_bounds_and_pagination_errors(
 
 @pytest.fixture
 def profiles(tmp_path):
-    from workgate.hosted_chat.provider_profiles import ProviderRepository
-
     from workgate.hosted_chat.credential_cipher import CredentialCipher
     from workgate.hosted_chat.database import SQLiteDatabase
+    from workgate.hosted_chat.provider_profiles import ProviderRepository
 
     db = SQLiteDatabase(tmp_path)
     return ProviderRepository(db, CredentialCipher(db))
@@ -430,3 +429,108 @@ async def test_auto_save_catalog_and_stale_write(profiles, monkeypatch):
         await profiles.save_discovered(profile_body(auto_discover=True))
     assert profiles.profile("Local")["models"] == ["manual"]
     assert profiles.profile("Local")["api_key"] == "changed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload,account,match",
+    [
+        ([], False, "Invalid provider model list"),
+        ({"data": {}}, False, "Invalid provider model list"),
+        ({"data": []}, False, "no supported models"),
+        ({"data": [{"id": str(i)} for i in range(129)]}, False, "128 models"),
+        ({}, True, "Invalid account model list"),
+    ],
+)
+async def test_invalid_catalog_response(monkeypatch, payload, account, match):
+    monkeypatch.setattr(
+        discovery,
+        "provider_client",
+        lambda *_args, **_kwargs: httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, json=payload)
+            )
+        ),
+    )
+    with pytest.raises(ValueError, match=match):
+        await _fetch_models(
+            "openai", "https://models.invalid", "", account=account
+        )
+
+
+@pytest.mark.asyncio
+async def test_catalog_refresh_only_opted_in_channels(
+    profiles, monkeypatch, caplog
+):
+    import asyncio
+
+    auto_profile(profiles)
+    profiles.save(profile_body(name="manual", models=["manual"]))
+    calls = []
+
+    async def fetch(kind, base, token, **kwargs):
+        calls.append((kind, base, token))
+        return {"models": [], "model_contexts": {}}
+
+    monkeypatch.setattr(discovery, "_fetch_models", fetch)
+    await discovery.refresh_model_channels(profiles)
+    assert calls == [("openai", "https://models.invalid/v1", "stored-secret")]
+    assert profiles.profile("Local")["models"] == []
+    assert profiles.profile("manual")["models"] == ["manual"]
+    with pytest.raises(ValueError, match="disabled"):
+        await discovery.refresh_model_channel(profiles, "manual")
+    with pytest.raises(KeyError, match="not found"):
+        await discovery.refresh_model_channel(profiles, "missing")
+    with pytest.raises(ValueError, match="saved channel"):
+        await discovery.refresh_model_channel(profiles, None)  # type: ignore[arg-type]
+
+    async def refresh_failed(*args):
+        raise RuntimeError("private transport data")
+
+    monkeypatch.setattr(discovery, "_refresh_snapshot", refresh_failed)
+    await discovery.refresh_model_channels(profiles)
+    assert "RuntimeError" in caplog.text
+    assert "private transport data" not in caplog.text
+
+    monkeypatch.setattr(discovery, "refresh_model_channels", refresh_failed)
+
+    async def stop(interval):
+        assert interval == discovery.REFRESH_INTERVAL
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(discovery.asyncio, "sleep", stop)
+    with pytest.raises(asyncio.CancelledError):
+        await discovery.serve_model_refresh(profiles)
+    assert "refresh cycle failed" in caplog.text
+    assert "private transport data" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_auto_save_manual_fallback_and_keyless_discovery(
+    profiles, monkeypatch
+):
+    profiles.save(
+        profile_body(model_contexts={"old": 4096}, api_key="stored-secret")
+    )
+
+    async def unavailable(*args, **kwargs):
+        raise httpx.ConnectError("offline")
+
+    monkeypatch.setattr(discovery, "_fetch_models", unavailable)
+    await profiles.save_discovered(profile_body(auto_discover=True))
+    saved = profiles.profile("Local")
+    assert saved["models"] == ["old"]
+    assert saved["model_contexts"] == {"old": 4096}
+    assert saved["discovered_model_contexts"] == {}
+    assert saved["model_sync_error"] == discovery._SYNC_ERROR
+
+    async def fetch(kind, base, token, **kwargs):
+        assert token == ""
+        return {"models": ["new"], "model_contexts": {}}
+
+    monkeypatch.setattr(discovery, "_fetch_models", fetch)
+    await profiles.save_discovered(
+        profile_body(auto_discover=True, keyless=True)
+    )
+    assert not profiles.profile("Local").get("api_key")
+    assert profiles.profile("Local")["models"] == ["new"]
