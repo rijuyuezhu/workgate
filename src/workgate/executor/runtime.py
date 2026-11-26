@@ -501,6 +501,9 @@ class ExecutorRuntime:
                 from .connection_status import ExecutorConnectionStatusStore
                 from .result_outbox import ExecutorResultOutbox
 
+                connection_status = ExecutorConnectionStatusStore(
+                    self.services.state_store
+                )
                 connection = ExecutorConnection.from_client(
                     client,
                     hello_factory=self._build_reconnect_hello,
@@ -510,9 +513,8 @@ class ExecutorRuntime:
                         self.config.state_dir, profile
                     ),
                     runtime_policy_handler=self._handle_runtime_policy,
-                    status_callback=ExecutorConnectionStatusStore(
-                        self.services.state_store
-                    ).record,
+                    status_callback=connection_status.record,
+                    poll_callback=connection_status.record_poll,
                 )
                 connection.start()
         except BaseException:

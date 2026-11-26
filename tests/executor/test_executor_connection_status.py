@@ -58,6 +58,31 @@ def test_connection_status_tracks_transition_without_sensitive_data(
     )
 
 
+def test_delivery_evidence_not_inherited_by_another_process(
+    tmp_path, monkeypatch
+):
+    clock = [1760000000.0]
+    monkeypatch.setattr(connection_status.time, "time", lambda: clock[0])
+    store = _store(tmp_path)
+    store.record("connected")
+    assert json.loads(store.path.read_bytes())["last_poll_at"] is None
+    clock[0] += 2
+    store.record_poll()
+    proof = json.loads(store.path.read_bytes())
+    assert proof["last_poll_at"] == clock[0]
+    assert proof["process_id"] == os.getpid()
+    clock[0] += 1
+    store.record("connected")
+    assert (
+        json.loads(store.path.read_bytes())["last_poll_at"]
+        == proof["last_poll_at"]
+    )
+    proof["process_id"] += 1
+    store.path.write_text(json.dumps(proof), encoding="utf-8")
+    store.record("connected")
+    assert json.loads(store.path.read_bytes())["last_poll_at"] is None
+
+
 def test_connection_status_does_not_trust_missing_corrupt_or_future_snapshots(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

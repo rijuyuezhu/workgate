@@ -1632,6 +1632,67 @@ async def test_connection_status_callback_tracks_retry_and_recovery() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("transient_write_failure", [False, True])
+async def test_first_completed_poll_reports_delivery_once_after_hello(
+    transient_write_failure: bool,
+) -> None:
+    allowed = asyncio.Event()
+    third_poll = asyncio.Event()
+    reports: list[str] = []
+    attempts = 0
+
+    def report():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1 and transient_write_failure:
+            raise PermissionError("transient write failure")
+        reports.append("poll")
+
+    class Client(_BaseFakeClient):
+        calls = 0
+
+        async def hello(
+            self, message: ExecutorHelloRequest
+        ) -> ExecutorHelloResponse:
+            return _policy()
+
+        async def heartbeat(self) -> None:
+            return None
+
+        async def poll(self, *, timeout_s: float) -> ExecutorCommand | None:
+            self.calls += 1
+            if self.calls == 1:
+                await allowed.wait()
+            elif self.calls >= 3:
+                third_poll.set()
+                await asyncio.Event().wait()
+            return None
+
+        async def submit_result(self, result: ExecutorResult) -> None:
+            raise AssertionError("no result expected")
+
+    connection = ExecutorConnection(
+        Client(),
+        hello_factory=_hello,
+        execute=lambda _command: None,
+        max_concurrent_commands=1,
+        poll_callback=report,
+    )
+    connection.start()
+    try:
+        assert await asyncio.wait_for(
+            connection.wait_first_hello_or_owner_action(), timeout=1
+        )
+        assert reports == []
+        allowed.set()
+        await asyncio.wait_for(third_poll.wait(), timeout=1)
+        assert reports == ["poll"]
+        assert attempts == (2 if transient_write_failure else 1)
+    finally:
+        await connection.aclose()
+
+
+@pytest.mark.asyncio
 async def test_connection_status_preserves_revoked_credential_action() -> None:
     observed: list[tuple[str, str | None]] = []
 

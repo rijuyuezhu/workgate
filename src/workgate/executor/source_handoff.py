@@ -70,6 +70,7 @@ def schedule_linux_source_cutover(
             str(checkout.parent.parent),
             "--executor-config",
             str(config),
+            "--require-controller-poll",
         ],
         timeout=30,
     )
@@ -134,6 +135,7 @@ def schedule_windows_source_cutover(
             str(checkout.parent.parent),
             "--executor-config",
             str(config),
+            "--require-controller-poll",
         ],
         cwd=str(checkout),
     )
@@ -187,6 +189,7 @@ def schedule_macos_source_cutover(
             str(checkout.parent.parent),
             "--executor-config",
             str(config),
+            "--require-controller-poll",
         ],
         "RunAtLoad": True,
         "KeepAlive": False,

@@ -94,6 +94,7 @@ def test_windows_handoff_uses_separate_one_time_task(
             str(checkout.parent.parent),
             "--executor-config",
             str(config),
+            "--require-controller-poll",
         ]
     )
     assert _literal(args) in script

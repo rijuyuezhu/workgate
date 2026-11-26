@@ -539,6 +539,37 @@ def test_windows_executor_switch_noop_rollback_preserves_identity(
     assert state["profile"].read_bytes() == state["identity_before"]
 
 
+@pytest.mark.parametrize("confirmed", [True, False])
+def test_automatic_windows_switch_requires_candidate_poll(
+    executor_switch, switcher, monkeypatch, confirmed
+):
+    state = executor_switch
+
+    def wait(python, profile, started_at):
+        assert (python, profile) == (state["new"], state["profile"])
+        assert state["stable"] == state["old"]
+        assert started_at > 0
+        if not confirmed:
+            raise RuntimeError("candidate poll timeout")
+
+    monkeypatch.setattr(switcher, "_wait_for_controller_poll", wait)
+    args = dict(
+        root=state["root"],
+        tag="v5.0.0a6",
+        role="executor",
+        executor_config=state["executor"],
+        require_controller_poll=True,
+    )
+    if confirmed:
+        switcher.switch(**args)
+        assert state["stable"] == state["new"]
+    else:
+        with pytest.raises(RuntimeError, match="previous task restored"):
+            switcher.switch(**args)
+        assert state["executor_install_calls"] == [state["new"], state["old"]]
+        assert state["stable"] == state["old"]
+
+
 @pytest.mark.parametrize(
     "failure", ["install", "native-not-running", "identity-changed"]
 )

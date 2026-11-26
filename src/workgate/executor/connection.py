@@ -179,6 +179,7 @@ class ExecutorConnection:
         sleep: Sleep = asyncio.sleep,
         random_value: Callable[[], float] = random.random,
         status_callback: ConnectionStatusCallback | None = None,
+        poll_callback: Callable[[], None] | None = None,
         result_outbox: ExecutorResultOutbox | None = None,
     ) -> None:
         if max_concurrent_commands < 1:
@@ -191,6 +192,7 @@ class ExecutorConnection:
         self._sleep = sleep
         self._random_value = random_value
         self._status_callback = status_callback
+        self._poll_callback = poll_callback
         self._result_outbox = result_outbox
         self._outbox_wake = asyncio.Event()
         self._stop = asyncio.Event()
@@ -217,6 +219,7 @@ class ExecutorConnection:
         max_concurrent_commands: int,
         runtime_policy_handler: RuntimePolicyHandler | None = None,
         status_callback: ConnectionStatusCallback | None = None,
+        poll_callback: Callable[[], None] | None = None,
         result_outbox: ExecutorResultOutbox | None = None,
     ) -> ExecutorConnection:
         """Construct the normal production connection without extra abstractions."""
@@ -227,6 +230,7 @@ class ExecutorConnection:
             max_concurrent_commands=max_concurrent_commands,
             runtime_policy_handler=runtime_policy_handler,
             status_callback=status_callback,
+            poll_callback=poll_callback,
             result_outbox=result_outbox,
         )
 
@@ -446,6 +450,7 @@ class ExecutorConnection:
         *,
         delivery_progress: asyncio.Event,
     ) -> None:
+        poll_reported = False
         while not self._stop.is_set() and self._owner_action_error is None:
             await self._wait_for_capacity()
             if self._stop.is_set() or self._owner_action_error is not None:
@@ -454,6 +459,20 @@ class ExecutorConnection:
             # A completed poll, including a normal 204/no-command response, proves
             # the delivery path is making progress and may reset reconnect backoff.
             delivery_progress.set()
+            if (
+                not poll_reported
+                and self._poll_callback is not None
+                and self._owner_action_error is None
+            ):
+                try:
+                    self._poll_callback()
+                    poll_reported = True
+                except Exception as exc:
+                    with suppress(Exception):
+                        logger.warning(
+                            "executor poll status write failed: error=%s",
+                            type(exc).__name__,
+                        )
             if command is None:
                 continue
             predecessor: asyncio.Future[None] | None = None
