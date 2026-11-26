@@ -261,3 +261,38 @@ def test_unexpected_schema_failure_rolls_back(
     with sqlite3.connect(path) as conn:
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
         assert conn.execute("SELECT name FROM sqlite_master").fetchall() == []
+
+
+@pytest.mark.parametrize(
+    "outcome", ["private", "missing", "hardlink", "unknown"]
+)
+def test_optional_sqlite_sidecar_rechecks_ambiguous_link_count(
+    tmp_path, monkeypatch, outcome
+):
+    path = tmp_path / "chat.sqlite3-shm"
+    path.touch(mode=0o600)
+    original = Path.lstat
+    real = original(path)
+    calls = 0
+
+    def transient(self, *args, **kwargs):
+        nonlocal calls
+        if self != path:
+            return original(self, *args, **kwargs)
+        calls += 1
+        if calls > 1 and outcome == "missing":
+            raise FileNotFoundError(self)
+        if calls > 1 and outcome == "private":
+            return real
+        values = list(real)
+        values[3] = 2 if calls > 1 and outcome == "hardlink" else 0
+        return os.stat_result(values)
+
+    monkeypatch.setattr(Path, "lstat", transient)
+    monkeypatch.setattr(database.time, "sleep", lambda _: None)
+    if outcome in {"hardlink", "unknown"}:
+        with pytest.raises(OSError, match="regular private"):
+            SQLiteDatabase._verify_private_file(path, optional=True)
+    else:
+        SQLiteDatabase._verify_private_file(path, optional=True)
+    assert calls >= 2

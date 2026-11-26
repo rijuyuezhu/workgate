@@ -8,6 +8,7 @@ import contextlib
 import os
 import sqlite3
 import stat
+import time
 from collections.abc import Generator
 from pathlib import Path
 
@@ -650,19 +651,36 @@ class SQLiteDatabase:
 
     @staticmethod
     def _verify_private_file(path: Path, *, optional: bool = False) -> None:
-        try:
-            info = path.lstat()
-        except FileNotFoundError:
-            if not optional:
-                raise
-            return
+        # SQLite may remove an optional WAL/SHM file as another connection
+        # closes. Windows can also return incomplete stat metadata for a file
+        # whose handle is temporarily shared. Retry only the ambiguous zero
+        # link count; never accept a linked or non-regular existing file.
+        retries = 50
+        while True:
+            try:
+                info = path.lstat()
+            except FileNotFoundError:
+                if not optional:
+                    raise
+                return
+            if (
+                optional
+                and stat.S_ISREG(info.st_mode)
+                and info.st_nlink == 0
+                and retries > 0
+            ):
+                retries -= 1
+                time.sleep(0.02)
+                continue
+            break
         if (
             not stat.S_ISREG(info.st_mode)
             or info.st_nlink != 1
             or path.is_symlink()
         ):
             raise OSError(
-                "Hosted Chat database files must be regular private files"
+                "Hosted Chat database files must be regular private files "
+                f"(mode={info.st_mode:#o}, links={info.st_nlink})"
             )
         if os.name != "nt" and (
             info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077
