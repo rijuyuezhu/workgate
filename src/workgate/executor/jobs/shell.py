@@ -4,6 +4,8 @@ import contextlib
 from collections.abc import Mapping
 from typing import Any
 
+from pydantic import TypeAdapter
+
 from ...audit import audit
 from ...config.executor import ExecutorConfig
 from ...errors import public_error_type
@@ -24,6 +26,7 @@ from ...jobs.recovery import store_transaction as _store_transaction
 from ...jobs.state import (
     ACTIVE_STATUSES,
     JobAttemptPaths,
+    JobIdentityInUseError,
     JobRow,
     JobStatusPayload,
     MutableJobRow,
@@ -56,6 +59,7 @@ from ...jobs.state import (
     utc as _utc,
 )
 from ...protocol.executor import JobInventorySummary
+from ...protocol.ids import ReservedJobId
 from ...schemas.result_models.jobs import (
     JobListOutput,
     JobRetryOutput,
@@ -238,50 +242,62 @@ async def start_shell_job_unlocked(
     name: str | None = None,
     *,
     script_path: str | None = None,
+    reserved_job_id: str | None = None,
 ) -> JobStartOutput:
     """Start one durable shell-backed job while its session lock is held."""
     session = session_store.touch_session(session_id)
     resolved_cwd = session_store.resolve_session_path(
         session, cwd, must_exist=True
     )
-    job_id = _new_job_id()
+    job_id = (
+        TypeAdapter(ReservedJobId).validate_python(reserved_job_id, strict=True)
+        if reserved_job_id is not None
+        else _new_job_id()
+    )
     display_name = name or job_id
     shell_name = _shell_safe_name(f"{job_id}-{display_name}")
     active_shells = await authoritative_persistent_shell_ids_execute(
         config, session_store
     )
-    paths, runner_command = _prepare_attempt(
-        config, job_id, 1, command, resolved_cwd
-    )
-    now = _utc()
-    job: JobRow = {
-        "job_id": job_id,
-        "kind": "shell",
-        "name": display_name,
-        "status": "starting",
-        "command": command,
-        "cwd": str(resolved_cwd),
-        "session_id": session_id,
-        "shell_id": shell_name,
-        "backend": None,
-        "command_path": str(paths["command"]),
-        "log_path": str(paths["log"]),
-        "status_path": str(paths["status"]),
-        "created_at": now,
-        "updated_at": now,
-        "last_started_at": None,
-        "completed_at": None,
-        "exit_code": None,
-        "error": None,
-        "log_truncated": False,
-        "output_bytes": 0,
-        "attempts": 1,
-    }
-    if script_path is not None:
-        job["script_path"] = script_path
-    operation_id = _begin_job_operation(job, "start")
+    paths = None
+    operation_id = None
     try:
         with _store_transaction() as store:
+            if any(
+                isinstance(row, dict) and row.get("job_id") == job_id
+                for row in store.get("jobs", [])
+            ):
+                raise JobIdentityInUseError("Job identity is already in use")
+            paths, runner_command = _prepare_attempt(
+                config, job_id, 1, command, resolved_cwd
+            )
+            now = _utc()
+            job: JobRow = {
+                "job_id": job_id,
+                "kind": "shell",
+                "name": display_name,
+                "status": "starting",
+                "command": command,
+                "cwd": str(resolved_cwd),
+                "session_id": session_id,
+                "shell_id": shell_name,
+                "backend": None,
+                "command_path": str(paths["command"]),
+                "log_path": str(paths["log"]),
+                "status_path": str(paths["status"]),
+                "created_at": now,
+                "updated_at": now,
+                "last_started_at": None,
+                "completed_at": None,
+                "exit_code": None,
+                "error": None,
+                "log_truncated": False,
+                "output_bytes": 0,
+                "attempts": 1,
+            }
+            if script_path is not None:
+                job["script_path"] = script_path
+            operation_id = _begin_job_operation(job, "start")
             retained = []
             for row in store.get("jobs", []):
                 if not isinstance(row, dict):
@@ -296,9 +312,12 @@ async def start_shell_job_unlocked(
             _prune_store(store, max_jobs=config.max_jobs)
             store["jobs"].append(job)
     except BaseException:
-        _discard_job_operation(operation_id)
+        if operation_id is not None:
+            _discard_job_operation(operation_id)
         _remove_attempt_paths(paths)
         raise
+
+    assert paths is not None and operation_id is not None
 
     try:
         try:

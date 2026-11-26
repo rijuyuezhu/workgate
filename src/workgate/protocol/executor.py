@@ -2,7 +2,7 @@
 
 from enum import StrEnum
 from ipaddress import IPv4Address, IPv4Network
-from typing import Literal
+from typing import Literal, Self
 
 from pydantic import (
     BaseModel,
@@ -14,7 +14,7 @@ from pydantic import (
     model_validator,
 )
 
-from .ids import CommandId, SessionId
+from .ids import CommandId, ReservedJobId, SessionId
 
 EXECUTOR_PAIR_START_PATH = "/executor/v1/pair/start"
 EXECUTOR_PAIR_POLL_PATH = "/executor/v1/pair/poll"
@@ -33,6 +33,35 @@ SESSION_CREATE_OP = "session.create"
 SESSION_LOOKUP_OP = "session.lookup"
 SESSION_TERMINATE_OP = "session.terminate"
 SESSION_CHANGE_WORKDIR_OP = "session.change_workdir"
+JOB_START_RESERVED_OP = "job.start_reserved"
+
+
+class ReservedJobStartRequest(BaseModel):
+    """Internal tracked Bash/Python request; never accepted as a public tool argument."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    job_id: ReservedJobId
+    tool: Literal["bash", "run_python_code"]
+    command: str | None = None
+    code: str | None = None
+    cwd: str = "."
+    timeout_s: int | None = None
+    max_output_bytes: int | None = None
+    env: dict[str, str] | None = None
+    async_: bool = False
+    persist_on_timeout: bool = False
+    name: str | None = None
+
+    @model_validator(mode="after")
+    def validate_mode(self) -> Self:
+        if not (self.async_ or self.persist_on_timeout):
+            raise ValueError("Reserved Job creation requires tracked execution")
+        if self.tool == "bash":
+            if self.command is None or self.code is not None:
+                raise ValueError("Reserved Bash Job requires command only")
+        elif self.code is None or self.command is not None:
+            raise ValueError("Reserved Python Job requires code only")
+        return self
 
 
 class ExecutorRuntimeOwnership(StrEnum):

@@ -16,6 +16,10 @@ MANAGED_STATE_MAX_BYTES = 262_144
 _ACTIVE_JOB_OPERATIONS: set[str] = set()
 
 
+class JobIdentityInUseError(ValueError):
+    """A private reserved Job ID already has a native record."""
+
+
 class JobRow(TypedDict, total=False):
     """Known durable tracked-job fields, including tolerated legacy partial rows."""
 
