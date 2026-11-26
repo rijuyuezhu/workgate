@@ -63,6 +63,27 @@ reconciliation of uncertain native side effects belongs to the native intent
 ledger, not this orchestration helper.
 
 
+Human approval proposal/decision handling follows the final pinned sources:
+
+| Workgate file | Upstream source at the pin | Git blob |
+| --- | --- | --- |
+| `approval_runtime.py` | `src/local_shell_mcp/webui/approval_runtime.py` | `e12100e03427bd3e6272352b10c80496767640d1` |
+| `tool_approval.py` | `src/local_shell_mcp/webui/tool_approval.py` | `6b7a644bf480fc0fa392b8afe187fd7739372bf3` |
+| `tests/hosted_chat/test_approval_runtime.py` | `tests/test_webui_approval_runtime.py` | `54df7f86bcd9aa6d951e4ce2610ad9e8b0bf83dc` |
+| `tests/hosted_chat/test_tool_approval_source_port.py` | `tests/test_webui_tool_approval_source_port.py` | `c029d030df225c54a9f74c76552f5a58b814b539` |
+| `tests/fixtures/hosted_chat/hitl_reference.cjs` | `tests/fixtures/librechat/hitl_reference.cjs` | `dfaaae0ee0d4a13e9ec95dc95535c3b1c7b7e9af` |
+| `tests/fixtures/hosted_chat/approval_runtime_sources.json` | `tests/fixtures/librechat/approval_runtime_sources.json` | `da96d7e050d5adc1ff2f5f7fdd7b25c633175e30` |
+
+The source decision mapper and differential oracles are retained. The
+prepared batch validates every original and edited call before dispatch;
+immutable JSON decisions cannot be changed by caller mutations. Result
+compaction reuses the existing source port. Approval never grants native
+permissions. The upstream direct local-file dispatch test is replaced here
+by an edited-call callback/permission regression; its native Workgate
+integration belongs to the dispatcher acceptance unit. Durable claims and
+approval settings are separate lifecycle contracts.
+
+
 Model discovery and refresh are adapted from the final upstream catalog service:
 
 | Workgate file | Upstream source at the pin | Git blob |
