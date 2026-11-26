@@ -9,14 +9,14 @@ from workgate.audit import query_audit
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.execution_context import control_execution_context
 from workgate.control.executor_transport import ExecutorTransportError
+from workgate.control.hosted_chat_native_creation import (
+    NativeCreationUncertain,
+    create_native,
+)
 from workgate.hosted_chat.database import SQLiteDatabase
 from workgate.hosted_chat.durable_tasks import DurableTaskRepository
 from workgate.hosted_chat.generation_actor_lease import ActorLease
 from workgate.hosted_chat.generations import GenerationStore
-from workgate.hosted_chat.native_creation import (
-    NativeCreationUncertain,
-    create_native,
-)
 from workgate.hosted_chat.provider_common import ModelToolCall
 from workgate.oauth.core.context import bind_oauth_claims, reset_oauth_claims
 from workgate.protocol.errors import ProtocolErrorCode
