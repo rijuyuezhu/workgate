@@ -348,3 +348,106 @@ async def test_server_scopes_are_separate_but_full_catalog_is_reusable() -> (
     assert calls == [("one", "a"), ("one", "b"), ("two", None)]
     catalog.invalidate("one")
     assert not any(scope == "one" for scope, _ in catalog._cache)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first,second", [(None, "docs"), ("docs", None)])
+async def test_overlapping_refresh_replaces_cached_catalog(
+    first: str | None, second: str | None
+) -> None:
+    version = 1
+
+    async def fetch(
+        session_id: str | None, server: str | None
+    ) -> list[dict[str, Any]]:
+        return [{"server": "docs", "tool": f"v{version}", "input_schema": {}}]
+
+    catalog = McpDiscovery(fetch)
+    await catalog.search("", session_id="s", server=first)
+    await catalog.search("", session_id="other", server=first)
+    version = 2
+    await catalog.search("", session_id="s", server=second, refresh=True)
+    assert (await catalog.search("", session_id="s", server=first))["tools"][0][
+        "tool"
+    ] == "v2"
+    assert (await catalog.search("", session_id="other", server=first))[
+        "tools"
+    ][0]["tool"] == "v1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first,second", [(None, "docs"), ("docs", None)])
+async def test_overlapping_inflight_refresh_cannot_restore_old_catalog(
+    first: str | None, second: str | None
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def fetch(
+        session_id: str | None, server: str | None
+    ) -> list[dict[str, Any]]:
+        nonlocal calls
+        calls += 1
+        version = calls
+        if version == 1:
+            started.set()
+            await release.wait()
+        return [{"server": "docs", "tool": f"v{version}", "input_schema": {}}]
+
+    catalog = McpDiscovery(fetch)
+    old = asyncio.create_task(catalog.search("", session_id="s", server=first))
+    await started.wait()
+    await catalog.search("", session_id="s", server=second, refresh=True)
+    release.set()
+    await old
+    assert (await catalog.search("", session_id="s", server=first))["tools"][0][
+        "tool"
+    ] != "v1"
+
+
+@pytest.mark.asyncio
+async def test_targeted_lookup_shares_pending_full_catalog() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls: list[str | None] = []
+
+    async def fetch(
+        session_id: str | None, server: str | None
+    ) -> list[dict[str, Any]]:
+        calls.append(server)
+        started.set()
+        await release.wait()
+        return [{"server": "docs", "tool": "find", "input_schema": {}}]
+
+    catalog = McpDiscovery(fetch)
+    full = asyncio.create_task(catalog.search("", session_id="s"))
+    await started.wait()
+    target = asyncio.create_task(
+        catalog.inspect("docs", "find", session_id="s")
+    )
+    await asyncio.sleep(0)
+    release.set()
+    await full
+    assert (await target)["tool"] == "find"
+    assert calls == [None]
+
+
+@pytest.mark.asyncio
+async def test_targeted_refresh_leaves_unrelated_targeted_catalog_intact() -> (
+    None
+):
+    calls: list[str | None] = []
+
+    async def fetch(
+        session_id: str | None, server: str | None
+    ) -> list[dict[str, Any]]:
+        calls.append(server)
+        return [{"server": server, "tool": "ping", "input_schema": {}}]
+
+    catalog = McpDiscovery(fetch)
+    await catalog.search("", session_id="s", server="a")
+    await catalog.search("", session_id="s", server="b")
+    await catalog.search("", session_id="s", server="a", refresh=True)
+    await catalog.inspect("b", "ping", session_id="s")
+    assert calls == ["a", "b", "a"]

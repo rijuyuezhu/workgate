@@ -51,6 +51,15 @@ class McpDiscovery:
         self._cache.clear()
         self._pending.clear()
 
+    @staticmethod
+    def _overlaps(
+        first: tuple[str | None, str | None],
+        second: tuple[str | None, str | None],
+    ) -> bool:
+        return first[0] == second[0] and (
+            first[1] is None or second[1] is None or first[1] == second[1]
+        )
+
     async def _rows(
         self,
         session_id: str | None,
@@ -69,7 +78,13 @@ class McpDiscovery:
                     return cached[1]
 
         pending = self._pending.get(key)
+        if not refresh and pending is None and server is not None:
+            pending = self._pending.get((session_id, None))
         if pending is None or refresh:
+            # A newer overlapping load supersedes older writes, not their waiters.
+            for previous in tuple(self._pending):
+                if self._overlaps(previous, key):
+                    del self._pending[previous]
             pending = asyncio.create_task(self._load(key))
             self._pending[key] = pending
         return await asyncio.shield(pending)
@@ -116,6 +131,10 @@ class McpDiscovery:
 
         if not cache:
             return
+        # A targeted catalog and a full catalog must not disagree about a server.
+        for previous in tuple(self._cache):
+            if self._overlaps(previous, key):
+                del self._cache[previous]
         self._cache[key] = (time.monotonic() + _CACHE_SECONDS, rows)
         self._cache.move_to_end(key)
         while len(self._cache) > _MAX_SCOPES:
