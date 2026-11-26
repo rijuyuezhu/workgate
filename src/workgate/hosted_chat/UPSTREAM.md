@@ -94,6 +94,25 @@ Graph, Actions, machine ACL, memory, Skills, and resource fields are introduced
 by their own integration units. No authoring selection itself grants tool
 access, and these repository helpers register no HTTP routes.
 
+The owned SQLite checkpoint saver follows these final sources:
+
+| Workgate file | Upstream source at the pin | Git blob |
+| --- | --- | --- |
+| `checkpoints.py` | `src/local_shell_mcp/webui/checkpoints.py` | `ab4df86cf08b3f66bb78980f965a5aaf97f572cb` |
+| `tests/hosted_chat/test_checkpoints.py` | `tests/test_webui_checkpoints.py` | `d30f1cbc24b190be323167b4dd604eb6b0e76577` |
+| `tests/fixtures/hosted_chat/checkpoint_reference.cjs` | `tests/fixtures/librechat/checkpoint_reference.cjs` | `ae363cf8d7dbd3e26b596c7d18816f11b5784a06` |
+| `tests/fixtures/hosted_chat/checkpoint_sources.json` | `tests/fixtures/librechat/checkpoint_sources.json` | `fd7cec9c7fc771ee5d686013c60db70a00d15e70` |
+
+The source anchoring and pending-write slot semantics remain intact, including
+the original differential oracle. Existing foreground runs require their
+matching owner, thread, namespace and live actor lease for mutations. The
+source checkpoint size ceiling also bounds pending writes in the same tuple.
+Multi-query tuple reads use one SQLite snapshot, and terminal cleanup is
+owner-bound. The saver is private storage; graph SDK serialization, detached
+host authority, authenticated recovery and tool-side-effect reconciliation
+are integrated separately. Construction does not launch any generation.
+
+
 Generation ownership and protocol negotiation use the final pinned upstream:
 
 | Workgate file | Upstream source at the pin | Git blob |
@@ -112,21 +131,3 @@ pinned negotiation header and downgrade-only behavior are retained. Run
 storage, authenticated SSE recovery, checkpoints and runner lifecycle tests
 follow in their corresponding integration units; no actor or heartbeat is
 started merely by importing these modules.
-
-The owned SQLite checkpoint saver follows these final sources:
-
-| Workgate file | Upstream source at the pin | Git blob |
-| --- | --- | --- |
-| `checkpoints.py` | `src/local_shell_mcp/webui/checkpoints.py` | `ab4df86cf08b3f66bb78980f965a5aaf97f572cb` |
-| `tests/hosted_chat/test_checkpoints.py` | `tests/test_webui_checkpoints.py` | `d30f1cbc24b190be323167b4dd604eb6b0e76577` |
-| `tests/fixtures/hosted_chat/checkpoint_reference.cjs` | `tests/fixtures/librechat/checkpoint_reference.cjs` | `ae363cf8d7dbd3e26b596c7d18816f11b5784a06` |
-| `tests/fixtures/hosted_chat/checkpoint_sources.json` | `tests/fixtures/librechat/checkpoint_sources.json` | `fd7cec9c7fc771ee5d686013c60db70a00d15e70` |
-
-The source anchoring and pending-write slot semantics remain intact, including
-the original differential oracle. Existing foreground runs require their
-matching owner, thread, namespace and live actor lease for mutations. The
-source checkpoint size ceiling also bounds pending writes in the same tuple.
-Multi-query tuple reads use one SQLite snapshot, and terminal cleanup is
-owner-bound. The saver is private storage; graph SDK serialization, detached
-host authority, authenticated recovery and tool-side-effect reconciliation
-are integrated separately. Construction does not launch any generation.
