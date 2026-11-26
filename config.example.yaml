@@ -88,7 +88,7 @@ tool_timeout_s: 60
 # Default timeout for bounded shell command calls in seconds.
 run_shell_default_timeout_s: 10
 # Maximum timeout accepted by bounded shell command calls in seconds.
-run_shell_max_timeout_s: 120
+run_shell_max_timeout_s: 3600
 # Command output limit in bytes.
 max_output_bytes: 200000
 # Maximum retained output bytes for one tracked background-job attempt.
