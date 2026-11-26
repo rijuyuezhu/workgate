@@ -2,6 +2,7 @@ import asyncio
 import base64
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -301,17 +302,30 @@ async def test_real_terminal_bridge_streams_raw_bytes_and_preserves_tmux_session
     shell_id = f"workgate-bridge-{uuid.uuid4().hex[:10]}"
     tmux = shutil.which("tmux") or "tmux"
     bash = shutil.which("bash") or "bash"
-    ready_marker = b"BRIDGE_READY> "
+    # tmux may erase trailing screen blanks or move the cursor over them
+    # instead of transmitting a literal space after the visible prompt.
+    ready_marker = b"BRIDGE_READY>"
     bashrc = tmp_path / "bridge-test.bashrc"
     bashrc.write_text(
         "unset PROMPT_COMMAND\nPS1='BRIDGE_READY> '\n",
         encoding="utf-8",
     )
-    subprocess.run(
+    # A fresh server prevents unrelated sessions or an ambient tmux config
+    # from changing terminal negotiation. Keep the socket path short on macOS.
+    socket_root = tempfile.TemporaryDirectory(prefix="wg-tmux-", dir="/tmp")
+    monkeypatch.setenv("TMUX_TMPDIR", socket_root.name)
+    monkeypatch.delenv("TMUX", raising=False)
+    monkeypatch.delenv("TMUX_PANE", raising=False)
+    pane_id = subprocess.run(
         [
             tmux,
+            "-f",
+            "/dev/null",
             "new-session",
             "-d",
+            "-P",
+            "-F",
+            "#{pane_id}",
             "-s",
             shell_id,
             bash,
@@ -321,7 +335,9 @@ async def test_real_terminal_bridge_streams_raw_bytes_and_preserves_tmux_session
             "-i",
         ],
         check=True,
-    )
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
     async def read_until(
         marker: bytes, attachment_id: str, initial: bytes = b""
@@ -335,7 +351,16 @@ async def test_real_terminal_bridge_streams_raw_bytes_and_preserves_tmux_session
             output.extend(base64.b64decode(chunk["data_b64"]))
             if chunk["eof"]:
                 break
-        assert marker in output, bytes(output[-4096:])
+        if marker not in output:
+            pane = subprocess.run(
+                [tmux, "capture-pane", "-p", "-t", pane_id],
+                capture_output=True,
+                check=False,
+            )
+            raise AssertionError(
+                f"Missing {marker!r}; bridge bytes={bytes(output[-4096:])!r}; "
+                f"pane={pane.stdout[-4096:]!r}; capture error={pane.stderr!r}"
+            )
         return bytes(output)
 
     async def initial_attach_output(attachment_id: str) -> bytes:
@@ -357,6 +382,24 @@ async def test_real_terminal_bridge_streams_raw_bytes_and_preserves_tmux_session
     bridge_id = ""
     second_id = ""
     try:
+        # Wait for the shell, not for a guessed initialization delay. The
+        # actual bridge still has to deliver the prompt and subsequent output.
+        deadline = time.monotonic() + 10
+        pane_output = b""
+        while time.monotonic() < deadline:
+            pane = subprocess.run(
+                [tmux, "capture-pane", "-p", "-t", pane_id],
+                check=True,
+                capture_output=True,
+            )
+            pane_output = pane.stdout
+            if ready_marker in pane_output:
+                break
+            await asyncio.sleep(0.05)
+        else:
+            raise AssertionError(
+                f"Bash prompt missing in tmux pane: {pane_output!r}"
+            )
         opened = await open_terminal_bridge_execute(shell_id, 90, 28)
         bridge_id = opened["bridge_id"]
         # The raw bridge normally connects to xterm.js, which answers tmux's
@@ -380,7 +423,7 @@ async def test_real_terminal_bridge_streams_raw_bytes_and_preserves_tmux_session
         )
         await read_until(ready_marker, bridge_id, first_output)
 
-        command = b"printf '\\033[31mBRIDGE_RAW_OK\\033[0m\\n'\r"
+        command = b"printf '\\033[31mBRIDGE_RAW_%s\\033[0m\\n' OK\r"
         await write_terminal_bridge_execute(
             bridge_id,
             base64.b64encode(command).decode("ascii"),
@@ -441,6 +484,7 @@ async def test_real_terminal_bridge_streams_raw_bytes_and_preserves_tmux_session
             check=False,
             capture_output=True,
         )
+        socket_root.cleanup()
 
 
 def test_unix_terminal_bridge_uses_resolved_tmux(monkeypatch):
