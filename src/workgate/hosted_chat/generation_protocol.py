@@ -4,8 +4,6 @@ Request markers may only lower a job's immutable negotiated protocol. Keeping
 this separate from transport lets SQLite retries and SSE share the same rule.
 """
 
-from __future__ import annotations
-
 from collections.abc import Mapping
 from typing import Any
 

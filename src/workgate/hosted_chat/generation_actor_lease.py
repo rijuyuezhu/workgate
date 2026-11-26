@@ -6,8 +6,6 @@ Recovery requires a newly authenticated request; a startup task never silently
 inherits machine permissions from a dead process.
 """
 
-from __future__ import annotations
-
 import asyncio
 import secrets
 import sqlite3
