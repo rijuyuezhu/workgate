@@ -13,7 +13,9 @@ import jwt
 
 from ..config.control import get_control_config
 from ..oauth.core.security import oauth_signing_secret
+from ..oauth.core.state import oauth_state
 from ..oauth.core.urls import base_url, issuer_url
+from .session_registry import SESSION_TTL, WebAuthStore
 
 UI_SESSION_COOKIE_PREFIX = "workgate-ui-session"
 UI_CSRF_COOKIE_PREFIX = "workgate-ui-csrf"
@@ -22,7 +24,7 @@ UI_SESSION_BINDING_HEADER = "x-workgate-ui-binding"
 UI_SESSION_BINDING_PROTOCOL_PREFIX = "workgate-ui-binding."
 UI_SESSION_BINDING_STORAGE_KEY = "workgate-ui-session-binding"
 UI_SESSION_ESTABLISHED_STORAGE_KEY = "workgate-ui-session-established"
-UI_SESSION_UNBOUNDED_SOURCE_TTL_S = 30 * 24 * 60 * 60
+UI_SESSION_UNBOUNDED_SOURCE_TTL_S = SESSION_TTL
 UI_SESSION_TOKEN_USE = "human-ui-session"
 _UI_SESSION_BINDING_MIN_LENGTH = 43
 _UI_SESSION_BINDING_MAX_LENGTH = 128
@@ -194,10 +196,55 @@ def _binding_digest(token: str) -> str:
     return hashlib.sha256(token.encode("ascii")).hexdigest()
 
 
+class BrowserSessionUnavailable(jwt.InvalidTokenError):
+    """Durable browser session state could not be checked."""
+
+
+def _first_party_approval(client_id: str, origin: str) -> int | None:
+    """Require the current approved native browser client and its exact callback."""
+    expected = origin + get_control_config().ui_path + "/callback"
+    state = oauth_state()
+    with state.client_lock:
+        state.require_open()
+        client = state.clients.get(client_id)
+        if (
+            client is None
+            or client.client_name != "Workgate WebUI"
+            or client.redirect_uris != [expected]
+            or client.approved_at is None
+        ):
+            return None
+        return client.approved_at
+
+
+def _renewable_store() -> WebAuthStore:
+    return WebAuthStore(oauth_state().state_store)
+
+
+def _check_renewable_grant(claims: dict[str, Any], origin: str) -> str:
+    identity = claims.get("jti")
+    approval = claims.get("renewable_approved_at")
+    client_id = claims.get("client_id")
+    if (
+        not isinstance(identity, str)
+        or not identity.isascii()
+        or not 32 <= len(identity) <= 128
+        or type(approval) is not int
+        or not isinstance(client_id, str)
+        or _first_party_approval(client_id, origin) != approval
+    ):
+        raise jwt.InvalidTokenError(
+            "Browser session approval is no longer valid"
+        )
+    return identity
+
+
 def issue_ui_session(
     claims: dict[str, Any],
     binding_token: str,
     origin: str | None = None,
+    *,
+    first_party_redirect: str | None = None,
 ) -> tuple[str, str, int | None]:
     """Issue a signed WebUI session token and its double-submit CSRF value."""
     if not is_valid_ui_session_binding_token(binding_token):
@@ -236,6 +283,17 @@ def issue_ui_session(
         "csrf_sha256": _csrf_digest(csrf_token),
         "binding_sha256": _binding_digest(binding_token),
     }
+    # Only the successful PKCE code exchange supplies this callback. A pasted
+    # external bearer never gains a renewable grant, even for the same client.
+    resolved_origin = (
+        ui_origin() if origin is None else canonical_ui_origin(origin)
+    )
+    if first_party_redirect == resolved_origin + settings.ui_path + "/callback":
+        approval = _first_party_approval(payload["client_id"], resolved_origin)
+        if approval is not None:
+            expires_at = now + SESSION_TTL
+            payload["renewable_approved_at"] = approval
+            _renewable_store().issue(payload["jti"], expires_at)
     max_age = expires_at - now
     payload["exp"] = expires_at
     token = jwt.encode(payload, _session_signing_key(), algorithm="HS256")
@@ -257,6 +315,7 @@ def validate_ui_session(
         options={
             "require": [
                 "iat",
+                "exp",
                 "aud",
                 "iss",
                 "sub",
@@ -277,7 +336,42 @@ def validate_ui_session(
         _binding_digest(binding_token), expected_binding
     ):
         raise jwt.InvalidTokenError("Invalid WebUI session binding")
+    if "renewable_approved_at" in claims:
+        resolved_origin = (
+            ui_origin() if origin is None else canonical_ui_origin(origin)
+        )
+        try:
+            identity = _check_renewable_grant(claims, resolved_origin)
+            if _renewable_store().session(identity) is None:
+                raise jwt.InvalidTokenError(
+                    "Browser session expired or revoked"
+                )
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise BrowserSessionUnavailable(
+                "Browser session unavailable"
+            ) from exc
     return claims
+
+
+def renew_ui_session(
+    claims: dict[str, Any], origin: str
+) -> tuple[str, int] | None:
+    """Renew an already validated first-party cookie without changing its identity."""
+    if "renewable_approved_at" not in claims:
+        return None
+    identity = _check_renewable_grant(claims, origin)
+    expires_at = _renewable_store().renew(identity)
+    if expires_at is None:
+        raise jwt.InvalidTokenError("Browser session expired or revoked")
+    token = jwt.encode(
+        {**claims, "exp": expires_at}, _session_signing_key(), algorithm="HS256"
+    )
+    return token, expires_at - int(time.time())
+
+
+def revoke_ui_session(claims: dict[str, Any]) -> None:
+    if "renewable_approved_at" in claims:
+        _renewable_store().revoke(claims["jti"])
 
 
 def has_valid_ui_csrf_tokens(

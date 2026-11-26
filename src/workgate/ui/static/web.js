@@ -1154,13 +1154,30 @@ void (async () => {
   });
 
   elements.oauthLogin.addEventListener("click", () => void startOAuth());
+  let lastSessionRenewal = 0;
+  let sessionRenewal = null;
+  function renewBrowserSession() {
+    if (!authenticated || config.authMode !== "oauth" || document.hidden
+        || !sessionBindingToken() || !cookieValue(csrfCookieName)
+        || sessionRenewal || Date.now() - lastSessionRenewal < 3600000) return;
+    lastSessionRenewal = Date.now();
+    sessionRenewal = request("/session/renew", { method: "POST", signal: AbortSignal.timeout(12000) })
+      .catch(() => { /* A transient failure must not trigger one request per keystroke. */ })
+      .finally(() => { sessionRenewal = null; });
+  }
+  document.addEventListener("pointerdown", renewBrowserSession);
+  document.addEventListener("keydown", renewBrowserSession);
   async function signOut() {
+    authenticated = false;
+    if (sessionRenewal) await sessionRenewal;
+    lastSessionRenewal = 0;
     cancelPendingReads();
     clearAuthenticatedViews();
+    let logoutConfirmed = true;
     try {
       await request("/session/logout", { method: "POST" });
-    } catch {
-      // Local UI state is still cleared when the server session already expired.
+    } catch (error) {
+      logoutConfirmed = error.status === 401;
     }
     terminal.reset("");
     dashboard.stopPolling();
@@ -1182,7 +1199,11 @@ void (async () => {
     sessionStorage.removeItem(pendingStorageKey);
     clearSessionBindingToken();
     elements.tokenInput.value = "";
-    showAuthentication("Signed out", "The persistent browser session was cleared.");
+    if (logoutConfirmed) {
+      showAuthentication("Signed out", "The persistent browser session was cleared.");
+    } else {
+      showAuthentication("Signed out locally", "The server could not confirm session revocation.");
+    }
   }
 
   function navigateTo(target) {

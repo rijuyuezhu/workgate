@@ -60,6 +60,7 @@ from .gui import (
 from .session import (
     api_ui_session_logout,
     api_ui_session_oauth,
+    api_ui_session_renew,
     api_ui_session_token,
     ui_request_origin,
 )
@@ -341,6 +342,11 @@ def human_ui_routes(
         Route(
             UI_API_PREFIX + "/session/token",
             api_ui_session_token,
+            methods=["POST"],
+        ),
+        Route(
+            UI_API_PREFIX + "/session/renew",
+            api_ui_session_renew,
             methods=["POST"],
         ),
         Route(

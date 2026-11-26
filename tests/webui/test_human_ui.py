@@ -701,6 +701,10 @@ def test_browser_oauth_pkce_flow_reaches_authenticated_ui(
     assert exchange.status_code == 200
     assert exchange.json()["ok"] is True
     assert "access_token" not in exchange.text
+    assert (
+        exchange.json()["data"]["expires_in"]
+        == UI_SESSION_UNBOUNDED_SOURCE_TTL_S
+    )
     set_cookies = exchange.headers.get_list("set-cookie")
     session_cookie = next(
         value
@@ -717,7 +721,11 @@ def test_browser_oauth_pkce_flow_reaches_authenticated_ui(
     for value in (session_cookie, csrf_cookie):
         max_age_match = re.search(r"Max-Age=(\d+)", value)
         assert max_age_match is not None
-        assert 3590 <= int(max_age_match.group(1)) <= 3600
+        assert (
+            UI_SESSION_UNBOUNDED_SOURCE_TTL_S - 10
+            <= int(max_age_match.group(1))
+            <= UI_SESSION_UNBOUNDED_SOURCE_TTL_S
+        )
         assert "Path=/" in value
         assert "SameSite=strict" in value
         if browser_origin.startswith("https://"):
@@ -768,6 +776,57 @@ def test_browser_oauth_pkce_flow_reaches_authenticated_ui(
     unrelated = client.post("/tools/list_persistent_shells", json={})
     assert unrelated.status_code == 401
 
+    renewal_headers = {
+        "Cookie": cookie_header,
+        "Origin": browser_origin,
+        UI_CSRF_HEADER: csrf_token,
+        UI_SESSION_BINDING_HEADER: UI_SESSION_BINDING,
+    }
+    assert (
+        client.post(
+            "/api/ui/session/renew",
+            headers={**renewal_headers, "Origin": "https://wrong.invalid"},
+        ).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            "/api/ui/session/renew",
+            headers={**renewal_headers, UI_CSRF_HEADER: "wrong"},
+        ).status_code
+        == 403
+    )
+    renewed = client.post("/api/ui/session/renew", headers=renewal_headers)
+    assert renewed.status_code == 200
+    assert renewed.json()["data"] == {"renewed": True}
+    assert any(
+        "Max-Age=" in header
+        for header in renewed.headers.get_list("set-cookie")
+    )
+    # Both the old and newly signed cookie share a single revocable identity.
+    new_session = client.cookies.get(session_cookie_name)
+    assert new_session
+    # A durable state read failure is not a successful revocation. Recovery
+    # permits a real logout, which must invalidate both signed cookies.
+    from workgate.ui.session_registry import WebAuthStore
+
+    def inaccessible(self, identity):
+        raise OSError("unavailable registry")
+
+    with monkeypatch.context() as unavailable:
+        unavailable.setattr(WebAuthStore, "session", inaccessible)
+        failed_logout = client.post(
+            "/api/ui/session/logout", headers=renewal_headers
+        )
+        assert failed_logout.status_code == 503
+        assert not failed_logout.headers.get_list("set-cookie")
+        assert (
+            client.post(
+                "/api/ui/session/renew", headers=renewal_headers
+            ).status_code
+            == 503
+        )
+
     logout = client.post(
         "/api/ui/session/logout",
         headers={
@@ -779,6 +838,21 @@ def test_browser_oauth_pkce_flow_reaches_authenticated_ui(
     )
     assert logout.status_code == 200
     assert client.get("/api/ui/bootstrap").status_code == 401
+    for token in (session_value, new_session):
+        replay = client.get(
+            "/api/ui/bootstrap",
+            headers={
+                "Cookie": f"{session_cookie_name}={token}",
+                UI_SESSION_BINDING_HEADER: UI_SESSION_BINDING,
+            },
+        )
+        assert replay.status_code == 401
+    assert (
+        client.post(
+            "/api/ui/session/renew", headers=renewal_headers
+        ).status_code
+        == 401
+    )
 
 
 def test_ui_session_token_is_cryptographically_isolated_from_oauth_bearer(

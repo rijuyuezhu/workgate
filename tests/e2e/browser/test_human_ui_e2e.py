@@ -55,6 +55,43 @@ def test_human_ui_real_chromium(browser_harness: BrowserHarness) -> None:
     browser_harness.assert_clean_browser()
 
 
+def test_first_party_browser_session_renews_on_activity(
+    browser_harness: BrowserHarness,
+) -> None:
+    import time
+
+    from workgate.ui.session import ui_session_cookie_name
+
+    browser_harness.login()
+    page = browser_harness.page
+    cookie_name = ui_session_cookie_name(browser_harness.base_url)
+    original = next(
+        cookie
+        for cookie in browser_harness.context.cookies()
+        if cookie.get("name") == cookie_name
+    )
+    original_expiry = original.get("expires")
+    assert isinstance(original_expiry, int | float)
+    assert original_expiry > time.time() + 29 * 24 * 60 * 60
+    # The restored page has not been interacted with yet. A key event, not
+    # background polling, initiates one authenticated renewal request.
+    with page.expect_response(
+        lambda response: response.url.endswith("/api/ui/session/renew")
+    ) as result:
+        page.keyboard.press("Shift")
+    assert result.value.status == 200
+    assert result.value.json()["data"] == {"renewed": True}
+    renewed = next(
+        cookie
+        for cookie in browser_harness.context.cookies()
+        if cookie.get("name") == cookie_name
+    )
+    renewed_expiry = renewed.get("expires")
+    assert isinstance(renewed_expiry, int | float)
+    assert renewed_expiry >= original_expiry
+    assert renewed.get("httpOnly") and renewed.get("sameSite") == "Strict"
+
+
 @pytest.mark.parametrize("scheme", ["light", "dark"])
 def test_oauth_approval_layout(
     browser_harness: BrowserHarness, scheme: Literal["light", "dark"]
