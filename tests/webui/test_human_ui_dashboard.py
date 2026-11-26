@@ -212,6 +212,28 @@ def test_dashboard_handles_executor_unavailable_and_malformed_snapshot(
     assert unavailable.status_code == 503
 
 
+def test_dashboard_optional_build_provenance():
+    version = {
+        "version": "5.1.0",
+        "commit": "a" * 40,
+        "branch": "main",
+        "build_date": "2026-11-23T08:00:00Z",
+    }
+    assert ui_dashboard_module._normalize_version(version) == {
+        **version,
+        "build_date": "2026-11-23T08:00:00+00:00",
+    }
+    assert ui_dashboard_module._normalize_version(
+        {
+            "version": "5.1.0",
+            "commit": "x" * 40,
+            "branch": "/private/path",
+            "build_date": "invalid",
+            "unknown": "private",
+        }
+    ) == {"version": "5.1.0"}
+
+
 def test_dashboard_snapshot_rejects_out_of_range_and_oversized_executor_values():
     cases: list[tuple[str, Any, str]] = [
         ("cpu_percent", -1.0, "cpu_percent"),

@@ -154,7 +154,7 @@ def test_executor_dashboard_snapshot_health_and_machine_alerts(
     monkeypatch.setattr(executor_dashboard_module.time, "time", lambda: 123.0)
     monkeypatch.setattr(
         executor_dashboard_module,
-        "version_info",
+        "diagnostic_version_info",
         lambda: {"version": "test"},
     )
 

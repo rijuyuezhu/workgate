@@ -20,7 +20,7 @@ from starlette.routing import BaseRoute, Route
 from ...config.control import ControlConfig, get_control_config
 from ...oauth.core.scopes import default_scope
 from ...oauth.core.urls import issuer_url, resource_url
-from ...version import version_info
+from ...version import diagnostic_version_info
 from ..security import UI_API_PREFIX
 from ..session import (
     UI_CSRF_HEADER,
@@ -283,7 +283,7 @@ async def api_bootstrap(request: Request) -> Response:
     settings = _control_runtime(request).config
     return _json_ok(
         {
-            "version": version_info(),
+            "version": diagnostic_version_info(),
             "ui": {
                 "path": settings.ui_path,
                 "api_prefix": UI_API_PREFIX,

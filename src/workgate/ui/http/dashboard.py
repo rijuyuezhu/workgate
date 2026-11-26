@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 from starlette.responses import Response
 
+from ...build_info import normalize_build_info
 from ...control.ui_executor import call_ui_executor
 from ...oauth.core.scopes import SCOPE_SHELL_READ
 from ..dashboard import dashboard_snapshot
@@ -127,7 +128,7 @@ def _normalize_version(value: Any) -> dict[str, str]:
             field=f"version.{field}",
             max_bytes=512,
         )
-    return version
+    return {**version, **normalize_build_info(value)}
 
 
 def _normalize_alert(executor_id: str, value: Any) -> dict[str, Any]:

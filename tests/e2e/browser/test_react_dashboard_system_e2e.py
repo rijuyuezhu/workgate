@@ -41,7 +41,13 @@ def test_react_dashboard_system_details(
         payload = response.json()
         data = payload["data"]
         data["generated_at"] = None
-        data["version"] = {"platform": "SyntheticOS", "python": "3.14"}
+        data["version"] = {
+            "platform": "SyntheticOS",
+            "python": "3.14",
+            "commit": "a" * 40,
+            "branch": "test-branch",
+            "build_date": "2026-11-23T08:00:00+00:00",
+        }
         data["system"].update(
             cpu_percent=0.0,
             memory_percent=None,
@@ -70,6 +76,11 @@ def test_react_dashboard_system_details(
     )
     expect(root.locator("#dashboard-platform")).to_have_text("SyntheticOS")
     expect(root.locator("#dashboard-python")).to_have_text("3.14")
+    expect(root.locator("#dashboard-commit")).to_have_text("a" * 40)
+    expect(root.locator("#dashboard-branch")).to_have_text("test-branch")
+    expect(root.locator("#dashboard-build-date")).to_have_text(
+        "2026-11-23T08:00:00+00:00"
+    )
     expect(root.locator("#dashboard-cpu-value")).to_have_text("0.0%")
     expect(root.locator("#dashboard-memory-value")).to_have_text("—")
     expect(root.locator("#dashboard-disk-value")).to_have_text("150.0%")
@@ -107,6 +118,9 @@ def test_react_dashboard_system_details(
         "0", timeout=12_000
     )
     expect(root.locator("#dashboard-python")).to_have_text("—")
+    expect(root.locator("#dashboard-commit")).to_have_count(0)
+    expect(root.locator("#dashboard-branch")).to_have_count(0)
+    expect(root.locator("#dashboard-build-date")).to_have_count(0)
     expect(root.locator("#dashboard-generated")).to_have_text("—")
     expect(disclosure).to_have_attribute("open", "")
     page.unroute_all(behavior="wait")
