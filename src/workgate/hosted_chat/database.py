@@ -1,0 +1,728 @@
+"""Private Hosted Chat database; native Workgate state remains file-backed.
+
+Chat schema and SQLite connection handling adapted from final upstream v6.0.3.
+See UPSTREAM.md for provenance. No legacy native state migration is performed.
+"""
+
+import contextlib
+import os
+import sqlite3
+import stat
+from collections.abc import Generator
+from pathlib import Path
+
+from ..app_paths import ensure_private_directory
+from ..utils.private_files import private_file_lock
+
+DB_NAME = "chat.sqlite3"
+_SCHEMA_VERSION = 1
+_APPLICATION_ID = 0x57474348  # WGCH
+
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS conversations (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+    agent_id TEXT,
+    model TEXT,
+    endpoint TEXT,
+    archived INTEGER NOT NULL DEFAULT 0,
+    pinned INTEGER NOT NULL DEFAULT 0,
+    unread_marker TEXT,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    parent_id TEXT,
+    role TEXT NOT NULL,
+    text TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL DEFAULT '{}',
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_conversations_owner ON conversations(owner, archived, updated_at DESC);
+CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner, updated_at DESC);
+CREATE TABLE IF NOT EXISTS agents (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    config TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+CREATE INDEX IF NOT EXISTS idx_agents_owner ON agents(owner, updated_at DESC);
+CREATE TABLE IF NOT EXISTS action_records (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    metadata TEXT NOT NULL,
+    credentials BLOB,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_action_agent ON action_records(owner,agent_id);
+CREATE TABLE IF NOT EXISTS action_oauth_tokens (
+    action_id TEXT NOT NULL REFERENCES action_records(id) ON DELETE CASCADE,
+    owner TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    token BLOB NOT NULL,
+    expires_at INTEGER,
+    PRIMARY KEY (action_id,owner,kind)
+);
+CREATE TABLE IF NOT EXISTS action_oauth_flows (
+    state_hash TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    action_id TEXT NOT NULL REFERENCES action_records(id) ON DELETE CASCADE,
+    action_version INTEGER NOT NULL,
+    run_id TEXT NOT NULL,
+    call_id TEXT NOT NULL,
+    redirect_uri TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    used_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_action_oauth_flows_expiry ON action_oauth_flows(expires_at);
+CREATE TABLE IF NOT EXISTS agent_versions (
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    snapshot TEXT NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    PRIMARY KEY(agent_id,version)
+);
+CREATE TABLE IF NOT EXISTS web_login_tickets (
+    hash TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    scopes TEXT NOT NULL,
+    grant_until INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    renewable INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS web_sessions (
+    hash TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    scopes TEXT NOT NULL,
+    grant_until INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    renewable INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_web_sessions_expiry ON web_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_web_tickets_expiry ON web_login_tickets(expires_at);
+CREATE TABLE IF NOT EXISTS webui_tags (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    tag TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(owner,tag)
+);
+CREATE INDEX IF NOT EXISTS idx_webui_tags_owner ON webui_tags(owner,position);
+CREATE TABLE IF NOT EXISTS webui_skills (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    name TEXT NOT NULL,
+    record TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(owner,name)
+);
+CREATE INDEX IF NOT EXISTS idx_webui_skills_owner ON webui_skills(owner,updated_at DESC);
+CREATE TABLE IF NOT EXISTS webui_skill_folders (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    skill_id TEXT NOT NULL REFERENCES webui_skills(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(skill_id,path)
+);
+CREATE INDEX IF NOT EXISTS idx_webui_skill_folders_skill ON webui_skill_folders(skill_id,path);
+CREATE TABLE IF NOT EXISTS webui_skill_files (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    skill_id TEXT NOT NULL REFERENCES webui_skills(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    data BLOB NOT NULL,
+    mime TEXT NOT NULL,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(skill_id,path)
+);
+CREATE TABLE IF NOT EXISTS webui_schedules (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    config TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    revision INTEGER NOT NULL DEFAULT 0,
+    next_run INTEGER,
+    run_count INTEGER NOT NULL DEFAULT 0,
+    failure_count INTEGER NOT NULL DEFAULT 0,
+    last_run TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(owner,request_id)
+);
+CREATE INDEX IF NOT EXISTS idx_webui_schedules_due ON webui_schedules(enabled,next_run);
+CREATE TABLE IF NOT EXISTS webui_schedule_runs (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    schedule_id TEXT NOT NULL REFERENCES webui_schedules(id) ON DELETE CASCADE,
+    due_at INTEGER NOT NULL,
+    conversation_id TEXT,
+    run_id TEXT,
+    status TEXT NOT NULL DEFAULT 'claimed',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(schedule_id,due_at)
+);
+CREATE INDEX IF NOT EXISTS idx_webui_schedule_runs_schedule ON webui_schedule_runs(schedule_id,created_at DESC);
+CREATE TABLE IF NOT EXISTS webui_memories (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    agent_id TEXT NOT NULL DEFAULT '',
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    token_count INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(owner,agent_id,key)
+);
+CREATE INDEX IF NOT EXISTS idx_webui_memories_owner ON webui_memories(owner,updated_at DESC);
+CREATE TABLE IF NOT EXISTS settings (
+    owner TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    PRIMARY KEY(owner, key)
+);
+CREATE TABLE IF NOT EXISTS runs (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    agent_id TEXT,
+    status TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+CREATE TABLE IF NOT EXISTS active_subagent_threads (
+    owner TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    parent_run_id TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    PRIMARY KEY(owner,thread_id)
+);
+CREATE INDEX IF NOT EXISTS idx_active_subagent_threads_parent
+ON active_subagent_threads(parent_run_id,active);
+CREATE TABLE IF NOT EXISTS generation_requests (
+    owner TEXT NOT NULL,
+    client_request_id TEXT NOT NULL,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    PRIMARY KEY(owner,client_request_id)
+);
+CREATE TABLE IF NOT EXISTS generation_events (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    data TEXT NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+CREATE INDEX IF NOT EXISTS idx_generation_events_run ON generation_events(run_id,seq);
+CREATE INDEX IF NOT EXISTS idx_runs_conversation ON runs(conversation_id,created_at DESC);
+-- Detached subagent tasks are persisted at creation, before any child model/tool
+-- execution. One task lease has one child generation and belongs to one trusted
+-- owner + parent conversation; a thread can have multiple sequential leases.
+CREATE TABLE IF NOT EXISTS subagent_threads (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    parent_conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    subagent_type TEXT NOT NULL,
+    messages TEXT NOT NULL DEFAULT '[]',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_subagent_threads_parent ON
+    subagent_threads(owner,parent_conversation_id,subagent_type);
+CREATE TABLE IF NOT EXISTS subagent_tasks (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    parent_conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    parent_run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    parent_agent_id TEXT NOT NULL,
+    parent_tool_call_id TEXT NOT NULL,
+    subagent_type TEXT NOT NULL,
+    thread_id TEXT NOT NULL REFERENCES subagent_threads(id) ON DELETE CASCADE,
+    idempotency_key TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    agent_config TEXT NOT NULL,
+    execution_options TEXT NOT NULL DEFAULT '{}',
+    input TEXT NOT NULL,
+    initial_messages TEXT NOT NULL,
+    granted_scopes TEXT NOT NULL,
+    grant_expires INTEGER,
+    child_run_id TEXT REFERENCES runs(id) ON DELETE SET NULL,
+    child_conversation_id TEXT,
+    child_registered INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL CHECK(status IN ('running','completed','error','cancelled')),
+    result TEXT,
+    error TEXT,
+    result_claimed INTEGER NOT NULL DEFAULT 0,
+    result_claim_key TEXT,
+    cancel_requested INTEGER NOT NULL DEFAULT 0,
+    lease_owner TEXT,
+    lease_until INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(owner,parent_conversation_id,idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS idx_subagent_tasks_scope ON
+    subagent_tasks(owner,parent_conversation_id,created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_subagent_one_live_thread ON
+    subagent_tasks(thread_id) WHERE status='running';
+CREATE TABLE IF NOT EXISTS subagent_task_controls (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES subagent_tasks(id) ON DELETE CASCADE,
+    invocation_key TEXT,
+    action TEXT NOT NULL CHECK(action IN ('steer','queue','interrupt')),
+    message TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('accepted','applied','rejected','failed')),
+    boundary TEXT,
+    reason TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_subagent_controls_task ON
+    subagent_task_controls(task_id,status,created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_subagent_control_invocation ON
+    subagent_task_controls(task_id,invocation_key) WHERE invocation_key IS NOT NULL;
+-- This is a durable reservation before poll/claim/control side effects.
+-- A reserved-but-unconfirmed replay is fenced instead of reexecuted blindly.
+CREATE TABLE IF NOT EXISTS subagent_task_invocations (
+    owner TEXT NOT NULL,
+    parent_conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    parent_run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    parent_agent_id TEXT NOT NULL,
+    tool_call_id TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('reserved','completed')),
+    result TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY(owner,parent_conversation_id,parent_run_id,parent_agent_id,tool_call_id)
+);
+-- Original agent completion event, prepared in the same transaction as the
+-- child task BEFORE its model starts. Source: subagentCompletionWakeup.ts.
+CREATE TABLE IF NOT EXISTS subagent_wakeups (
+    task_id TEXT PRIMARY KEY REFERENCES subagent_tasks(id) ON DELETE CASCADE,
+    owner TEXT NOT NULL,
+    parent_conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    parent_run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    parent_agent_id TEXT NOT NULL,
+    envelope TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending'
+       CHECK(status IN ('pending','dispatched','done','retired','dead')),
+    run_id TEXT REFERENCES runs(id) ON DELETE SET NULL,
+    lease_owner TEXT,
+    lease_until INTEGER,
+    error TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at INTEGER,
+    failure_history TEXT NOT NULL DEFAULT '[]',
+    requeue_count INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_subagent_wakeups_pending ON
+    subagent_wakeups(status,created_at);
+-- Original LibreChat Agent Trigger source admission: separate API-key identity,
+-- envelope idempotency, ordered SQLite lane and per-replica leased dispatch.
+CREATE TABLE IF NOT EXISTS agent_event_source_keys (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    label TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    permissions TEXT NOT NULL,
+    expires_at INTEGER,
+    revoked_at INTEGER,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_event_keys_owner ON agent_event_source_keys(owner,created_at);
+CREATE TABLE IF NOT EXISTS agent_event_bindings (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    source_key_id TEXT NOT NULL REFERENCES agent_event_source_keys(id) ON DELETE CASCADE,
+    actor_id TEXT NOT NULL,
+    parent_conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    parent_message_id TEXT NOT NULL,
+    parent_agent_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    conversation_id TEXT NOT NULL UNIQUE REFERENCES conversations(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_event_bindings_owner ON agent_event_bindings(owner,source_key_id);
+CREATE TABLE IF NOT EXISTS agent_event_deliveries (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    owner TEXT NOT NULL,
+    source_key_id TEXT NOT NULL REFERENCES agent_event_source_keys(id) ON DELETE CASCADE,
+    fingerprint TEXT NOT NULL,
+    envelope TEXT NOT NULL,
+    mode TEXT NOT NULL CHECK(mode IN ('fire','continue','steer')),
+    ordering_key TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending','leased','succeeded','dead')),
+    run_id TEXT REFERENCES runs(id) ON DELETE SET NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    available_at INTEGER NOT NULL,
+    lease_owner TEXT,
+    lease_until INTEGER,
+    error_code TEXT,
+    error_type TEXT,
+    result TEXT,
+    coalesce_key TEXT,
+    coalesce_until INTEGER,
+    batch_root_id TEXT,
+    batch_count INTEGER NOT NULL DEFAULT 1,
+    batch_bytes INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(owner,source_key_id,id)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_event_deliveries_lane
+    ON agent_event_deliveries(owner,ordering_key,seq,status);
+CREATE INDEX IF NOT EXISTS idx_agent_event_deliveries_eligible
+    ON agent_event_deliveries(status,available_at,lease_until);
+-- Fenced foreground HTTP chat generation owner; independent of detached
+-- internal subagent completion wakeup leases and native Job/Shell ownership.
+CREATE TABLE IF NOT EXISTS generation_actor_leases (
+    run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+    owner TEXT NOT NULL,
+    token TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_generation_actor_leases_expiry
+    ON generation_actor_leases(expires_at);
+-- Host-owned ordinary background calls are process-local (source background.ts).
+-- A restart never silently retries an irreversible tool. The one-shot result,
+-- unknown outcome and parent-auth lineage remain durable for honest polling.
+-- Original LibreChat event-actor detached action: one immutable action per
+-- bound-child delivery, persisted in the SAME transaction as the native task.
+-- A lost launch acknowledgement is indeterminate and must not re-execute.
+CREATE TABLE IF NOT EXISTS agent_event_detached_actions (
+    delivery_id TEXT PRIMARY KEY REFERENCES agent_event_deliveries(id) ON DELETE CASCADE,
+    owner TEXT NOT NULL,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    task_id TEXT NOT NULL UNIQUE,
+    tool_name TEXT NOT NULL,
+    tool_call_id TEXT NOT NULL,
+    argument_hash TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN
+       ('reserved','running','launch_indeterminate','succeeded','failed','cancelled')),
+    evidence TEXT,
+    recovery_after INTEGER NOT NULL,
+    observed_at INTEGER,
+    continuation_id TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agent_event_detached_tasks
+    ON agent_event_detached_actions(owner,task_id,status);
+CREATE TABLE IF NOT EXISTS agent_background_tools (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    authorization_conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    parent_run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    parent_tool_call_id TEXT NOT NULL,
+    tool_name TEXT NOT NULL,
+    argument_hash TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('running','completed','error','cancelled','uncertain')),
+    result TEXT,
+    error_type TEXT,
+    claimed INTEGER NOT NULL DEFAULT 0,
+    cancel_requested INTEGER NOT NULL DEFAULT 0,
+    lease_owner TEXT,
+    lease_until INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE(owner,conversation_id,parent_run_id,parent_tool_call_id)
+);
+CREATE INDEX IF NOT EXISTS idx_background_tool_scope
+  ON agent_background_tools(owner,authorization_conversation_id,created_at);
+-- Replay an acknowledged poll only to the same authenticated Agent tool call.
+-- An independent tool call cannot claim an already consumed result.
+CREATE TABLE IF NOT EXISTS agent_background_tool_claims (
+    task_id TEXT PRIMARY KEY REFERENCES agent_background_tools(id) ON DELETE CASCADE,
+    owner TEXT NOT NULL,
+    claimant_run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    claimant_call_id TEXT NOT NULL,
+    response TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS agent_durable_tasks (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    conversation_id TEXT NOT NULL,
+    authorization_conversation_id TEXT,
+    run_id TEXT,
+    call_id TEXT NOT NULL,
+    agent_id TEXT,
+    tool TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    machine TEXT NOT NULL,
+    requirements TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    idempotency_key TEXT,
+    key_hash TEXT,
+    scopes TEXT NOT NULL,
+    grant_expires INTEGER,
+    native_id TEXT,
+    state TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    next_attempt_at INTEGER,
+    last_error TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_durable_key
+    ON agent_durable_tasks(machine,tool,key_hash) WHERE key_hash IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_durable_native
+    ON agent_durable_tasks(machine,kind,native_id)
+    WHERE native_id IS NOT NULL AND kind != 'retry';
+CREATE INDEX IF NOT EXISTS idx_agent_durable_recovery ON agent_durable_tasks(state,next_attempt_at);
+CREATE TABLE IF NOT EXISTS agent_run_cancellations (
+    run_id TEXT PRIMARY KEY,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS attachments (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+    name TEXT NOT NULL,
+    path TEXT NOT NULL,
+    content_type TEXT,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+CREATE TABLE IF NOT EXISTS attachment_uploads (
+    file_id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    path TEXT NOT NULL,
+    st_dev TEXT,
+    st_ino TEXT,
+    content_sha256 TEXT,
+    content_size INTEGER,
+    file_identity TEXT,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+CREATE TABLE IF NOT EXISTS tool_attachment_links (
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    response_message_id TEXT NOT NULL,
+    tool_call_id TEXT NOT NULL,
+    file_id TEXT NOT NULL REFERENCES attachments(id) ON DELETE CASCADE,
+    PRIMARY KEY (run_id,tool_call_id,file_id)
+);
+CREATE INDEX IF NOT EXISTS idx_tool_attachment_response ON tool_attachment_links(response_message_id);
+CREATE TABLE IF NOT EXISTS attachment_deletions (
+    file_id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    original_path TEXT NOT NULL,
+    quarantine_path TEXT NOT NULL,
+    phase TEXT NOT NULL CHECK(phase IN ('prepared','committed')),
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+CREATE INDEX IF NOT EXISTS idx_conversations_unread ON conversations(owner)
+    WHERE unread_marker IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_agent_event_delivery_batch
+    ON agent_event_deliveries(owner,coalesce_key,batch_root_id,coalesce_until);
+CREATE TRIGGER IF NOT EXISTS subagent_wakeup_parent_settled
+    AFTER UPDATE OF status ON runs
+    WHEN NEW.status IN ('complete','aborted','error','interrupted','requires_action')
+    BEGIN UPDATE subagent_wakeups SET next_attempt_at=NULL
+        WHERE parent_conversation_id=NEW.conversation_id AND status='pending'; END;
+CREATE TRIGGER IF NOT EXISTS subagent_wakeup_child_settled
+    AFTER UPDATE OF status ON subagent_tasks WHEN NEW.status!='running'
+    BEGIN UPDATE subagent_wakeups SET next_attempt_at=NULL
+        WHERE task_id=NEW.id AND status='pending'; END;
+"""
+
+_FTS_SCHEMA = """
+CREATE VIRTUAL TABLE IF NOT EXISTS message_search USING fts5(
+    message_id UNINDEXED, conversation_id UNINDEXED, text, tokenize='trigram'
+);
+CREATE TRIGGER IF NOT EXISTS message_search_insert AFTER INSERT ON messages BEGIN
+    INSERT INTO message_search(message_id, conversation_id, text)
+    VALUES(new.id, new.conversation_id, new.text);
+END;
+CREATE TRIGGER IF NOT EXISTS message_search_delete AFTER DELETE ON messages BEGIN
+    DELETE FROM message_search WHERE message_id = old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS message_search_update AFTER UPDATE OF text ON messages BEGIN
+    DELETE FROM message_search WHERE message_id = old.id;
+    INSERT INTO message_search(message_id, conversation_id, text)
+    VALUES(new.id, new.conversation_id, new.text);
+END;
+"""
+
+
+class SQLiteDatabase:
+    """One Control-owned Chat database, created only by an explicit caller."""
+
+    def __init__(self, state_dir: Path) -> None:
+        root = Path(state_dir) / "hosted-chat"
+        if root.is_symlink() or root.is_junction():
+            raise OSError("Hosted Chat directory must not be a link")
+        self.root = ensure_private_directory(root)
+        self.path = self.root / DB_NAME
+        lock = self.root / "schema.lock"
+        self._verify_private_file(lock, optional=True)
+        with private_file_lock(lock, timeout_s=30):
+            self._prepare_file()
+            with self.connect() as db:
+                version = db.execute("PRAGMA user_version").fetchone()[0]
+                application_id = db.execute("PRAGMA application_id").fetchone()[
+                    0
+                ]
+                if version not in (0, _SCHEMA_VERSION):
+                    raise RuntimeError(
+                        "Unsupported Hosted Chat database schema version"
+                    )
+                if (
+                    version == 0
+                    and (
+                        application_id != 0
+                        or db.execute(
+                            "SELECT 1 FROM sqlite_master LIMIT 1"
+                        ).fetchone()
+                    )
+                ) or (
+                    version == _SCHEMA_VERSION
+                    and application_id != _APPLICATION_ID
+                ):
+                    raise RuntimeError(
+                        "Unrecognized Hosted Chat database schema"
+                    )
+                if db.execute("PRAGMA journal_mode=WAL").fetchone()[0] != "wal":
+                    raise RuntimeError(
+                        "Hosted Chat database requires WAL support"
+                    )
+                if version == 0:
+                    self._initialize(db)
+                self.fts_enabled = (
+                    db.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='message_search'"
+                    ).fetchone()
+                    is not None
+                )
+
+    def _prepare_file(self) -> None:
+        try:
+            descriptor = os.open(
+                self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+            )
+        except FileExistsError:
+            pass
+        else:
+            os.close(descriptor)
+        self._verify_files()
+
+    @staticmethod
+    def _verify_private_file(path: Path, *, optional: bool = False) -> None:
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            if not optional:
+                raise
+            return
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_nlink != 1
+            or path.is_symlink()
+        ):
+            raise OSError(
+                "Hosted Chat database files must be regular private files"
+            )
+        if os.name != "nt" and (
+            info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077
+        ):
+            raise PermissionError(
+                "Hosted Chat database files must be owner-only"
+            )
+
+    def _verify_files(self) -> None:
+        self._verify_private_file(self.path)
+        for suffix in ("-wal", "-shm", "-journal"):
+            self._verify_private_file(
+                self.path.with_name(DB_NAME + suffix), optional=True
+            )
+
+    @staticmethod
+    def _initialize(db: sqlite3.Connection) -> None:
+        def create(schema: str) -> None:
+            db.executescript(
+                "BEGIN IMMEDIATE;\n"
+                + _SCHEMA
+                + schema
+                + f"\nPRAGMA application_id={_APPLICATION_ID};\nPRAGMA user_version={_SCHEMA_VERSION};\nCOMMIT;"
+            )
+
+        try:
+            create(_FTS_SCHEMA)
+        except sqlite3.OperationalError as exc:
+            db.rollback()
+            if not any(
+                marker in str(exc).lower()
+                for marker in (
+                    "no such module: fts5",
+                    "error in tokenizer constructor",
+                    "no such tokenizer",
+                )
+            ):
+                raise
+            create("")
+
+    @contextlib.contextmanager
+    def connect(self) -> Generator[sqlite3.Connection]:
+        """Commit successful writes; rollback failures and close the connection."""
+        self._verify_files()
+        db = sqlite3.connect(self.path, timeout=30)
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA busy_timeout=30000")
+            db.execute("PRAGMA foreign_keys=ON")
+            yield db
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    @contextlib.contextmanager
+    def read_snapshot(self) -> Generator[sqlite3.Connection]:
+        """Consistent read-only snapshot for multi-query repository projections."""
+        with self.connect() as db:
+            db.execute("PRAGMA query_only=ON")
+            db.execute("BEGIN")
+            yield db
