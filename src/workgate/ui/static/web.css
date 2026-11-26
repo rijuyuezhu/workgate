@@ -3644,6 +3644,7 @@ button:has(> .control-icon) { display: inline-flex; align-items: center; justify
   box-shadow: inset 3px 0 0 #d8a129;
 }
 #executors-panel .executor-config-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; margin: 0 0 12px; }
+#executors-panel .executor-config-search { flex: 1 1 160px; max-width: 280px; min-width: 0; padding: 7px 9px; font-size: 12px; }
 #executors-panel .executor-config-filter { display: inline-flex; align-items: center; gap: 7px; color: light-dark(#646e80, #bdc9dc); font-size: 12px; cursor: pointer; }
 #executors-panel .executor-config-filter input { margin: 0; accent-color: #c4932d; }
 #executors-panel .executor-config-filter[hidden] { display: none; }
