@@ -47,6 +47,22 @@ Provider profile storage and sampling are adapted from the final upstream source
 The repository retains the final channel names, protocol aliases, redacted catalog DTO, reference guards, and model sampling validation. Explicit Control-owned database and cipher instances replace global HTTP-route dependencies. API keys are encrypted and bound to channel, provider and endpoint. A deleted channel name cannot be reused while retained history references it. A private HTTP endpoint requires explicit opt-in; resolved-address validation is required in the transport unit before any requests. Unsaved built-in defaults carry no ambient credentials. Automatic discovery and account OAuth are not exposed by this private unit; their final source integrations and route/transport acceptance remain pending. Generation sampling snapshot tests follow the generation store import.
 
 
+Tool batch execution is adapted from the final upstream ToolNode port:
+
+| Workgate file | Upstream source at the pin | Git blob |
+| --- | --- | --- |
+| `agent_execution.py` | `src/local_shell_mcp/webui/agent_execution.py` | `5c5e8bfbc1c7a491b65bf06adfdcf150855de629` |
+| `tests/hosted_chat/test_agent_execution.py` | `tests/test_webui_agent_execution.py` | `54d9c469c880cbb515a1af4f81b5e1ac2c107ad7` |
+| `tests/fixtures/hosted_chat/tool_batch_reference.cjs` | `tests/fixtures/librechat/tool_batch_reference.cjs` | `230b14f18f37554949159451475ff9417e19d76c` |
+
+Sibling settlement, interrupt-first ordering and the original replay oracle
+are preserved. The native complete-batch validator rejects invalid proposals
+before any dispatch. Callback mutations cannot rewrite the cached proposal or
+result. Completion is cached only after the persistence callback succeeds;
+reconciliation of uncertain native side effects belongs to the native intent
+ledger, not this orchestration helper.
+
+
 Model discovery and refresh are adapted from the final upstream catalog service:
 
 | Workgate file | Upstream source at the pin | Git blob |
