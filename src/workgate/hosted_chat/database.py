@@ -490,6 +490,7 @@ CREATE TABLE IF NOT EXISTS agent_durable_tasks (
     tool TEXT NOT NULL,
     kind TEXT NOT NULL,
     machine TEXT NOT NULL,
+    native_session_id TEXT,
     requirements TEXT NOT NULL,
     fingerprint TEXT NOT NULL,
     idempotency_key TEXT,

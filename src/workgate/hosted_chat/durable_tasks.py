@@ -10,7 +10,15 @@ import json
 from collections.abc import Collection
 from dataclasses import dataclass
 
-from ..protocol.ids import new_session_id, new_task_id
+from pydantic import TypeAdapter
+
+from ..protocol.executor import ReservedJobStartRequest
+from ..protocol.ids import (
+    SessionId,
+    new_reserved_job_id,
+    new_session_id,
+    new_task_id,
+)
 from .database import SQLiteDatabase
 from .generation_actor_lease import ActorLease, ActorLeaseLost
 from .machine_permissions import authorize_machine_action, require_machine_scope
@@ -30,6 +38,30 @@ def _fingerprint(name: str, arguments: dict) -> str:
     ).hexdigest()
 
 
+def reserved_job_request(
+    call: ModelToolCall, key: str
+) -> ReservedJobStartRequest:
+    """Validate the same private wire request before claiming a native effect."""
+    arguments = dict(call.arguments)
+    if arguments.keys() & {"job_id", "tool", "idempotency_key"}:
+        raise ValueError("Job identity is allocated by Control")
+    TypeAdapter(SessionId).validate_python(
+        arguments.pop("session_id", None), strict=True
+    )
+    if arguments.pop("pty", False) is not False:
+        raise ValueError("Reserved Jobs cannot use PTY mode")
+    purpose = arguments.pop("purpose", None)
+    if purpose is not None and not isinstance(purpose, str):
+        raise ValueError("Invalid tool purpose")
+    return ReservedJobStartRequest.model_validate(
+        {
+            "job_id": key,
+            "tool": call.name,
+            **arguments,
+        }
+    )
+
+
 @dataclass(frozen=True)
 class Intent:
     id: str
@@ -38,6 +70,7 @@ class Intent:
     machine: str
     state: str
     native_id: str | None
+    session_id: str | None
 
 
 class DurableTaskRepository:
@@ -59,6 +92,7 @@ class DurableTaskRepository:
             row["machine"],
             row["state"],
             row["native_id"],
+            row["native_session_id"],
         )
 
     def _run(self, db, lease: ActorLease):
@@ -106,7 +140,7 @@ class DurableTaskRepository:
             run["owner"],
             authorization_id,
             machine,
-            "read",
+            "execute" if kind == "job" else "read",
             agent=agent,
             scopes=scopes,
             expires=expires,
@@ -124,18 +158,55 @@ class DurableTaskRepository:
         kind: str,
         native_id: str,
         machine: str | None = None,
+        session_id: str | None = None,
     ) -> bool:
+        if kind == "job" and session_id is None:
+            return False
         if kind != "task" and machine is None:
             return False
         return (
             db.execute(
                 "SELECT 1 FROM agent_durable_tasks WHERE owner=? AND conversation_id=? "
                 "AND kind=? AND native_id=? AND state='active' "
-                "AND (? IS NULL OR machine=?) LIMIT 1",
-                (owner, conversation_id, kind, native_id, machine, machine),
+                "AND (? IS NULL OR machine=?) AND (? IS NULL OR native_session_id=?) LIMIT 1",
+                (
+                    owner,
+                    conversation_id,
+                    kind,
+                    native_id,
+                    machine,
+                    machine,
+                    session_id,
+                    session_id,
+                ),
             ).fetchone()
             is not None
         )
+
+    def _require_parent(
+        self, db, run, kind: str, machine: str, arguments: dict
+    ) -> None:
+        if kind == "session" and not self._owned(
+            db,
+            run["owner"],
+            run["conversation_id"],
+            "task",
+            arguments["task_id"],
+        ):
+            raise PermissionError(
+                "Native Task does not belong to this conversation"
+            )
+        if kind == "job" and not self._owned(
+            db,
+            run["owner"],
+            run["conversation_id"],
+            "session",
+            arguments["session_id"],
+            machine,
+        ):
+            raise PermissionError(
+                "Native Session does not belong to this conversation and Executor"
+            )
 
     def reserve(
         self,
@@ -151,6 +222,7 @@ class DurableTaskRepository:
         """Reserve one stable identity for the immutable native creation request."""
         complete_tool_batch([call])
         arguments = call.arguments
+        session_id = None
         if call.name == "task" and arguments.get("action") == "create":
             kind = "task"
             if arguments.keys() - {"action", "label", "objective"}:
@@ -167,8 +239,18 @@ class DurableTaskRepository:
                 raise ValueError(
                     "Session reservation requires an explicit Executor and Task"
                 )
+        elif call.name in {"bash", "run_python_code"}:
+            kind = "job"
+            session_id = arguments.get("session_id")
         else:
             raise ValueError("Not a supported native creation")
+        key = {
+            "task": new_task_id,
+            "session": new_session_id,
+            "job": new_reserved_job_id,
+        }[kind]()
+        if kind == "job":
+            reserved_job_request(call, key)
         identity = _fingerprint(
             "native-intent",
             {
@@ -194,6 +276,7 @@ class DurableTaskRepository:
                 if (
                     prior["fingerprint"] != fingerprint
                     or prior["machine"] != machine
+                    or prior["native_session_id"] != session_id
                     or prior["agent_id"] != run["agent_id"]
                     or prior["authorization_conversation_id"]
                     != authorization_id
@@ -214,20 +297,14 @@ class DurableTaskRepository:
                 registered,
                 authorization_id,
             )
-            if kind == "session" and not self._owned(
-                db, lease.owner, conversation_id, "task", arguments["task_id"]
-            ):
-                raise PermissionError(
-                    "Native Task does not belong to this conversation"
-                )
+            self._require_parent(db, run, kind, machine, arguments)
             if prior is not None:
                 return self._intent(prior)
-            key = new_task_id() if kind == "task" else new_session_id()
             now = _now()
             db.execute(
                 "INSERT INTO agent_durable_tasks(id,owner,conversation_id,authorization_conversation_id,"
-                "run_id,call_id,agent_id,tool,kind,machine,requirements,fingerprint,idempotency_key,key_hash,"
-                "scopes,grant_expires,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "run_id,call_id,agent_id,tool,kind,machine,native_session_id,requirements,fingerprint,idempotency_key,key_hash,"
+                "scopes,grant_expires,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     identity,
                     lease.owner,
@@ -239,7 +316,10 @@ class DurableTaskRepository:
                     call.name,
                     kind,
                     machine,
-                    json.dumps({machine: "read"}),
+                    session_id,
+                    json.dumps(
+                        {machine: "execute" if kind == "job" else "read"}
+                    ),
                     fingerprint,
                     key,
                     hashlib.sha256(key.encode()).hexdigest(),
@@ -280,6 +360,7 @@ class DurableTaskRepository:
             or row["idempotency_key"] != intent.key
             or row["tool"] != intent.name
             or row["machine"] != intent.machine
+            or row["native_session_id"] != intent.session_id
         ):
             raise PermissionError(
                 "Native intent does not belong to this generation"
@@ -308,16 +389,9 @@ class DurableTaskRepository:
                 raise PermissionError(
                     "A replayed tool call cannot change a durable request"
                 )
-            if row["kind"] == "session" and not self._owned(
-                db,
-                lease.owner,
-                run["conversation_id"],
-                "task",
-                call.arguments["task_id"],
-            ):
-                raise PermissionError(
-                    "Native Task does not belong to this conversation"
-                )
+            self._require_parent(
+                db, run, row["kind"], row["machine"], call.arguments
+            )
             scopes, expires = self._grant(row, scopes, expires)
             self._authorize(
                 db,
@@ -372,11 +446,12 @@ class DurableTaskRepository:
         native_id: str,
         *,
         machine: str | None = None,
+        session_id: str | None = None,
     ) -> bool:
         """Ownership evidence is separate from live native authorization."""
         with self.database.read_snapshot() as db:
             return self._owned(
-                db, owner, conversation_id, kind, native_id, machine
+                db, owner, conversation_id, kind, native_id, machine, session_id
             )
 
     def is_run_cancelled(self, run_id: str) -> bool:
@@ -492,7 +567,9 @@ class DurableTaskRepository:
                 pending.append(dict(row))
         return pending
 
-    def finish_cancellation(self, identity: str, *, stopped: bool) -> None:
+    def finish_cancellation(
+        self, identity: str, *, stopped: bool, native_confirmed: bool = True
+    ) -> None:
         """Only positive native evidence settles a claimed cancellation."""
         now = _now()
         with self.database.connect() as db:
@@ -505,7 +582,7 @@ class DurableTaskRepository:
                     now,
                     None if stopped else now + 5_000_000,
                     None if stopped else "Native cancellation unconfirmed",
-                    stopped,
+                    stopped and native_confirmed,
                     identity,
                 ),
             )

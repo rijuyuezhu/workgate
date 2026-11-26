@@ -9,18 +9,30 @@ from workgate.audit import query_audit
 from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.execution_context import control_execution_context
 from workgate.control.executor_transport import ExecutorTransportError
+from workgate.control.hosted_chat_cancellation import sweep_native_cancellations
 from workgate.control.hosted_chat_native_creation import (
     NativeCreationUncertain,
     create_native,
 )
+from workgate.executor.jobs import shell as job_shell
 from workgate.hosted_chat.database import SQLiteDatabase
 from workgate.hosted_chat.durable_tasks import DurableTaskRepository
 from workgate.hosted_chat.generation_actor_lease import ActorLease
 from workgate.hosted_chat.generations import GenerationStore
 from workgate.hosted_chat.provider_common import ModelToolCall
+from workgate.hosted_chat.storage import WorkspaceRepository
 from workgate.oauth.core.context import bind_oauth_claims, reset_oauth_claims
 from workgate.protocol.errors import ProtocolErrorCode
-from workgate.protocol.executor import SESSION_CREATE_OP, SESSION_LOOKUP_OP
+from workgate.protocol.executor import (
+    JOB_START_RESERVED_OP,
+    SESSION_CREATE_OP,
+    SESSION_LOOKUP_OP,
+)
+from workgate.schemas.result_models.shell import (
+    KillPersistentShellOutput,
+    ReadPersistentShellOutput,
+    StartPersistentShellOutput,
+)
 
 SCOPES = {"shell:read", "shell:write", "shell:execute"}
 
@@ -261,3 +273,318 @@ async def test_native_creation_missing_task_receipt_never_reoffers(
         await invoke(harness, repo, lease, call)
     assert len(attempts) == 1
     assert not await harness.control.task_service.list_tasks()
+
+
+@pytest.fixture
+def tracked_shells(monkeypatch):
+    active = set()
+    started = []
+    killed = []
+
+    async def start(
+        _config, _store, cwd, name, command, *, owner_session_id=None
+    ):
+        started.append(name)
+        active.add(name)
+        return StartPersistentShellOutput(
+            shell_id=name, name=name, cwd=cwd, command=command, backend="fake"
+        )
+
+    async def inventory(*args):
+        return set(active)
+
+    async def read(_config, shell_id, lines):
+        return ReadPersistentShellOutput(
+            shell_id=shell_id, output="native output", lines=lines
+        )
+
+    async def kill(_config, _store, shell_id):
+        killed.append(shell_id)
+        active.discard(shell_id)
+        return KillPersistentShellOutput(shell_id=shell_id, killed=True)
+
+    monkeypatch.setattr(job_shell, "start_persistent_shell_execute", start)
+    monkeypatch.setattr(
+        job_shell, "authoritative_persistent_shell_ids_execute", inventory
+    )
+    monkeypatch.setattr(job_shell, "read_persistent_shell_output_execute", read)
+    monkeypatch.setattr(job_shell, "kill_persistent_shell_execute", kill)
+    return started, killed
+
+
+async def native_session(harness, repo, lease):
+    task = await invoke(
+        harness,
+        repo,
+        lease,
+        ModelToolCall("native-task", "task", {"action": "create"}),
+    )
+    session = await invoke(
+        harness,
+        repo,
+        lease,
+        ModelToolCall(
+            "native-session",
+            "session_start",
+            {"executor_id": harness.executor_id, "task_id": task["task_id"]},
+        ),
+    )
+    return task["task_id"], session["session_id"]
+
+
+def intent_rows(repo):
+    with repo.database.connect() as db:
+        return {
+            row["call_id"]: dict(row)
+            for row in db.execute("SELECT * FROM agent_durable_tasks")
+        }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool,body",
+    [
+        ("bash", {"command": "echo hello"}),
+        ("run_python_code", {"code": "print('hello')"}),
+    ],
+)
+async def test_tracked_job_lost_response_reconciles_exact_session_and_id(
+    bound, tracked_shells, monkeypatch, tool, body
+):
+    harness, repo, lease, generation = bound
+    started, _ = tracked_shells
+    _, session_id = await native_session(harness, repo, lease)
+    transport = harness.control.executor_transport
+    original = transport.call
+    offered = []
+
+    async def lost_response(
+        executor_id, op, args=None, *, session_id=None, timeout_s=None
+    ):
+        result = await original(
+            executor_id, op, args, session_id=session_id, timeout_s=timeout_s
+        )
+        if op == JOB_START_RESERVED_OP:
+            assert result.ok and args is not None
+            offered.append((executor_id, session_id, args["job_id"]))
+            raise ExecutorTransportError(
+                ProtocolErrorCode.EXECUTOR_OFFLINE,
+                "lost Job response",
+                delivery_state="offered",
+            )
+        return result
+
+    monkeypatch.setattr(transport, "call", lost_response)
+    call = ModelToolCall(
+        "tracked", tool, {"session_id": session_id, "async_": True, **body}
+    )
+    with pytest.raises(ExecutorTransportError, match="lost Job response"):
+        await invoke(harness, repo, lease, call)
+    row = intent_rows(repo)["tracked"]
+    assert row["state"] == "unknown" and row["native_id"] is None
+    assert row["native_session_id"] == session_id
+    assert offered == [
+        (harness.executor_id, session_id, row["idempotency_key"])
+    ]
+    result = await invoke(harness, repo, lease, call)
+    assert result["recovered"] and result["mode"] == "job"
+    assert result["result"]["job_id"] == row["idempotency_key"]
+    assert result["result"]["stdout"] == "native output"
+    assert len(offered) == 1 and len(started) == 1
+    assert repo.owned(
+        "local-user",
+        generation.conversation_id,
+        "job",
+        row["idempotency_key"],
+        machine=harness.executor_id,
+        session_id=session_id,
+    )
+    assert not repo.owned(
+        "local-user",
+        generation.conversation_id,
+        "job",
+        row["idempotency_key"],
+        machine=harness.executor_id,
+    )
+    assert not repo.owned(
+        "local-user",
+        generation.conversation_id,
+        "job",
+        row["idempotency_key"],
+        machine=harness.executor_id,
+        session_id="wrong",
+    )
+
+
+@pytest.mark.asyncio
+async def test_tracked_job_checks_execute_scope_and_native_session_ownership(
+    bound, tracked_shells
+):
+    harness, repo, lease, generation = bound
+    started, _ = tracked_shells
+    _, session_id = await native_session(harness, repo, lease)
+    call = ModelToolCall(
+        "tracked",
+        "bash",
+        {"session_id": session_id, "command": "echo hello", "async_": True},
+    )
+    for scopes in (
+        {"shell:read", "shell:execute"},
+        {"shell:read", "shell:write"},
+    ):
+        with pytest.raises(PermissionError):
+            await invoke(harness, repo, lease, call, scopes=scopes)
+    workspace = WorkspaceRepository(repo.database)
+    key = "agent.machine_policy.conversation." + generation.conversation_id
+    workspace.save_setting("local-user", key, {harness.executor_id: "read"})
+    with pytest.raises(PermissionError, match="read-only"):
+        await invoke(harness, repo, lease, call)
+    workspace.save_setting("local-user", key, {})
+    foreign, _ = GenerationStore(repo.database).begin(
+        "local-user", {"text": "foreign"}
+    )
+    foreign_lease = ActorLease.claim(
+        repo.database, "local-user", foreign.run_id
+    )
+    assert foreign_lease is not None
+    with pytest.raises(PermissionError, match="does not belong"):
+        await invoke(harness, repo, foreign_lease, call)
+    for extra in (
+        {"job_id": "injected"},
+        {"pty": True},
+        {"async_": False},
+        {"idempotency_key": "injected"},
+    ):
+        with pytest.raises(ValueError):
+            await invoke(
+                harness,
+                repo,
+                lease,
+                ModelToolCall("tracked", "bash", call.arguments | extra),
+            )
+    assert not started
+    assert "tracked" not in intent_rows(repo)
+
+
+@pytest.mark.asyncio
+async def test_abort_tracked_job_in_reused_session_does_not_end_session(
+    bound, tracked_shells, monkeypatch
+):
+    harness, repo, lease, generation = bound
+    started, killed = tracked_shells
+    task_id, session_id = await native_session(harness, repo, lease)
+    store = GenerationStore(repo.database)
+    assert store.finish(
+        lease.owner,
+        generation.run_id,
+        status="complete",
+        text="ready",
+        actor_lease=lease,
+    )
+    next_run, _ = store.begin(
+        lease.owner,
+        {"conversationId": generation.conversation_id, "text": "run Job"},
+    )
+    next_lease = ActorLease.claim(repo.database, lease.owner, next_run.run_id)
+    assert next_lease is not None
+    transport = harness.control.executor_transport
+    original = transport.call
+
+    async def lost_response(
+        executor_id, op, args=None, *, session_id=None, timeout_s=None
+    ):
+        result = await original(
+            executor_id, op, args, session_id=session_id, timeout_s=timeout_s
+        )
+        if op == JOB_START_RESERVED_OP:
+            raise ExecutorTransportError(
+                ProtocolErrorCode.EXECUTOR_OFFLINE,
+                "lost Job response",
+                delivery_state="offered",
+            )
+        return result
+
+    monkeypatch.setattr(transport, "call", lost_response)
+    call = ModelToolCall(
+        "tracked",
+        "bash",
+        {"session_id": session_id, "command": "long running", "async_": True},
+    )
+    with pytest.raises(ExecutorTransportError):
+        await invoke(harness, repo, next_lease, call)
+    assert intent_rows(repo)["tracked"]["native_id"] is None
+    repo.cancel_run(next_lease.owner, next_run.run_id)
+    assert await sweep_native_cancellations(harness.control, repo) == 1
+    row = intent_rows(repo)["tracked"]
+    assert (
+        row["state"] == "stopped" and row["native_id"] == row["idempotency_key"]
+    )
+    assert killed == started and len(killed) == 1
+    assert harness.executor.sessions.lookup(session_id) is not None
+    assert (
+        await harness.control.task_service.read_task(task_id)
+    ).status == "active"
+    assert intent_rows(repo)["native-session"]["state"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_cancel_unconfirmed_job_after_session_absence_does_not_fabricate_receipt(
+    bound,
+):
+    harness, repo, lease, _ = bound
+    _, session_id = await native_session(harness, repo, lease)
+    proposal = ModelToolCall(
+        "tracked",
+        "bash",
+        {"session_id": session_id, "command": "never offered", "async_": True},
+    )
+    grant = {
+        "scopes": SCOPES,
+        "expires": None,
+        "registered": (harness.executor_id,),
+    }
+    intent = repo.reserve(lease, proposal, machine=harness.executor_id, **grant)
+    assert repo.claim(lease, intent, proposal, **grant)
+    await harness.control.session_coordinator.end_session(session_id)
+    repo.cancel_run(lease.owner, lease.run_id)
+    await sweep_native_cancellations(harness.control, repo)
+    row = intent_rows(repo)["tracked"]
+    assert row["state"] == "stopped"
+    assert row["native_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_missing_tracked_job_receipt_never_reoffers(
+    bound, tracked_shells, monkeypatch
+):
+    harness, repo, lease, _ = bound
+    started, _ = tracked_shells
+    _, session_id = await native_session(harness, repo, lease)
+    transport = harness.control.executor_transport
+    original = transport.call
+    offered = []
+
+    async def missing(
+        executor_id, op, args=None, *, session_id=None, timeout_s=None
+    ):
+        if op == JOB_START_RESERVED_OP:
+            offered.append(session_id)
+            raise TimeoutError("Job response unknown")
+        return await original(
+            executor_id, op, args, session_id=session_id, timeout_s=timeout_s
+        )
+
+    monkeypatch.setattr(transport, "call", missing)
+    call = ModelToolCall(
+        "missing-job",
+        "bash",
+        {"session_id": session_id, "command": "never observed", "async_": True},
+    )
+    with pytest.raises(TimeoutError):
+        await invoke(harness, repo, lease, call)
+    for _ in range(2):
+        with pytest.raises(NativeCreationUncertain, match="unconfirmed"):
+            await invoke(harness, repo, lease, call)
+    row = intent_rows(repo)["missing-job"]
+    assert row["state"] == "unknown" and row["native_id"] is None
+    assert offered == [session_id] and not started
