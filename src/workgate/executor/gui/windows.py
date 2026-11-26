@@ -4,7 +4,6 @@ import asyncio
 import contextlib
 import ctypes
 import hashlib
-import json
 import os
 import subprocess
 import sys
@@ -29,6 +28,7 @@ from .base import (
     display_screenshot_path,
     quantize_scroll_amount,
 )
+from .limits import json_size
 from .windows_capture import _native_window_bounds, _set_thread_dpi_awareness
 
 
@@ -577,14 +577,7 @@ class WindowsGuiBackend:
                     for key in ("id", "title", "app", "pid", "bounds")
                     if key in record
                 }
-                extra = len(
-                    json.dumps(
-                        public_record,
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                        default=str,
-                    ).encode("utf-8")
-                ) + (1 if windows else 0)
+                extra = json_size(public_record) + (1 if windows else 0)
                 if used_bytes + extra > GUI_MAX_WINDOWS_TOTAL_BYTES:
                     break
                 windows.append(record)
@@ -654,13 +647,7 @@ class WindowsGuiBackend:
                     ),
                     "depth": depth,
                 }
-                encoded = json.dumps(
-                    element,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    default=str,
-                ).encode("utf-8")
-                extra = len(encoded) + (1 if elements else 0)
+                extra = json_size(element) + (1 if elements else 0)
                 if used_bytes + extra > GUI_MAX_ELEMENTS_TOTAL_BYTES:
                     break
                 elements.append(element)

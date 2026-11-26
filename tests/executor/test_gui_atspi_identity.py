@@ -1,6 +1,9 @@
 """Provider-backed AT-SPI identities must remain stable and fail closed."""
 
 import hashlib
+import json
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -256,3 +259,18 @@ async def test_linux_backend_preserves_provider_identity_from_helper(
         "accessible_id": "",
         "fingerprint": "abc123",
     }
+
+
+def test_atspi_helper_standalone_imports_without_site_packages():
+    result = subprocess.run(
+        [sys.executable, "-E", "-S", str(helper.__file__)],
+        input="{",
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 2
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["error_type"] == "JSONDecodeError"
