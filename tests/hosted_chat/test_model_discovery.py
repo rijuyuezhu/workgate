@@ -374,3 +374,59 @@ async def test_auto_save_fallback_requires_same_connection(
         await discovery.prepare_auto_save(
             profiles, _validate({**body, "api_key": "different"}), previous
         )
+
+
+@pytest.mark.asyncio
+async def test_auto_save_catalog_and_stale_write(profiles, monkeypatch):
+    from workgate.hosted_chat.provider_profiles import ChannelConflict
+
+    async def success(kind, base, token, **kwargs):
+        assert token == "stored-secret"
+        return {
+            "models": ["old", "new"],
+            "model_contexts": {"old": 8192, "new": 16384},
+        }
+
+    monkeypatch.setattr(discovery, "_fetch_models", success)
+    await profiles.save_discovered(
+        profile_body(
+            auto_discover=True,
+            api_key="stored-secret",
+            model_contexts={"old": 4096},
+            model_sampling={"old": {"temperature": 0}},
+        )
+    )
+    current = profiles.profile("Local")
+    assert current["models"] == ["old", "new"]
+    assert current["model_contexts"] == {"old": 4096, "new": 16384}
+    assert (
+        current["auto_discover"] is True
+        and current["api_key"] == "stored-secret"
+    )
+
+    async def unavailable(*args, **kwargs):
+        raise httpx.ConnectError("offline")
+
+    monkeypatch.setattr(discovery, "_fetch_models", unavailable)
+    await profiles.save_discovered(
+        profile_body(
+            auto_discover=True,
+            models=["old", "new"],
+            model_contexts={"old": 4096},
+        )
+    )
+    saved = profiles.profile("Local")
+    assert saved["model_sync_at"] == current["model_sync_at"]
+    assert saved["models"] == current["models"]
+    assert saved["model_sampling"] == {"old": {"temperature": 0}}
+    assert saved["model_sync_error"] == discovery._SYNC_ERROR
+
+    async def stale(*args, **kwargs):
+        profiles.save(profile_body(api_key="changed", models=["manual"]))
+        return {"models": ["stale"], "model_contexts": {}}
+
+    monkeypatch.setattr(discovery, "_fetch_models", stale)
+    with pytest.raises(ChannelConflict, match="changed during discovery"):
+        await profiles.save_discovered(profile_body(auto_discover=True))
+    assert profiles.profile("Local")["models"] == ["manual"]
+    assert profiles.profile("Local")["api_key"] == "changed"
