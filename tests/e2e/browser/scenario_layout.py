@@ -20,6 +20,16 @@ def run_webui_layout(harness: BrowserHarness) -> None:
     expect(page.locator("#nav-toggle")).to_be_hidden()
     expect(page.locator("#connection-state")).to_be_visible()
     expect(page.locator("#version")).to_be_visible()
+    resources = page.get_by_role("navigation", name="Workgate resources")
+    for label, url in (
+        ("Documentation", "https://project.rijuyuezhu.top/workgate/"),
+        ("Source repository", "https://github.com/rijuyuezhu/workgate"),
+    ):
+        link = resources.get_by_role("link", name=label, exact=True)
+        expect(link).to_be_visible()
+        expect(link).to_have_attribute("href", url)
+        expect(link).to_have_attribute("rel", "noopener noreferrer")
+        expect(link).to_have_attribute("target", "_blank")
     assert page.title().endswith("— Workgate")
     colors = page.evaluate("""() => ({
         body: getComputedStyle(document.body).backgroundColor,

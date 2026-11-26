@@ -2240,6 +2240,8 @@ input[type=checkbox] { accent-color: #6759e7; }
 .dashboard-task-row strong { min-width: 0; overflow: hidden; overflow-wrap: anywhere; white-space: normal; font-size: 12px; }
 .dashboard-task-row:hover { background: light-dark(#f8f7ff, #151f2c); }
 .dashboard-task-state { padding: 4px 9px; border-radius: 99px; background: light-dark(#e9f8f1, #222e40); color: light-dark(#16825b, #8eecca); font-size: 10px; text-transform: capitalize; }
+.dashboard-help-links { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 14px; font-size: 12px; }
+.dashboard-help-links a { text-decoration: underline; text-underline-offset: 3px; }
 .dashboard-system-disclosure { margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
 .dashboard-system-disclosure summary { padding: 13px 17px; color: light-dark(#657184, #bdc9dc); font-size: 12px; font-weight: 650; cursor: pointer; }
 .dashboard-system-disclosure[open] summary { border-bottom: 1px solid var(--line); }
