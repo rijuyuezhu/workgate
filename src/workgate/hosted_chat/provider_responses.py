@@ -285,6 +285,27 @@ def _metadata_item(item: dict) -> dict | None:
     return None
 
 
+@asynccontextmanager
+async def _response_stream(client, config, body, headers):
+    """Resolve account credentials just before use; retry only a pre-stream 401."""
+    if not config.account_id:
+        async with client.stream("POST", config.url, json=body, headers=headers) as response:
+            yield response
+        return
+    from .model_oauth import access_token, adapter
+    from .routes import _repo
+    if config.url != adapter(config.auth_method).base_url + "/responses":
+        raise ValueError("Account authorization cannot be used at a different API endpoint")
+    database = _repo().database
+    token = await access_token(database, config.account_channel, config.account_id)
+    for attempt in range(2):
+        async with client.stream("POST", config.url, json=body,
+                                 headers={**headers, "Authorization": "Bearer " + token}) as response:
+            if response.status_code != 401 or attempt:
+                yield response
+                return
+        token = await access_token(database, config.account_channel, config.account_id, rejected=token)
+
 async def stream_responses(
     config: ProviderConfig,
     messages: list[dict],
