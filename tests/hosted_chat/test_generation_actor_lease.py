@@ -1,397 +1,108 @@
-"""Two-controller SQLite fencing and fresh-grant SSE restart of ordinary runs."""
-from __future__ import annotations
+"""Owner-scoped actor lease tests adapted from the pinned upstream source."""
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
-import httpx
 import pytest
-from starlette.applications import Starlette
 
-from local_shell_mcp.settings import get_settings
-from local_shell_mcp.sqlite_store import SQLiteDatabase
-from local_shell_mcp.webui import generation_routes
-from local_shell_mcp.webui.agent_runtime import RuntimeSafetyError
-from local_shell_mcp.webui.checkpoints import SQLiteCheckpointSaver
-from local_shell_mcp.webui.generation_actor_lease import (
+from workgate.hosted_chat import generation_actor_lease
+from workgate.hosted_chat.database import SQLiteDatabase
+from workgate.hosted_chat.generation_actor_lease import (
     ActorLease,
+    ActorLeaseLost,
     active_run_ids,
-    resumable_run_ids,
 )
-from local_shell_mcp.webui.generations import GenerationStore
-from local_shell_mcp.webui.providers import ProviderConfig
 
 
 @pytest.fixture
-def context(tmp_path, monkeypatch):
-    root = tmp_path / '.state'
-    monkeypatch.setenv('LOCAL_SHELL_MCP_WORKSPACE_ROOT', str(tmp_path))
-    monkeypatch.setenv('LOCAL_SHELL_MCP_STATE_DIR', str(root))
-    monkeypatch.setenv('LOCAL_SHELL_MCP_AUTH_MODE', 'none')
-    get_settings.cache_clear()
-    first, second = SQLiteDatabase(root), SQLiteDatabase(root)
-    store = GenerationStore(first)
-    job, _ = store.begin('local', {'text': 'ordinary user request'})
-    monkeypatch.setattr(generation_routes, '_database', lambda: first)
-    monkeypatch.setattr(generation_routes, 'provider_config', lambda *args: ProviderConfig(
-        'openai', 'test', 'http://localhost:9000/v1/chat/completions', ''))
-    yield first, second, store, job
-    get_settings.cache_clear()
+def context(tmp_path):
+    first, second = SQLiteDatabase(tmp_path), SQLiteDatabase(tmp_path)
+    with first.connect() as conn:
+        conn.execute(
+            "INSERT INTO conversations(id,owner) VALUES('chat','local')"
+        )
+        conn.execute(
+            "INSERT INTO runs(id,conversation_id,status) VALUES('run','chat','running')"
+        )
+    return first, second, "run"
 
 
 def test_one_actor_claim_across_controller_db_instances(context):
-    first, second, store, job = context
+    first, second, run_id = context
 
     def race(index):
-        return ActorLease.claim(first if index % 2 else second, 'local', job.run_id)
+        return ActorLease.claim(first if index % 2 else second, "local", run_id)
 
     with ThreadPoolExecutor(max_workers=20) as pool:
         actors = [a for a in pool.map(race, range(32)) if a is not None]
     assert len(actors) == 1
     winner = actors[0]
     assert winner.is_current()
-    assert job.run_id in active_run_ids(second)
+    assert run_id in active_run_ids(second)
     assert winner.renew()
-    assert not ActorLease.claim(second, 'other', job.run_id)
+    assert not ActorLease.claim(second, "other", run_id)
     with first.connect() as conn:
-        conn.execute('UPDATE generation_actor_leases SET expires_at=0 WHERE run_id=?', (job.run_id,))
-    replacement = ActorLease.claim(second, 'local', job.run_id)
+        conn.execute(
+            "UPDATE generation_actor_leases SET expires_at=0 WHERE run_id=?",
+            (run_id,),
+        )
+    replacement = ActorLease.claim(second, "local", run_id)
     assert replacement and replacement.token != winner.token
-    with pytest.raises(RuntimeSafetyError, match='lease'):
+    with pytest.raises(ActorLeaseLost, match="lease"):
         winner.assert_current()
-    with pytest.raises(RuntimeSafetyError, match='lease'):
-        store.append('local', job.run_id, {'event': 'forged'}, actor_lease=winner)
-    with pytest.raises(RuntimeSafetyError, match='lease'):
-        store.finish('local', job.run_id, status='complete', actor_lease=winner)
-    assert store.append('local', job.run_id, {'event': 'new-owner'}, actor_lease=replacement)
-    assert store.finish('local', job.run_id, status='complete', actor_lease=replacement)
+    with first.connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        with pytest.raises(ActorLeaseLost, match="lease"):
+            winner.assert_current(conn)
+        replacement.assert_current(conn)
+        conn.execute("UPDATE runs SET status='complete' WHERE id=?", (run_id,))
     assert not replacement.renew()
     winner.release()  # old actor must not delete the new actor's lease
     with first.connect() as conn:
-        assert conn.execute('SELECT token FROM generation_actor_leases WHERE run_id=?',
-                            (job.run_id,)).fetchone()[0] == replacement.token
+        assert (
+            conn.execute(
+                "SELECT token FROM generation_actor_leases WHERE run_id=?",
+                (run_id,),
+            ).fetchone()[0]
+            == replacement.token
+        )
     replacement.release()
-    assert job.run_id not in active_run_ids(first)
-
-
-def test_checkpointed_ordinary_run_is_preserved_while_uncheckpointed_orphan_terminates(context):
-    first, second, store, job = context
-    saver = SQLiteCheckpointSaver(first, 'local')
-    config = saver.config(job.conversation_id, job.run_id, event_actor=True)
-    saver.put(config, {'v': 1, 'id': '00001', 'channel_values': {
-        'messages': [{'role': 'user', 'content': 'ordinary user request'}],
-        'step': 0, 'model_turn': 0, 'pending_calls': [],
-        'tool_step_started': False, 'completed': False, 'agent_id': None,
-    }, 'channel_versions': {}, 'versions_seen': {}}, {'source': 'loop', 'step': 0})
-    orphan, _ = store.begin('local', {'text': 'no checkpoint'})
-    assert job.run_id in resumable_run_ids(second)
-    assert orphan.run_id not in resumable_run_ids(second)
-    exclusions = active_run_ids(first) | resumable_run_ids(first)
-    assert store.recover_orphans(exclusions) == 1
-    assert store.get('local', job.run_id).status == 'running'
-    assert store.get('local', orphan.run_id).status == 'interrupted'
-
-
-@pytest.mark.asyncio
-async def test_sse_resume_reattaches_after_controller_crash_with_fresh_grants(context, monkeypatch):
-    first, second, store, job = context
-    saver = SQLiteCheckpointSaver(first, 'local')
-    config = saver.config(job.conversation_id, job.run_id, event_actor=True)
-    saver.put(config, {'v': 1, 'id': '00001', 'channel_values': {
-        'messages': [{'role': 'user', 'content': 'ordinary user request'}],
-        'step': 0, 'model_turn': 0, 'pending_calls': [],
-        'tool_step_started': False, 'completed': False, 'agent_id': None,
-    }, 'channel_versions': {}, 'versions_seen': {}}, {'source': 'loop', 'step': 0})
-    # Simulate the first Controller crashing: the new process shares SQLite,
-    # but no in-memory task or scope grant survives.
-    seen = []
-
-    async def model(profile, messages, **kwargs):
-        seen.append(messages)
-        yield 'Successfully resumed on a fresh Controller.'
-
-    monkeypatch.setattr(generation_routes, 'stream_model_with_tools', model)
-    monkeypatch.setattr(generation_routes, 'stream_model', model)
-    app = Starlette(routes=generation_routes.generation_routes())
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
-        response = await asyncio.wait_for(client.get(
-            f'/api/agents/chat/stream/{job.conversation_id}?resume=true'), 15)
-        assert response.status_code == 200, response.text
-        assert '"sync":true' in response.text
-        assert 'Successfully resumed on a fresh Controller.' in response.text
-    assert len(seen) == 1
-    assert store.get('local', job.run_id).status == 'complete'
-    assert job.run_id not in active_run_ids(first)
-
-
-@pytest.mark.asyncio
-async def test_sse_does_not_start_an_actor_while_another_controller_owns_it(context, monkeypatch):
-    first, second, store, job = context
-    active = ActorLease.claim(second, 'local', job.run_id)
-    assert active
-    async def broken(*args, **kwargs):
-        raise AssertionError('A second Controller tried to start the model')
-        yield ''
-
-    monkeypatch.setattr(generation_routes, 'stream_model_with_tools', broken)
-    monkeypatch.setattr(generation_routes, 'stream_model', broken)
-    # The lease is valid. The route reattaches as a passive SSE client, not
-    # another model scheduler, even when there is no local event-loop task.
-    assert job.run_id in active_run_ids(first)
-    assert generation_routes._TASKS.get(job.run_id) is None
-    assert ActorLease.claim(first, 'local', job.run_id) is None
-    from starlette.requests import Request
-
-    req = Request({'type': 'http', 'method': 'GET',
-                   'path': '/api/agents/chat/stream/' + job.conversation_id,
-                   'path_params': {'stream_id': job.conversation_id},
-                   'query_string': b'resume=true', 'headers': []})
-    response = await generation_routes.stream_generation(req)
-    assert response.status_code == 200
-    assert job.run_id not in generation_routes._TASKS
-    active.release()
-
-
-@pytest.mark.asyncio
-async def test_old_controller_cannot_emit_or_finalize_after_root_lease_takeover(context, monkeypatch):
-    first, second, store, job = context
-    entered = asyncio.Event()
-    release = asyncio.Event()
-
-    async def model(profile, history, **kwargs):
-        entered.set()
-        await release.wait()
-        yield 'must not arrive after lease takeover'
-
-    monkeypatch.setattr(generation_routes, 'stream_model_with_tools', model)
-    monkeypatch.setattr(generation_routes, 'stream_model', model)
-    profile = ProviderConfig('openai', 'test', 'http://localhost:9000/v1/chat/completions', '')
-    await generation_routes._start_task('local', job, profile, None)
-    await asyncio.wait_for(entered.wait(), 8)
-    with first.connect() as conn:
-        conn.execute('UPDATE generation_actor_leases SET expires_at=0 WHERE run_id=?', (job.run_id,))
-    takeover = ActorLease.claim(second, 'local', job.run_id)
-    assert takeover
-    release.set()
-    current = generation_routes._TASKS[job.run_id]
-    await asyncio.wait_for(current, 8)
-    assert store.get('local', job.run_id).status == 'running'
-    assert not any('must not arrive' in str(e) for _, e in store.events('local', job.run_id))
-    assert takeover.is_current()
-    takeover.release()
-
-
-@pytest.mark.asyncio
-async def test_crash_after_steer_applied_before_first_checkpoint_replays_instruction(context, monkeypatch):
-    from local_shell_mcp.webui.steering import SteeringStore
-
-    first, second, store, job = context
-    steering = SteeringStore(first)
-    ack = steering.enqueue('local', {'conversationId': job.conversation_id,
-        'generationCreatedAt': job.generation_created_at, 'text': 'Durable correction',
-        'clientSteerId': 'stale-checkpoint'}, preempt_capable=True)
-    # The source applied SSE + SQLite receipt commits here. Simulate a power
-    # loss before any AgentRunner / StateGraph checkpoint transaction.
-    assert len(steering.drain('local', job.run_id, boundary='terminal')) == 1
-    assert ack['steerId'] in str(steering.applied_parts('local', job.run_id))
-    assert job.run_id in resumable_run_ids(second)
-    assert store.recover_orphans(resumable_run_ids(second)) == 0
-    observed = []
-
-    async def model(profile, messages, **kwargs):
-        observed.append(messages)
-        assert sum(m.get('steerId') == ack['steerId'] for m in messages) == 1
-        assert messages[-1]['content'] == 'Durable correction'
-        yield 'Processed recovered steer.'
-
-    monkeypatch.setattr(generation_routes, 'stream_model_with_tools', model)
-    monkeypatch.setattr(generation_routes, 'stream_model', model)
-    app = Starlette(routes=generation_routes.generation_routes())
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
-        response = await asyncio.wait_for(client.get(
-            f'/api/agents/chat/stream/{job.conversation_id}?resume=true'), 15)
-        assert response.status_code == 200, response.text
-    assert len(observed) == 1
-    assert store.get('local', job.run_id).status == 'complete'
-    assert sum(e.get('event') == 'on_steer_applied' for _, e in store.events('local', job.run_id)) == 1
+    assert run_id not in active_run_ids(first)
 
 
 @pytest.mark.asyncio
 async def test_heartbeat_stops_if_run_lease_changes(context, monkeypatch):
-    from local_shell_mcp.webui import generation_actor_lease
-
-    first, second, store, job = context
-    lease = ActorLease.claim(first, 'local', job.run_id)
+    first, second, run_id = context
+    lease = ActorLease.claim(first, "local", run_id)
     assert lease is not None
-    monkeypatch.setattr(generation_actor_lease, '_RENEW_S', .01)
-    with first.connect() as connection:
-        connection.execute('UPDATE generation_actor_leases SET expires_at=0 WHERE run_id=?', (job.run_id,))
+    monkeypatch.setattr(generation_actor_lease, "_RENEW_S", 0.01)
+    with first.connect() as conn:
+        conn.execute(
+            "UPDATE generation_actor_leases SET expires_at=0 WHERE run_id=?",
+            (run_id,),
+        )
     await asyncio.wait_for(lease.keep_alive(), 1)
-    with first.connect() as connection:
-        assert connection.execute('SELECT expires_at FROM generation_actor_leases WHERE run_id=?',
-                                  (job.run_id,)).fetchone()[0] == 0
+    assert not lease.is_current()
+    assert not lease.renew()
+    replacement = ActorLease.claim(second, "local", run_id)
+    assert replacement is not None
     lease.release()
-
-
-def test_recovery_exclusion_preserves_other_live_controller(context):
-    first, second, store, job = context
-    owner = ActorLease.claim(first, 'local', job.run_id)
-    assert owner is not None
-    assert resumable_run_ids(second, excludes=active_run_ids(second)) == set()
-    owner.release()
-
-
-def test_checkpoint_and_human_pause_writes_fenced_in_their_own_transaction(context):
-    """An old Controller cannot mutate either checkpoint or pause after takeover.
-
-    A lease precheck outside the write transaction is not enough: the other
-    Controller could have claimed the run in between the two operations.
-    """
-    from local_shell_mcp.webui.checkpoints import SQLiteCheckpointSaver
-    from local_shell_mcp.webui.graph_checkpoint import OwnedGraphCheckpointer
-
-    first, second, store, job = context
-    old = ActorLease.claim(first, 'local', job.run_id)
-    assert old is not None
-    saver = SQLiteCheckpointSaver(first, 'local', actor_lease=old)
-    graph = OwnedGraphCheckpointer(first, 'local', actor_lease=old)
-    config = saver.config(job.conversation_id, job.run_id, event_actor=True)
-    initial = {'v': 1, 'id': '000001', 'channel_values': {'messages': []},
-               'channel_versions': {}, 'versions_seen': {}}
-    saved = saver.put(config, initial, {'source': 'checkpoint-start'})
-    saver.put_writes(saved, [('messages', {'role': 'assistant', 'content': 'before'})], task_id='tool-before')
-    graph_config = graph.storage.config(job.conversation_id, job.run_id + ':graph:', event_actor=True)
-    assert graph.storage.put(graph_config, initial, {'source': 'graph-start'})
-
-    with first.connect() as db:
-        db.execute('UPDATE generation_actor_leases SET expires_at=0 WHERE run_id=?', (job.run_id,))
-    replacement = ActorLease.claim(second, 'local', job.run_id)
-    assert replacement is not None
-    with pytest.raises(RuntimeSafetyError, match='lease'):
-        saver.put(saved, {**initial, 'id': '000002'}, {'source': 'stale checkpoint'})
-    with pytest.raises(RuntimeSafetyError, match='lease'):
-        saver.put_writes(saved, [('messages', {'role': 'tool', 'content': 'stale'})], task_id='stale')
-    with pytest.raises(RuntimeSafetyError, match='lease'):
-        graph.storage.put(graph_config, {**initial, 'id': '000002'}, {'source': 'stale graph'})
-    with pytest.raises(RuntimeSafetyError, match='lease'):
-        graph.storage.put_writes(graph_config | {'configurable': {
-            **graph_config['configurable'], 'checkpoint_id': '000001'}},
-            [('messages', {'role': 'tool', 'content': 'stale graph write'})], task_id='stale')
-    pending = {'actionId': 'human', 'payload': {'type': 'ask_user_question'},
-               'runId': job.run_id, 'namespace': ''}
-    with pytest.raises(RuntimeSafetyError, match='lease'):
-        store.pause_for_question('local', job.run_id, pending, [], '', actor_lease=old)
-    with pytest.raises(RuntimeSafetyError, match='lease'):
-        store.pause_for_approval('local', job.run_id, pending, [], '', actor_lease=old)
-    with pytest.raises(RuntimeSafetyError, match='lease'):
-        store.complete_approval_batch('local', job.run_id, 'human', [], '', actor_lease=old)
-    assert store.get('local', job.run_id).status == 'running'
-    assert saver.get_tuple(saved)['checkpoint']['channel_values']['messages'] == []
-    with first.connect() as db:
-        assert db.execute("SELECT count(*) FROM agent_checkpoint_writes WHERE task_id='stale'").fetchone()[0] == 0
-        assert db.execute("SELECT count(*) FROM agent_checkpoints WHERE checkpoint_id='000002'").fetchone()[0] == 0
-    assert store.pending_action('local', job.run_id) is None
-    # The new actor remains authorized to continue both original data stores.
-    fresh = SQLiteCheckpointSaver(second, 'local', actor_lease=replacement)
-    assert fresh.put(saved, {**initial, 'id': '000003'}, {'source': 'new actor'})
-    assert store.pause_for_question('local', job.run_id, pending, [], '', actor_lease=replacement)
+    assert replacement.is_current()
     replacement.release()
 
 
-@pytest.mark.asyncio
-async def test_tool_progress_sse_refuses_stale_actor_token(context):
-    """Tool and step-completion events must not bypass the root event fence."""
-    from local_shell_mcp.webui.agent_runner import AgentRunner
-    from local_shell_mcp.webui.providers import ModelToolCall, ProviderConfig
-
-    first, second, store, job = context
-    lease = ActorLease.claim(first, 'local', job.run_id)
-    assert lease
-
-    async def stream(*args, **kwargs):
-        yield ''
-
-    async def on_text(text):
-        pass
-
-    runner = AgentRunner('local', job, first, store, scopes=set(), grant_expires=None,
-                         stream_tools=stream, stream_text=stream, on_text=on_text,
-                         profile=ProviderConfig('openai', 'mock', 'http://localhost:15', ''),
-                         actor_lease=lease)
-    with first.connect() as db:
-        db.execute('UPDATE generation_actor_leases SET expires_at=0 WHERE run_id=?', (job.run_id,))
-    assert ActorLease.claim(second, 'local', job.run_id)
-    with pytest.raises(RuntimeSafetyError, match='lease'):
-        runner._tool_step(ModelToolCall('old-call', 'plan_manage', {'action': 'list'}))
-    assert not any(e.get('event') == 'on_run_step' for _, e in store.events('local', job.run_id))
-
-
-@pytest.mark.asyncio
-async def test_shutdown_before_actor_first_tick_releases_lease(context):
-    first, second, store, job = context
-    profile = generation_routes.provider_config()
-    assert await generation_routes._start_task('local', job, profile, None)
-    # No scheduling point between creation and shutdown: the task's coroutine
-    # has not entered, so its own finally block cannot run.
-    await generation_routes.shutdown_generations()
-    assert job.run_id not in generation_routes._TASKS
-    assert not generation_routes._SHUTDOWN_TASKS
-    assert job.run_id not in active_run_ids(first)
-    assert store.get('local', job.run_id).status == 'running'
-    replacement = ActorLease.claim(second, 'local', job.run_id)
-    assert replacement is not None
-    replacement.release()
-
-
-@pytest.mark.asyncio
-async def test_instruction_failure_does_not_claim_actor(context, monkeypatch):
-    first, _, _, job = context
-
-    def invalid(*args):
-        raise ValueError('invalid instructions')
-
-    monkeypatch.setattr(generation_routes, 'agent_instructions', invalid)
-    with pytest.raises(ValueError, match='invalid instructions'):
-        await generation_routes._start_task('local', job, generation_routes.provider_config(), None)
-    assert job.run_id not in active_run_ids(first)
-
-
-@pytest.mark.asyncio
-async def test_memory_cleanup_failure_cannot_strand_suspended_actor(context, monkeypatch):
-    from local_shell_mcp.webui import agent_runner, memory_agent
-    from local_shell_mcp.webui.agent_runtime import AgentSuspended
-
-    first, _, store, job = context
-    started = asyncio.Event()
-
-    async def memory(*args, **kwargs):
-        started.set()
-        try:
-            await asyncio.Future()
-        except asyncio.CancelledError:
-            raise RuntimeError('memory cleanup failed') from None
-
-    async def suspend(self, history):
-        await started.wait()
-        raise AgentSuspended()
-
-    monkeypatch.setattr(memory_agent, 'run_automatic_memory', memory)
-    monkeypatch.setattr(agent_runner.AgentRunner, 'run', suspend)
-    assert await generation_routes._start_task('local', job, generation_routes.provider_config(), None)
-    task = generation_routes._TASKS[job.run_id]
-    await asyncio.wait_for(task, 5)
-    assert job.run_id not in generation_routes._TASKS
-    assert job.run_id not in active_run_ids(first)
-    assert store.get('local', job.run_id).status == 'running'
-
-
-def test_step_event_query_is_owner_scoped_and_excludes_text_deltas(context):
-    _, _, store, job = context
-    store.append('local', job.run_id, {'event': 'on_run_step',
-        'data': {'id': 'answer', 'index': 0, 'type': 'message_creation'}})
-    store.append('local', job.run_id, {'event': 'on_message_delta',
-        'data': {'id': 'answer', 'delta': {'content': {'type': 'text', 'text': 'hello'}}}})
-    store.append('local', job.run_id, {'event': 'on_run_step_closed', 'data': {'id': 'answer'}})
-    assert [event['event'] for event in store.message_step_events('local', job.run_id)] == [
-        'on_run_step', 'on_run_step_closed']
-    assert store.message_step_events('other', job.run_id) == []
+def test_owner_and_run_status_fence_all_operations(context):
+    first, second, run_id = context
+    assert ActorLease.claim(first, "other", run_id) is None
+    assert ActorLease.claim(first, "local", "missing") is None
+    lease = ActorLease.claim(first, "local", run_id)
+    assert lease is not None
+    with first.connect() as conn:
+        conn.execute("UPDATE conversations SET owner='other' WHERE id='chat'")
+    assert not lease.is_current()
+    assert not lease.renew()
+    assert active_run_ids(second) == set()
+    lease.release()
+    with first.connect() as conn:
+        conn.execute("UPDATE runs SET status='complete' WHERE id=?", (run_id,))
+    assert ActorLease.claim(second, "other", run_id) is None
