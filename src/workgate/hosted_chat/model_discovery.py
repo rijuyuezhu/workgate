@@ -9,7 +9,6 @@ import asyncio
 import json
 import logging
 import re
-import time
 
 import httpx
 
@@ -19,7 +18,11 @@ from .provider_profiles import (
     _DEFAULTS,
     _OWNER,
     _PREFIX,
+    _SYNC_ERROR,
+    ChannelConflict,
     ProviderRepository,
+    _apply_catalog,
+    _validate,
     validate_connection,
 )
 
@@ -274,32 +277,6 @@ async def discover_models(repo: ProviderRepository, body: dict) -> dict:
 
 
 REFRESH_INTERVAL = 600
-_SYNC_ERROR = (
-    "Unable to refresh model information. Last successful data is retained."
-)
-
-
-def _apply_catalog(value: dict, catalog: dict, overrides: dict) -> None:
-    models = catalog["models"]
-    reported = {
-        m: n for m, n in catalog["model_contexts"].items() if m in models
-    }
-    overrides = {m: n for m, n in overrides.items() if m in models}
-    value.update(
-        models=models,
-        discovered_model_contexts=reported,
-        model_context_overrides=overrides,
-        model_contexts={**reported, **overrides},
-        model_sync_at=time.time(),
-        model_sync_error=None,
-    )
-    # Only active models need defaults in the editable catalog. Historical
-    # conversations and Agent references are not rewritten.
-    value["model_sampling"] = {
-        m: v
-        for m, v in (value.get("model_sampling") or {}).items()
-        if m in models
-    }
 
 
 async def prepare_auto_save(
@@ -347,24 +324,27 @@ async def prepare_auto_save(
         ) from None
 
 
-def apply_auto_save(value: dict, previous: dict, catalog: dict | None) -> None:
-    overrides = value["model_contexts"]
-    if catalog is not None:
-        _apply_catalog(value, catalog, overrides)
-        return
-    if previous.get("auto_discover") is True:
-        reported = previous.get("discovered_model_contexts") or {}
-    else:
-        # An old/manual list is a valid fallback, not discovered metadata.
-        reported = {}
-        overrides = {**(previous.get("model_contexts") or {}), **overrides}
-    _apply_catalog(
-        value,
-        {"models": previous["models"], "model_contexts": reported},
-        overrides,
-    )
-    value["model_sync_at"] = previous.get("model_sync_at")
-    value["model_sync_error"] = _SYNC_ERROR
+async def save_discovered(repo: ProviderRepository, body: dict) -> dict:
+    """Probe outside the write transaction, then commit the exact snapshot."""
+    value = _validate(body)
+    if not value["auto_discover"]:
+        return repo._save_validated(body, value)
+    old_name, key, previous_key = repo._save_keys(body, value)
+    with repo.database.read_snapshot() as db:
+        row = db.execute(
+            "SELECT value FROM settings WHERE owner=? AND key=?",
+            (_OWNER, previous_key),
+        ).fetchone()
+    raw = row[0] if row is not None else None
+    previous = json.loads(raw) if raw is not None else {}
+    if old_name is not None and key != previous_key and raw is None:
+        raise KeyError("Original channel no longer exists")
+    if previous and previous["provider"] != value["provider"]:
+        raise ChannelConflict(
+            "Existing channel provider type cannot be changed"
+        )
+    catalog = await prepare_auto_save(repo, value, previous)
+    return repo._save_validated(body, value, prepared=(raw, catalog))
 
 
 async def _refresh_snapshot(

@@ -7,6 +7,7 @@ and enforce the configured network policy before making provider requests.
 import json
 import re
 import sqlite3
+import time
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit, urlunsplit
 
@@ -265,6 +266,54 @@ class ChannelConflict(ValueError):
         self.can_force = can_force
 
 
+_SYNC_ERROR = (
+    "Unable to refresh model information. Last successful data is retained."
+)
+
+
+def _apply_catalog(value: dict, catalog: dict, overrides: dict) -> None:
+    models = catalog["models"]
+    reported = {
+        m: n for m, n in catalog["model_contexts"].items() if m in models
+    }
+    overrides = {m: n for m, n in overrides.items() if m in models}
+    value.update(
+        models=models,
+        discovered_model_contexts=reported,
+        model_context_overrides=overrides,
+        model_contexts={**reported, **overrides},
+        model_sync_at=time.time(),
+        model_sync_error=None,
+    )
+    # Only active models need defaults in the editable catalog. Historical
+    # conversations and Agent references are not rewritten.
+    value["model_sampling"] = {
+        m: v
+        for m, v in (value.get("model_sampling") or {}).items()
+        if m in models
+    }
+
+
+def apply_auto_save(value: dict, previous: dict, catalog: dict | None) -> None:
+    overrides = value["model_contexts"]
+    if catalog is not None:
+        _apply_catalog(value, catalog, overrides)
+        return
+    if previous.get("auto_discover") is True:
+        reported = previous.get("discovered_model_contexts") or {}
+    else:
+        # An old/manual list is a valid fallback, not discovered metadata.
+        reported = {}
+        overrides = {**(previous.get("model_contexts") or {}), **overrides}
+    _apply_catalog(
+        value,
+        {"models": previous["models"], "model_contexts": reported},
+        overrides,
+    )
+    value["model_sync_at"] = previous.get("model_sync_at")
+    value["model_sync_error"] = _SYNC_ERROR
+
+
 class ProviderRepository:
     def __init__(
         self, database: SQLiteDatabase, cipher: CredentialCipher
@@ -381,30 +430,6 @@ class ProviderRepository:
             )
         return self._save_validated(body, value)
 
-    async def save_discovered(self, body: dict) -> dict:
-        """Probe outside the write transaction, then commit the exact snapshot."""
-        from .model_discovery import prepare_auto_save
-
-        value = _validate(body)
-        if not value["auto_discover"]:
-            return self._save_validated(body, value)
-        old_name, key, previous_key = self._save_keys(body, value)
-        with self.database.read_snapshot() as db:
-            row = db.execute(
-                "SELECT value FROM settings WHERE owner=? AND key=?",
-                (_OWNER, previous_key),
-            ).fetchone()
-        raw = row[0] if row is not None else None
-        previous = json.loads(raw) if raw is not None else {}
-        if old_name is not None and key != previous_key and raw is None:
-            raise KeyError("Original channel no longer exists")
-        if previous and previous["provider"] != value["provider"]:
-            raise ChannelConflict(
-                "Existing channel provider type cannot be changed"
-            )
-        catalog = await prepare_auto_save(self, value, previous)
-        return self._save_validated(body, value, prepared=(raw, catalog))
-
     def _save_validated(
         self,
         body: dict,
@@ -496,8 +521,6 @@ class ProviderRepository:
                     if value["auto_discover"] or model in value["models"]
                 }
             if prepared is not None:
-                from .model_discovery import apply_auto_save
-
                 apply_auto_save(value, previous, prepared[1])
             db.execute(
                 "INSERT INTO settings(owner,key,value) VALUES(?,?,?) ON CONFLICT(owner,key) DO UPDATE SET value=excluded.value",

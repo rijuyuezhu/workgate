@@ -357,7 +357,9 @@ async def test_auto_save_fallback_requires_same_connection(
 
     value = _validate(body)
     assert await discovery.prepare_auto_save(profiles, value, previous) is None
-    discovery.apply_auto_save(value, previous, None)
+    from workgate.hosted_chat.provider_profiles import apply_auto_save
+
+    apply_auto_save(value, previous, None)
     assert (
         value["model_sync_at"] == 1
         and value["model_sync_error"] == discovery._SYNC_ERROR
@@ -387,13 +389,14 @@ async def test_auto_save_catalog_and_stale_write(profiles, monkeypatch):
         }
 
     monkeypatch.setattr(discovery, "_fetch_models", success)
-    await profiles.save_discovered(
+    await discovery.save_discovered(
+        profiles,
         profile_body(
             auto_discover=True,
             api_key="stored-secret",
             model_contexts={"old": 4096},
             model_sampling={"old": {"temperature": 0}},
-        )
+        ),
     )
     current = profiles.profile("Local")
     assert current["models"] == ["old", "new"]
@@ -407,12 +410,13 @@ async def test_auto_save_catalog_and_stale_write(profiles, monkeypatch):
         raise httpx.ConnectError("offline")
 
     monkeypatch.setattr(discovery, "_fetch_models", unavailable)
-    await profiles.save_discovered(
+    await discovery.save_discovered(
+        profiles,
         profile_body(
             auto_discover=True,
             models=["old", "new"],
             model_contexts={"old": 4096},
-        )
+        ),
     )
     saved = profiles.profile("Local")
     assert saved["model_sync_at"] == current["model_sync_at"]
@@ -426,7 +430,9 @@ async def test_auto_save_catalog_and_stale_write(profiles, monkeypatch):
 
     monkeypatch.setattr(discovery, "_fetch_models", stale)
     with pytest.raises(ChannelConflict, match="changed during discovery"):
-        await profiles.save_discovered(profile_body(auto_discover=True))
+        await discovery.save_discovered(
+            profiles, profile_body(auto_discover=True)
+        )
     assert profiles.profile("Local")["models"] == ["manual"]
     assert profiles.profile("Local")["api_key"] == "changed"
 
@@ -517,7 +523,7 @@ async def test_auto_save_manual_fallback_and_keyless_discovery(
         raise httpx.ConnectError("offline")
 
     monkeypatch.setattr(discovery, "_fetch_models", unavailable)
-    await profiles.save_discovered(profile_body(auto_discover=True))
+    await discovery.save_discovered(profiles, profile_body(auto_discover=True))
     saved = profiles.profile("Local")
     assert saved["models"] == ["old"]
     assert saved["model_contexts"] == {"old": 4096}
@@ -529,8 +535,8 @@ async def test_auto_save_manual_fallback_and_keyless_discovery(
         return {"models": ["new"], "model_contexts": {}}
 
     monkeypatch.setattr(discovery, "_fetch_models", fetch)
-    await profiles.save_discovered(
-        profile_body(auto_discover=True, keyless=True)
+    await discovery.save_discovered(
+        profiles, profile_body(auto_discover=True, keyless=True)
     )
     assert not profiles.profile("Local").get("api_key")
     assert profiles.profile("Local")["models"] == ["new"]
