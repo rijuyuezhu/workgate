@@ -2632,21 +2632,25 @@ async def test_job_tail_preserves_running_state_when_live_shell_capture_fails(
 
 
 @pytest.mark.asyncio
-async def test_job_tail_marks_lost_only_after_authoritative_shell_absence(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("receipt_during_capture", [True, False])
+async def test_job_tail_reconciles_disappearing_shell(
+    tmp_path, monkeypatch, receipt_during_capture
 ):
     _configure_job_state(tmp_path, monkeypatch)
     session_id = _create_session(str(tmp_path))
+    log = tmp_path / "job.log"
+    receipt = tmp_path / "job.json"
     row = {
         "job_id": "job_running",
         "kind": "shell",
         "name": "running",
         "status": "running",
-        "command": "sleep 60",
+        "command": "echo done",
         "cwd": str(tmp_path),
         "session_id": session_id,
         "shell_id": "shell_running",
-        "log_path": str(tmp_path / "missing.log"),
+        "log_path": str(log),
+        "status_path": str(receipt),
         "created_at": 1.0,
         "updated_at": 1.0,
         "attempts": 1,
@@ -2654,28 +2658,48 @@ async def test_job_tail_marks_lost_only_after_authoritative_shell_absence(
     job_persistence.save_store(
         {"version": job_persistence.JOB_STORE_VERSION, "jobs": [row]}
     )
+    active = True
 
-    async def absent_inventory(*_args):
-        return set()
+    async def inventory(*_args):
+        return {"shell_running"} if active else set()
+
+    def complete():
+        log.write_text("done\n", encoding="utf-8")
+        receipt.write_text(
+            json.dumps({"exit_code": 0, "completed_at": 3.0}),
+            encoding="utf-8",
+        )
 
     async def failed_tail(_config, _shell_id: str, _lines: int):
+        nonlocal active
+        active = False
+        if receipt_during_capture:
+            complete()
         raise RuntimeError("shell disappeared")
 
     monkeypatch.setattr(
         job_shell,
         "authoritative_persistent_shell_ids_execute",
-        absent_inventory,
+        inventory,
     )
     monkeypatch.setattr(
         job_shell, "read_persistent_shell_output_execute", failed_tail
     )
 
     result = await _test_job_tail_execute(session_id, "job_running")
+    if not receipt_during_capture:
+        assert result.job.status == "lost"
+        assert (
+            _load_store_untyped()["jobs"][0]["shell_absence_confirmed"] is True
+        )
+        complete()
+        result = await _test_job_tail_execute(session_id, "job_running")
+    assert result.job.status == "succeeded"
+    assert result.job.exit_code == 0
+    assert result.output.strip() == "done"
     stored = _load_store_untyped()["jobs"][0]
-
-    assert result.job.status == "lost"
-    assert stored["status"] == "lost"
-    assert stored["shell_absence_confirmed"] is True
+    assert stored["status"] == "succeeded"
+    assert "shell_absence_confirmed" not in stored
 
 
 def test_refresh_lost_shell_job_recovers_live_shell():
