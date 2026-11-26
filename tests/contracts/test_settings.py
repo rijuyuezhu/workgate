@@ -111,6 +111,35 @@ def test_settings_rejects_non_mapping_config(tmp_path):
         raise AssertionError("expected ValueError")
 
 
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        (
+            b"port: 8001\n1: value\nunknown: other\n",
+            "Config keys must be strings",
+        ),
+        (b"true: value\n", "Config keys must be strings"),
+        (
+            b"oauth_admin_pin: [private-test-value\n",
+            "Invalid YAML configuration",
+        ),
+        (b"port: \xff\n", "Invalid UTF-8 configuration"),
+    ],
+)
+def test_invalid_config_reports_path_without_yaml_excerpt(
+    tmp_path, content, message
+):
+    config = tmp_path / "config.yaml"
+    config.write_bytes(content)
+    with pytest.raises(ValueError, match=message) as error:
+        load_settings(config)
+    assert str(config) in str(error.value)
+    assert "private-test-value" not in str(error.value)
+    if message.startswith("Invalid YAML"):
+        assert "line " in str(error.value)
+        assert "column " in str(error.value)
+
+
 def test_config_file_rejects_nested_unknown_keys(monkeypatch, tmp_path):
     config = tmp_path / "config.yaml"
     config.write_text(

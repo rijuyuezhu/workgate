@@ -460,6 +460,39 @@ class LoadedConfigFile:
     names: frozenset[str]
 
 
+def _parse_config_mapping(
+    content: bytes, path: Path | None = None
+) -> dict[str, Any]:
+    """Parse a flat Settings mapping without exposing YAML source excerpts."""
+    location = f": {path}" if path is not None else ""
+    try:
+        loaded = yaml.safe_load(content.decode("utf-8"))
+    except UnicodeError:
+        raise ValueError(f"Invalid UTF-8 configuration{location}") from None
+    except yaml.YAMLError as exc:
+        mark = getattr(exc, "problem_mark", None)
+        position = (
+            f" (line {mark.line + 1}, column {mark.column + 1})"
+            if mark is not None
+            else ""
+        )
+        raise ValueError(
+            f"Invalid YAML configuration{location}{position}"
+        ) from None
+    if loaded is None:
+        return {}
+    if not isinstance(loaded, dict):
+        raise ValueError(f"Config file must contain a mapping{location}")
+    if not all(isinstance(key, str) for key in loaded):
+        raise ValueError(f"Config keys must be strings{location}")
+    unknown = loaded.keys() - Settings.model_fields.keys()
+    if unknown:
+        raise ValueError(
+            f"Unknown config settings{location}: {sorted(unknown)}"
+        )
+    return loaded
+
+
 def read_config_file(
     path: str | Path | None,
     *,
@@ -470,21 +503,10 @@ def read_config_file(
     if not path:
         return {}
     config_path = Path(path).expanduser()
-    loaded = yaml.safe_load(
-        source_bytes.decode("utf-8")
-        if source_bytes is not None
-        else config_path.read_text()
+    loaded = _parse_config_mapping(
+        source_bytes if source_bytes is not None else config_path.read_bytes(),
+        config_path,
     )
-    if loaded is None:
-        return {}
-    if not isinstance(loaded, dict):
-        raise ValueError(f"Config file must contain a mapping: {config_path}")
-    known = frozenset(Settings.model_fields)
-    unknown = frozenset(loaded) - known
-    if unknown:
-        raise ValueError(
-            f"Unknown config settings in {config_path}: {sorted(unknown)}"
-        )
     selected = _selected_setting_names(setting_names)
     loaded = {name: value for name, value in loaded.items() if name in selected}
     for name in _CONFIG_PATH_FIELDS.intersection(loaded):

@@ -15,7 +15,12 @@ from pydantic import ValidationError
 
 from ..utils.private_files import atomic_write_private_bytes, private_file_lock
 from .roles import CONTROL_SETTING_NAMES, EXECUTOR_SETTING_NAMES
-from .settings import _CONFIG_PATH_FIELDS, Settings, _default_setting_values
+from .settings import (
+    _CONFIG_PATH_FIELDS,
+    Settings,
+    _default_setting_values,
+    _parse_config_mapping,
+)
 
 
 class ConfigSnapshot(Protocol):
@@ -76,16 +81,9 @@ def revision_for(snapshot: ConfigSnapshot) -> str | None:
 
 def _mapping(content: bytes) -> dict[str, Any]:
     try:
-        data = yaml.safe_load(content.decode("utf-8"))
-    except (UnicodeError, yaml.YAMLError, ValueError) as exc:
-        raise ConfigEditError("InvalidConfigFile", 409) from exc
-    if data is None:
-        return {}
-    if not isinstance(data, dict) or not all(isinstance(k, str) for k in data):
-        raise ConfigEditError("InvalidConfigFile", 409)
-    if data.keys() - Settings.model_fields.keys():
-        raise ConfigEditError("InvalidConfigFile", 409)
-    return data
+        return _parse_config_mapping(content)
+    except ValueError:
+        raise ConfigEditError("InvalidConfigFile", 409) from None
 
 
 def _validate(snapshot: ConfigSnapshot, candidate: dict[str, Any]) -> None:
