@@ -314,3 +314,183 @@ async def test_catalog_rejects_old_access_token(repo, monkeypatch):
         "model_contexts": {},
     }
     assert calls == ["mock-access", "new-access"]
+
+
+async def test_account_catalog_refresh_reuses_single_discovery_service(
+    repo, monkeypatch
+):
+    from workgate.hosted_chat import model_discovery
+
+    await accounts.save_account(repo, "chatgpt", "Account", credentials())
+    before = repo.profile("Account")
+    body = {
+        "name": "Account",
+        "provider": "openai-responses",
+        "base_url": model_oauth.RESOURCE,
+        "models": ["model"],
+        "auto_discover": True,
+        "model_contexts": {"model": 4096},
+        "model_sampling": {"model": {"temperature": 0.3}},
+    }
+    accounts.update_account(repo, body)
+    before = repo.profile("Account")
+    calls = []
+
+    async def refresh(self, previous):
+        return {
+            **previous,
+            "access_token": "rotated",
+            "refresh_token": "rotated-refresh",
+            "expires_at": time.time() + 3600,
+        }
+
+    async def catalog(self, token):
+        calls.append(token)
+        return {
+            "models": ["model", "new"],
+            "model_contexts": {"model": 65536, "new": 32768},
+        }
+
+    monkeypatch.setattr(model_oauth.ChatGPTAuthorization, "refresh", refresh)
+    monkeypatch.setattr(model_oauth.ChatGPTAuthorization, "catalog", catalog)
+    # Account activity is explicitly disabled unless its runtime provides the
+    # accepted callback. No hidden token request or background service.
+    await model_discovery.refresh_model_channels(repo)
+    assert not calls
+    with pytest.raises(ValueError, match="account authorization"):
+        await model_discovery.refresh_model_channel(repo, "Account")
+    await model_discovery.refresh_model_channels(
+        repo, account_refresh=accounts.refresh_account_snapshot
+    )
+    current = repo.profile("Account")
+    assert calls == ["rotated"]
+    assert current["oauth_credentials"] != before["oauth_credentials"]
+    assert current["models"] == ["model", "new"]
+    assert current["model_contexts"] == {"model": 4096, "new": 32768}
+    assert current["model_sampling"] == {"model": {"temperature": 0.3}}
+
+    async def failed(self, token):
+        raise httpx.ConnectError("private provider diagnostic")
+
+    monkeypatch.setattr(model_oauth.ChatGPTAuthorization, "catalog", failed)
+    await model_discovery.refresh_model_channel(
+        repo, "Account", account_refresh=accounts.refresh_account_snapshot
+    )
+    retained = repo.profile("Account")
+    assert retained["model_sync_at"] == current["model_sync_at"]
+    assert retained["models"] == current["models"]
+    assert retained["oauth_credentials"] == current["oauth_credentials"]
+    assert retained["model_sync_error"] == model_discovery._SYNC_ERROR
+
+
+@pytest.mark.parametrize("change", ["edit", "delete", "reauthorize"])
+async def test_account_catalog_cas_rejects_stale_result(
+    repo, monkeypatch, change
+):
+    await accounts.save_account(
+        repo, "chatgpt", "Account", credentials(expires_at=time.time() + 3600)
+    )
+    before = repo.profile("Account")
+    with repo.database.read_snapshot() as db:
+        raw = db.execute(
+            "SELECT value FROM settings WHERE key='model.channel.Account'"
+        ).fetchone()[0]
+
+    async def catalog(self, token):
+        if change == "edit":
+            accounts.update_account(
+                repo,
+                {
+                    "name": "Account",
+                    "provider": "openai-responses",
+                    "base_url": model_oauth.RESOURCE,
+                    "models": ["manual"],
+                    "auto_discover": False,
+                },
+            )
+        elif change == "delete":
+            repo.delete(name="Account")
+        else:
+
+            async def replacement_catalog(self, token):
+                return {"models": ["reauthorized"], "model_contexts": {}}
+
+            monkeypatch.setattr(
+                model_oauth.ChatGPTAuthorization, "catalog", replacement_catalog
+            )
+            await accounts.save_account(
+                repo,
+                "chatgpt",
+                "Account",
+                credentials(expires_at=time.time() + 3600),
+                original=before,
+            )
+        return {"models": ["stale"], "model_contexts": {}}
+
+    monkeypatch.setattr(model_oauth.ChatGPTAuthorization, "catalog", catalog)
+    assert not await accounts.refresh_account_snapshot(
+        repo, "model.channel.Account", raw
+    )
+    if change == "delete":
+        with pytest.raises(ValueError, match="Unknown"):
+            repo.profile("Account")
+    else:
+        assert repo.profile("Account")["models"] == [
+            "manual" if change == "edit" else "reauthorized"
+        ]
+
+
+async def test_active_and_expired_refresh_lease_fences_completion(
+    repo, monkeypatch
+):
+    await accounts.save_account(repo, "chatgpt", "Account", credentials())
+    value = repo.profile("Account")
+    lease = "model.oauth.refresh." + value["oauth_id"]
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def refresh(self, previous):
+        entered.set()
+        await release.wait()
+        return {
+            **previous,
+            "access_token": "late-token",
+            "expires_at": time.time() + 3600,
+        }
+
+    monkeypatch.setattr(model_oauth.ChatGPTAuthorization, "refresh", refresh)
+    task = asyncio.create_task(
+        accounts.access_token(repo, "Account", value["oauth_id"])
+    )
+    try:
+        await entered.wait()
+        with pytest.raises(ChannelConflict, match="busy"):
+            await accounts.save_account(
+                repo, "chatgpt", "Account", credentials(), original=value
+            )
+        monkeypatch.setattr(accounts, "_REFRESH_WAIT_S", 0)
+        with pytest.raises(ValueError, match="busy"):
+            await accounts.access_token(repo, "Account", value["oauth_id"])
+        with repo.database.connect() as db:
+            active = accounts._lease_row(db, lease)
+            assert active is not None
+            accounts._store_value(
+                db, lease, {**active, "until": time.time() - 1}
+            )
+        with pytest.raises(
+            model_oauth.ReauthorizationRequired, match="interrupted"
+        ):
+            await accounts.access_token(repo, "Account", value["oauth_id"])
+        release.set()
+        with pytest.raises(
+            model_oauth.ReauthorizationRequired, match="changed"
+        ):
+            await task
+        current = repo.profile("Account")
+        assert current["oauth_credentials"] == value["oauth_credentials"]
+        assert current["oauth_error"] == accounts._REAUTHORIZE
+    finally:
+        release.set()
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)

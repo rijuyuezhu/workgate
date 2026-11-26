@@ -18,6 +18,7 @@ from .model_oauth import ReauthorizationRequired, adapter
 from .provider_profiles import (
     _CHANNEL_PREFIX,
     _OWNER,
+    _SYNC_ERROR,
     ChannelConflict,
     ProviderRepository,
     _apply_catalog,
@@ -32,7 +33,10 @@ _REAUTHORIZE = "Account credential refresh was interrupted; sign in again"
 
 
 def check_binding(value: dict):
-    auth = adapter(value.get("auth_method"))
+    method = value.get("auth_method")
+    if not isinstance(method, str):
+        raise ReauthorizationRequired("Invalid account authorization method")
+    auth = adapter(method)
     if (value.get("provider"), value.get("base_url")) != (
         auth.protocol,
         auth.base_url,
@@ -178,52 +182,47 @@ async def access_token(
 
     updated = None
     encrypted = None
-    error = None
+    error = _REAUTHORIZE
     try:
-        try:
-            async with asyncio.timeout(_REFRESH_TIMEOUT_S):
-                updated = await auth.refresh(credentials)
-            encrypted = seal(repo, value, updated)
-        except BaseException as exc:
-            # Rotation may already have happened even if its reply was lost.
-            # Preserve the last encrypted record and require reauthorization.
-            error = _REAUTHORIZE
-            if isinstance(exc, ReauthorizationRequired):
-                error = "Account authorization expired; sign in again"
-            raise
-        finally:
-            with repo.database.connect() as db:
-                db.execute("BEGIN IMMEDIATE")
-                row = _account_row(db, identity)
-                current = json.loads(row["value"]) if row else {}
-                active = _lease_row(db, lease)
-                owns_lease = active is not None and active["owner"] == lock_id
-                unchanged = (
-                    current.get("oauth_id") == identity
+        async with asyncio.timeout(_REFRESH_TIMEOUT_S):
+            updated = await auth.refresh(credentials)
+        encrypted = seal(repo, value, updated)
+        error = None
+    except ReauthorizationRequired:
+        error = "Account authorization expired; sign in again"
+        raise ReauthorizationRequired(error) from None
+    except httpx.HTTPError, TimeoutError, ValueError:
+        raise ReauthorizationRequired(_REAUTHORIZE) from None
+    finally:
+        # Even cancellation and unexpected failures may follow a successful
+        # remote rotation. Never replay the uncertain old refresh token.
+        with repo.database.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = _account_row(db, identity)
+            current = json.loads(row["value"]) if row else {}
+            active = _lease_row(db, lease)
+            accepted = False
+            if active is not None and active["owner"] == lock_id:
+                if (
+                    row is not None
                     and current.get("oauth_credentials")
                     == value["oauth_credentials"]
-                )
-                if owns_lease and unchanged:
+                ):
                     if error is not None or active["until"] <= time.time():
                         current["oauth_error"] = error or _REAUTHORIZE
                     else:
                         current["oauth_credentials"] = encrypted
+                        accepted = True
                     _store_value(db, row["key"], current)
-                if owns_lease:
-                    db.execute(
-                        "DELETE FROM settings WHERE owner=? AND key=?",
-                        (_OWNER, lease),
-                    )
-                accepted = (
-                    owns_lease and unchanged and not current.get("oauth_error")
+                db.execute(
+                    "DELETE FROM settings WHERE owner=? AND key=?",
+                    (_OWNER, lease),
                 )
-        if not accepted or updated is None:
-            raise ReauthorizationRequired(
-                "Account channel changed during credential refresh"
-            )
-        return updated["access_token"]
-    except httpx.HTTPError, TimeoutError:
-        raise ReauthorizationRequired(_REAUTHORIZE) from None
+    if not accepted or updated is None:
+        raise ReauthorizationRequired(
+            "Account channel changed during credential refresh"
+        )
+    return updated["access_token"]
 
 
 async def catalog_for(
@@ -242,6 +241,45 @@ async def catalog_for(
         repo, value["name"], value["oauth_id"], rejected=token
     )
     return await auth.catalog(token)
+
+
+def _catalog_snapshot(value: dict) -> dict:
+    # Refresh may replace ciphertext without changing the configured account
+    # or the catalog. All other concurrent edits invalidate the pending reply.
+    return {
+        key: item
+        for key, item in value.items()
+        if key not in {"oauth_credentials", "oauth_error"}
+    }
+
+
+async def refresh_account_snapshot(
+    repo: ProviderRepository, key: str, raw: str
+) -> bool:
+    value = json.loads(raw)
+    if value.get("auto_discover") is not True or not value.get("oauth_id"):
+        return False
+    try:
+        catalog = await catalog_for(repo, value)
+    except httpx.HTTPError, TimeoutError, ValueError, UnicodeError:
+        catalog = None
+    with repo.database.connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        current = repo._read(db, key)
+        if current is None or _catalog_snapshot(current) != _catalog_snapshot(
+            value
+        ):
+            return False
+        if catalog is None:
+            current["model_sync_error"] = _SYNC_ERROR
+        elif current.get("oauth_error"):
+            return False
+        else:
+            _apply_catalog(
+                current, catalog, current.get("model_context_overrides") or {}
+            )
+        _store_value(db, key, current)
+    return True
 
 
 async def save_account(
@@ -284,6 +322,13 @@ async def save_account(
             ):
                 raise ChannelConflict(
                     "Account channel changed during authorization"
+                )
+            active = _lease_row(
+                db, "model.oauth.refresh." + current["oauth_id"]
+            )
+            if active is not None and active["until"] > time.time():
+                raise ChannelConflict(
+                    "Account credential refresh is busy; retry authorization"
                 )
             prior = unseal(repo, current)
             if (
@@ -379,10 +424,15 @@ def update_account(repo: ProviderRepository, body: dict) -> dict:
             value["model_sampling"] = {
                 m: v
                 for m, v in (previous.get("model_sampling") or {}).items()
-                if m in value["models"]
+                if value["auto_discover"] or m in value["models"]
             }
         if value["auto_discover"]:
             overrides = value["model_contexts"]
+            if previous.get("auto_discover") is not True:
+                overrides = {
+                    **(previous.get("model_contexts") or {}),
+                    **overrides,
+                }
             _apply_catalog(
                 value,
                 {

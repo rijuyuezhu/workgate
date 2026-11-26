@@ -564,6 +564,12 @@ class ProviderRepository:
                     "Channel is referenced by " + ", ".join(references),
                     can_force=legacy_provider is None,
                 )
+            current = self._read(db, key)
+            if current and current.get("oauth_id"):
+                db.execute(
+                    "DELETE FROM settings WHERE owner=? AND key=?",
+                    (_OWNER, "model.oauth.refresh." + current["oauth_id"]),
+                )
             db.execute(
                 "DELETE FROM settings WHERE owner=? AND key=?", (_OWNER, key)
             )

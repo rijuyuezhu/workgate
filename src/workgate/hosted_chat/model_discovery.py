@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import re
+from collections.abc import Awaitable, Callable
 
 import httpx
 
@@ -379,7 +380,25 @@ async def _refresh_snapshot(
         return cursor.rowcount == 1
 
 
-async def refresh_model_channels(repo: ProviderRepository) -> None:
+AccountRefresh = Callable[[ProviderRepository, str, str], Awaitable[bool]]
+
+
+async def _refresh_channel_snapshot(
+    repo: ProviderRepository,
+    key: str,
+    raw: str,
+    account_refresh: AccountRefresh | None,
+) -> bool:
+    if json.loads(raw).get("oauth_id"):
+        if account_refresh is None:
+            return False
+        return await account_refresh(repo, key, raw)
+    return await _refresh_snapshot(repo, key, raw)
+
+
+async def refresh_model_channels(
+    repo: ProviderRepository, *, account_refresh: AccountRefresh | None = None
+) -> None:
     with repo.database.read_snapshot() as db:
         rows = db.execute(
             "SELECT key,value FROM settings WHERE owner=? AND (key LIKE ? OR key LIKE ?) AND json_extract(value,'$.auto_discover')=1",
@@ -389,7 +408,9 @@ async def refresh_model_channels(repo: ProviderRepository) -> None:
 
     async def refresh(row):
         async with semaphore:
-            await _refresh_snapshot(repo, row["key"], row["value"])
+            await _refresh_channel_snapshot(
+                repo, row["key"], row["value"], account_refresh
+            )
 
     results = await asyncio.gather(
         *(refresh(row) for row in rows), return_exceptions=True
@@ -401,10 +422,17 @@ async def refresh_model_channels(repo: ProviderRepository) -> None:
             )
 
 
-async def serve_model_refresh(repo: ProviderRepository) -> None:
+async def serve_model_refresh(
+    repo: ProviderRepository, *, account_refresh: AccountRefresh | None = None
+) -> None:
     while True:
         try:
-            await refresh_model_channels(repo)
+            if account_refresh is None:
+                await refresh_model_channels(repo)
+            else:
+                await refresh_model_channels(
+                    repo, account_refresh=account_refresh
+                )
         except Exception as exc:
             logger.warning(
                 "Model catalog refresh cycle failed: %s", type(exc).__name__
@@ -412,7 +440,12 @@ async def serve_model_refresh(repo: ProviderRepository) -> None:
         await asyncio.sleep(REFRESH_INTERVAL)
 
 
-async def refresh_model_channel(repo: ProviderRepository, channel: str) -> dict:
+async def refresh_model_channel(
+    repo: ProviderRepository,
+    channel: str,
+    *,
+    account_refresh: AccountRefresh | None = None,
+) -> dict:
     if not isinstance(channel, str):
         raise ValueError("Specify a saved channel")
     key = (
@@ -424,8 +457,11 @@ async def refresh_model_channel(repo: ProviderRepository, channel: str) -> dict:
         ).fetchone()
     if row is None:
         raise KeyError("Channel not found")
-    if json.loads(row[0]).get("auto_discover") is not True:
+    value = json.loads(row[0])
+    if value.get("auto_discover") is not True:
         raise ValueError("Automatic model discovery is disabled")
-    if not await _refresh_snapshot(repo, key, row[0]):
+    if value.get("oauth_id") and account_refresh is None:
+        raise ValueError("Account discovery requires account authorization")
+    if not await _refresh_channel_snapshot(repo, key, row[0], account_refresh):
         raise ValueError("Channel changed during refresh; retry")
     return repo.public_profiles()
