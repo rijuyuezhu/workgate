@@ -6,7 +6,7 @@ from typing import Any
 
 from ..config.executor import ExecutorConfig
 from ..telemetry.system import local_system_snapshot
-from ..version import version_info
+from ..version import diagnostic_version_info
 from .path import resolve_default_workdir
 
 _MAX_ALERTS = 12
@@ -60,7 +60,7 @@ def dashboard_snapshot(config: ExecutorConfig) -> dict[str, Any]:
     return {
         "generated_at": time.time(),
         "health": health,
-        "version": version_info(),
+        "version": diagnostic_version_info(),
         "system": system,
         "alerts": alerts,
         "sources": {"system": "ok"},

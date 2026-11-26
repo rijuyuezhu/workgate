@@ -27,6 +27,13 @@ def version_info() -> dict[str, Any]:
     }
 
 
+def diagnostic_version_info() -> dict[str, Any]:
+    """Report optional provenance only on authenticated diagnostic surfaces."""
+    from .build_info import build_info
+
+    return {**version_info(), **build_info()}
+
+
 def format_version_info(info: dict[str, Any] | None = None) -> str:
     """Return the human-readable CLI version string."""
     data = version_info() if info is None else info

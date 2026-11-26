@@ -42,6 +42,9 @@ function SystemDetails({ snapshot }: { snapshot: Snapshot }) {
   const version = record(snapshot?.version);
   const load = numeric(system.load_1m);
   const details = [
+    ...(typeof version.commit === "string" && version.commit ? [["Source commit", "dashboard-commit", version.commit]] : []),
+    ...(typeof version.branch === "string" && version.branch ? [["Branch", "dashboard-branch", version.branch]] : []),
+    ...(typeof version.build_date === "string" && version.build_date ? [["Build date", "dashboard-build-date", version.build_date]] : []),
     ["Platform", "dashboard-platform", text(version.platform)],
     ["Python", "dashboard-python", text(version.python)],
     ["CPUs", "dashboard-cpu-count", text(system.cpu_count)],
