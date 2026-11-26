@@ -8,6 +8,7 @@ import asyncio
 import ipaddress
 import socket
 from typing import cast
+from urllib.parse import urlsplit
 
 import httpcore
 import httpx
@@ -49,6 +50,49 @@ def _allowed_ip(
     if https:
         return address.is_global or private
     return private_http and private
+
+
+def validate_provider_endpoint(
+    value: str, *, allow_private_http: bool = False
+) -> None:
+    """Validate the configured URL and literal IPs without making a request."""
+    if (
+        type(allow_private_http) is not bool
+        or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in value)
+        or "\\" in value
+    ):
+        raise ValueError("Invalid model provider URL")
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        raise ValueError("Invalid model provider URL") from None
+    if (
+        not host
+        or parsed.scheme not in {"http", "https"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or "#" in value
+        or "?" in value
+        or port == 0
+        or "%" in host
+    ):
+        raise ValueError("Invalid model provider URL")
+    https = parsed.scheme == "https"
+    loopback = host in _LOOPBACK_NAMES
+    if not (https or loopback or allow_private_http):
+        raise ValueError("Private HTTP provider requires explicit opt-in")
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return  # DNS addresses must be checked at dial time.
+    if not _allowed_ip(
+        host, loopback=loopback, private_http=allow_private_http, https=https
+    ):
+        raise ValueError(
+            "Provider destination is outside the configured network policy"
+        )
 
 
 def _resolved_ips(
@@ -156,25 +200,11 @@ class ProviderHTTPTransport(httpx.AsyncHTTPTransport):
     """HTTPX transport limited to the configured provider origin and vetted IPs."""
 
     def __init__(self, base_url: str, *, allow_private_http: bool = False):
+        validate_provider_endpoint(
+            base_url, allow_private_http=allow_private_http
+        )
         url = httpx.URL(base_url)
         scheme, host, port = _origin(url)
-        if (
-            not host
-            or scheme not in {"https", "http"}
-            or url.username
-            or url.password
-            or url.fragment
-            or url.query
-            or url.port == 0
-            or type(allow_private_http) is not bool
-        ):
-            raise ValueError("Invalid provider origin")
-        if (
-            scheme == "http"
-            and host not in _LOOPBACK_NAMES
-            and not allow_private_http
-        ):
-            raise ValueError("Private HTTP provider requires explicit opt-in")
         super().__init__(trust_env=False)
         self.origin = (scheme, host, port)
         self._pool = httpcore.AsyncConnectionPool(

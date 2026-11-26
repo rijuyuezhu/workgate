@@ -29,6 +29,24 @@ Provider profile storage and sampling are adapted from the final upstream source
 The repository retains the final channel names, protocol aliases, redacted catalog DTO, reference guards, and model sampling validation. Explicit Control-owned database and cipher instances replace global HTTP-route dependencies. API keys are encrypted and bound to channel, provider and endpoint. A deleted channel name cannot be reused while retained history references it. A private HTTP endpoint requires explicit opt-in; resolved-address validation is required in the transport unit before any requests. Unsaved built-in defaults carry no ambient credentials. Automatic discovery and account OAuth are not exposed by this private unit; their final source integrations and route/transport acceptance remain pending. Generation sampling snapshot tests follow the generation store import.
 
 
+Model discovery and refresh are adapted from the final upstream catalog service:
+
+| Workgate file | Upstream source at the pin | Git blob |
+| --- | --- | --- |
+| `model_discovery.py` | `src/local_shell_mcp/webui/model_discovery.py` | `145ea6abf8113cee559ac71ca5a9ffe9c80b3701` |
+| `tests/hosted_chat/test_model_discovery.py` | `tests/test_webui_provider_profiles.py` (discovery cases) | `3feef623b70da2f6a2de1fd4e1e366763684e5d5` |
+
+The catalog preserves source protocol pagination, filtering, context-window
+overrides, bounded requests, failure retention and opt-in refresh. Workgate
+uses the same endpoint validation and pinned transport for both profile
+configuration and requests; saved API keys are decrypted only for their
+bound endpoint. Automatic save probes outside the SQLite write transaction,
+then compares the exact saved snapshot before committing the new profile.
+Refresh also compares the prior row, preventing stale replies from overwriting
+edits or restoring deleted profiles. Account authorization remains a separate
+unit. The refresh coroutine is not started by importing these modules.
+
+
 Model-facing tool and media projection uses these final upstream sources:
 
 | Workgate file | Upstream source at the pin | Git blob |
