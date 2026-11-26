@@ -9,6 +9,7 @@ import json
 from collections.abc import AsyncIterator
 from urllib.parse import quote, urlsplit
 
+from .account_credentials import check_binding
 from .mcp_projection import openai_wire_messages
 from .network import validate_provider_endpoint
 from .provider_common import (
@@ -47,15 +48,28 @@ def selected_provider(payload: dict, agent: dict | None = None) -> str:
 
 
 def provider_config(
-    repo: ProviderRepository, provider: str, model: str | None = None
+    repo: ProviderRepository,
+    provider: str,
+    model: str | None = None,
+    *,
+    allow_account: bool = False,
 ) -> ProviderConfig:
     value = repo.profile(provider)
     kind = value["provider"]
     token, base = value.get("api_key", ""), value["base_url"]
     private_http = value.get("allow_private_http", False)
     validate_provider_endpoint(base, allow_private_http=private_http)
-    if value.get("oauth_id"):
-        raise ValueError("Account authorization service is not available")
+    account_id = value.get("oauth_id")
+    account_repository = None
+    if account_id:
+        if not allow_account:
+            raise ValueError("Account authorization service is not available")
+        check_binding(value)
+        if value.get("oauth_error"):
+            raise ValueError("Account authorization expired; sign in again")
+        if token or private_http or value.get("keyless"):
+            raise ValueError("Invalid account channel configuration")
+        account_repository = repo
     if not model and not value["models"]:
         raise ValueError("No available models in this channel")
     name = model or value["models"][0]
@@ -69,6 +83,7 @@ def provider_config(
     if kind in {"openai", "openai-responses"}:
         if (
             not token
+            and account_repository is None
             and not value.get("keyless")
             and urlsplit(base).hostname not in {"localhost", "127.0.0.1", "::1"}
         ):
@@ -106,6 +121,7 @@ def provider_config(
         auth_method=value.get("auth_method"),
         channel=value.get("name", kind),
         allow_private_http=private_http,
+        account_repository=account_repository,
     )
 
 

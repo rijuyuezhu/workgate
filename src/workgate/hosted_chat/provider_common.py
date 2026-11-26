@@ -18,7 +18,9 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
+from .model_oauth import adapter
 from .network import provider_client
+from .provider_profiles import ProviderRepository
 
 MAX_TOOL_ARGUMENTS = 1024 * 1024
 MAX_TOOL_CALLS = 128
@@ -38,6 +40,9 @@ class ProviderConfig:
     auth_method: str | None = None
     channel: str | None = None
     allow_private_http: bool = False
+    account_repository: ProviderRepository | None = field(
+        default=None, repr=False, compare=False
+    )
 
 
 def provider_scope(config: ProviderConfig) -> str:
@@ -55,9 +60,40 @@ def provider_scope(config: ProviderConfig) -> str:
     ).hexdigest()
 
 
-def provider_http_client(config: ProviderConfig) -> httpx.AsyncClient:
-    if config.account_id or config.auth_method:
+def validate_account_config(config: ProviderConfig) -> bool:
+    """Require an explicit account capability, never infer it from an endpoint."""
+    if not any(
+        (
+            config.account_id,
+            config.auth_method,
+            config.account_channel,
+            config.account_repository,
+        )
+    ):
+        return False
+    if (
+        not config.account_id
+        or not config.account_channel
+        or not config.auth_method
+        or config.account_repository is None
+        or config.channel != config.account_channel
+        or config.token
+        or config.allow_private_http
+    ):
         raise ValueError("Account authorization service is not available")
+    auth = adapter(config.auth_method)
+    if (
+        config.provider != auth.protocol
+        or config.url != auth.base_url + "/responses"
+    ):
+        raise ValueError(
+            "Account authorization cannot be used at a different API endpoint"
+        )
+    return True
+
+
+def provider_http_client(config: ProviderConfig) -> httpx.AsyncClient:
+    validate_account_config(config)
     url = urlsplit(config.url)
     if url.fragment or (
         url.query and (config.provider != "google" or url.query != "alt=sse")
