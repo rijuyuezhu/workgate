@@ -307,3 +307,367 @@ async def test_unexpected_provider_and_upstream_http_failure_are_bounded(
                 [],
             )
         )
+
+
+def test_explicit_profiles_resolve_all_four_protocols(tmp_path, monkeypatch):
+    from workgate.hosted_chat.credential_cipher import CredentialCipher
+    from workgate.hosted_chat.database import SQLiteDatabase
+    from workgate.hosted_chat.provider_profiles import ProviderRepository
+    from workgate.hosted_chat.providers import (
+        provider_config,
+        selected_provider,
+    )
+
+    db = SQLiteDatabase(tmp_path)
+    repo = ProviderRepository(db, CredentialCipher(db))
+    monkeypatch.setenv("OPENAI_API_KEY", "ambient-secret")
+    with pytest.raises(ValueError, match="API key"):
+        provider_config(repo, "openai")
+    for name, kind, suffix in (
+        ("Chat", "openai", "/chat/completions"),
+        ("Responses", "openai-responses", "/responses"),
+        ("Claude", "anthropic", "/messages"),
+        (
+            "Gemini channel",
+            "google",
+            "/models/model:streamGenerateContent?alt=sse",
+        ),
+    ):
+        repo.save(
+            {
+                "name": name,
+                "provider": kind,
+                "base_url": "https://gateway.invalid/v1",
+                "api_key": "explicit-secret",
+                "models": ["model"],
+                "model_sampling": {"model": {"temperature": 0.3}},
+            }
+        )
+        config = provider_config(repo, name)
+        assert config.url == "https://gateway.invalid/v1" + suffix
+        assert (
+            config.token == "explicit-secret"
+            and "explicit-secret" not in repr(config)
+        )
+        assert config.channel == name and config.sampling == {
+            "temperature": 0.3
+        }
+    repo.save(
+        {
+            "name": "Local",
+            "provider": "openai",
+            "base_url": "http://10.0.0.2:8080/v1",
+            "allow_private_http": True,
+            "keyless": True,
+            "models": ["model"],
+        }
+    )
+    config = provider_config(repo, "Local")
+    assert config.allow_private_http and not config.token
+    assert selected_provider({"endpoint": "Local"}) == "Local"
+    assert (
+        selected_provider({"endpoint": "agents"}, {"provider": "Chat"})
+        == "Chat"
+    )
+    assert selected_provider({}) == "openai"
+    with pytest.raises(ValueError, match="Gemini"):
+        provider_config(repo, "Gemini channel", "../invalid")
+    with pytest.raises(ValueError, match="model identifier"):
+        provider_config(repo, "Chat", "bad\nmodel")
+
+
+def _mock_frames(monkeypatch, responses):
+    requests = []
+
+    def reply(request):
+        requests.append(request)
+        status, events = responses.pop(0)
+        content = (
+            "\n\n".join(
+                "data: "
+                + (event if isinstance(event, str) else json.dumps(event))
+                for event in events
+            )
+            + "\n\n"
+        )
+        return httpx.Response(
+            status, text=content, headers={"content-type": "text/event-stream"}
+        )
+
+    monkeypatch.setattr(
+        provider_common,
+        "provider_client",
+        lambda _base, **kwargs: httpx.AsyncClient(
+            transport=httpx.MockTransport(reply), timeout=kwargs["timeout"]
+        ),
+    )
+    return requests
+
+
+@pytest.mark.asyncio
+async def test_openai_usage_fallback_only_before_output(monkeypatch):
+    from workgate.hosted_chat.providers import ModelThought, ModelUsage
+
+    cfg = ProviderConfig(
+        "openai", "model", "https://gateway.invalid/v1/chat/completions", "key"
+    )
+    events = [
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "reasoning_content": "plan",
+                        "reasoning_details": [
+                            {"type": "reasoning.text", "text": "duplicate"}
+                        ],
+                    }
+                }
+            ]
+        },
+        {
+            "choices": [
+                {"delta": {"content": "answer"}, "finish_reason": "stop"}
+            ]
+        },
+        {"choices": [], "usage": {"prompt_tokens": 12, "completion_tokens": 3}},
+        "[DONE]",
+    ]
+    requests = _mock_frames(
+        monkeypatch, [(400, ["stream_options unsupported"]), (200, events)]
+    )
+    assert await _collect(
+        stream_model(cfg, [{"role": "user", "content": "hi"}])
+    ) == [
+        ModelThought("thinking", text="plan"),
+        "answer",
+        ModelUsage("openai", 12, 3),
+    ]
+    assert len(requests) == 2 and "stream_options" in json.loads(
+        requests[0].content
+    )
+    assert "stream_options" not in json.loads(requests[1].content)
+    for status, diagnostic in [
+        (401, "stream_options unsupported"),
+        (400, "invalid key"),
+    ]:
+        requests = _mock_frames(monkeypatch, [(status, [diagnostic])])
+        with pytest.raises(httpx.HTTPStatusError):
+            await _collect(stream_model(cfg, []))
+        assert len(requests) == 1
+
+
+def _openai_call(index, identity, args):
+    return {
+        "choices": [
+            {
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": index,
+                            "id": identity,
+                            "function": {"name": "read", "arguments": args},
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "second,terminal",
+    [
+        (None, []),
+        (None, [{"choices": [{"finish_reason": "length"}]}, "[DONE]"]),
+        (_openai_call(1, "first", "{}"), ["[DONE]"]),
+        (_openai_call(1, "second", "[]"), ["[DONE]"]),
+        (_openai_call(1, "second", '{"x": NaN}'), ["[DONE]"]),
+    ],
+)
+async def test_openai_never_releases_part_of_invalid_batch(
+    monkeypatch, second, terminal
+):
+    from workgate.hosted_chat.providers import (
+        ModelToolCall,
+        stream_model_with_tools,
+    )
+
+    events = [_openai_call(0, "first", "{}")]
+    if second is not None:
+        events.append(second)
+    _mock_frames(monkeypatch, [(200, events + terminal)])
+    seen = []
+    config = ProviderConfig(
+        "openai", "model", "https://gateway.invalid/v1/chat/completions", "key"
+    )
+    with pytest.raises(ValueError):
+        async for item in stream_model_with_tools(
+            config,
+            [],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "read",
+                        "parameters": {"type": "object"},
+                    },
+                }
+            ],
+        ):
+            seen.append(item)
+    assert not any(isinstance(item, ModelToolCall) for item in seen)
+
+
+@pytest.mark.asyncio
+async def test_openai_complete_parallel_tool_calls(monkeypatch):
+    from workgate.hosted_chat.providers import (
+        ModelToolCall,
+        ModelUsage,
+        stream_model_with_tools,
+    )
+
+    _mock_frames(
+        monkeypatch,
+        [
+            (
+                200,
+                [
+                    _openai_call(0, "first", '{"x":1}'),
+                    _openai_call(1, "second", "{}"),
+                    {"choices": [{"finish_reason": "tool_calls"}]},
+                    {
+                        "usage": {"prompt_tokens": 20, "completion_tokens": 9},
+                        "choices": [],
+                    },
+                    "[DONE]",
+                ],
+            )
+        ],
+    )
+    config = ProviderConfig(
+        "openai", "model", "https://gateway.invalid/v1/chat/completions", "key"
+    )
+    result = await _collect(
+        stream_model_with_tools(
+            config,
+            [],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "read",
+                        "parameters": {"type": "object"},
+                    },
+                }
+            ],
+        )
+    )
+    assert result == [
+        ModelToolCall("first", "read", {"x": 1}),
+        ModelToolCall("second", "read", {}),
+        ModelUsage("openai", 20, 9),
+    ]
+
+
+def test_confirmed_usage_and_sampling_policy():
+    from workgate.hosted_chat.provider_common import (
+        _anthropic_omits_sampling_parameters,
+        _usage_frame,
+    )
+    from workgate.hosted_chat.providers import ModelUsage
+
+    usage = _usage_frame(
+        "anthropic",
+        {
+            "type": "message_start",
+            "message": {
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 0,
+                    "cache_read_input_tokens": 20,
+                    "cache_creation_input_tokens": 10,
+                }
+            },
+        },
+    )
+    assert usage == ModelUsage("anthropic", 130, 0)
+    assert _usage_frame(
+        "anthropic",
+        {"type": "message_delta", "usage": {"output_tokens": 5}},
+        usage,
+    ) == ModelUsage("anthropic", 130, 5)
+    assert _usage_frame(
+        "google",
+        {"usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 2}},
+    ) == ModelUsage("google", 5, 2)
+    assert (
+        _usage_frame(
+            "openai", {"usage": {"prompt_tokens": -1, "completion_tokens": 2}}
+        )
+        is None
+    )
+    assert _anthropic_omits_sampling_parameters("claude-opus-4-7")
+    assert not _anthropic_omits_sampling_parameters("claude-sonnet-4-6")
+
+
+def test_account_and_arbitrary_query_are_not_activated():
+    for config in (
+        ProviderConfig(
+            "openai-responses",
+            "model",
+            "https://gateway.invalid/v1/responses",
+            "",
+            account_id="account",
+        ),
+        ProviderConfig(
+            "openai",
+            "model",
+            "https://gateway.invalid/v1/chat/completions?secret=key",
+            "key",
+        ),
+    ):
+        with pytest.raises(ValueError):
+            provider_common.provider_http_client(config)
+
+
+@pytest.mark.parametrize("event", ["invalid-json", []])
+async def test_openai_tool_stream_invalid_sse(monkeypatch, event):
+    from workgate.hosted_chat.providers import stream_model_with_tools
+
+    _mock_frames(monkeypatch, [(200, [event])])
+    config = ProviderConfig(
+        "openai", "model", "https://gateway.invalid/v1/chat/completions", "key"
+    )
+    with pytest.raises(ValueError, match="SSE"):
+        await _collect(
+            stream_model_with_tools(
+                config,
+                [],
+                tools=[{"type": "function", "function": {"name": "read"}}],
+            )
+        )
+
+
+async def test_openai_text_stream_options(monkeypatch):
+    captured = {}
+    _mock_client(
+        monkeypatch,
+        [
+            'data: {"choices":[{"delta":{"content":[{"text":"text"}],"reasoning_content":"thought"}}]}',
+            "data: [DONE]",
+        ],
+        captured,
+    )
+    config = ProviderConfig(
+        "openai", "model", "https://provider.test/chat/completions", "secret"
+    )
+    from workgate.hosted_chat.provider_common import ModelThought
+
+    result = await _collect(
+        stream_model(config, [], max_tokens=10, temperature=0.1, top_p=0.8)
+    )
+    assert result == [ModelThought("thinking", text="thought"), "text"]
+    body = json.loads(captured["request"].content)
+    assert body["max_completion_tokens"] == 10
+    assert body["temperature"] == 0.1 and body["top_p"] == 0.8

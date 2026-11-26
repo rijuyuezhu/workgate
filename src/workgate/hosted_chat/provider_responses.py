@@ -8,6 +8,7 @@ from .mcp_projection import (
     project_artifact_messages,
 )
 from .provider_common import (
+    MAX_TOOL_ARGUMENTS,
     ModelFinish,
     ModelThought,
     ModelToolCall,
@@ -23,7 +24,6 @@ from .provider_multimodal import inline_media
 from .result_projection import truncate_approval_result
 
 PROTOCOL = "openai-responses"
-_MAX_ARGUMENTS = 1024 * 1024
 
 
 def _parts(content, *, assistant=False) -> list[dict]:
@@ -446,7 +446,7 @@ async def stream_responses(
                 or not name
             ):
                 raise ValueError("Invalid Responses function call")
-            if not isinstance(args, str) or len(args) > _MAX_ARGUMENTS:
+            if not isinstance(args, str) or len(args) > MAX_TOOL_ARGUMENTS:
                 raise ValueError("Invalid Responses function arguments")
             try:
                 arguments = json.loads(args)
@@ -488,9 +488,10 @@ async def stream_responses(
         yield ModelUsage(PROTOCOL, usage.input_tokens, usage.output_tokens)
     if incomplete and not emit_finish_reason:
         raise RuntimeError("Responses generation was incomplete")
+    complete_tool_batch(calls)
     for item in replay:
         yield item
-    for call in complete_tool_batch(calls):
+    for call in calls:
         yield call
     if emit_finish_reason:
         details = response.get("incomplete_details") or {}

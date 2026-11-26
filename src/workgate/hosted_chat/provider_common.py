@@ -261,9 +261,9 @@ class ModelThought:
 
     kind: str
     text: str = ""
-    signature: str = ""
-    data: str = ""
-    provider_data: dict | None = None
+    signature: str = field(default="", repr=False)
+    data: str = field(default="", repr=False)
+    provider_data: dict | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -273,7 +273,7 @@ class ModelToolCall:
     call_id: str
     name: str
     arguments: dict
-    provider_data: dict | None = None
+    provider_data: dict | None = field(default=None, repr=False)
 
     def history_metadata(self) -> dict:
         return (
@@ -302,7 +302,8 @@ def complete_tool_batch(calls: list[ModelToolCall]) -> list[ModelToolCall]:
             raise ValueError("Invalid model tool name")
         if (
             not isinstance(call.arguments, dict)
-            or len(json.dumps(call.arguments)) > MAX_TOOL_ARGUMENTS
+            or len(json.dumps(call.arguments, allow_nan=False))
+            > MAX_TOOL_ARGUMENTS
         ):
             raise ValueError("Invalid or oversized model tool arguments")
         ids.add(call.call_id)

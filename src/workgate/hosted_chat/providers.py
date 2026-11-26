@@ -9,6 +9,11 @@ from .network import validate_provider_endpoint
 from .provider_common import (
     MAX_TOOL_ARGUMENTS,
     MAX_TOOL_CALLS,
+    ModelFinish,
+    ModelThought,
+    ModelToolCall,
+    ModelUsage,
+    ProviderConfig,
     _anthropic_omits_sampling_parameters,
     _data_frames,
     _openai_reasoning_fragments,
@@ -17,21 +22,6 @@ from .provider_common import (
     complete_tool_batch,
     provider_http_client,
     provider_scope,
-)
-from .provider_common import (
-    ModelFinish as ModelFinish,
-)
-from .provider_common import (
-    ModelThought as ModelThought,
-)
-from .provider_common import (
-    ModelToolCall as ModelToolCall,
-)
-from .provider_common import (
-    ModelUsage as ModelUsage,
-)
-from .provider_common import (
-    ProviderConfig as ProviderConfig,
 )
 from .provider_profiles import ProviderRepository
 from .provider_responses import stream_responses
@@ -64,6 +54,13 @@ def provider_config(
     if not model and not value["models"]:
         raise ValueError("No available models in this channel")
     name = model or value["models"][0]
+    if (
+        not isinstance(name, str)
+        or not name.strip()
+        or len(name) > 200
+        or any(ord(c) < 32 for c in name)
+    ):
+        raise ValueError("Invalid model identifier")
     if kind in {"openai", "openai-responses"}:
         if (
             not token
@@ -127,6 +124,8 @@ async def stream_model(
             top_p=top_p,
             emit_finish_reason=emit_finish_reason,
         ):
+            if isinstance(event, ModelToolCall):
+                raise ValueError("Unexpected tool call in text-only stream")
             yield event
         return
 
@@ -198,7 +197,9 @@ async def stream_model(
                 event = json.loads(frame)
             except json.JSONDecodeError:
                 continue
-            if "error" in event:
+            if not isinstance(event, dict):
+                continue
+            if "error" in event or event.get("type") == "error":
                 raise RuntimeError(
                     "Model provider rejected the generation request"
                 )
@@ -348,7 +349,9 @@ async def stream_model_with_tools(
                 event = json.loads(frame)
             except json.JSONDecodeError as exc:
                 raise ValueError("Invalid provider tool SSE frame") from exc
-            if "error" in event:
+            if not isinstance(event, dict):
+                raise ValueError("Invalid provider tool SSE event")
+            if "error" in event or event.get("type") == "error":
                 raise RuntimeError(
                     "Model provider rejected the generation request"
                 )
@@ -385,6 +388,10 @@ async def stream_model_with_tools(
                     function = fragment.get("function") or {}
                     tool["name"] += str(function.get("name") or "")
                     tool["arguments"] += str(function.get("arguments") or "")
+                    if len(tool["id"]) > 1024 or len(tool["name"]) > 1024:
+                        raise ValueError(
+                            "Model tool identity exceeds size limit"
+                        )
                     if len(tool["arguments"]) > MAX_TOOL_ARGUMENTS:
                         raise ValueError(
                             "Model tool arguments exceed size limit"

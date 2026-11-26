@@ -8,6 +8,7 @@ checkpoint-local raw_result, UI metadata or unsupported content blocks.
 import json
 import secrets
 from collections.abc import AsyncIterator
+from typing import Any
 
 from .provider_common import (
     MAX_TOOL_ARGUMENTS,
@@ -32,8 +33,10 @@ def _content_blocks(blocks: list[dict], provider: str) -> list[dict]:
     """Only model-supported types are admitted to the vendor wire request."""
     result = []
     for block in blocks:
+        if not isinstance(block, dict):
+            raise ValueError("Invalid provider content block")
         kind = block.get("type")
-        if kind == "text":
+        if kind == "text" and isinstance(block.get("text"), str):
             result.append(
                 {"type": "text", "text": block["text"]}
                 if provider == "anthropic"
@@ -77,6 +80,8 @@ def native_messages(
     """Serialize ordered assistant/tool/steer messages without lossy str()."""
     from .mcp_projection import project_artifact_messages
 
+    if provider not in {"anthropic", "google"}:
+        raise ValueError("Unsupported native model provider")
     messages = project_artifact_messages(messages, provider)
     result: list[dict] = []
     systems: list[str] = []
@@ -127,7 +132,7 @@ def native_messages(
                     raise ValueError(
                         "Gemini function response has no matching function call"
                     )
-                response = {"result": rendered}
+                response: dict[str, Any] = {"result": rendered}
                 if message.get("is_error"):
                     response["is_error"] = True
                 parts = [
@@ -224,7 +229,7 @@ def native_messages(
         ):
             result[-1][key].extend(parts)
         elif result and result[-1]["role"] == native_role:
-            existing = result[-1][key]
+            existing: Any = result[-1][key]
             if isinstance(existing, str):
                 existing = (
                     [{"type": "text", "text": existing}]
@@ -338,6 +343,8 @@ async def stream_native_tools(
                 event = json.loads(frame)
             except json.JSONDecodeError as exc:
                 raise ValueError("Invalid provider tool SSE frame") from exc
+            if not isinstance(event, dict):
+                raise ValueError("Invalid provider tool SSE event")
             if "error" in event or event.get("type") == "error":
                 raise RuntimeError(
                     "Model provider rejected the generation request"

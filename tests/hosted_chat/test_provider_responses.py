@@ -456,3 +456,57 @@ async def test_unsupported_tool_declaration():
                 PROFILE, [USER], tools=[{"type": "invalid"}]
             )
         ]
+
+
+@pytest.mark.asyncio
+async def test_terminal_replay_scoped_to_exact_channel(transport):
+    from dataclasses import replace
+
+    batches, requests = transport
+    cfg = replace(PROFILE, channel="original")
+    batches.append([complete([REASON, MESSAGE, CALL])])
+    received = [
+        event
+        async for event in stream_model_with_tools(cfg, [USER], tools=TOOLS)
+    ]
+    assert received[0] == "Reading"
+    calls = [event for event in received if isinstance(event, ModelToolCall)]
+    assert len(calls) == 1
+    call = calls[0]
+    reasoning = [
+        {"type": event.kind, **event.provider_data}
+        for event in received
+        if isinstance(event, ModelThought)
+        and event.kind == "responses_item"
+        and event.provider_data
+    ]
+    history = [
+        USER,
+        {
+            "role": "assistant",
+            "content": "Reading",
+            "reasoning": reasoning,
+            "tool_calls": [
+                {
+                    "id": call.call_id,
+                    "function": {
+                        "name": call.name,
+                        "arguments": json.dumps(call.arguments),
+                    },
+                    **call.history_metadata(),
+                }
+            ],
+        },
+    ]
+    wire = responses_input(cfg, history)
+    assert wire[1] == REASON and wire[2] == MESSAGE
+    assert wire[3]["call_id"] == call.call_id
+    for other in (
+        replace(cfg, channel="other"),
+        replace(cfg, token="other"),
+        replace(cfg, model="other"),
+    ):
+        assert "encrypted-state" not in json.dumps(
+            responses_input(other, history)
+        )
+    assert requests[0][2]["store"] is False

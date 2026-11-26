@@ -51,7 +51,9 @@ def transport(monkeypatch):
     monkeypatch.setattr(
         provider_common,
         "provider_client",
-        lambda **kwargs: original(transport=mock, **kwargs),
+        lambda _base, **kwargs: original(
+            transport=mock, timeout=kwargs["timeout"]
+        ),
     )
     return events, requests
 
@@ -307,3 +309,241 @@ async def test_gemini_parallel_calls_and_empty_history(transport):
         [{"role": "user", "content": "a"}, {"role": "user", "content": "b"}],
         "google",
     ) == ([{"role": "user", "parts": [{"text": "a"}, {"text": "b"}]}], "")
+
+
+def test_opaque_native_replay_is_bound_to_connection():
+    from dataclasses import replace
+
+    from workgate.hosted_chat.provider_common import provider_scope
+
+    config = ProviderConfig(
+        "anthropic",
+        "model",
+        "https://gateway.invalid/v1/messages",
+        "secret",
+        channel="first",
+    )
+    scope = provider_scope(config)
+    history = [
+        {
+            "role": "assistant",
+            "content": "answer",
+            "reasoning": [
+                {
+                    "type": "thinking",
+                    "thinking": "provider thought",
+                    "signature": "signed",
+                    "scope": scope,
+                },
+                {"type": "redacted_thinking", "data": "opaque", "scope": scope},
+            ],
+        }
+    ]
+    projected, _ = native_messages(history, "anthropic", scope=scope)
+    assert projected[0]["content"][0]["signature"] == "signed"
+    assert projected[0]["content"][1]["data"] == "opaque"
+    projected, _ = native_messages(
+        history,
+        "anthropic",
+        scope=provider_scope(replace(config, channel="second")),
+    )
+    assert projected[0]["content"] == "answer"
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "google"])
+async def test_native_tool_stream_disconnect_does_not_release_call(
+    transport, provider
+):
+    events, _ = transport
+    if provider == "anthropic":
+        events[:] = [
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "id",
+                    "name": "file_read",
+                    "input": {},
+                },
+            }
+        ]
+    else:
+        events[:] = [
+            {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {
+                                    "functionCall": {
+                                        "name": "file_read",
+                                        "args": {},
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    with pytest.raises(ValueError, match="complete tool batch"):
+        await collect(provider, events)
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "google"])
+def test_native_projection_media_and_tool_error(provider):
+    history = [
+        {"role": "system", "content": [{"type": "text", "text": "policy"}]},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "inspect"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,YQ=="},
+                },
+                {
+                    "type": "file",
+                    "file": {"file_data": "data:application/pdf;base64,YQ=="},
+                },
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {"id": "a", "function": {"name": "file_read", "arguments": {}}},
+                {
+                    "id": "b",
+                    "function": {"name": "file_read", "arguments": "{}"},
+                },
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "a",
+            "content": [{"type": "text", "text": "failed"}],
+            "is_error": True,
+        },
+        {"role": "tool", "tool_call_id": "b", "content": "ok"},
+        {"role": "user", "content": "continue"},
+    ]
+    wire, system = native_messages(history, provider)
+    assert system == "policy"
+    data = json.dumps(wire)
+    assert "YQ==" in data and "application/pdf" in data
+    assert '"is_error": true' in data and "failed" in data
+    assert "continue" in data
+
+
+@pytest.mark.parametrize(
+    "provider,message",
+    [
+        ("unsupported", {"role": "user", "content": "hi"}),
+        ("anthropic", {"role": "system", "content": 3}),
+        ("google", {"role": "unknown", "content": "hi"}),
+        ("anthropic", {"role": "user", "content": 3}),
+        ("google", {"role": "user", "content": [3]}),
+        ("anthropic", {"role": "user", "content": [{"type": "audio"}]}),
+        (
+            "google",
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://remote.invalid/x"},
+                    }
+                ],
+            },
+        ),
+        ("anthropic", {"role": "tool", "content": "hi"}),
+        (
+            "google",
+            {"role": "tool", "tool_call_id": "missing", "content": "hi"},
+        ),
+        ("anthropic", {"role": "tool", "tool_call_id": "a", "content": 3}),
+        (
+            "google",
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "a",
+                        "function": {"name": "file_read", "arguments": "[]"},
+                    }
+                ],
+            },
+        ),
+    ],
+)
+def test_native_projection_rejects_invalid_messages(provider, message):
+    with pytest.raises(ValueError):
+        native_messages([message], provider)
+
+
+@pytest.mark.parametrize("event", ["invalid-json", []])
+async def test_native_rejects_invalid_sse(transport, event):
+    events, _ = transport
+    events[:] = [event]
+    with pytest.raises(ValueError, match="SSE"):
+        await collect("anthropic", events)
+
+
+async def test_anthropic_thoughts_usage_and_finish(transport):
+    from workgate.hosted_chat.provider_common import ModelFinish, ModelUsage
+    from workgate.hosted_chat.provider_tool_protocols import stream_native_tools
+
+    events, _ = transport
+    events[:] = [
+        {
+            "type": "message_start",
+            "message": {"usage": {"input_tokens": 8, "output_tokens": 0}},
+        },
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "redacted_thinking", "data": "opaque"},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 1,
+            "delta": {"type": "thinking_delta", "thinking": "thought"},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 1,
+            "delta": {"type": "signature_delta", "signature": "signed"},
+        },
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn"},
+            "usage": {"output_tokens": 3},
+        },
+        {"type": "message_stop"},
+    ]
+    config = ProviderConfig(
+        "anthropic", "model", "https://provider.test/messages", "secret"
+    )
+    result = [
+        x
+        async for x in stream_native_tools(
+            config,
+            [],
+            tools=TOOLS,
+            max_tokens=10,
+            temperature=0.3,
+            top_p=0.8,
+            emit_finish_reason=True,
+        )
+    ]
+    assert isinstance(result[0], ModelThought) and result[0].data == "opaque"
+    assert result[1] == ModelThought("thinking", text="thought")
+    assert (
+        isinstance(result[2], ModelThought) and result[2].signature == "signed"
+    )
+    assert result[-2:] == [
+        ModelUsage("anthropic", 8, 3),
+        ModelFinish("anthropic", "end_turn"),
+    ]
