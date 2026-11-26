@@ -1,4 +1,5 @@
 import os
+from typing import Literal
 
 import pytest
 from playwright.sync_api import expect, sync_playwright
@@ -52,6 +53,53 @@ def test_human_ui_real_chromium(browser_harness: BrowserHarness) -> None:
     run_mobile_drilldown(browser_harness)
     run_native_gui_manual(browser_harness)
     browser_harness.assert_clean_browser()
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_oauth_approval_layout(
+    browser_harness: BrowserHarness, scheme: Literal["light", "dark"]
+) -> None:
+    from workgate.oauth.core.service import AuthorizationFormContext
+    from workgate.oauth.http.authorization import _authorize_form
+
+    response = _authorize_form(
+        AuthorizationFormContext(
+            params={},
+            client_id="layout-client",
+            client_name="Layout client",
+            redirect_uri="https://example.test/" + "a" * 160,
+            resource="https://example.test/mcp",
+            scope="shell:read",
+        ),
+        error="Example error message",
+    )
+    page = browser_harness.browser.new_page(color_scheme=scheme)
+    try:
+        for width, height in [(1440, 900), (390, 844), (320, 568)]:
+            page.set_viewport_size({"width": width, "height": height})
+            page.set_content(bytes(response.body).decode("utf-8"))
+            assert page.evaluate(
+                "document.documentElement.scrollWidth <= innerWidth"
+            )
+            assert (
+                page.evaluate(
+                    "getComputedStyle(document.documentElement).colorScheme"
+                )
+                == scheme
+            )
+            expect(
+                page.get_by_role("heading", name="Authorize Workgate")
+            ).to_be_visible()
+            expect(page.locator(".request-details")).to_contain_text(
+                "shell:read"
+            )
+            expect(page.get_by_role("alert")).to_have_text(
+                "Example error message"
+            )
+            expect(page.get_by_label("Admin PIN")).to_be_visible()
+            expect(page.get_by_role("button", name="Approve")).to_be_visible()
+    finally:
+        page.close()
 
 
 def test_executor_fleet_resource_overview(
