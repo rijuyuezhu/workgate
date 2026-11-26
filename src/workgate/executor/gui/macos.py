@@ -26,6 +26,7 @@ from .base import (
     display_screenshot_path,
     quantize_scroll_amount,
 )
+from .limits import json_size, key_parts
 
 _AX_OPERATION_TIMEOUT_S = 30.0
 
@@ -288,19 +289,7 @@ def _unicode_chunks(text: str, max_units: int = 20) -> list[str]:
 
 
 def _key_parts(keys: Any) -> list[str]:
-    if isinstance(keys, str):
-        parts = [
-            part.strip()
-            for part in keys.replace("+", " ").split()
-            if part.strip()
-        ]
-    elif isinstance(keys, list):
-        parts = [str(part).strip() for part in keys if str(part).strip()]
-    else:
-        raise ValueError("key action requires keys as a string or list")
-    if not parts:
-        raise ValueError("key action requires at least one key")
-    return [part.upper() for part in parts]
+    return [part.upper() for part in key_parts(keys)]
 
 
 class MacOSGuiBackend:
@@ -388,14 +377,7 @@ class MacOSGuiBackend:
                 "pid": int(row.get(Quartz.kCGWindowOwnerPID, 0) or 0),
                 "bounds": bounds,
             }
-            extra = len(
-                json.dumps(
-                    record,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    default=str,
-                ).encode("utf-8")
-            ) + (1 if windows else 0)
+            extra = json_size(record) + (1 if windows else 0)
             if used_bytes + extra > GUI_MAX_WINDOWS_TOTAL_BYTES:
                 break
             windows.append(record)
@@ -603,13 +585,7 @@ class MacOSGuiBackend:
                     ),
                     "depth": depth,
                 }
-                encoded = json.dumps(
-                    item,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    default=str,
-                ).encode("utf-8")
-                extra = len(encoded) + (1 if elements else 0)
+                extra = json_size(item) + (1 if elements else 0)
                 if used_bytes + extra > GUI_MAX_ELEMENTS_TOTAL_BYTES:
                     break
                 elements.append(item)

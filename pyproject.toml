@@ -115,6 +115,7 @@ target-version = "py314"
 
 [tool.ruff.per-file-target-version]
 "src/workgate/executor/gui/linux_atspi_helper.py" = "py310"
+"src/workgate/executor/gui/limits.py" = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

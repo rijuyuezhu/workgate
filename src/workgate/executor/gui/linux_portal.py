@@ -10,6 +10,7 @@ from urllib.request import url2pathname
 from xml.etree import ElementTree
 
 from ...errors import GuiUnavailableError
+from .limits import key_parts as _key_parts
 
 _PORTAL_INPUT_TIMEOUT_S = 15.0
 _PORTAL_LIFECYCLE_TIMEOUT_S = 15.0
@@ -162,22 +163,6 @@ def _keysym(text: str) -> int:
     if codepoint <= 0xFF:
         return codepoint
     return 0x01000000 | codepoint
-
-
-def _key_parts(keys: Any) -> list[str]:
-    if isinstance(keys, str):
-        parts = [
-            part.strip()
-            for part in keys.replace("+", " ").split()
-            if part.strip()
-        ]
-    elif isinstance(keys, list):
-        parts = [str(part).strip() for part in keys if str(part).strip()]
-    else:
-        raise ValueError("key action requires keys as a string or list")
-    if not parts:
-        raise ValueError("key action requires at least one key")
-    return parts
 
 
 def _portal_request_path(bus: Any, handle_token: str) -> str:

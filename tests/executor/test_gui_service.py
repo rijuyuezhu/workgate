@@ -676,6 +676,9 @@ def test_gui_payload_bounding_helpers_cover_edge_cases(
 ) -> None:
     assert gui_base._truncate_gui_text("ok", 8) == "ok"
     assert gui_base._truncate_gui_text("abcdef", 4) == "a..."
+    assert gui_base._truncate_gui_text("你好", 1) == "."
+    assert gui_base._truncate_gui_text("你好", 0) == ""
+    assert gui_base._truncate_gui_text("你好啊", 6) == "你..."
 
     element = gui_base._bounded_element_record(
         {
@@ -722,6 +725,7 @@ def test_gui_payload_bounding_helpers_cover_edge_cases(
     )
     assert window is not None
     assert window["pid"] == 0
+    assert gui_base._bounded_window_record({"pid": float("inf")}) == {"pid": 0}
     assert window["bounds"] == {"x": 1, "y": 2, "width": 3, "height": 4}
     assert gui_base._bounded_window_records("not-a-list") == []
     assert gui_base._bounded_window_records([None, {"id": "w"}]) == [
