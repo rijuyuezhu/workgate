@@ -166,8 +166,11 @@ persists that key with the pending retry transition. Lookup and cleanup match
 the attempt and key rather than trusting the reusable Job ID alone. A newer
 or conflicting attempt settles cleanup without a fabricated receipt or a stop
 of unrelated work. The private adapter takes one retry target per durable
-intent; public Job batch dispatch and managed copy integration remain follow-ups,
-alongside runtime lifecycle wiring.
+intent. Background managed copy reserves a Control-owned Job with the original
+source and destination Sessions and Executor bindings. Admission checks source
+read and destination write authority separately; cancellation is fenced to
+the original copy attempt. Managed-copy retry, public Job batch dispatch and
+runtime lifecycle wiring remain follow-ups.
 
 
 Agent authoring starts with the final upstream repository and validators.

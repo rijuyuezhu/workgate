@@ -10,6 +10,8 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
+from pydantic import TypeAdapter
+
 from ..audit import audit
 from ..config.role_config import (
     SharedRoleConfig,
@@ -18,6 +20,7 @@ from ..config.role_config import (
 )
 from ..errors import public_error_type
 from ..persistence import StateStore, use_state_store
+from ..protocol.ids import ReservedJobId
 from ..schemas.result_models.jobs import (
     JobListOutput,
     JobRetryOutput,
@@ -49,6 +52,7 @@ from .state import (
     ACTIVE_STATUSES,
     CONFIRMED_TERMINAL_STATUSES,
     JobAttemptPaths,
+    JobIdentityInUseError,
     JobRow,
     JobStore,
     MutableJobRow,
@@ -583,6 +587,7 @@ async def _start_managed_job_unlocked(
     name: str | None = None,
     command: str | None = None,
     cwd: str = ".",
+    reserved_job_id: str | None = None,
 ) -> JobStartOutput:
     """Start one control-managed task owned by an execution session."""
     runtime = managed_jobs_runtime()
@@ -591,45 +596,58 @@ async def _start_managed_job_unlocked(
     if normalized_kind not in runtime.handlers:
         raise ValueError(f"unknown managed job kind: {normalized_kind}")
     normalized_payload = _managed_json_dict(payload, label="payload")
-    job_id = _new_job_id()
-    attempt = 1
-    paths = _attempt_paths(job_id, attempt)
-    write_private_text(paths["log"], "")
-    now = _utc()
-    display_name = name or f"{normalized_kind}-{job_id}"
-    job: JobRow = {
-        "job_id": job_id,
-        "kind": "managed",
-        "managed_kind": normalized_kind,
-        "managed_payload": normalized_payload,
-        "runtime_instance_id": PROCESS_INSTANCE_ID,
-        "managed_lease_version": MANAGED_JOB_LEASE_VERSION,
-        "name": display_name,
-        "status": "running",
-        "command": command or normalized_kind,
-        "cwd": cwd,
-        "session_id": session_id,
-        "shell_id": None,
-        "backend": "managed",
-        "command_path": None,
-        "log_path": str(paths["log"]),
-        "status_path": None,
-        "created_at": now,
-        "updated_at": now,
-        "last_started_at": now,
-        "completed_at": None,
-        "exit_code": None,
-        "error": None,
-        "log_truncated": False,
-        "output_bytes": 0,
-        "attempts": attempt,
-        "progress": None,
-        "result": None,
-    }
+    job_id = (
+        TypeAdapter(ReservedJobId).validate_python(reserved_job_id, strict=True)
+        if reserved_job_id is not None
+        else _new_job_id()
+    )
+    paths: JobAttemptPaths | None = None
+    published = False
+    # Acquire our lease before creating artifacts. A duplicate that fails
+    # acquisition must never release the existing runtime's lease.
+    runtime.acquire_lease(job_id)
     try:
-        runtime.acquire_lease(job_id)
         with _store_transaction() as store:
+            if any(row.get("job_id") == job_id for row in store["jobs"]):
+                raise JobIdentityInUseError(
+                    "Managed Job identity is already in use"
+                )
+            attempt = 1
+            paths = _attempt_paths(job_id, attempt)
+            write_private_text(paths["log"], "")
+            now = _utc()
+            display_name = name or f"{normalized_kind}-{job_id}"
+            job: JobRow = {
+                "job_id": job_id,
+                "kind": "managed",
+                "managed_kind": normalized_kind,
+                "managed_payload": normalized_payload,
+                "runtime_instance_id": PROCESS_INSTANCE_ID,
+                "managed_lease_version": MANAGED_JOB_LEASE_VERSION,
+                "name": display_name,
+                "status": "running",
+                "command": command or normalized_kind,
+                "cwd": cwd,
+                "session_id": session_id,
+                "shell_id": None,
+                "backend": "managed",
+                "command_path": None,
+                "log_path": str(paths["log"]),
+                "status_path": None,
+                "created_at": now,
+                "updated_at": now,
+                "last_started_at": now,
+                "completed_at": None,
+                "exit_code": None,
+                "error": None,
+                "log_truncated": False,
+                "output_bytes": 0,
+                "attempts": attempt,
+                "progress": None,
+                "result": None,
+            }
             store["jobs"].append(job)
+            published = True
         _launch_managed_job(
             runtime,
             session_id,
@@ -639,14 +657,20 @@ async def _start_managed_job_unlocked(
             str(paths["log"]),
         )
     except BaseException:
-        runtime.release_lease(job_id)
-        _remove_attempt_paths(paths)
-        with contextlib.suppress(Exception), _store_transaction() as store:
-            store["jobs"] = [
-                row
-                for row in store.get("jobs", [])
-                if row.get("job_id") != job_id
-            ]
+        try:
+            if published:
+                with (
+                    contextlib.suppress(Exception),
+                    _store_transaction() as store,
+                ):
+                    store["jobs"] = [
+                        row
+                        for row in store.get("jobs", [])
+                        if row.get("job_id") != job_id
+                    ]
+            _remove_attempt_paths(paths)
+        finally:
+            runtime.release_lease(job_id)
         raise
     audit(
         "job_start",
@@ -666,6 +690,7 @@ async def start_managed_job_without_session_admission(
     name: str | None = None,
     command: str | None = None,
     cwd: str = ".",
+    reserved_job_id: str | None = None,
 ) -> JobStartOutput:
     """Start managed work after an external session authority admitted it."""
     return await _start_managed_job_unlocked(
@@ -675,6 +700,7 @@ async def start_managed_job_without_session_admission(
         name=name,
         command=command,
         cwd=cwd,
+        reserved_job_id=reserved_job_id,
     )
 
 
@@ -718,17 +744,49 @@ async def _stop_managed_job(
     return JobStopOutput(job=public, killed=killed, stderr="")
 
 
+def _require_managed_binding(
+    job: Mapping[str, Any],
+    expected_kind: str | None,
+    expected_payload: Mapping[str, Any] | None,
+) -> None:
+    if str(job.get("kind") or "shell") != "managed":
+        raise RuntimeError("Job is not control-managed")
+    if expected_kind is not None and job.get("managed_kind") != expected_kind:
+        raise PermissionError("Managed Job kind differs from its reservation")
+    if expected_payload is not None:
+        payload = job.get("managed_payload")
+        if not isinstance(payload, dict) or any(
+            payload.get(key) != value for key, value in expected_payload.items()
+        ):
+            raise PermissionError(
+                "Managed Job Session binding differs from its reservation"
+            )
+
+
 async def _stop_managed_job_without_session_admission(
     session_id: str,
     job_id: str,
+    *,
+    expected_attempt: int | None = None,
+    expected_kind: str | None = None,
+    expected_payload: Mapping[str, Any] | None = None,
 ) -> JobStopOutput:
     """Stop one managed job when its owner session may already be terminating."""
     operation_id = ""
     try:
         with _store_transaction() as store:
-            job = _refresh_job_status(
-                _find_session_job(store, session_id, job_id), set()
-            )
+            job = _find_session_job(store, session_id, job_id)
+            if expected_kind is not None or expected_payload is not None:
+                _require_managed_binding(job, expected_kind, expected_payload)
+            job = _refresh_job_status(job, set())
+            if expected_attempt is not None and (
+                int(job.get("attempts") or 1) != expected_attempt
+                or int(job.get("pending_attempt") or expected_attempt)
+                != expected_attempt
+            ):
+                return JobStopOutput(
+                    job=_public_job(job), killed=False, stderr=""
+                )
             if job.get("status") != "running":
                 return JobStopOutput(
                     job=_public_job(job), killed=False, stderr=""
@@ -756,10 +814,21 @@ async def _stop_managed_job_without_session_admission(
 
 
 async def stop_managed_job_without_session_admission(
-    session_id: str, job_id: str
+    session_id: str,
+    job_id: str,
+    *,
+    expected_attempt: int | None = None,
+    expected_kind: str | None = None,
+    expected_payload: Mapping[str, Any] | None = None,
 ) -> JobStopOutput:
     """Stop managed work after an external session authority admitted cleanup."""
-    return await _stop_managed_job_without_session_admission(session_id, job_id)
+    return await _stop_managed_job_without_session_admission(
+        session_id,
+        job_id,
+        expected_attempt=expected_attempt,
+        expected_kind=expected_kind,
+        expected_payload=expected_payload,
+    )
 
 
 async def job_stop_managed_references_execute(
@@ -962,15 +1031,18 @@ async def managed_job_list_execute(
 
 
 async def managed_job_tail_execute(
-    session_id: str, job_id: str, lines: int = 200
+    session_id: str,
+    job_id: str,
+    lines: int = 200,
+    *,
+    expected_kind: str | None = None,
+    expected_payload: Mapping[str, Any] | None = None,
 ) -> JobTailOutput:
     """Read managed-job state without consulting legacy session authority."""
     with _store_transaction() as store:
-        job = _refresh_job_status(
-            _find_session_job(store, session_id, job_id), set()
-        )
-        if str(job.get("kind") or "shell") != "managed":
-            raise RuntimeError(f"job is not control-managed: {job_id}")
+        job = _find_session_job(store, session_id, job_id)
+        _require_managed_binding(job, expected_kind, expected_payload)
+        job = _refresh_job_status(job, set())
         public = _public_job(job)
         log_path = str(job.get("log_path") or "")
     output = job_status._read_log_tail(log_path, lines)

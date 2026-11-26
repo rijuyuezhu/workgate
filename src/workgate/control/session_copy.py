@@ -5,7 +5,7 @@ import contextlib
 import logging
 import secrets
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -310,6 +310,8 @@ class ControlSessionCopyService:
         kind: CopyKind = "auto",
         overwrite: bool = True,
         chunk_size: int | None = None,
+        reserved_job_id: str | None = None,
+        expected_executors: Mapping[str, str] | None = None,
     ) -> JobStartOutput:
         """Start one durable control-managed copy under execution-session admission."""
         normalized_chunk_size = normalize_chunk_size(chunk_size)
@@ -317,6 +319,10 @@ class ControlSessionCopyService:
             (src_session_id, dst_session_id)
         ) as records:
             by_id = {str(record.session_id): record for record in records}
+            if expected_executors is not None and dict(expected_executors) != {
+                key: str(record.executor_id) for key, record in by_id.items()
+            }:
+                raise PermissionError("Managed copy Session bindings changed")
             payload = {
                 "transfer_id": "copy_" + secrets.token_urlsafe(16),
                 "src_session_id": src_session_id,
@@ -346,6 +352,7 @@ class ControlSessionCopyService:
                     f"{dst_session_id}:{dst_path}"
                 ),
                 cwd=".",
+                reserved_job_id=reserved_job_id,
             )
 
     def managed_job_registration(self) -> tuple[str, ManagedJobHandler]:
