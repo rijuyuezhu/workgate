@@ -427,12 +427,7 @@ async def serve_model_refresh(
 ) -> None:
     while True:
         try:
-            if account_refresh is None:
-                await refresh_model_channels(repo)
-            else:
-                await refresh_model_channels(
-                    repo, account_refresh=account_refresh
-                )
+            await refresh_model_channels(repo, account_refresh=account_refresh)
         except Exception as exc:
             logger.warning(
                 "Model catalog refresh cycle failed: %s", type(exc).__name__

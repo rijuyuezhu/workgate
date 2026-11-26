@@ -490,7 +490,7 @@ async def test_catalog_refresh_only_opted_in_channels(
     with pytest.raises(ValueError, match="saved channel"):
         await discovery.refresh_model_channel(profiles, None)  # type: ignore[arg-type]
 
-    async def refresh_failed(*args):
+    async def refresh_failed(*args, **kwargs):
         raise RuntimeError("private transport data")
 
     monkeypatch.setattr(discovery, "_refresh_snapshot", refresh_failed)
