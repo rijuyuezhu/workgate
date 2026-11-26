@@ -21,6 +21,10 @@ TaskId = Annotated[
     str,
     StringConstraints(pattern=r"^task_[A-Za-z0-9_-]{22,}$", max_length=128),
 ]
+ReservedJobId = Annotated[
+    str,
+    StringConstraints(pattern=r"^job_[a-f0-9]{32}$"),
+]
 CommandId = Annotated[
     str,
     StringConstraints(pattern=r"^cmd_[A-Za-z0-9_-]{22,}$", max_length=128),
@@ -61,6 +65,11 @@ def new_session_id() -> str:
 def new_task_id() -> str:
     """Return a new durable semantic task identifier."""
     return _new_opaque_id("task_")
+
+
+def new_reserved_job_id() -> str:
+    """Return a private preallocated native Job identity."""
+    return "job_" + secrets.token_hex(_OPAQUE_ID_BYTES)
 
 
 def new_command_id() -> str:

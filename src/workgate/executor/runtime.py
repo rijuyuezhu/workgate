@@ -15,6 +15,7 @@ from ..config.executor import ExecutorConfig
 from ..config.role_config import use_role_config
 from ..persistence import use_state_store
 from ..protocol.executor import (
+    JOB_START_RESERVED_OP,
     SESSION_CHANGE_WORKDIR_OP,
     SESSION_CREATE_OP,
     SESSION_LOOKUP_OP,
@@ -794,6 +795,13 @@ class ExecutorRuntime:
                 raise ValueError("session.change_workdir requires workdir")
             async with self.peer_receiver.session_lifecycle(session_id):
                 return await self.sessions.change_workdir(session_id, workdir)
+
+        if command.op == JOB_START_RESERVED_OP:
+            if command.session_id is None:
+                raise ValueError("Reserved Job creation requires session_id")
+            return await self.shell.start_reserved_job(
+                str(command.session_id), dict(command.args)
+            )
 
         args = dict(command.args)
         if command.session_id is not None:

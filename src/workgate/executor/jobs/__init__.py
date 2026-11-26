@@ -39,10 +39,16 @@ class ExecutorJobService:
         name: str | None = None,
         *,
         script_path: str | None = None,
+        reserved_job_id: str | None = None,
     ) -> JobStartOutput:
         async with session_lifecycle_lock(session_id):
             return await self.start_unlocked(
-                session_id, command, cwd=cwd, name=name, script_path=script_path
+                session_id,
+                command,
+                cwd=cwd,
+                name=name,
+                script_path=script_path,
+                reserved_job_id=reserved_job_id,
             )
 
     async def start_unlocked(
@@ -53,6 +59,7 @@ class ExecutorJobService:
         name: str | None = None,
         *,
         script_path: str | None = None,
+        reserved_job_id: str | None = None,
     ) -> JobStartOutput:
         return await shell_jobs.start_shell_job_unlocked(
             self.config,
@@ -62,6 +69,7 @@ class ExecutorJobService:
             cwd=cwd,
             name=name,
             script_path=script_path,
+            reserved_job_id=reserved_job_id,
         )
 
     async def list(

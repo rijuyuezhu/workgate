@@ -7,6 +7,7 @@ from typing import Any
 
 from ..config.executor import ExecutorConfig
 from ..jobs.persistence import TERMINAL_STATUSES
+from ..jobs.state import JobIdentityInUseError
 from ..schemas.result_models.jobs import JobStartOutput, JobTailOutput
 from ..schemas.result_models.shell import (
     RunPythonCodeOutput,
@@ -221,26 +222,32 @@ async def run_python_code_execute(
         ],
         shell=_effective_shell_executable(config),
     )
-    result = await bash_execute(
-        config,
-        store,
-        session_id,
-        command,
-        str(resolved_cwd),
-        timeout_s,
-        max_output_bytes,
-        env,
-        async_,
-        pty,
-        name,
-        job_start=job_start,
-        forbidden_shell_ids=forbidden_shell_ids,
-        persist_on_timeout=persist_on_timeout,
-        job_wait=job_wait,
-        job_script_path=str(script_path)
-        if not pty and (persist_on_timeout or async_)
-        else None,
-    )
+    try:
+        result = await bash_execute(
+            config,
+            store,
+            session_id,
+            command,
+            str(resolved_cwd),
+            timeout_s,
+            max_output_bytes,
+            env,
+            async_,
+            pty,
+            name,
+            job_start=job_start,
+            forbidden_shell_ids=forbidden_shell_ids,
+            persist_on_timeout=persist_on_timeout,
+            job_wait=job_wait,
+            job_script_path=str(script_path)
+            if not pty and (persist_on_timeout or async_)
+            else None,
+        )
+    except JobIdentityInUseError:
+        # The duplicate never published a Job referencing this new script.
+        with contextlib.suppress(OSError):
+            script_path.unlink(missing_ok=True)
+        raise
     return RunPythonCodeOutput(
         **result.model_dump(), script_path=str(script_path)
     )

@@ -1,9 +1,14 @@
 """Executor-owned shell and persistent-terminal orchestration."""
 
+from functools import partial
 from typing import Any
 
 from ..config.executor import ExecutorConfig
-from ..protocol.executor import JobInventorySummary, ShellInventorySummary
+from ..protocol.executor import (
+    JobInventorySummary,
+    ReservedJobStartRequest,
+    ShellInventorySummary,
+)
 from ..schemas.result_models.shell import ListPersistentShellsOutput
 from .bash import bash_execute, run_python_code_execute
 from .errors import ExecutorResourceInventoryUnavailable
@@ -29,7 +34,9 @@ class ShellService:
         self.store = store
         self.jobs = ExecutorJobService(config, store)
 
-    async def bash(self, args: dict[str, Any]) -> Any:
+    async def bash(
+        self, args: dict[str, Any], *, reserved_job_id: str | None = None
+    ) -> Any:
         pty = bool(args.get("pty", False))
         return await bash_execute(
             self.config,
@@ -43,7 +50,9 @@ class ShellService:
             bool(args.get("async_", False)),
             pty,
             None if args.get("name") is None else str(args["name"]),
-            job_start=self.jobs.start,
+            job_start=partial(self.jobs.start, reserved_job_id=reserved_job_id)
+            if reserved_job_id is not None
+            else self.jobs.start,
             job_wait=self.jobs.wait,
             persist_on_timeout=args.get("persist_on_timeout", False),
             forbidden_shell_ids=(
@@ -51,7 +60,9 @@ class ShellService:
             ),
         )
 
-    async def run_python_code(self, args: dict[str, Any]) -> Any:
+    async def run_python_code(
+        self, args: dict[str, Any], *, reserved_job_id: str | None = None
+    ) -> Any:
         pty = bool(args.get("pty", False))
         return await run_python_code_execute(
             self.config,
@@ -65,7 +76,9 @@ class ShellService:
             bool(args.get("async_", False)),
             pty,
             None if args.get("name") is None else str(args["name"]),
-            job_start=self.jobs.start,
+            job_start=partial(self.jobs.start, reserved_job_id=reserved_job_id)
+            if reserved_job_id is not None
+            else self.jobs.start,
             job_wait=self.jobs.wait,
             persist_on_timeout=args.get("persist_on_timeout", False),
             forbidden_shell_ids=(
@@ -73,6 +86,17 @@ class ShellService:
             ),
             python_executable=args.get("python_executable"),
         )
+
+    async def start_reserved_job(
+        self, session_id: str, args: dict[str, Any]
+    ) -> Any:
+        request = ReservedJobStartRequest.model_validate(args)
+        payload = request.model_dump(
+            exclude={"job_id", "tool"}, exclude_none=True
+        )
+        payload["session_id"] = session_id
+        handler = self.bash if request.tool == "bash" else self.run_python_code
+        return await handler(payload, reserved_job_id=request.job_id)
 
     async def start(self, args: dict[str, Any]) -> Any:
         session_id = args.get("session_id")
