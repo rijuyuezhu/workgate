@@ -11,7 +11,6 @@ from ...jobs.status import _read_status_path
 from ...platform.host import HostOS, host_os
 from ...protocol.executor import (
     JobInventorySummary,
-    ReservedJobAttemptReceipt,
     ReservedJobAttemptRequest,
 )
 from ...schemas.result_models.jobs import (
@@ -21,6 +20,7 @@ from ...schemas.result_models.jobs import (
     JobStartOutput,
     JobStopOutput,
     JobTailOutput,
+    ReservedJobAttemptReceipt,
 )
 from ..errors import ExecutorResourceInventoryUnavailable
 from ..tool_session.lifecycle import session_lifecycle_lock

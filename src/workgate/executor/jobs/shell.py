@@ -60,7 +60,6 @@ from ...jobs.state import (
 )
 from ...protocol.executor import (
     JobInventorySummary,
-    ReservedJobAttemptReceipt,
     ReservedJobAttemptRequest,
 )
 from ...protocol.ids import ReservedJobId
@@ -70,6 +69,7 @@ from ...schemas.result_models.jobs import (
     JobStartOutput,
     JobStopOutput,
     JobTailOutput,
+    ReservedJobAttemptReceipt,
 )
 from ..shell import (
     authoritative_persistent_shell_ids_execute,

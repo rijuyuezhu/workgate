@@ -12,10 +12,10 @@ from ..oauth.core.context import bind_oauth_claims, reset_oauth_claims
 from ..protocol.executor import (
     JOB_CANCEL_ATTEMPT_OP,
     SHELL_LOOKUP_RESERVED_OP,
-    ReservedJobAttemptReceipt,
     ReservedJobAttemptRequest,
     ReservedShellLookupResult,
 )
+from ..schemas.result_models.jobs import ReservedJobAttemptReceipt
 from ..schemas.result_models.shell import KillPersistentShellOutput
 from .execution_context import control_execution_context
 from .runtime import ControlRuntime

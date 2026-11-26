@@ -1,8 +1,11 @@
 """Typed structured outputs for tracked shell and managed job tools."""
 
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from ...protocol.executor import ReservedJobAttemptRequest
+from ...protocol.ids import SessionId
 
 type JobStatus = Literal[
     "starting",
@@ -84,6 +87,40 @@ class JobInfo(BaseModel):
     attempts: int = Field(
         description="Number of times this tracked job has been started, including retries."
     )
+
+
+class ReservedJobAttemptReceipt(ReservedJobAttemptRequest):
+    session_id: SessionId
+    state: Literal["matching", "superseded", "unknown", "rejected"]
+    job: JobInfo | None = None
+    output: str | None = None
+
+    @model_validator(mode="after")
+    def validate_receipt(self) -> Self:
+        if self.state == "matching":
+            if (
+                self.job is None
+                or self.job.job_id != self.job_id
+                or self.job.session_id != self.session_id
+                or self.job.kind != "shell"
+                or self.job.attempts != self.attempt
+            ):
+                raise ValueError("Mismatched native Job attempt receipt")
+        elif self.job is not None or self.output is not None:
+            raise ValueError(
+                "Unconfirmed attempt must not expose native Job data"
+            )
+        return self
+
+    def matches(
+        self, request: ReservedJobAttemptRequest, session_id: str
+    ) -> bool:
+        return (
+            self.session_id == session_id
+            and self.job_id == request.job_id
+            and self.attempt == request.attempt
+            and self.retry_key == request.retry_key
+        )
 
 
 class JobStartOutput(JobInfo):
