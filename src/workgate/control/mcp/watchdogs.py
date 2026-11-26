@@ -24,6 +24,7 @@ from ...oauth.core.state import OAuthState
 from ...persistence import StateStore
 from ...tools.declarative import mcp_handler_error_handler
 from ...tools.mcp_text import has_explicit_tool_text
+from ...tools.result_compaction import compact_native_result
 from ...utils.serialization import to_jsonable
 from ..execution_context import control_execution_context
 from ..tool_timeouts import SHELL_COMMAND_TOOL_NAMES, tool_timeout_s
@@ -170,6 +171,18 @@ def _mcp_tool_audit_watchdog_wrapper(
             session_ids=session_ids,
             task_ids=task_ids,
         )
+        if (
+            isinstance(result, CallToolResult)
+            and not result.is_error
+            and result.structured_content is not None
+        ):
+            projected = compact_native_result(
+                tool_name, result.structured_content
+            )
+            if projected is not result.structured_content:
+                return result.model_copy(
+                    update={"structured_content": projected}
+                )
         return result
 
     if hasattr(original, "__signature__"):

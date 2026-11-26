@@ -2,6 +2,7 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
+from jsonschema import validate
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent
 
@@ -511,6 +512,33 @@ async def test_model_facing_tools_use_explicit_mcp_text(tmp_path, monkeypatch):
     assert isinstance(bash.structured_content, dict)
     assert isinstance(bash.content[0], TextContent)
     assert bash.content[0].text == "shell-output"
+    tools = {tool.name: tool for tool in await mcp.list_tools()}
+    schema = tools["bash"].output_schema
+    assert schema is not None
+    validate(bash.structured_content, schema)
+    detail = bash.structured_content["result"]
+    assert detail["ok"] is True and detail["exit_code"] == 0
+    assert (
+        not {"command", "cwd", "stderr", "timed_out", "truncated"}
+        & detail.keys()
+    )
+    assert bash.structured_content["command"] == "printf shell-output"
+    assert bash.structured_content["cwd"] == str(tmp_path)
+    records = [
+        json.loads(line)
+        for line in get_settings().audit_log_path.read_text().splitlines()
+    ]
+    raw = [
+        record["output"]
+        for record in records
+        if record.get("event") == "tool_call_end"
+        and record.get("tool") == "bash"
+    ][-1]
+    assert raw["result"]["command"] == "printf shell-output"
+    assert raw["result"]["cwd"] == str(tmp_path)
+    assert raw["result"]["stderr"] == ""
+    assert raw["result"]["timed_out"] is False
+    assert raw["result"]["truncated"] is False
 
     tree = await mcp.call_tool(
         "tree_view", {"session_id": session_id, "cwd": ".", "depth": 1}
