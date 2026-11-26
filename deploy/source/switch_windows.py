@@ -10,6 +10,12 @@ import sys
 import time
 from pathlib import Path
 
+from executor_trial import (
+    begin_trial,
+    executor_switch_lock,
+    finish_trial,
+    recover_trial,
+)
 from prepare import _check_launcher, _default_root, _write_launcher
 from switch import _staged_python, _wait_for_controller_poll
 
@@ -325,10 +331,12 @@ def _switch_executor(
     if old == new:
         print(f"Executor is already running {tag}; no restart")
         return
+    started_at = time.time()
+    if require_controller_poll:
+        begin_trial(root, old, new, config, profile, started_at)
     try:
         _stop(old, "executor")
         _ensure_stopped(old, "executor")
-        started_at = time.time()
         _executor_install(new, config)
         if _executor_binding(new, config, current=True) != profile:
             raise RuntimeError("new Executor moved its pairing identity")
@@ -367,6 +375,8 @@ def _switch_executor(
                 (root / "bin/workgate.cmd").unlink(missing_ok=True)
             else:
                 _write_launcher(root, old)
+            if require_controller_poll:
+                finish_trial(root)
         except Exception as recovery:
             raise RuntimeError(
                 f"Executor switch failed: {exc}; recovery also failed: {recovery}"
@@ -374,6 +384,8 @@ def _switch_executor(
         raise RuntimeError(
             f"Executor switch failed, previous task restored: {exc}"
         ) from exc
+    if require_controller_poll:
+        finish_trial(root)
     print(f"Executor switched to {tag}; previous release retained for rollback")
 
 
@@ -401,6 +413,10 @@ def switch(
     if require_controller_poll and role != "executor":
         raise ValueError(
             "Control poll verification requires a standalone Executor"
+        )
+    if adopt_legacy_executor and require_controller_poll:
+        raise ValueError(
+            "initial legacy adoption cannot be an automatic cutover"
         )
     if adopt_legacy_executor and role != "executor":
         raise ValueError(
@@ -437,26 +453,47 @@ def switch(
             "expected unchanged durable YAML config for this role"
         )
 
-    # Normal managed cutover keeps its original preflight order and behavior.
-    old = None if adopt_legacy_executor else _old_python(root)
+    if role == "executor":
+        assert executor_config is not None
+        with executor_switch_lock(root):
+            old = None if adopt_legacy_executor else _old_python(root)
+            new = _staged_python(root, tag)
+            if not new.with_name("pythonw.exe").is_file():
+                raise RuntimeError(
+                    "prepared Windows runtime is missing pythonw.exe"
+                )
+            if adopt_legacy_executor:
+                old = _legacy_executor_python(root, new)
+            assert old is not None
+            if recover_trial(
+                root,
+                old,
+                new,
+                executor_config,
+                binding=lambda python: _executor_binding(
+                    python, executor_config, current=True
+                ),
+                wait_for_poll=_wait_for_controller_poll,
+                publish=_write_launcher,
+            ):
+                print(
+                    f"Executor interrupted cutover recovered at {tag}; no service restart"
+                )
+                return
+            _switch_executor(
+                root,
+                old,
+                new,
+                tag,
+                executor_config,
+                adopt_legacy=adopt_legacy_executor,
+                require_controller_poll=require_controller_poll,
+            )
+        return
+    old = _old_python(root)
     new = _staged_python(root, tag)
     if not new.with_name("pythonw.exe").is_file():
         raise RuntimeError("prepared Windows runtime is missing pythonw.exe")
-    if adopt_legacy_executor:
-        old = _legacy_executor_python(root, new)
-    assert old is not None
-    if role == "executor":
-        assert executor_config is not None
-        _switch_executor(
-            root,
-            old,
-            new,
-            tag,
-            executor_config,
-            adopt_legacy=adopt_legacy_executor,
-            require_controller_poll=require_controller_poll,
-        )
-        return
     assert control_config is not None
 
     # The directory is derived from the already installed native action; never

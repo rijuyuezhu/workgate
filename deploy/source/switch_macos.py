@@ -9,6 +9,12 @@ import sys
 import time
 from pathlib import Path
 
+from executor_trial import (
+    begin_trial,
+    executor_switch_lock,
+    finish_trial,
+    recover_trial,
+)
 from switch import (
     _old_python,
     _staged_python,
@@ -155,53 +161,81 @@ def switch(
     if config.is_symlink() or not config.is_file():
         raise RuntimeError("managed Executor YAML config missing")
 
-    old = _old_python(root)
-    new = _staged_python(root, tag)
-    profile = _binding(old, config, current=True)
-    identity = profile.read_bytes()
-    if old == new:
-        print(f"Executor is already running {tag}; no restart")
-        return
-    before = _status(old, config)
-    candidate = _status(new, config)
-    if any(candidate.get(key) != before.get(key) for key in ("Service", "Log")):
-        raise RuntimeError("staged Executor resolves a different native state")
-    try:
-        started_at = time.time()
-        _install(new, config)
-        if _wait_for_binding(new, config) != profile:
-            raise RuntimeError("new Executor service uses a different identity")
-        if require_controller_poll:
-            _wait_for_controller_poll(new, profile, started_at)
-            if _binding(new, config, current=True) != profile:
-                raise RuntimeError(
-                    "candidate Executor binding changed during poll verification"
-                )
-        if profile.read_bytes() != identity:
-            raise RuntimeError(
-                "Executor pairing identity changed during cutover"
+    with executor_switch_lock(root):
+        old = _old_python(root)
+        new = _staged_python(root, tag)
+        if recover_trial(
+            root,
+            old,
+            new,
+            config,
+            binding=lambda python: _binding(python, config, current=True),
+            wait_for_poll=_wait_for_controller_poll,
+            publish=_write_launcher,
+        ):
+            print(
+                f"Executor interrupted cutover recovered at {tag}; no service restart"
             )
-        _write_launcher(root, new)
-    except Exception as exc:
+            return
+        profile = _binding(old, config, current=True)
+        identity = profile.read_bytes()
+        if old == new:
+            print(f"Executor is already running {tag}; no restart")
+            return
+        before = _status(old, config)
+        candidate = _status(new, config)
+        if any(
+            candidate.get(key) != before.get(key) for key in ("Service", "Log")
+        ):
+            raise RuntimeError(
+                "staged Executor resolves a different native state"
+            )
+        started_at = time.time()
+        if require_controller_poll:
+            begin_trial(root, old, new, config, profile, started_at)
         try:
-            _install(old, config)
-            if _wait_for_binding(old, config) != profile:
-                raise RuntimeError("old Executor native service not restored")
+            _install(new, config)
+            if _wait_for_binding(new, config) != profile:
+                raise RuntimeError(
+                    "new Executor service uses a different identity"
+                )
+            if require_controller_poll:
+                _wait_for_controller_poll(new, profile, started_at)
+                if _binding(new, config, current=True) != profile:
+                    raise RuntimeError(
+                        "candidate Executor binding changed during poll verification"
+                    )
             if profile.read_bytes() != identity:
                 raise RuntimeError(
-                    "Executor pairing identity changed; recovery unsafe"
+                    "Executor pairing identity changed during cutover"
                 )
-            _write_launcher(root, old)
-        except Exception as recovery:
+            _write_launcher(root, new)
+        except Exception as exc:
+            try:
+                _install(old, config)
+                if _wait_for_binding(old, config) != profile:
+                    raise RuntimeError(
+                        "old Executor native service not restored"
+                    )
+                if profile.read_bytes() != identity:
+                    raise RuntimeError(
+                        "Executor pairing identity changed; recovery unsafe"
+                    )
+                _write_launcher(root, old)
+                if require_controller_poll:
+                    finish_trial(root)
+            except Exception as recovery:
+                raise RuntimeError(
+                    f"Mac Executor cutover failed; recovery also failed: {type(recovery).__name__}"
+                ) from recovery
             raise RuntimeError(
-                f"Mac Executor cutover failed; recovery also failed: {type(recovery).__name__}"
-            ) from recovery
-        raise RuntimeError(
-            "Mac Executor cutover failed; old service restored"
-        ) from exc
-    print(
-        f"Executor LaunchAgent switched to {tag}; old source retained for rollback"
-    )
+                "Mac Executor cutover failed; old service restored"
+            ) from exc
+        if require_controller_poll:
+            finish_trial(root)
+        print(
+            f"Executor LaunchAgent switched to {tag}; old source retained for rollback"
+        )
 
 
 def main() -> None:

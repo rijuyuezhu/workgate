@@ -11,6 +11,12 @@ import sys
 import time
 from pathlib import Path
 
+from executor_trial import (
+    begin_trial,
+    executor_switch_lock,
+    finish_trial,
+    recover_trial,
+)
 from prepare import (
     REPOSITORY,
     _check_launcher,
@@ -304,8 +310,10 @@ def _switch_executor(
             cwd=python.parents[2],
         )
 
+    started_at = time.time()
+    if require_controller_poll:
+        begin_trial(root, old, new, config, profile, started_at)
     try:
-        started_at = time.time()
         install(new)
         if _executor_binding(new, config, current=True) != (unit, profile):
             raise RuntimeError(
@@ -334,6 +342,8 @@ def _switch_executor(
                     "Executor pairing identity changed; recovery cannot confirm it"
                 )
             _write_launcher(root, old)
+            if require_controller_poll:
+                finish_trial(root)
         except Exception as recovery:
             raise RuntimeError(
                 f"Executor cutover failed: {exc}; recovery also failed: {recovery}"
@@ -341,6 +351,8 @@ def _switch_executor(
         raise RuntimeError(
             f"Executor cutover failed, previous service restored: {exc}"
         ) from exc
+    if require_controller_poll:
+        finish_trial(root)
     print(
         f"Executor service switched to {tag}; previous runtime retained for rollback"
     )
@@ -387,16 +399,32 @@ def switch(
             raise RuntimeError(
                 "Executor cutover requires durable Executor YAML config"
             )
-        old_python = _old_python(root)
-        new_python = _staged_python(root, tag)
-        _switch_executor(
-            root,
-            old_python,
-            new_python,
-            tag,
-            paired_config,
-            require_controller_poll=require_controller_poll,
-        )
+        with executor_switch_lock(root):
+            old_python = _old_python(root)
+            new_python = _staged_python(root, tag)
+            if recover_trial(
+                root,
+                old_python,
+                new_python,
+                paired_config,
+                binding=lambda python: _executor_binding(
+                    python, paired_config, current=True
+                )[1],
+                wait_for_poll=_wait_for_controller_poll,
+                publish=_write_launcher,
+            ):
+                print(
+                    f"Executor interrupted cutover recovered at {tag}; no service restart"
+                )
+                return
+            _switch_executor(
+                root,
+                old_python,
+                new_python,
+                tag,
+                paired_config,
+                require_controller_poll=require_controller_poll,
+            )
         return
     if config is None or not config.is_file():
         raise RuntimeError(f"missing durable Control config: {config}")
