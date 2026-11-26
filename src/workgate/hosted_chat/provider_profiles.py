@@ -362,8 +362,9 @@ class ProviderRepository:
             "api_key"
         ]
 
-    def profile(self, channel: str) -> dict:
-        """Internal inference profile; never return this object from a public route."""
+    @classmethod
+    def _profile_record(cls, db: sqlite3.Connection, channel: str) -> dict:
+        """Resolve the channel in the caller's snapshot without decrypting keys."""
         if not isinstance(channel, str):
             raise ValueError("Invalid model channel")
         normalized = channel.strip().lower()
@@ -371,15 +372,20 @@ class ProviderRepository:
             if normalized in aliases:
                 normalized = kind
                 break
+        if normalized in _DEFAULTS:
+            value = cls._read(db, _PREFIX + normalized) or cls._default_profile(
+                normalized
+            )
+        else:
+            value = cls._read(db, _CHANNEL_PREFIX + channel)
+            if not value or value.get("name") != channel:
+                raise ValueError("Unknown model channel")
+        return value
+
+    def profile(self, channel: str) -> dict:
+        """Internal inference profile; never return this object from a public route."""
         with self.database.read_snapshot() as db:
-            if normalized in _DEFAULTS:
-                value = self._read(
-                    db, _PREFIX + normalized
-                ) or self._default_profile(normalized)
-            else:
-                value = self._read(db, _CHANNEL_PREFIX + channel)
-                if not value or value.get("name") != channel:
-                    raise ValueError("Unknown model channel")
+            value = self._profile_record(db, channel)
         return {
             **{k: v for k, v in value.items() if k != "api_key_ciphertext"},
             "api_key": self._secret(value),

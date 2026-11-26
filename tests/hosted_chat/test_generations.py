@@ -1,229 +1,352 @@
-"""SQLite generation lease, event replay and authenticated native React SSE."""
+"""SQLite run admission and replay, adapted from final upstream source tests."""
 
-from __future__ import annotations
-
-import asyncio
 import json
-from types import SimpleNamespace
+from concurrent.futures import ThreadPoolExecutor
 
-import httpx
 import pytest
-from starlette.applications import Starlette
 
-from local_shell_mcp.sqlite_store import SQLiteDatabase
-from local_shell_mcp.webui import generation_routes, routes
-from local_shell_mcp.webui.generations import GenerationConflict, GenerationStore
-from local_shell_mcp.webui.providers import ProviderConfig
-
-
-@pytest.fixture(autouse=True)
-def native_settings_environment(tmp_path, monkeypatch):
-    # Native modules retain their imported accessor; configure its environment
-    # as well as the endpoint accessor mocks, on non-root CI runners too.
-    from local_shell_mcp.settings import get_settings
-
-    monkeypatch.setenv("LOCAL_SHELL_MCP_WORKSPACE_ROOT", str(tmp_path))
-    monkeypatch.setenv("LOCAL_SHELL_MCP_STATE_DIR", str(tmp_path / ".local-shell-mcp"))
-    get_settings.cache_clear()
-    yield
-    get_settings.cache_clear()
+from workgate.hosted_chat import generations
+from workgate.hosted_chat.agents import AgentRepository
+from workgate.hosted_chat.credential_cipher import CredentialCipher
+from workgate.hosted_chat.database import SQLiteDatabase
+from workgate.hosted_chat.generation_actor_lease import (
+    ActorLease,
+    ActorLeaseLost,
+)
+from workgate.hosted_chat.generations import GenerationConflict, GenerationStore
+from workgate.hosted_chat.provider_profiles import ProviderRepository
+from workgate.hosted_chat.storage import WorkspaceRepository
 
 
 @pytest.fixture
 def database(tmp_path):
-    return SQLiteDatabase(tmp_path / ".local-shell-mcp")
+    return SQLiteDatabase(tmp_path)
+
+
+def claim(database, job, owner="alice"):
+    lease = ActorLease.claim(database, owner, job.run_id)
+    assert lease is not None
+    return lease
+
+
+def delta(text, kind="text"):
+    return {
+        "event": "on_message_delta" if kind == "text" else "on_reasoning_delta",
+        "data": {"delta": {"content": {"type": kind, kind: text}}},
+    }
 
 
 def test_generation_transaction_and_event_replay(database):
     store = GenerationStore(database)
-    job, fresh = store.begin("alice", {
-        "conversationId": "new", "clientRequestId": "turn-1", "text": "你好",
-        "endpoint": "agents", "model": "test-model", "messageId": "user-1",
-    })
-    assert fresh is True
-    assert job.status == "running"
-    assert job.generation_created_at > 0
-    same, fresh = store.begin("alice", {
-        "conversationId": "new", "clientRequestId": "turn-1", "text": "你好"
-    })
-    assert not fresh
-    assert same.run_id == job.run_id
-    assert len(store.history("alice", job.conversation_id)) == 1
+    job, fresh = store.begin(
+        "alice",
+        {
+            "conversationId": "new",
+            "clientRequestId": "turn-1",
+            "text": "你好",
+            "endpoint": "agents",
+            "model": "test-model",
+            "messageId": "user-1",
+        },
+        protocol_version=1,
+    )
+    assert fresh and job.status == "running" and job.generation_created_at > 0
+    same, fresh = store.begin(
+        "alice",
+        {"conversationId": "new", "clientRequestId": "turn-1", "text": "你好"},
+        protocol_version=2,
+    )
+    assert not fresh and same == job and same.protocol_version == 1
+    repo = WorkspaceRepository(database)
+    assert len(repo.messages("alice", job.conversation_id)["messages"]) == 1
     with pytest.raises(GenerationConflict):
-        store.begin("alice", {"conversationId": job.conversation_id, "text": "duplicate"})
-    store.append("alice", job.run_id, {"event": "on_run_step", "data": {"id": "step-1"}})
-    store.append("alice", job.run_id, {"event": "on_message_delta", "data": {"delta": {"text": "世界"}}})
+        store.begin(
+            "alice",
+            {"conversationId": job.conversation_id, "text": "duplicate"},
+        )
+    lease = claim(database, job)
+    store.append(
+        "alice",
+        job.run_id,
+        {"event": "on_run_step", "data": {"id": "step-1"}},
+        actor_lease=lease,
+    )
+    store.append("alice", job.run_id, delta("世界"), actor_lease=lease)
+    store.append(
+        "alice", job.run_id, delta("thought", "think"), actor_lease=lease
+    )
+    store.append("alice", job.run_id, delta("!"), actor_lease=lease)
     rows = store.events("alice", job.run_id)
-    assert [data.get("event", "created") for _, data in rows] == ["created", "on_run_step", "on_message_delta"]
-    assert len(store.events("alice", job.run_id, rows[1][0])) == 1
-    assert store.finish("alice", job.run_id, status="complete", text="世界")
-    assert not store.finish("alice", job.run_id, status="complete", text="duplicate")
-    assert store.latest("alice", job.conversation_id).status == "complete"
+    assert len(rows) == 5 and rows[0][1]["created"]
+    assert len(store.events("alice", job.run_id, rows[1][0], limit=1)) == 1
+    assert store.events("bob", job.run_id) == []
+    assert store.finish(
+        "alice", job.run_id, status="complete", actor_lease=lease
+    )
+    assert not store.finish(
+        "alice",
+        job.run_id,
+        status="complete",
+        text="duplicate",
+        actor_lease=lease,
+    )
+    latest = store.latest("alice", job.conversation_id)
+    assert latest is not None and latest.status == "complete"
     assert store.latest("bob", job.conversation_id) is None
     assert store.get("bob", job.run_id) is None
-    assert store.history("alice", job.conversation_id)[-1]["content"] == "世界"
-    assert store.events("alice", job.run_id)[-1][1]["final"] is True
-    assert store.recover_orphans() == 0
+    history = repo.messages("alice", job.conversation_id)["messages"]
+    final = store.events("alice", job.run_id)[-1][1]
+    assert final["final"] and final["generationProtocolVersion"] == 1
+    assert history[-1]["text"] == "世界!"
+    assert history[-1]["content"] == final["responseMessage"]["content"]
+    assert [part["type"] for part in history[-1]["content"]] == [
+        "text",
+        "think",
+        "text",
+    ]
+    assert final["unreadMarker"] == "run:" + job.run_id
+    assert not lease.is_current()
+    restarted = GenerationStore(SQLiteDatabase(database.root.parent))
+    assert restarted.get("alice", job.run_id) == latest
 
 
 def test_followup_updates_conversation_model_without_recreating_chat(database):
-    from local_shell_mcp.webui.storage import WorkspaceRepository
-
     repo = WorkspaceRepository(database)
-    original = repo.create_conversation("alice", {
-        "endpoint": "openAI", "model": "previous-model", "title": "Existing chat",
-    })
+    profiles = ProviderRepository(database, CredentialCipher(database))
+    profiles.save(
+        {
+            "name": "模型一",
+            "provider": "openai",
+            "base_url": "https://example.invalid/v1",
+            "models": ["new-model"],
+            "api_key": "secret",
+        }
+    )
+    original = repo.create_conversation(
+        "alice",
+        {
+            "endpoint": "openAI",
+            "model": "previous-model",
+            "title": "Existing chat",
+        },
+    )
     cid = original["conversationId"]
-    job, fresh = GenerationStore(database).begin("alice", {
-        "conversationId": cid, "endpoint": "custom", "model": "new-model", "text": "Next turn",
-    })
-    assert fresh and job.conversation_id == cid
+    store = GenerationStore(database)
+    job, fresh = store.begin(
+        "alice",
+        {
+            "conversationId": cid,
+            "endpoint": "模型一",
+            "text": "Next turn",
+            "lsmSampling": {"temperature": 0},
+        },
+    )
+    assert (
+        fresh
+        and job.conversation_id == cid
+        and job.provider == "模型一"
+        and job.model == "new-model"
+    )
     restored = repo.conversation("alice", cid)
-    assert restored["model"] == "new-model"
-    assert restored["endpoint"] == "custom"
+    assert (
+        restored is not None
+        and restored["model"] == "new-model"
+        and restored["endpoint"] == "模型一"
+    )
     assert restored["title"] == "Existing chat"
-
-
-def test_generation_rejects_bad_prompt_and_keeps_clean_database(database):
-    store = GenerationStore(database)
-    with pytest.raises(ValueError):
-        store.begin("alice", {"text": ""})
-    with pytest.raises(ValueError):
-        store.begin("alice", {"text": "abc", "clientRequestId": "z" * 300})
-    with database.connect() as conn:
-        assert conn.execute("SELECT count(*) FROM conversations").fetchone()[0] == 0
-        assert conn.execute("SELECT count(*) FROM runs").fetchone()[0] == 0
-
-
-def test_client_cannot_preoccupy_trusted_child_or_wakeup_idempotency_namespace(database):
-    store = GenerationStore(database)
-    for key in ("subagent:subtask_opaque", "subagent-wakeup:subtask_opaque"):
-        with pytest.raises(ValueError, match="Internal"):
-            store.begin("alice", {"text": "Spoof an internal turn", "clientRequestId": key})
+    assert job.sampling == {"temperature": 0}
+    lease = claim(database, job)
+    assert store.finish(
+        "alice", job.run_id, status="complete", text="done", actor_lease=lease
+    )
+    next_job, _ = store.begin(
+        "alice", {"conversationId": cid, "text": "followup"}
+    )
+    assert next_job.provider == job.provider and next_job.model == job.model
+    assert next_job.sampling == job.sampling
+    msgs = repo.messages("alice", cid)["messages"]
+    assert msgs[-1]["parentMessageId"] == job.response_message_id
     with database.connect() as db:
-        assert db.execute("SELECT count(*) FROM generation_requests").fetchone()[0] == 0
-        assert db.execute("SELECT count(*) FROM runs").fetchone()[0] == 0
+        assert all(
+            "secret" not in row[0]
+            for row in db.execute("SELECT state FROM runs")
+        )
 
 
-def test_crashed_generation_is_marked_interrupted_and_replayable(database):
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"text": ""},
+        {"text": "abc", "clientRequestId": "z" * 300},
+        {"text": "task", "conversationId": 123},
+        {"text": "task", "projectId": []},
+        {"text": "task", "projectId": "missing"},
+        {"text": "task", "conversationId": "missing"},
+        {"text": "task", "provider": "missing"},
+        {"text": "task", "model": {}},
+        {"text": "task", "parentMessageId": "missing"},
+        {"text": "task", "files": [{}]},
+        {"text": "task", "compact": True},
+        {"text": "task", "messageId": {}},
+        {"text": "task", "lsmSampling": {"temperature": float("nan")}},
+    ],
+)
+def test_generation_rejects_invalid_admission_without_partial_writes(
+    database, payload
+):
     store = GenerationStore(database)
-    job, _ = store.begin("alice", {"text": "a pending question"})
-    store.append("alice", job.run_id, {"event": "on_message_delta", "data": {"text": "partial"}})
-    assert store.recover_orphans() == 1
-    assert store.recover_orphans() == 0
-    assert store.latest("alice", job.conversation_id).status == "interrupted"
-    assert store.events("alice", job.run_id)[-1][1]["final"] is True
-    final = store.events("alice", job.run_id)[-1][1]
-    assert final["error"]
-    assert final["responseMessage"]["content"][-1] == {"type": "error", "error": "Generation failed"}
-    # The original React content renderer sees the same part on history reload.
+    with pytest.raises((ValueError, KeyError)):
+        store.begin("alice", payload)
     with database.connect() as conn:
-        import json
-        row = conn.execute("SELECT content FROM messages WHERE id=?", (job.response_message_id,)).fetchone()
-    assert json.loads(row[0])[-1] == final["responseMessage"]["content"][-1]
+        for table in (
+            "conversations",
+            "runs",
+            "messages",
+            "generation_requests",
+            "generation_events",
+        ):
+            assert (
+                conn.execute("SELECT count(*) FROM " + table).fetchone()[0] == 0
+            )
 
 
-@pytest.mark.asyncio
-async def test_streaming_generation_http_reconnect_and_token_isolation(database, monkeypatch):
-    # Load native modules before replacing the settings accessor: imports in
-    # those modules otherwise retain the test lambda after monkeypatch undo.
-    from local_shell_mcp import settings as settings_module
-    from local_shell_mcp import tools  # noqa: F401
-    settings = settings_module.Settings(state_dir=database.root, workspace_root=database.root,
-                                        auth_mode="oauth")
+def test_internal_namespace_and_owner_fences(database):
+    store = GenerationStore(database)
+    for key in ("subagent:child", "subagent-wakeup:child", "trigger_key"):
+        with pytest.raises(ValueError, match="Internal"):
+            store.begin("alice", {"text": "Spoof", "clientRequestId": key})
+    project = WorkspaceRepository(database).create_project("alice", "Research")
+    agent = AgentRepository(database).create(
+        "alice", {"provider": "openai", "model": "agent-model"}
+    )
+    job, _ = store.begin(
+        "alice",
+        {
+            "text": "hello",
+            "agent_id": agent["id"],
+            "projectId": project["id"],
+            "clientRequestId": "turn",
+        },
+    )
+    assert job.agent_id == agent["id"] and job.model == "agent-model"
+    for payload in (
+        {"text": "x", "agent_id": agent["id"]},
+        {"text": "x", "projectId": project["id"]},
+        {"text": "x", "conversationId": job.conversation_id},
+        {"text": "x", "parentMessageId": job.user_message_id},
+    ):
+        with pytest.raises(KeyError):
+            store.begin("bob", payload)
+    other, _ = store.begin("bob", {"text": "hello", "clientRequestId": "turn"})
+    assert other.run_id != job.run_id
+    lease = claim(database, job)
+    other_lease = claim(database, other, "bob")
+    with pytest.raises(ActorLeaseLost):
+        store.append("alice", job.run_id, delta("bad"), actor_lease=other_lease)
+    with pytest.raises(ActorLeaseLost):
+        store.finish(
+            "alice", job.run_id, status="complete", actor_lease=other_lease
+        )
+    assert store.get("alice", job.run_id) == job
+    with database.connect() as db:
+        db.execute(
+            "UPDATE generation_actor_leases SET expires_at=0 WHERE run_id=?",
+            (job.run_id,),
+        )
+    new_lease = claim(database, job)
+    with pytest.raises(ActorLeaseLost):
+        store.append("alice", job.run_id, delta("stale"), actor_lease=lease)
+    with pytest.raises(ActorLeaseLost):
+        store.finish("alice", job.run_id, status="error", actor_lease=lease)
+    assert store.finish(
+        "alice",
+        job.run_id,
+        status="interrupted",
+        error="Stopped",
+        actor_lease=new_lease,
+    )
+    final = store.events("alice", job.run_id)[-1][1]
+    assert final["error"] == "Stopped"
+    assert final["responseMessage"]["content"][-1] == {
+        "type": "error",
+        "error": "Stopped",
+    }
 
-    monkeypatch.setattr(settings_module, "get_settings", lambda: settings)
-    monkeypatch.setattr(routes, "get_settings", lambda: settings)
 
-    async def fake_stream(profile, messages, **kwargs):
-        assert profile.token == "model-secret"
-        assert messages[-1]["content"] == "Hello"
-        for fragment in ("Hi", " there"):
-            await asyncio.sleep(0.01)
-            yield fragment
+def test_admission_races_and_event_limits(database, monkeypatch):
+    store = GenerationStore(database)
 
-    monkeypatch.setattr(generation_routes, "stream_model_with_tools", fake_stream)
-    monkeypatch.setattr(generation_routes, "provider_config",
-                        lambda kind, model: ProviderConfig("openai", model or "test", "https://test.invalid", "model-secret"))
-    app = Starlette(routes=generation_routes.generation_routes())
+    def submit(i):
+        return store.begin(
+            "alice",
+            {"text": "same", "clientRequestId": "request"},
+            protocol_version=1 + i % 2,
+        )
 
-    async def authenticated(scope, receive, send):
-        if scope.get("type") == "http":
-            principal = next((v.decode() for k, v in scope.get("headers", []) if k == b"x-test-owner"), None)
-            if principal:
-                scope.setdefault("state", {})["principal"] = SimpleNamespace(subject=principal)
-        await app(scope, receive, send)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(submit, range(16)))
+    assert sum(fresh for _, fresh in results) == 1
+    assert len({job.run_id for job, _ in results}) == 1
+    job = results[0][0]
+    assert all(
+        other.protocol_version == job.protocol_version for other, _ in results
+    )
+    lease = claim(database, job)
+    with pytest.raises(ValueError, match="256 KiB"):
+        store.append(
+            "alice", job.run_id, delta("a" * (257 * 1024)), actor_lease=lease
+        )
+    with pytest.raises(ValueError, match="Unsupported"):
+        store.append(
+            "alice",
+            job.run_id,
+            {"event": "on_run_step_completed", "data": {}},
+            actor_lease=lease,
+        )
+    monkeypatch.setattr(generations, "_EVENT_LIMIT", 1)
+    with pytest.raises(ValueError, match="retention"):
+        store.append("alice", job.run_id, delta("overflow"), actor_lease=lease)
+    assert store.finish(
+        "alice", job.run_id, status="aborted", actor_lease=lease
+    )
+    assert store.events("alice", job.run_id)[-1][1]["aborted"]
+    with pytest.raises(ActorLeaseLost):
+        store.append("alice", job.run_id, delta("late"), actor_lease=lease)
+    with database.connect() as db:
+        assert (
+            db.execute("SELECT count(*) FROM conversations").fetchone()[0] == 1
+        )
+        assert db.execute("SELECT count(*) FROM messages").fetchone()[0] == 1
+        assert (
+            json.loads(db.execute("SELECT state FROM runs").fetchone()[0])[
+                "generationProtocolVersion"
+            ]
+            == job.protocol_version
+        )
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=authenticated), base_url="http://lsm") as client:
-        alice, bob = {"x-test-owner": "alice", "x-librechat-generation-protocol": "2"}, {"x-test-owner": "bob"}
-        assert (await client.post("/api/agents/chat", json={"text": "Hello"})).status_code == 401
-        start = await client.post("/api/agents/chat", headers=alice, json={
-            "conversationId": "new", "text": "Hello", "model": "test", "clientRequestId": "first"
-        })
-        assert start.status_code == 202, start.text
-        identity = start.json()
-        assert identity["generationProtocolVersion"] == 2
-        cid = identity["conversationId"]
-        assert (await client.get(f"/api/agents/chat/status/{cid}", headers=bob)).json()["active"] is False
-        other = await client.get(f"/api/agents/chat/stream/{cid}", headers=bob)
-        assert other.status_code == 404
-        stream = await client.get(f"/api/agents/chat/stream/{cid}", headers=alice)
-        assert stream.status_code == 200, stream.text
-        assert stream.headers["x-librechat-generation-protocol"] == "2"
-        events = [json.loads(line[6:]) for line in stream.text.splitlines() if line.startswith("data: ")]
-        assert events[0]["created"] is True
-        assert events[1]["event"] == "on_run_step"
-        assert [event["data"]["delta"]["content"]["text"] for event in events if event.get("event") == "on_message_delta"] == ["Hi", " there"]
-        assert events[-1]["responseMessage"]["text"] == "Hi there"
-        assert events[-1]["final"] is True
-        assert (await client.get(f"/api/agents/chat/status/{cid}", headers=alice)).json()["status"] == "complete"
-        replay = await client.get(f"/api/agents/chat/stream/{cid}", headers=alice, params={"after": 2})
-        assert replay.status_code == 200
-        assert "on_message_delta" in replay.text
-        assert (await client.get(f"/api/agents/chat/stream/{cid}", headers=alice,
-                                 params={"generationCreatedAt": "1"})).status_code == 409
-    await generation_routes.shutdown_generations()
 
-
-@pytest.mark.asyncio
-async def test_http_negotiation_persists_first_protocol_and_never_upgrades(database, monkeypatch):
-    monkeypatch.setattr(generation_routes, "_database", lambda: database)
-    monkeypatch.setattr(generation_routes, "_owner", lambda request: "alice")
-    monkeypatch.setattr(generation_routes, "provider_config",
-                        lambda kind, model: ProviderConfig("openai", "test", "https://test.invalid", "secret"))
-
-    async def parked(*args, **kwargs):
-        pass
-
-    monkeypatch.setattr(generation_routes, "_start_task", parked)
-    app = Starlette(routes=generation_routes.generation_routes())
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        for index, (body_version, query, header, expected) in enumerate([
-            (None, {}, {}, 1),
-            (2, {}, {}, 2),
-            (2, {"generationProtocolVersion": "1"}, {}, 1),
-            (None, {}, {"x-librechat-generation-protocol": "2"}, 2),
-            (2, {}, {"x-librechat-generation-protocol": "invalid"}, 1),
-        ]):
-            payload = {"text": "hello", "clientRequestId": "negotiation-" + str(index)}
-            if body_version is not None:
-                payload["generationProtocolVersion"] = body_version
-            started = await client.post("/api/agents/chat", json=payload, params=query, headers=header)
-            assert started.status_code == 202, started.text
-            assert started.json()["generationProtocolVersion"] == expected
-            assert started.headers["x-librechat-generation-protocol"] == str(expected)
-            cid = started.json()["conversationId"]
-            stored = GenerationStore(database).latest("alice", cid)
-            assert stored.protocol_version == expected
-            retried = await client.post("/api/agents/chat", json={**payload, "generationProtocolVersion": 2})
-            assert retried.json()["generationProtocolVersion"] == expected
-            abort = await client.post("/api/agents/chat/abort", json={
-                "conversationId": cid, "generationProtocolVersion": 2,
-            })
-            assert abort.json()["generationProtocolVersion"] == expected
-            stream = await client.get("/api/agents/chat/stream/" + cid,
-                                      params={"generationProtocolVersion": "2"})
-            assert stream.headers["x-librechat-generation-protocol"] == str(expected)
-            status = await client.get("/api/agents/chat/status/" + cid,
-                                      params={"generationProtocolVersion": "2"})
-            assert status.json()["generationProtocolVersion"] == expected
+def test_reserved_response_identity_and_failed_write_leave_no_partial_run(
+    database,
+):
+    store = GenerationStore(database)
+    job, _ = store.begin("alice", {"text": "first", "messageId": "user-id"})
+    for ident in (job.response_message_id, job.user_message_id):
+        with pytest.raises(ValueError, match="already in use"):
+            store.begin("bob", {"text": "other", "messageId": ident})
+    lease = claim(database, job)
+    with pytest.raises(ValueError, match="Invalid generation delta"):
+        store.append(
+            "alice",
+            job.run_id,
+            {"event": "on_message_delta", "data": {"delta": {}}},
+            actor_lease=lease,
+        )
+    assert len(store.events("alice", job.run_id)) == 1
+    with database.connect() as db:
+        assert db.execute("SELECT count(*) FROM runs").fetchone()[0] == 1
+        assert (
+            db.execute("SELECT count(*) FROM conversations").fetchone()[0] == 1
+        )
+    assert store.finish(
+        "alice", job.run_id, status="complete", text="answer", actor_lease=lease
+    )
