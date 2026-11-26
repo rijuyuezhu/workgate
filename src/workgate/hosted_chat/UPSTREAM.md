@@ -16,3 +16,14 @@ The database imports the final Hosted Chat table definitions, FTS projection, in
 The initial differential schema check compared the exact pinned upstream DDL against the initialized Workgate database: 41 Chat table definitions unchanged; excluded upstream `state`, `state_append_chunks`, `state_append_lengths`, `legacy_imports`, and the generic `workspaces` table (native Workgate workspace state remains authoritative). SQLite application ID and schema version are Workgate-owned.
 
 The repository retains final React DTOs, pagination, bookmark filters and preference merging. Adaptations enforce owner-scoped project and agent references within write transactions, consistent history snapshots, literal wildcard searches and bounded cursor decoding. The canonical attachment history projection joins persisted messages to their owning runs, ignores deleted files and retains trusted memory events. Attachment mutation routes and the generation runner are not imported in this unit; their source will be integrated with the corresponding lifecycle and permission contracts.
+
+Provider profile storage and sampling are adapted from the final upstream sources:
+
+| Workgate file | Upstream source at the pin | Git blob |
+| --- | --- | --- |
+| `provider_profiles.py` | `src/local_shell_mcp/webui/provider_profiles.py` | `f4cc2abde8895eb47e8abbca99b1a59f7e582cc3` |
+| `sampling.py` | `src/local_shell_mcp/webui/sampling.py` | `74350d3276bf72f704c3aa9b6ba8b5738387a335` |
+| `tests/hosted_chat/test_provider_profiles.py` | `tests/test_webui_provider_profiles.py` (repository cases) | `3feef623b70da2f6a2de1fd4e1e366763684e5d5` |
+| `tests/hosted_chat/test_sampling.py` | `tests/test_webui_sampling.py` (validation/merge cases) | `5bcc7e81ae65aaf0449f9976c8cf483123b9e9bc` |
+
+The repository retains the final channel names, protocol aliases, redacted catalog DTO, reference guards, and model sampling validation. Explicit Control-owned database and cipher instances replace global HTTP-route dependencies. API keys are encrypted and bound to channel, provider and endpoint. A deleted channel name cannot be reused while retained history references it. A private HTTP endpoint requires explicit opt-in; resolved-address validation is required in the transport unit before any requests. Unsaved built-in defaults carry no ambient credentials. Automatic discovery and account OAuth are not exposed by this private unit; their final source integrations and route/transport acceptance remain pending. Generation sampling snapshot tests follow the generation store import.
