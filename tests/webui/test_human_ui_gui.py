@@ -77,7 +77,7 @@ async def test_gui_view_requires_gui_scope_and_explicit_session(
         headers=allowed,
     )
     assert listed.status_code == 200
-    assert listed.json()["data"]["windows"] == []
+    assert listed.json()["data"] == {"windows": [], "available": True}
     assert listed.headers["Cache-Control"] == "no-store"
     assert calls == [("gui_list", {"session_id": session_id})]
 
@@ -156,6 +156,44 @@ async def test_gui_view_ended_and_unknown_sessions_do_not_invoke_backend(
         headers=headers,
     )
     assert ended.status_code != 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error_type,status", [(GuiUnavailableError, 200), (RuntimeError, 502)]
+)
+async def test_gui_window_inventory_distinguishes_unavailability(
+    tmp_path, monkeypatch, error_type, status
+):
+    client, harness, session_id = await _setup(tmp_path, monkeypatch)
+
+    async def unavailable(name, args):
+        assert name == "gui_list"
+        assert args == {"session_id": session_id}
+        raise error_type("No graphical desktop")
+
+    monkeypatch.setattr(
+        harness.control.session_coordinator, "call_session_tool", unavailable
+    )
+    response = client.get(
+        "/api/ui/gui/windows",
+        params={"session_id": session_id},
+        headers=_headers(SCOPE_GUI_USE),
+    )
+    assert response.status_code == status
+    assert response.headers["Cache-Control"] == "no-store"
+    if status == 200:
+        assert response.json() == {
+            "ok": True,
+            "data": {
+                "available": False,
+                "reason": "No graphical desktop",
+                "windows": [],
+                "capabilities": {},
+            },
+        }
+    else:
+        assert response.json()["ok"] is False
 
 
 @pytest.mark.asyncio
