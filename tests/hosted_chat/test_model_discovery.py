@@ -129,3 +129,248 @@ async def test_discovery_bounds_and_pagination_errors(
     )
     with pytest.raises(ValueError, match=match):
         await _fetch_models(kind, "http://127.0.0.1:8000/v1", "")
+
+
+@pytest.fixture
+def profiles(tmp_path):
+    from workgate.hosted_chat.provider_profiles import ProviderRepository
+
+    from workgate.hosted_chat.credential_cipher import CredentialCipher
+    from workgate.hosted_chat.database import SQLiteDatabase
+
+    db = SQLiteDatabase(tmp_path)
+    return ProviderRepository(db, CredentialCipher(db))
+
+
+def profile_body(**changes):
+    return {
+        "name": "Local",
+        "provider": "openai",
+        "base_url": "https://models.invalid/v1",
+        "models": ["old"],
+        **changes,
+    }
+
+
+@pytest.mark.asyncio
+async def test_discovery_filtering_and_saved_key_binding(profiles, monkeypatch):
+    profiles.save(profile_body(api_key="stored-secret"))
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"id": "chat", "context_length": 10000},
+                    {"id": "embeddings-v2"},
+                    {"id": "custom-embed", "task": "embedding"},
+                    {
+                        "id": "vision",
+                        "architecture": {"output_modalities": ["image"]},
+                    },
+                    {
+                        "id": "responses-only",
+                        "supported_endpoints": ["/responses"],
+                    },
+                    {
+                        "id": "compatible",
+                        "supported_endpoints": ["/v1/chat/completions"],
+                    },
+                ]
+            },
+        )
+
+    monkeypatch.setattr(
+        discovery,
+        "provider_client",
+        lambda _base, **_kw: httpx.AsyncClient(
+            transport=httpx.MockTransport(respond)
+        ),
+    )
+    result = await discovery.discover_models(
+        profiles, profile_body(existing_channel="Local")
+    )
+    assert result == {
+        "models": ["chat", "compatible"],
+        "model_contexts": {"chat": 10000},
+    }
+    assert requests[-1].headers["Authorization"] == "Bearer stored-secret"
+    with pytest.raises(ValueError, match="changed endpoint"):
+        await discovery.discover_models(
+            profiles,
+            profile_body(
+                existing_channel="Local", base_url="https://other.invalid/v1"
+            ),
+        )
+    assert len(requests) == 1
+    await discovery.discover_models(
+        profiles,
+        profile_body(
+            existing_channel="Local",
+            base_url="https://other.invalid/v1",
+            keyless=True,
+        ),
+    )
+    assert "Authorization" not in requests[-1].headers
+    await discovery.discover_models(
+        profiles,
+        profile_body(
+            existing_channel="Local",
+            base_url="https://other.invalid/v1",
+            api_key="new-secret",
+        ),
+    )
+    assert requests[-1].headers["Authorization"] == "Bearer new-secret"
+
+
+@pytest.mark.asyncio
+async def test_discovery_does_not_expose_provider_error(profiles, monkeypatch):
+    def respond(request):
+        return httpx.Response(401, json={"error": "private-secret"})
+
+    monkeypatch.setattr(
+        discovery,
+        "provider_client",
+        lambda _base, **_kw: httpx.AsyncClient(
+            transport=httpx.MockTransport(respond)
+        ),
+    )
+    with pytest.raises(discovery.CatalogUnavailable) as failure:
+        await discovery.discover_models(
+            profiles, profile_body(api_key="private-secret")
+        )
+    assert "private-secret" not in str(failure.value)
+    assert not any(
+        row["configured"] for row in profiles.public_profiles()["providers"]
+    )
+
+
+def auto_profile(profiles):
+    import json
+
+    profiles.save(
+        profile_body(
+            api_key="stored-secret",
+            model_contexts={"old": 4096},
+            model_sampling={"old": {"temperature": 0}},
+        )
+    )
+    with profiles.database.connect() as db:
+        value = json.loads(
+            db.execute(
+                "SELECT value FROM settings WHERE key='model.channel.Local'"
+            ).fetchone()[0]
+        )
+        value.update(
+            auto_discover=True,
+            discovered_model_contexts={"old": 8192},
+            model_context_overrides={"old": 4096},
+            model_sync_at=1,
+        )
+        raw = json.dumps(value)
+        db.execute(
+            "UPDATE settings SET value=? WHERE key='model.channel.Local'",
+            (raw,),
+        )
+    return raw
+
+
+@pytest.mark.asyncio
+async def test_refresh_keeps_last_success_and_context_overrides(
+    profiles, monkeypatch
+):
+    raw = auto_profile(profiles)
+
+    async def failure(*args, **kwargs):
+        raise httpx.ConnectError("private upstream error")
+
+    monkeypatch.setattr(discovery, "_fetch_models", failure)
+    assert await discovery._refresh_snapshot(
+        profiles, "model.channel.Local", raw
+    )
+    value = profiles.profile("Local")
+    assert value["models"] == ["old"] and value["model_sync_at"] == 1
+    assert value["model_contexts"] == {"old": 4096}
+    assert value["model_sync_error"] == discovery._SYNC_ERROR
+
+    async def success(kind, base, token, **kwargs):
+        assert (kind, base, token) == (
+            "openai",
+            "https://models.invalid/v1",
+            "stored-secret",
+        )
+        return {
+            "models": ["old", "new"],
+            "model_contexts": {"old": 10000, "new": 20000},
+        }
+
+    monkeypatch.setattr(discovery, "_fetch_models", success)
+    await discovery.refresh_model_channel(profiles, "Local")
+    current = profiles.profile("Local")
+    assert current["models"] == ["old", "new"]
+    assert current["model_contexts"] == {"old": 4096, "new": 20000}
+    assert current["discovered_model_contexts"] == {"old": 10000, "new": 20000}
+    assert current["model_sampling"] == {"old": {"temperature": 0}}
+    assert current["model_sync_error"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["edit", "delete"])
+async def test_refresh_cas_rejects_stale_reply(profiles, monkeypatch, change):
+    raw = auto_profile(profiles)
+
+    async def fetch(*args, **kwargs):
+        if change == "edit":
+            profiles.save(profile_body(models=["manual"], api_key="new-secret"))
+        else:
+            profiles.delete(name="Local")
+        return {"models": ["stale"], "model_contexts": {}}
+
+    monkeypatch.setattr(discovery, "_fetch_models", fetch)
+    assert not await discovery._refresh_snapshot(
+        profiles, "model.channel.Local", raw
+    )
+    if change == "edit":
+        assert profiles.profile("Local")["models"] == ["manual"]
+        assert profiles.profile("Local")["api_key"] == "new-secret"
+    else:
+        with pytest.raises(ValueError, match="Unknown model channel"):
+            profiles.profile("Local")
+
+
+@pytest.mark.asyncio
+async def test_auto_save_fallback_requires_same_connection(
+    profiles, monkeypatch
+):
+    import json
+
+    raw = auto_profile(profiles)
+    previous = json.loads(raw)
+
+    async def failed(*args, **kwargs):
+        raise httpx.ConnectError("private detail")
+
+    monkeypatch.setattr(discovery, "_fetch_models", failed)
+    body = profile_body(auto_discover=True, model_contexts={"old": 4096})
+    from workgate.hosted_chat.provider_profiles import _validate
+
+    value = _validate(body)
+    assert await discovery.prepare_auto_save(profiles, value, previous) is None
+    discovery.apply_auto_save(value, previous, None)
+    assert (
+        value["model_sync_at"] == 1
+        and value["model_sync_error"] == discovery._SYNC_ERROR
+    )
+    assert value["model_contexts"] == {"old": 4096}
+    with pytest.raises(ValueError, match="changed endpoint"):
+        await discovery.prepare_auto_save(
+            profiles,
+            _validate({**body, "base_url": "https://other.invalid/v1"}),
+            previous,
+        )
+    with pytest.raises(discovery.CatalogUnavailable):
+        await discovery.prepare_auto_save(
+            profiles, _validate({**body, "api_key": "different"}), previous
+        )
