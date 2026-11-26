@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Literal
 
-from pydantic import JsonValue
+from pydantic import JsonValue, TypeAdapter
 
 from .. import __version__
 from ..errors import (
@@ -27,7 +27,7 @@ from ..protocol.executor import (
     ExecutorResult,
     SessionInventorySummary,
 )
-from ..protocol.ids import new_session_id
+from ..protocol.ids import SessionId, new_session_id
 from .executor_transport import (
     ExecutorTransport,
     ExecutorTransportError,
@@ -209,9 +209,23 @@ class ControlSessionCoordinator:
         label: str | None = None,
         executor_id: str | None = None,
         task_id: str | None = None,
+        reserved_session_id: str | None = None,
     ) -> JsonValue:
-        session_id = str(new_session_id())
+        """Create once; a private caller may persist the native ID in advance."""
+        if reserved_session_id is not None and (
+            executor_id is None or task_id is None
+        ):
+            raise ValueError(
+                "Reserved sessions require an explicit executor and task"
+            )
+        session_id = (
+            TypeAdapter(SessionId).validate_python(reserved_session_id)
+            if reserved_session_id is not None
+            else new_session_id()
+        )
         async with self._capacity_lock:
+            if session_id in self._state.snapshot_sessions():
+                raise ValueError("Session identity is already in use")
             await self._reap_for_capacity()
             self._require_capacity()
             selected = await self.select_executor(executor_id)
@@ -973,6 +987,15 @@ class ControlSessionCoordinator:
             item = SessionInventorySummary.model_validate(result.result)
         except Exception:
             return
+        current = self._state.snapshot_sessions().get(str(record.session_id))
+        if (
+            item.session_id != record.session_id
+            or current is None
+            or current.status != "creating"
+            or current.executor_id != record.executor_id
+            or current.task_id != record.task_id
+        ):
+            return
         self._state.update_session(
             str(record.session_id),
             status="active",
@@ -982,6 +1005,29 @@ class ControlSessionCoordinator:
         self._replace_session_activity(
             str(record.session_id), item.last_active_at
         )
+
+    async def lookup_reserved_session(
+        self, session_id: str, *, executor_id: str, task_id: str
+    ) -> ControlSessionRecord | None:
+        """Read-only native creation evidence, never re-offer a create.
+
+        The private caller must authorize its durable reservation first. None
+        means there is no confirmed active record, not permission to retry.
+        """
+        async with self._lock(session_id):
+            record = self._state.snapshot_sessions().get(session_id)
+            if record is None:
+                return None
+            if record.executor_id != executor_id or record.task_id != task_id:
+                raise PermissionError("Session reservation binding mismatch")
+            if record.status == "creating":
+                await self._reconcile_ambiguous_create(record)
+                record = self._state.snapshot_sessions().get(session_id)
+            return (
+                record
+                if record is not None and record.status == "active"
+                else None
+            )
 
     def _schedule_termination(
         self, record: ControlSessionRecord, *, only_if_creating: bool = False

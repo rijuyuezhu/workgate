@@ -20,6 +20,7 @@ from workgate.oauth.core.context import bind_oauth_claims, reset_oauth_claims
 from workgate.protocol.errors import ProtocolErrorCode
 from workgate.protocol.executor import (
     SESSION_CREATE_OP,
+    SESSION_LOOKUP_OP,
     ExecutorResult,
     OperationError,
 )
@@ -27,6 +28,7 @@ from workgate.protocol.ids import (
     new_command_id,
     new_executor_id,
     new_session_id,
+    new_task_id,
 )
 
 
@@ -454,3 +456,119 @@ async def test_queued_timeout_cleans_up_new_task(tmp_path, monkeypatch):
         )
     assert await harness.control.task_service.list_tasks() == []
     assert not _state(harness)
+
+
+@pytest.mark.asyncio
+async def test_reserved_task_session_recovery_never_recreates(
+    tmp_path, monkeypatch
+):
+    harness = setup(monkeypatch, tmp_path)
+    coordinator = harness.control.session_coordinator
+    service = harness.control.task_service
+    transport = harness.control.executor_transport
+    task_id, session_id = new_task_id(), new_session_id()
+    task = await service.create_task(label="durable", reserved_task_id=task_id)
+    assert task.task_id == task_id
+    with pytest.raises(ValueError, match="already in use"):
+        await service.create_task(label="overwrite", reserved_task_id=task_id)
+    assert (await service.read_task(task_id)).label == "durable"
+    original_call = transport.call
+    offered = []
+    lookup_allowed = False
+
+    async def lost_response(
+        executor_id, op, args=None, *, session_id=None, timeout_s=None
+    ):
+        if op == SESSION_LOOKUP_OP and not lookup_allowed:
+            raise TimeoutError("temporarily unavailable")
+        response = await original_call(
+            executor_id, op, args, session_id=session_id, timeout_s=timeout_s
+        )
+        if op == SESSION_CREATE_OP:
+            offered.append(session_id)
+            raise ExecutorTransportError(
+                ProtocolErrorCode.EXECUTOR_OFFLINE,
+                "response lost after creation",
+                delivery_state="offered",
+            )
+        return response
+
+    monkeypatch.setattr(transport, "call", lost_response)
+    with pytest.raises(ExecutorTransportError, match="response lost"):
+        await coordinator.start_session(
+            workdir="project",
+            executor_id=harness.executor_id,
+            task_id=task_id,
+            reserved_session_id=session_id,
+        )
+    assert _state(harness)[session_id].status == "creating"
+    assert harness.executor.sessions.lookup(session_id) is not None
+    assert (
+        await coordinator.lookup_reserved_session(
+            session_id, executor_id=harness.executor_id, task_id=task_id
+        )
+        is None
+    )
+    with pytest.raises(ValueError, match="already in use"):
+        await coordinator.start_session(
+            workdir="project",
+            executor_id=harness.executor_id,
+            task_id=task_id,
+            reserved_session_id=session_id,
+        )
+    lookup_allowed = True
+    with pytest.raises(PermissionError, match="binding mismatch"):
+        await coordinator.lookup_reserved_session(
+            session_id, executor_id=harness.executor_id, task_id=new_task_id()
+        )
+    with pytest.raises(PermissionError, match="binding mismatch"):
+        await coordinator.lookup_reserved_session(
+            session_id, executor_id=new_executor_id(), task_id=task_id
+        )
+    record = await coordinator.lookup_reserved_session(
+        session_id, executor_id=harness.executor_id, task_id=task_id
+    )
+    assert record is not None and record.status == "active"
+    assert record.session_id == session_id and record.task_id == task_id
+    assert offered == [session_id]
+    assert (await service.read_task(task_id)).session_ids == [session_id]
+    assert len(await service.list_tasks()) == 1
+
+
+@pytest.mark.asyncio
+async def test_reserved_id_validation_and_principal_isolation(
+    tmp_path, monkeypatch
+):
+    harness = setup(monkeypatch, tmp_path)
+    service = harness.control.task_service
+    coordinator = harness.control.session_coordinator
+    task_id, session_id = new_task_id(), new_session_id()
+    alice = bind_oauth_claims({"sub": "alice"})
+    try:
+        with pytest.raises(ValueError):
+            await service.create_task(reserved_task_id="../escape")
+        await service.create_task(reserved_task_id=task_id)
+        with pytest.raises(ValueError, match="explicit executor and task"):
+            await coordinator.start_session(reserved_session_id=session_id)
+        with pytest.raises(ValueError):
+            await coordinator.start_session(
+                executor_id=harness.executor_id,
+                task_id=task_id,
+                reserved_session_id="../escape",
+            )
+    finally:
+        reset_oauth_claims(alice)
+    bob = bind_oauth_claims({"sub": "bob"})
+    try:
+        with pytest.raises(ValueError, match="already in use"):
+            await service.create_task(reserved_task_id=task_id)
+        with pytest.raises(PermissionError, match="different principal"):
+            await coordinator.start_session(
+                executor_id=harness.executor_id,
+                task_id=task_id,
+                reserved_session_id=session_id,
+            )
+        assert await service.list_tasks() == []
+        assert not _state(harness)
+    finally:
+        reset_oauth_claims(bob)

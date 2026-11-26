@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 from ..audit import audit
 from ..config.control import ControlConfig
@@ -896,14 +896,29 @@ class ControlTaskService:
                     break
 
     def _create_sync(
-        self, *, label: str | None, objective: str | None
+        self,
+        *,
+        label: str | None,
+        objective: str | None,
+        reserved_task_id: str | None = None,
     ) -> TaskOutput:
         subject = self._subject()
+        task_id = (
+            TypeAdapter(TaskId).validate_python(reserved_task_id)
+            if reserved_task_id is not None
+            else new_task_id()
+        )
         registry_path = self._store.layout.control_tasks_dir / ".registry"
         with self._store.transaction(registry_path):
+            if (
+                self._store.read_json(
+                    self._path(task_id), max_bytes=self._stored_task_max_bytes
+                )
+                is not None
+            ):
+                raise ValueError("Task identity is already in use")
             self._prune_for_create(subject)
             now = time.time()
-            task_id = str(new_task_id())
             document = TaskDocument(
                 created_at=now,
                 updated_at=now,
@@ -932,10 +947,18 @@ class ControlTaskService:
         return self._task_output(stored)
 
     async def create_task(
-        self, *, label: str | None = None, objective: str | None = None
+        self,
+        *,
+        label: str | None = None,
+        objective: str | None = None,
+        reserved_task_id: str | None = None,
     ) -> TaskOutput:
+        """Create a task; private callers may persist its ID before admission."""
         return await asyncio.to_thread(
-            self._create_sync, label=label, objective=objective
+            self._create_sync,
+            label=label,
+            objective=objective,
+            reserved_task_id=reserved_task_id,
         )
 
     def _list_tasks_sync(self) -> list[TaskOutput]:
