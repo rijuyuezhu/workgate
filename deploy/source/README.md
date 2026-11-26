@@ -55,6 +55,8 @@ Use -Role control or -Role colocate and the corresponding existing configuration
 
 The switch uses the existing paired identity and service definition. Check status with the Executor service's existing configuration (`workgate executor status --config PATH`); a running operating-system service alone does not confirm Control connectivity.
 
+If an automated Executor switch is interrupted, rerun the switch for the same prepared target and saved configuration. The switch can confirm a candidate that has successfully contacted Control and finish publishing its stable command without restarting the Executor. If the previous service is still bound, it clears the interrupted trial; rerun the switch to retry the upgrade. If neither binding or the saved identity can be confirmed, inspect the native service and keep the cutover record and previous release intact.
+
 If an Executor reports `action-required (RuntimePolicyBlock)` after a version mismatch, confirm that Control and the Executor now use the **same release**. Then restart that Executor's **existing** native service (`workgate executor restart --config PATH`) to initiate a new Hello. An already dispatched or failed native cutover needs its systemd, launchd or Windows Task Scheduler result checked before another switch attempt. Keep its paired profile and previous release intact.
 
 ## Roll back

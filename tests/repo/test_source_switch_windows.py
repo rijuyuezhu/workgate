@@ -539,18 +539,24 @@ def test_windows_executor_switch_noop_rollback_preserves_identity(
     assert state["profile"].read_bytes() == state["identity_before"]
 
 
-@pytest.mark.parametrize("confirmed", [True, False])
+@pytest.mark.parametrize("outcome", ["confirmed", "timeout", "interrupted"])
 def test_automatic_windows_switch_requires_candidate_poll(
-    executor_switch, switcher, monkeypatch, confirmed
+    executor_switch, switcher, monkeypatch, outcome
 ):
     state = executor_switch
 
+    waits = 0
+
     def wait(python, profile, started_at):
+        nonlocal waits
+        waits += 1
         assert (python, profile) == (state["new"], state["profile"])
         assert state["stable"] == state["old"]
         assert started_at > 0
-        if not confirmed:
+        if outcome == "timeout":
             raise RuntimeError("candidate poll timeout")
+        if outcome == "interrupted" and waits == 1:
+            raise KeyboardInterrupt
 
     monkeypatch.setattr(switcher, "_wait_for_controller_poll", wait)
     args = dict(
@@ -560,14 +566,23 @@ def test_automatic_windows_switch_requires_candidate_poll(
         executor_config=state["executor"],
         require_controller_poll=True,
     )
-    if confirmed:
+    if outcome == "confirmed":
         switcher.switch(**args)
+        assert state["stable"] == state["new"]
+    elif outcome == "interrupted":
+        with pytest.raises(KeyboardInterrupt):
+            switcher.switch(**args)
+        assert (state["root"] / ".executor-cutover.json").is_file()
+        assert state["stable"] == state["old"]
+        switcher.switch(**{**args, "require_controller_poll": False})
+        assert state["executor_install_calls"] == [state["new"]]
         assert state["stable"] == state["new"]
     else:
         with pytest.raises(RuntimeError, match="previous task restored"):
             switcher.switch(**args)
         assert state["executor_install_calls"] == [state["new"], state["old"]]
         assert state["stable"] == state["old"]
+    assert not (state["root"] / ".executor-cutover.json").exists()
 
 
 @pytest.mark.parametrize(

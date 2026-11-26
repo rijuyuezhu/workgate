@@ -129,33 +129,49 @@ def test_macos_switch_preserves_identity_and_changes_stable_launcher(
     assert stable.read_text() == str(new)
 
 
-@pytest.mark.parametrize("confirmed", [True, False])
+@pytest.mark.parametrize("outcome", ["confirmed", "timeout", "interrupted"])
 def test_automatic_mac_switch_requires_candidate_poll(
-    switcher, installation, monkeypatch, confirmed
+    switcher, installation, monkeypatch, outcome
 ):
     root, config, old, new, _plist, profile, stable, state = installation
 
+    waits = 0
+
     def wait(python, paired_profile, started_at):
+        nonlocal waits
+        waits += 1
         assert (python, paired_profile) == (new, profile)
         assert state["active"] == new
         assert stable.read_text() == "old stable cli"
         assert started_at > 0
-        if not confirmed:
+        if outcome == "timeout":
             raise RuntimeError("candidate poll timeout")
+        if outcome == "interrupted" and waits == 1:
+            raise KeyboardInterrupt
 
     monkeypatch.setattr(switcher, "_wait_for_controller_poll", wait)
     args = dict(
         root=root, tag="v5.0.0a99", config=config, require_controller_poll=True
     )
-    if confirmed:
+    if outcome == "confirmed":
         switcher.switch(**args)
         assert state["active"] == new
+        assert stable.read_text() == str(new)
+    elif outcome == "interrupted":
+        with pytest.raises(KeyboardInterrupt):
+            switcher.switch(**args)
+        assert (root / ".executor-cutover.json").is_file()
+        assert stable.read_text() == "old stable cli"
+        assert state["active"] == new
+        switcher.switch(root=root, tag="v5.0.0a99", config=config)
+        assert state["installs"] == [new]
         assert stable.read_text() == str(new)
     else:
         with pytest.raises(RuntimeError, match="old service restored"):
             switcher.switch(**args)
         assert state["active"] == old
         assert stable.read_text() == str(old)
+    assert not (root / ".executor-cutover.json").exists()
 
 
 def test_macos_failed_install_restores_old_runtime(switcher, installation):

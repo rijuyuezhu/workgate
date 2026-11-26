@@ -75,14 +75,16 @@ def test_candidate_poll_timeout_is_bounded(switcher, tmp_path, monkeypatch):
         )
 
 
-@pytest.mark.parametrize("confirmed", [True, False])
+@pytest.mark.parametrize("outcome", ["confirmed", "timeout", "interrupted"])
 def test_automatic_linux_switch_verifies_poll_before_commit(
-    switcher, tmp_path, monkeypatch, confirmed
+    switcher, tmp_path, monkeypatch, outcome
 ):
     root = tmp_path / "managed"
+    root.mkdir()
     old = root / "versions/old/.venv/bin/python"
     new = root / "versions/new/.venv/bin/python"
     config = tmp_path / "executor.yaml"
+    config.write_text("mode: http\n", encoding="utf-8")
     unit = tmp_path / "workgate-executor.service"
     profile = tmp_path / "executor/profile.json"
     profile.parent.mkdir()
@@ -92,7 +94,9 @@ def test_automatic_linux_switch_verifies_poll_before_commit(
     stable = [old]
 
     def binding(python, saved_config, *, current):
-        assert saved_config == config and current and python == active[0]
+        assert saved_config == config and current
+        if python != active[0]:
+            raise RuntimeError("runtime is not active")
         return unit, profile
 
     def run(python, *_args, cwd):
@@ -100,12 +104,18 @@ def test_automatic_linux_switch_verifies_poll_before_commit(
         installed.append(active[0])
         return ""
 
+    waits = 0
+
     def wait(python, paired_profile, started_at):
+        nonlocal waits
+        waits += 1
         assert (python, paired_profile) == (new, profile)
         assert active[0] == new and stable[0] == old
         assert started_at > 0
-        if not confirmed:
+        if outcome == "timeout":
             raise RuntimeError("candidate poll timeout")
+        if outcome == "interrupted" and waits == 1:
+            raise KeyboardInterrupt
 
     monkeypatch.setattr(switcher, "_executor_binding", binding)
     monkeypatch.setattr(
@@ -127,8 +137,24 @@ def test_automatic_linux_switch_verifies_poll_before_commit(
         lambda _root, python: stable.__setitem__(0, python),
     )
     args = (root, old, new, "v5.0.0a99", config)
-    if confirmed:
+    if outcome == "confirmed":
         switcher._switch_executor(*args, require_controller_poll=True)
+        assert stable == active == [new]
+        assert installed == [new]
+    elif outcome == "interrupted":
+        with pytest.raises(KeyboardInterrupt):
+            switcher._switch_executor(*args, require_controller_poll=True)
+        assert stable == [old] and active == [new]
+        assert (root / ".executor-cutover.json").is_file()
+        monkeypatch.setattr(switcher.sys, "platform", "linux")
+        for key in tuple(switcher.os.environ):
+            if key.startswith("WORKGATE_"):
+                monkeypatch.delenv(key)
+        monkeypatch.setattr(switcher, "_old_python", lambda _root: stable[0])
+        monkeypatch.setattr(switcher, "_staged_python", lambda *_: new)
+        switcher.switch(
+            root=root, tag="v5.0.0a99", role="executor", executor_config=config
+        )
         assert stable == active == [new]
         assert installed == [new]
     else:
@@ -137,3 +163,88 @@ def test_automatic_linux_switch_verifies_poll_before_commit(
         assert stable == active == [old]
         assert installed == [new, old]
     assert profile.read_bytes() == b"unchanged profile"
+    assert not (root / ".executor-cutover.json").exists()
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "old-active",
+        "published",
+        "published-unconfirmed",
+        "unconfirmed",
+        "changed-profile",
+        "changed-config",
+        "wrong-target",
+        "poll-timeout",
+    ],
+)
+def test_recover_trial_respects_binding_and_identity(switcher, tmp_path, case):
+    root = tmp_path / "managed"
+    root.mkdir()
+    previous = root / "versions/old/.venv/bin/python"
+    candidate = root / "versions/new/.venv/bin/python"
+    config = tmp_path / "executor.yaml"
+    profile = tmp_path / "profile.json"
+    config.write_text("config", encoding="utf-8")
+    profile.write_text("identity", encoding="utf-8")
+    current = candidate if case.startswith("published") else previous
+    active = previous if case == "old-active" else candidate
+    switcher.begin_trial(root, previous, candidate, config, profile, 1.0)
+    record = root / ".executor-cutover.json"
+    if case == "changed-profile":
+        profile.write_text("changed", encoding="utf-8")
+    if case == "changed-config":
+        config.write_text("changed", encoding="utf-8")
+    requested = root / "another" if case == "wrong-target" else candidate
+    writes = []
+    polls = []
+
+    def binding(python):
+        if case == "unconfirmed" or python != active:
+            raise RuntimeError("unconfirmed")
+        return profile
+
+    def wait(python, paired_profile, started):
+        polls.append((python, paired_profile, started))
+        if case != "published":
+            raise RuntimeError("poll timeout")
+
+    def publish(root, python):
+        writes.append(python)
+        return root / "bin/workgate"
+
+    def recover():
+        return switcher.recover_trial(
+            root,
+            current,
+            requested,
+            config,
+            binding=binding,
+            wait_for_poll=wait,
+            publish=publish,
+        )
+
+    if case == "published":
+        assert recover()
+    else:
+        with pytest.raises(RuntimeError):
+            recover()
+    assert record.exists() == (case not in {"published", "old-active"})
+    assert writes == []
+    assert polls == (
+        [(candidate, profile, 1.0)]
+        if case in {"poll-timeout", "published", "published-unconfirmed"}
+        else []
+    )
+
+
+def test_executor_switch_lock_excludes_another_switch(switcher, tmp_path):
+    with (
+        switcher.executor_switch_lock(tmp_path),
+        pytest.raises((RuntimeError, OSError)),
+        switcher.executor_switch_lock(tmp_path),
+    ):
+        pytest.fail("second switch acquired active lock")
+    with switcher.executor_switch_lock(tmp_path):
+        pass
