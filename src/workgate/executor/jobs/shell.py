@@ -193,35 +193,31 @@ async def tail_shell_job_unlocked(
             )
             output = str(tail.model_dump().get("output", ""))
         except Exception as exc:
-            if active is not None:
-                with _store_transaction() as store:
-                    current = _find_session_job(store, session_id, job_id)
+            # The shell can exit while its durable receipt/log becomes visible.
+            # Reconcile fresh evidence instead of classifying from stale inventory.
+            active = await authoritative_persistent_shell_ids_execute(
+                config, session_store
+            )
+            with _store_transaction() as store:
+                current = _find_session_job(store, session_id, job_id)
+                if _job_shell_id(current) == shell_id:
+                    current = _refresh_job_status(current, active)
                     if (
                         current.get("status") == "running"
-                        and _job_shell_id(current) == shell_id
+                        and active is not None
+                        and shell_id in active
                     ):
-                        completed = _utc()
-                        if shell_id in active:
-                            current.update(
-                                {
-                                    "updated_at": completed,
-                                    "error": (
-                                        "persistent shell output capture failed: "
-                                        f"{exc}"
-                                    ),
-                                }
-                            )
-                        else:
-                            current.update(
-                                {
-                                    "status": "lost",
-                                    "updated_at": completed,
-                                    "completed_at": completed,
-                                    "error": str(exc),
-                                    "shell_absence_confirmed": True,
-                                }
-                            )
-                    public = _public_job(current)
+                        current.update(
+                            {
+                                "updated_at": _utc(),
+                                "error": f"persistent shell output capture failed: {exc}",
+                            }
+                        )
+                public = _public_job(current)
+                log_path = str(current.get("log_path") or "")
+            output = job_status._read_log_tail(
+                log_path, lines, max_bytes=max(1, config.max_job_log_bytes)
+            )
 
     message = None
     if public.status in TERMINAL_STATUSES:
