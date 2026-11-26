@@ -72,3 +72,24 @@ result budget remains bounded even when history is reloaded. Actual attachment
 ownership, durable generation, protocol serialization and app rendering
 are integrated in their respective units; importing these helpers does
 not start a service or send a request.
+
+
+Agent authoring starts with the final upstream repository and validators.
+
+| Workgate file | Upstream source at the pin | Git blob |
+| --- | --- | --- |
+| `agents.py` | `src/local_shell_mcp/webui/agents.py` | `78384395bf93b00642c6a45fb7d7bbb7a3c01446` |
+| `agent_validation.py` | `src/local_shell_mcp/webui/agent_validation.py` | `b500411155f878f295a682697cf9a0211532dbab` |
+| `tests/hosted_chat/test_agents.py` | `tests/test_webui_agents.py` (repository cases) | `60319c018f5b002edd5d87c72ed7e7440a5968f1` |
+| `tests/fixtures/hosted_chat/agent_parameter_vectors.json` | `tests/fixtures/librechat/agent_parameter_vectors.json` | `e10ecc3a4acd1dac652eb9e243b14f4a67b89bd1` |
+| `tests/fixtures/hosted_chat/agent_core_validation_vectors.json` | `tests/fixtures/librechat/agent_validation_vectors.json` (core authoring fields only) | `e8a81f5e7c16abc6d6530e78061f50be68799ba5` |
+
+The first authoring unit keeps the original field allowlist, nullable model,
+parameter normalization, owner-bound CRUD, search, cursor pagination, clone
+and revision history. Empty provider identity is rejected. Revision restore
+replaces the configuration exactly and creates a new revision atomically.
+Named channel references, including prior revisions, remain in the existing
+provider deletion guard; deleting an Agent does not rewrite old conversations.
+Graph, Actions, machine ACL, memory, Skills, and resource fields are introduced
+by their own integration units. No authoring selection itself grants tool
+access, and these repository helpers register no HTTP routes.
