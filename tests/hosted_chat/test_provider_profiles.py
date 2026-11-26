@@ -4,11 +4,11 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+
 from workgate.hosted_chat.credential_cipher import (
     CredentialCipher,
     CredentialUnavailable,
 )
-
 from workgate.hosted_chat.database import SQLiteDatabase
 from workgate.hosted_chat.provider_profiles import (
     ChannelConflict,
