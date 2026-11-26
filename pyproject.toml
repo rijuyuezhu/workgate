@@ -40,6 +40,21 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Control-only Hosted Chat dependencies, from final upstream v6.0.3.
+hosted-chat = [
+    "httpcore>=1.0,<2",
+    "zstandard>=0.23.0,<1",
+    "xlrd>=2.0.2,<3",
+    "tzdata>=2025.2; platform_system == 'Windows'",
+    "pypdf>=5.0,<7",
+    "python-docx>=1.1,<2",
+    "langgraph>=1.0.10,<1.1",
+    "langchain-core>=1.2.8,<2",
+    # No Windows ARM64 wheel; the pinned tokenizer has a conservative byte-count fallback.
+    "tiktoken>=0.9,<1; sys_platform != 'win32' or platform_machine != 'ARM64'",
+    "regex>=2024.5,<2027",
+    "ddgs>=9,<10",
+]
 s3 = [
     "boto3>=1.40,<2",
 ]

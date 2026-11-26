@@ -63,6 +63,8 @@ jobs:
       - run: uv sync --locked --group dev
       - run: brew install tmux
       - run: uv run pytest -q -m "not topology"
+      - name: Verify optional Hosted Chat dependencies
+        run: uv run --locked --extra hosted-chat --no-build-package tiktoken python scripts/validation/check-hosted-chat-deps.py
 
   windows-arm64-dependencies:
     name: Native Windows ARM64 clean dependency sync
@@ -78,6 +80,8 @@ jobs:
       - run: uv sync --locked --group dev
       - run: uv run --locked python scripts/release/smoke_arm64_crypto_wheel.py
       - run: uv run --locked workgate --version
+      - name: Verify optional Hosted Chat dependencies
+        run: uv run --locked --extra hosted-chat --no-build-package tiktoken python scripts/validation/check-hosted-chat-deps.py
 
   windows-native:
     name: Native Windows tests (x86-64, Python 3.14)
@@ -120,6 +124,8 @@ jobs:
           uv venv --python 3.14 $environment
           uv pip install --python (Join-Path $environment 'Scripts/python.exe') $wheel
           & (Join-Path $environment 'Scripts/workgate.exe') --version
+      - name: Verify optional Hosted Chat dependencies
+        run: uv run --locked --extra hosted-chat --no-build-package tiktoken python scripts/validation/check-hosted-chat-deps.py
 
 
   topology:
@@ -227,6 +233,8 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --locked --group dev
+      - name: Verify optional Hosted Chat dependencies
+        run: uv run --locked --extra hosted-chat --no-build-package tiktoken python scripts/validation/check-hosted-chat-deps.py
       - run: uv build --out-dir dist
       - name: Check universal wheel and source distribution
         run: python scripts/validation/check-python-dist.py dist
