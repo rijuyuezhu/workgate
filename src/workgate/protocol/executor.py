@@ -14,6 +14,7 @@ from pydantic import (
     model_validator,
 )
 
+from ..schemas.result_models.jobs import JobInfo
 from .ids import CommandId, ReservedJobId, ReservedShellId, SessionId
 
 EXECUTOR_PAIR_START_PATH = "/executor/v1/pair/start"
@@ -34,6 +35,9 @@ SESSION_LOOKUP_OP = "session.lookup"
 SESSION_TERMINATE_OP = "session.terminate"
 SESSION_CHANGE_WORKDIR_OP = "session.change_workdir"
 JOB_START_RESERVED_OP = "job.start_reserved"
+JOB_RETRY_RESERVED_OP = "job.retry_reserved"
+JOB_LOOKUP_ATTEMPT_OP = "job.lookup_attempt"
+JOB_CANCEL_ATTEMPT_OP = "job.cancel_attempt"
 SHELL_START_RESERVED_OP = "shell.start_reserved"
 SHELL_LOOKUP_RESERVED_OP = "shell.lookup_reserved"
 
@@ -75,6 +79,57 @@ class ReservedJobStartRequest(ReservedExecutionRequest):
         if not (self.async_ or self.persist_on_timeout):
             raise ValueError("Reserved Job creation requires tracked execution")
         return self
+
+
+class ReservedJobAttemptRequest(BaseModel):
+    """Exact native attempt, not merely the reusable public Job ID."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    job_id: ReservedJobId
+    attempt: int = Field(ge=1)
+    retry_key: CommandId | None = None
+
+    @model_validator(mode="after")
+    def validate_retry_key(self) -> Self:
+        if (self.attempt == 1) != (self.retry_key is None):
+            raise ValueError(
+                "Retry key is required for attempts after the first"
+            )
+        return self
+
+
+class ReservedJobAttemptReceipt(ReservedJobAttemptRequest):
+    session_id: SessionId
+    state: Literal["matching", "superseded", "unknown", "rejected"]
+    job: JobInfo | None = None
+    output: str | None = None
+
+    @model_validator(mode="after")
+    def validate_receipt(self) -> Self:
+        if self.state == "matching":
+            if (
+                self.job is None
+                or self.job.job_id != self.job_id
+                or self.job.session_id != self.session_id
+                or self.job.kind != "shell"
+                or self.job.attempts != self.attempt
+            ):
+                raise ValueError("Mismatched native Job attempt receipt")
+        elif self.job is not None or self.output is not None:
+            raise ValueError(
+                "Unconfirmed attempt must not expose native Job data"
+            )
+        return self
+
+    def matches(
+        self, request: ReservedJobAttemptRequest, session_id: str
+    ) -> bool:
+        return (
+            self.session_id == session_id
+            and self.job_id == request.job_id
+            and self.attempt == request.attempt
+            and self.retry_key == request.retry_key
+        )
 
 
 class ReservedShellStartRequest(ReservedExecutionRequest):

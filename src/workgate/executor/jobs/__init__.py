@@ -9,7 +9,11 @@ from ...jobs.persistence import TERMINAL_STATUSES, attempt_paths
 from ...jobs.state import CONFIRMED_TERMINAL_STATUSES
 from ...jobs.status import _read_status_path
 from ...platform.host import HostOS, host_os
-from ...protocol.executor import JobInventorySummary
+from ...protocol.executor import (
+    JobInventorySummary,
+    ReservedJobAttemptReceipt,
+    ReservedJobAttemptRequest,
+)
 from ...schemas.result_models.jobs import (
     JobListOutput,
     JobOutput,
@@ -132,6 +136,55 @@ class ExecutorJobService:
             return await shell_jobs.retry_shell_job_unlocked(
                 self.config, self.store, session_id, job_id
             )
+
+    async def reserved_attempt(
+        self, session_id: str, args: dict[str, Any], *, operation: str
+    ) -> ReservedJobAttemptReceipt:
+        """Private retry/lookup/cleanup using the existing native lifecycle lock."""
+        request = ReservedJobAttemptRequest.model_validate(args)
+        async with session_lifecycle_lock(session_id):
+            if operation == "retry":
+                if request.retry_key is None:
+                    raise ValueError("Reserved retry requires a retry key")
+                try:
+                    result = await shell_jobs.retry_shell_job_unlocked(
+                        self.config,
+                        self.store,
+                        session_id,
+                        request.job_id,
+                        reservation=request,
+                    )
+                except shell_jobs.ReservedJobRetryRejected:
+                    return ReservedJobAttemptReceipt(
+                        **request.model_dump(),
+                        session_id=session_id,
+                        state="rejected",
+                    )
+                return ReservedJobAttemptReceipt(
+                    **request.model_dump(),
+                    session_id=session_id,
+                    state="matching",
+                    job=result,
+                )
+            receipt = await shell_jobs.lookup_job_attempt_unlocked(
+                self.config,
+                self.store,
+                session_id,
+                request,
+            )
+            if receipt.state == "matching":
+                if operation == "cancel":
+                    result = await self.stop_unlocked(
+                        session_id, request.job_id
+                    )
+                    return receipt.model_copy(update={"job": result.job})
+                tail = await shell_jobs.tail_shell_job_unlocked(
+                    self.config, self.store, session_id, request.job_id, 200
+                )
+                return receipt.model_copy(
+                    update={"job": tail.job, "output": tail.output}
+                )
+            return receipt
 
     async def reconcile(self) -> bool:
         return await shell_jobs.reconcile_shell_jobs_execute(

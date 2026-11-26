@@ -1,5 +1,6 @@
 """Paired native Task/Session creation with durable intent reconciliation."""
 
+import asyncio
 import time
 
 import pytest
@@ -12,6 +13,7 @@ from workgate.control.executor_transport import ExecutorTransportError
 from workgate.control.hosted_chat_cancellation import sweep_native_cancellations
 from workgate.control.hosted_chat_native_creation import (
     NativeCreationUncertain,
+    NativeRetryRejected,
     create_native,
 )
 from workgate.executor import shell as shell_ops
@@ -26,6 +28,8 @@ from workgate.hosted_chat.storage import WorkspaceRepository
 from workgate.oauth.core.context import bind_oauth_claims, reset_oauth_claims
 from workgate.protocol.errors import ProtocolErrorCode
 from workgate.protocol.executor import (
+    JOB_LOOKUP_ATTEMPT_OP,
+    JOB_RETRY_RESERVED_OP,
     JOB_START_RESERVED_OP,
     SESSION_CREATE_OP,
     SESSION_LOOKUP_OP,
@@ -839,3 +843,288 @@ async def test_shell_cleanup_lost_kill_receipt_keeps_reused_session(
         await harness.control.task_service.read_task(task_id)
     ).status == "active"
     assert killed == [key]
+
+
+async def next_generation(repo, lease, generation, text):
+    store = GenerationStore(repo.database)
+    assert store.finish(
+        lease.owner,
+        generation.run_id,
+        status="complete",
+        text="ready",
+        actor_lease=lease,
+    )
+    run, _ = store.begin(
+        lease.owner,
+        {"conversationId": generation.conversation_id, "text": text},
+    )
+    actor = ActorLease.claim(repo.database, lease.owner, run.run_id)
+    assert actor is not None
+    return run, actor
+
+
+async def create_tracked_job(harness, repo, lease, sid):
+    proposal = ModelToolCall(
+        "owned-job",
+        "bash",
+        {"session_id": sid, "command": "tracked", "async_": True},
+    )
+    result = await invoke(harness, repo, lease, proposal)
+    return proposal, result["result"]["job_id"]
+
+
+@pytest.mark.asyncio
+async def test_retry_receipt_and_cleanup_are_fenced_by_attempt(
+    bound, tracked_shells, monkeypatch
+):
+    harness, repo, lease, generation = bound
+    started, killed = tracked_shells
+    task_id, sid = await native_session(harness, repo, lease)
+    first, first_lease = await next_generation(
+        repo, lease, generation, "initial Job"
+    )
+    _, jid = await create_tracked_job(harness, repo, first_lease, sid)
+    stopped = await harness.call(
+        harness.executor_id, "job", {"cancel": [jid]}, session_id=sid
+    )
+    assert (
+        stopped.ok
+        and stopped.result["cancelled"][0]["job"]["status"] == "stopped"
+    )
+    second, second_lease = await next_generation(
+        repo, first_lease, first, "retry Job"
+    )
+    transport = harness.control.executor_transport
+    original = transport.call
+    offered = []
+
+    async def lost(
+        executor_id, op, args=None, *, session_id=None, timeout_s=None
+    ):
+        result = await original(
+            executor_id, op, args, session_id=session_id, timeout_s=timeout_s
+        )
+        if op == JOB_RETRY_RESERVED_OP:
+            assert result.ok and args is not None
+            offered.append(dict(args))
+            raise TimeoutError("retry response lost")
+        return result
+
+    monkeypatch.setattr(transport, "call", lost)
+    retry = ModelToolCall(
+        "retry-job", "job", {"session_id": sid, "retry": [jid]}
+    )
+    with pytest.raises(TimeoutError):
+        await invoke(harness, repo, second_lease, retry)
+    row = intent_rows(repo)["retry-job"]
+    assert row["state"] == "unknown" and row["native_id"] is None
+    assert row["target_job_id"] == jid and row["native_attempt"] == 2
+    assert offered == [
+        {"job_id": jid, "attempt": 2, "retry_key": row["idempotency_key"]}
+    ]
+    with pytest.raises(PermissionError, match="unresolved"):
+        await invoke(
+            harness,
+            repo,
+            second_lease,
+            ModelToolCall("other-retry", "job", retry.arguments),
+        )
+    recovered = await invoke(harness, repo, second_lease, retry)
+    assert recovered["recovered"] is True and recovered["operation"] == "retry"
+    assert (
+        recovered["retried"][0]["job_id"] == jid
+        and recovered["retried"][0]["attempts"] == 2
+    )
+    assert len(started) == 2 and len(offered) == 1
+    assert intent_rows(repo)["retry-job"]["native_id"] == jid
+
+    duplicate = await harness.call(
+        harness.executor_id, JOB_RETRY_RESERVED_OP, offered[0], session_id=sid
+    )
+    assert duplicate.ok and duplicate.result["state"] == "rejected"
+    initial = await harness.call(
+        harness.executor_id,
+        JOB_LOOKUP_ATTEMPT_OP,
+        {"job_id": jid, "attempt": 1},
+        session_id=sid,
+    )
+    assert initial.ok and initial.result["state"] == "superseded"
+    repo.cancel_run(first_lease.owner, first.run_id)
+    assert await sweep_native_cancellations(harness.control, repo) == 1
+    assert intent_rows(repo)["owned-job"]["state"] == "stopped"
+    assert killed == [started[0]]
+    assert (
+        await harness.call(
+            harness.executor_id, "job", {"poll": [jid]}, session_id=sid
+        )
+    ).result["outputs"][0]["job"]["status"] == "running"
+    repo.cancel_run(second_lease.owner, second.run_id)
+    assert await sweep_native_cancellations(harness.control, repo) == 1
+    assert intent_rows(repo)["retry-job"]["state"] == "stopped"
+    assert killed == started
+    assert harness.executor.sessions.lookup(sid) is not None
+    assert (
+        await harness.control.task_service.read_task(task_id)
+    ).status == "active"
+
+
+@pytest.mark.asyncio
+async def test_public_retry_does_not_become_chat_owned_attempt(
+    bound, tracked_shells, monkeypatch
+):
+    harness, repo, lease, generation = bound
+    started, killed = tracked_shells
+    _, sid = await native_session(harness, repo, lease)
+    first, first_lease = await next_generation(
+        repo, lease, generation, "initial Job"
+    )
+    _, jid = await create_tracked_job(harness, repo, first_lease, sid)
+    stopped = await harness.call(
+        harness.executor_id, "job", {"cancel": [jid]}, session_id=sid
+    )
+    assert stopped.ok
+    second, second_lease = await next_generation(
+        repo, first_lease, first, "retry Job"
+    )
+    # A native client wins the race before Chat offers its reserved retry.
+    native = await harness.call(
+        harness.executor_id, "job", {"retry": [jid]}, session_id=sid
+    )
+    assert native.ok and native.result["retried"][0]["attempts"] == 2
+    call = ModelToolCall(
+        "retry-conflict", "job", {"session_id": sid, "retry": [jid]}
+    )
+    with pytest.raises(NativeRetryRejected):
+        await invoke(harness, repo, second_lease, call)
+    row = intent_rows(repo)["retry-conflict"]
+    assert (
+        row["state"] == "stopped"
+        and row["native_id"] is None
+        and row["native_attempt"] == 2
+    )
+    with pytest.raises(PermissionError):
+        await invoke(harness, repo, second_lease, call)
+    repo.cancel_run(second_lease.owner, second.run_id)
+    assert await sweep_native_cancellations(harness.control, repo) == 0
+    assert intent_rows(repo)["retry-conflict"]["state"] == "stopped"
+    assert intent_rows(repo)["retry-conflict"]["native_id"] is None
+    assert killed == [started[0]] and len(started) == 2
+    assert (
+        await harness.call(
+            harness.executor_id, "job", {"poll": [jid]}, session_id=sid
+        )
+    ).result["outputs"][0]["job"]["status"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_retry_requires_owned_job_and_live_execute_scope(
+    bound, tracked_shells
+):
+    harness, repo, lease, _ = bound
+    started, _ = tracked_shells
+    _, sid = await native_session(harness, repo, lease)
+    _, jid = await create_tracked_job(harness, repo, lease, sid)
+    call = ModelToolCall("retry", "job", {"session_id": sid, "retry": [jid]})
+    with pytest.raises(PermissionError):
+        await invoke(
+            harness, repo, lease, call, scopes={"shell:read", "shell:write"}
+        )
+    with pytest.raises(ValueError):
+        await invoke(
+            harness,
+            repo,
+            lease,
+            ModelToolCall(
+                "batch-retry", "job", {"session_id": sid, "retry": [jid, jid]}
+            ),
+        )
+    from workgate.protocol.ids import new_reserved_job_id
+
+    with pytest.raises(PermissionError, match="does not belong"):
+        await invoke(
+            harness,
+            repo,
+            lease,
+            ModelToolCall(
+                "foreign-retry",
+                "job",
+                {"session_id": sid, "retry": [new_reserved_job_id()]},
+            ),
+        )
+    assert len(started) == 1 and "retry" not in intent_rows(repo)
+
+
+@pytest.mark.asyncio
+async def test_interrupted_native_retry_recovers_pending_attempt_receipt(
+    bound, tracked_shells, monkeypatch
+):
+    harness, repo, lease, generation = bound
+    started, killed = tracked_shells
+    _, sid = await native_session(harness, repo, lease)
+    first, first_lease = await next_generation(
+        repo, lease, generation, "initial Job"
+    )
+    _, jid = await create_tracked_job(harness, repo, first_lease, sid)
+    assert (
+        await harness.call(
+            harness.executor_id, "job", {"cancel": [jid]}, session_id=sid
+        )
+    ).ok
+    second, second_lease = await next_generation(
+        repo, first_lease, first, "retry Job"
+    )
+    start = job_shell.start_persistent_shell_execute
+
+    async def interrupted(*args, **kwargs):
+        await start(*args, **kwargs)
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(
+        job_shell, "start_persistent_shell_execute", interrupted
+    )
+    retry = ModelToolCall(
+        "interrupted-retry", "job", {"session_id": sid, "retry": [jid]}
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await invoke(harness, repo, second_lease, retry)
+    monkeypatch.setattr(job_shell, "start_persistent_shell_execute", start)
+    row = intent_rows(repo)["interrupted-retry"]
+    assert row["state"] == "unknown" and row["native_id"] is None
+    recovered = await invoke(harness, repo, second_lease, retry)
+    assert recovered["recovered"] is True
+    assert recovered["retried"][0]["attempts"] == 2
+    assert recovered["retried"][0]["status"] == "running"
+    assert len(started) == 2
+    repo.cancel_run(second_lease.owner, second.run_id)
+    assert await sweep_native_cancellations(harness.control, repo) == 1
+    assert killed == started
+
+
+@pytest.mark.asyncio
+async def test_explicit_retry_rejection_does_not_block_later_valid_retry(
+    bound, tracked_shells
+):
+    harness, repo, lease, _ = bound
+    started, _ = tracked_shells
+    _, sid = await native_session(harness, repo, lease)
+    _, jid = await create_tracked_job(harness, repo, lease, sid)
+    arguments = {"session_id": sid, "retry": [jid]}
+    with pytest.raises(NativeRetryRejected):
+        await invoke(
+            harness, repo, lease, ModelToolCall("early", "job", arguments)
+        )
+    row = intent_rows(repo)["early"]
+    assert (
+        row["state"] == "stopped"
+        and row["native_id"] is None
+        and len(started) == 1
+    )
+    assert (
+        await harness.call(
+            harness.executor_id, "job", {"cancel": [jid]}, session_id=sid
+        )
+    ).ok
+    result = await invoke(
+        harness, repo, lease, ModelToolCall("later", "job", arguments)
+    )
+    assert result["retried"][0]["attempts"] == 2 and len(started) == 2

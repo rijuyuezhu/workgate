@@ -492,6 +492,8 @@ CREATE TABLE IF NOT EXISTS agent_durable_tasks (
     kind TEXT NOT NULL,
     machine TEXT NOT NULL,
     native_session_id TEXT,
+    target_job_id TEXT,
+    native_attempt INTEGER,
     requirements TEXT NOT NULL,
     fingerprint TEXT NOT NULL,
     idempotency_key TEXT,

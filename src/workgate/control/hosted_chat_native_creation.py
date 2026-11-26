@@ -23,12 +23,16 @@ from ..hosted_chat.provider_common import ModelToolCall, complete_tool_batch
 from ..oauth.core.context import current_oauth_claims
 from ..oauth.core.scopes import scope_set
 from ..protocol.executor import (
+    JOB_LOOKUP_ATTEMPT_OP,
+    JOB_RETRY_RESERVED_OP,
     JOB_START_RESERVED_OP,
     SHELL_LOOKUP_RESERVED_OP,
     SHELL_START_RESERVED_OP,
+    ReservedJobAttemptReceipt,
+    ReservedJobAttemptRequest,
     ReservedShellLookupResult,
 )
-from ..schemas.result_models.jobs import JobOutput
+from ..schemas.result_models.jobs import JobOutput, JobRetryOutput
 from ..schemas.result_models.session import SessionStartOutput
 from ..schemas.result_models.shell import (
     RunPythonCodeOutput,
@@ -41,6 +45,10 @@ from .tool_timeouts import tool_timeout_s
 
 class NativeCreationUncertain(RuntimeError):
     """The original native mutation has no confirmed receipt; never re-offer."""
+
+
+class NativeRetryRejected(RuntimeError):
+    """The native owner explicitly refused retry before starting an attempt."""
 
 
 def _grant(
@@ -102,42 +110,100 @@ async def _native_job_result(
             result.mode != "job"
             or result.result.get("job_id") != intent.key
             or result.result.get("session_id") != session_id
+            or result.result.get("attempts") != 1
         ):
             raise NativeCreationUncertain(
                 "Native Job response has a mismatched identity"
             )
         return intent.key, result.model_dump(mode="json")
 
+    receipt = await _job_attempt_receipt(
+        runtime,
+        intent,
+        ReservedJobAttemptRequest(job_id=intent.key, attempt=1),
+        dispatch=False,
+    )
+    assert receipt.job is not None
+    return intent.key, {
+        "mode": "job",
+        "command": receipt.job.command,
+        "cwd": receipt.job.cwd,
+        "result": receipt.job.model_dump(mode="json")
+        | {"stdout": receipt.output or ""},
+        "recovered": True,
+        "message": "Existing Job creation confirmed by exact native attempt lookup; reuse this job_id.",
+    }
+
+
+async def _job_attempt_receipt(
+    runtime: ControlRuntime,
+    intent: Intent,
+    request: ReservedJobAttemptRequest,
+    *,
+    dispatch: bool,
+) -> ReservedJobAttemptReceipt:
+    session_id = intent.session_id
+    if session_id is None:
+        raise PermissionError("Missing native Job Session reservation")
+    coordinator = runtime.session_coordinator
+    record = coordinator.require_session_status(session_id, {"active"})
+    if record.executor_id != intent.machine:
+        raise PermissionError("Native Job Session binding mismatch")
     try:
-        receipt = JobOutput.model_validate(
+        receipt = ReservedJobAttemptReceipt.model_validate(
             await coordinator.call_session_tool(
-                "job",
-                {"session_id": session_id, "poll": [intent.key], "lines": 200},
+                JOB_RETRY_RESERVED_OP if dispatch else JOB_LOOKUP_ATTEMPT_OP,
+                request.model_dump(mode="json") | {"session_id": session_id},
             )
         )
     except PublicToolError, RuntimeError, ValueError, KeyError, TimeoutError:
+        if dispatch:
+            raise
         raise NativeCreationUncertain(
-            "Native Job creation is unconfirmed"
+            "Native Job attempt is unconfirmed"
         ) from None
-    if receipt.operation != "poll" or len(receipt.outputs) != 1:
-        raise NativeCreationUncertain("Native Job creation is unconfirmed")
-    tail = receipt.outputs[0]
     if (
-        tail.job.job_id != intent.key
-        or tail.job.session_id != session_id
-        or tail.job.kind != "shell"
+        dispatch
+        and receipt.matches(request, session_id)
+        and receipt.state == "rejected"
+    ):
+        raise NativeRetryRejected(
+            "Native Job retry was not admitted; inspect the current Job before submitting another retry"
+        )
+    if (
+        not receipt.matches(request, session_id)
+        or receipt.state != "matching"
+        or receipt.job is None
     ):
         raise NativeCreationUncertain(
-            "Native Job receipt has a mismatched identity"
+            "Native Job attempt is unconfirmed or superseded"
         )
-    return intent.key, {
-        "mode": "job",
-        "command": tail.job.command,
-        "cwd": tail.job.cwd,
-        "result": tail.job.model_dump(mode="json") | {"stdout": tail.output},
-        "recovered": True,
-        "message": "Existing Job creation confirmed by native poll; reuse this job_id.",
-    }
+    return receipt
+
+
+async def _native_retry_result(
+    runtime: ControlRuntime,
+    intent: Intent,
+    *,
+    dispatch: bool,
+) -> tuple[str, dict]:
+    if intent.target_job_id is None or intent.attempt is None:
+        raise PermissionError("Missing native Job retry reservation")
+    request = ReservedJobAttemptRequest(
+        job_id=intent.target_job_id,
+        attempt=intent.attempt,
+        retry_key=intent.key,
+    )
+    receipt = await _job_attempt_receipt(
+        runtime, intent, request, dispatch=dispatch
+    )
+    assert receipt.job is not None
+    result = JobOutput(
+        operation="retry", retried=[JobRetryOutput(**receipt.job.model_dump())]
+    )
+    return intent.target_job_id, result.model_dump(mode="json") | (
+        {"recovered": True} if not dispatch else {}
+    )
 
 
 async def _native_shell_result(
@@ -210,6 +276,8 @@ async def _native_result(
         return await _native_job_result(
             runtime, intent, call, dispatch=dispatch
         )
+    if call.name == "job":
+        return await _native_retry_result(runtime, intent, dispatch=dispatch)
     if call.name == "task":
         if dispatch:
             result = await runtime.task_service.create_task(
@@ -318,13 +386,21 @@ async def create_native(
                 expires=expires,
                 registered=_registered(runtime),
             )
-            with audit_call_context(audit_id, sessions, tasks):
-                native_id, result = await asyncio.wait_for(
-                    _native_result(runtime, intent, call, dispatch=dispatch),
-                    timeout=tool_timeout_s(
-                        call.name, config=runtime.config, args=call.arguments
-                    ),
-                )
+            try:
+                with audit_call_context(audit_id, sessions, tasks):
+                    native_id, result = await asyncio.wait_for(
+                        _native_result(
+                            runtime, intent, call, dispatch=dispatch
+                        ),
+                        timeout=tool_timeout_s(
+                            call.name,
+                            config=runtime.config,
+                            args=call.arguments,
+                        ),
+                    )
+            except NativeRetryRejected:
+                repository.reject_retry(lease, intent)
+                raise
             confirmed = repository.bind(lease, intent, native_id)
             if confirmed.state != "active":
                 raise PermissionError("Native creation was cancelled")

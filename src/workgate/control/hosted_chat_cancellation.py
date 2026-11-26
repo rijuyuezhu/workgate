@@ -10,10 +10,12 @@ from ..hosted_chat.durable_tasks import DurableTaskRepository
 from ..jobs.state import CONFIRMED_TERMINAL_STATUSES
 from ..oauth.core.context import bind_oauth_claims, reset_oauth_claims
 from ..protocol.executor import (
+    JOB_CANCEL_ATTEMPT_OP,
     SHELL_LOOKUP_RESERVED_OP,
+    ReservedJobAttemptReceipt,
+    ReservedJobAttemptRequest,
     ReservedShellLookupResult,
 )
-from ..schemas.result_models.jobs import JobOutput
 from ..schemas.result_models.shell import KillPersistentShellOutput
 from .execution_context import control_execution_context
 from .runtime import ControlRuntime
@@ -38,37 +40,28 @@ async def _stop_job(
     if record.status != "active":
         return "pending"
 
-    # A claimed but unreturned creation must be observed by exact native poll
-    # before we attempt cancellation. Never replay the native creation.
-    if row["native_id"] is None:
-        receipt = JobOutput.model_validate(
-            await runtime.session_coordinator.call_session_tool(
-                "job", {"session_id": session_id, "poll": [key], "lines": 1}
-            )
-        )
-        if receipt.operation != "poll" or len(receipt.outputs) != 1:
-            return "pending"
-        job = receipt.outputs[0].job
-        if (
-            job.job_id != key
-            or job.session_id != session_id
-            or job.kind != "shell"
-        ):
-            return "pending"
-        if job.status in CONFIRMED_TERMINAL_STATUSES:
-            return "stopped"
-
-    result = JobOutput.model_validate(
+    request = ReservedJobAttemptRequest(
+        job_id=key,
+        attempt=row["native_attempt"],
+        retry_key=row["idempotency_key"] if row["kind"] == "retry" else None,
+    )
+    receipt = ReservedJobAttemptReceipt.model_validate(
         await runtime.session_coordinator.call_session_tool(
-            "job", {"session_id": session_id, "cancel": [key], "lines": 1}
+            JOB_CANCEL_ATTEMPT_OP,
+            request.model_dump(mode="json") | {"session_id": session_id},
         )
     )
-    if result.operation != "cancel" or len(result.cancelled) != 1:
+    if not receipt.matches(request, session_id):
         return "pending"
-    job = result.cancelled[0].job
-    if job.job_id != key or job.session_id != session_id or job.kind != "shell":
+    if receipt.state == "superseded":
+        return "absent"
+    if receipt.state != "matching" or receipt.job is None:
         return "pending"
-    return "stopped" if job.status in CONFIRMED_TERMINAL_STATUSES else "pending"
+    return (
+        "stopped"
+        if receipt.job.status in CONFIRMED_TERMINAL_STATUSES
+        else "pending"
+    )
 
 
 async def _stop_shell(
@@ -119,10 +112,10 @@ async def _stop(
 ) -> CleanupOutcome:
     # IDs were allocated by the private ledger before the one dispatch claim.
     # Never stop an arbitrary ID from a provider response or a listing.
-    key = row["idempotency_key"]
+    key = row["target_job_id"] or row["idempotency_key"]
     if not key or row["native_id"] not in (None, key):
         return "pending"
-    if row["kind"] == "job":
+    if row["kind"] in {"job", "retry"}:
         return await _stop_job(runtime, row, key)
     if row["kind"] == "shell":
         return await _stop_shell(runtime, repository, row, key)
@@ -199,7 +192,9 @@ async def sweep_native_cancellations(
                         conversation_id=row["conversation_id"],
                         tool=row["tool"],
                         machine=row["machine"],
-                        native_id=row["idempotency_key"]
+                        native_id=(
+                            row["target_job_id"] or row["idempotency_key"]
+                        )
                         if outcome == "stopped"
                         else row["native_id"],
                         reserved_id=row["idempotency_key"],

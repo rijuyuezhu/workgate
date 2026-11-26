@@ -15,6 +15,9 @@ from ..config.executor import ExecutorConfig
 from ..config.role_config import use_role_config
 from ..persistence import use_state_store
 from ..protocol.executor import (
+    JOB_CANCEL_ATTEMPT_OP,
+    JOB_LOOKUP_ATTEMPT_OP,
+    JOB_RETRY_RESERVED_OP,
     JOB_START_RESERVED_OP,
     SESSION_CHANGE_WORKDIR_OP,
     SESSION_CREATE_OP,
@@ -803,6 +806,23 @@ class ExecutorRuntime:
                 raise ValueError("Reserved Job creation requires session_id")
             return await self.shell.start_reserved_job(
                 str(command.session_id), dict(command.args)
+            )
+
+        if command.op in {
+            JOB_RETRY_RESERVED_OP,
+            JOB_LOOKUP_ATTEMPT_OP,
+            JOB_CANCEL_ATTEMPT_OP,
+        }:
+            if command.session_id is None:
+                raise ValueError("Reserved Job attempt requires session_id")
+            return await self.shell.jobs.reserved_attempt(
+                str(command.session_id),
+                dict(command.args),
+                operation={
+                    JOB_RETRY_RESERVED_OP: "retry",
+                    JOB_LOOKUP_ATTEMPT_OP: "lookup",
+                    JOB_CANCEL_ATTEMPT_OP: "cancel",
+                }[command.op],
             )
 
         if command.op in {SHELL_START_RESERVED_OP, SHELL_LOOKUP_RESERVED_OP}:
