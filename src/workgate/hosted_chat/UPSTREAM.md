@@ -45,3 +45,30 @@ then compares the exact saved snapshot before committing the new profile.
 Refresh also compares the prior row, preventing stale replies from overwriting
 edits or restoring deleted profiles. Account authorization remains a separate
 unit. The refresh coroutine is not started by importing these modules.
+
+
+Model-facing tool and media projection uses these final upstream sources:
+
+| Workgate file | Upstream source at the pin | Git blob |
+| --- | --- | --- |
+| `mcp_content.py` | `src/local_shell_mcp/webui/mcp_content.py` | `524dd4396577ca6734e6c5da10bedf61a416fc67` |
+| `mcp_projection.py` | `src/local_shell_mcp/webui/mcp_projection.py` | `b17c27ca8c6516c93720c5aaf8a176b3d010555f` |
+| `provider_multimodal.py` | `src/local_shell_mcp/webui/provider_multimodal.py` | `33ce92d0dee596ce8a16ed8e06c21a9dd035ec4a` |
+| `result_projection.py` | `src/local_shell_mcp/webui/approval_runtime.py` (UTF-16 truncation) | `e12100e03427bd3e6272352b10c80496767640d1` |
+| `tests/hosted_chat/test_provider_projection.py` | `tests/test_webui_message_parity.py` (MCP cases) | `f3f229bfca58601f2823ee666dfe0209d686b136` |
+| same | `tests/test_webui_pr355_edge_coverage.py` (projection cases) | `1f20e8d244165912a1384440aa6217a7226dcc73` |
+| same | `tests/test_webui_steer_media.py` (native media cases) | `e9876cc4923caa39b5bfd36075faa00b7c5b9dc5` |
+| `tests/fixtures/hosted_chat/mcp_content_vectors.json` | `tests/fixtures/librechat/mcp_content_vectors.json` | `89ca4369f1d6a2d9a05c4d42271483684e70c823` |
+| `tests/fixtures/hosted_chat/approval_runtime_reference.cjs` | `tests/fixtures/librechat/approval_runtime_reference.cjs` | `34587d8e224e7cf9b3d09933d73e322b665d9c3f` |
+
+The original source oracle and its license/source metadata remain intact.
+Projection recognizes the native `call_agent_mcp_tool` result, including
+structured content, without interpreting ordinary tool JSON as MCP media.
+It retains raw redacted results and projects complete batches at their
+original positions. Remote image URLs and active UI HTML are not projected;
+native MCP Apps authorization and rendering remain separate. Inline image/PDF
+parts use the same bounded canonical base64 validator. The model-facing
+result budget remains bounded even when history is reloaded. Actual attachment
+ownership, durable generation, protocol serialization and app rendering
+are integrated in their respective units; importing these helpers does
+not start a service or send a request.
