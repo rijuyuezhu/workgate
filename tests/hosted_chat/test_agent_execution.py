@@ -9,33 +9,61 @@ from pathlib import Path
 
 import pytest
 
-from local_shell_mcp.webui.agent_execution import _same_args, execute_tool_batch, replay_key
-from local_shell_mcp.webui.providers import ModelToolCall
+from workgate.hosted_chat.agent_execution import (
+    _same_args,
+    execute_tool_batch,
+    replay_key,
+)
+from workgate.hosted_chat.provider_common import ModelToolCall
 
 
 def call(identity, name="read", arguments=None):
-    return ModelToolCall(identity, name, arguments if arguments is not None else {"key": identity})
+    return ModelToolCall(
+        identity,
+        name,
+        arguments if arguments is not None else {"key": identity},
+    )
 
 
 def test_replay_keys_and_argument_equality_match_original_node():
     node = shutil.which("node")
     if not node:
         pytest.skip("Original source differential oracle requires Node")
-    values = [{}, {"x": 1}, {"x": 1.0}, {"x": True}, {"x": False},
-              {"x": [1, "1"]}, {"x": None}, {"x": {"b": 2, "a": 1}},
-              {"x": {"a": 1, "b": 2}}, {"x": -0.0}]
+    values = [
+        {},
+        {"x": 1},
+        {"x": 1.0},
+        {"x": True},
+        {"x": False},
+        {"x": [1, "1"]},
+        {"x": None},
+        {"x": {"b": 2, "a": 1}},
+        {"x": {"a": 1, "b": 2}},
+        {"x": -0.0},
+    ]
     pairs = list(itertools.product(values, repeat=2))
-    fixture = Path(__file__).parent / "fixtures/librechat/tool_batch_reference.cjs"
+    fixture = (
+        Path(__file__).parent.parent
+        / "fixtures/hosted_chat/tool_batch_reference.cjs"
+    )
     script = """
 const fs=require('fs'), p=require(process.argv[1]);
 const pairs=JSON.parse(fs.readFileSync(0,'utf8'));
 process.stdout.write(JSON.stringify({equal:pairs.map(([a,b])=>p.recordArgsEqual(a,b)),
 keys:[p.directReplayKey({id:'call'},0),p.directReplayKey({id:''},2),p.directReplayKey({},3)]}));
 """
-    expected = json.loads(subprocess.check_output([node, "-e", script, str(fixture.resolve())],
-                                                  input=json.dumps(pairs).encode()))
+    expected = json.loads(
+        subprocess.check_output(
+            [node, "-e", script, str(fixture.resolve())],
+            input=json.dumps(pairs).encode(),
+        )
+    )
     assert [_same_args(a, b) for a, b in pairs] == expected["equal"]
-    assert [replay_key(call("call"), 0), replay_key(call(""), 2), replay_key(call(None), 3)] == expected["keys"]
+    assert [
+        replay_key(call("call"), 0),
+        replay_key(call(""), 2),
+        replay_key(call(None), 3),
+    ] == expected["keys"]
 
 
 @pytest.mark.asyncio
@@ -56,8 +84,11 @@ async def test_batch_executes_concurrently_but_returns_provider_order_and_replay
     async def complete(item, result):
         saved.append((item.call_id, result))
 
-    assert await execute_tool_batch(calls, execute, settled=cache, on_completed=complete) == [
-        {"id": "first"}, {"id": "second"},
+    assert await execute_tool_batch(
+        calls, execute, settled=cache, on_completed=complete
+    ) == [
+        {"id": "first"},
+        {"id": "second"},
     ]
     assert len(saved) == 2
     replayed = await execute_tool_batch(calls, execute, settled=cache)
@@ -65,9 +96,15 @@ async def test_batch_executes_concurrently_but_returns_provider_order_and_replay
     assert len(started) == 2
     assert cache[replay_key(calls[0], 0)]["output"]["id"] == "first"
     with pytest.raises(ValueError, match="Cannot change"):
-        await execute_tool_batch([call("first", arguments={"key": "changed"})], execute, settled=cache)
+        await execute_tool_batch(
+            [call("first", arguments={"key": "changed"})],
+            execute,
+            settled=cache,
+        )
     with pytest.raises(ValueError, match="Cannot change"):
-        await execute_tool_batch([call("first", name="other")], execute, settled=cache)
+        await execute_tool_batch(
+            [call("first", name="other")], execute, settled=cache
+        )
 
 
 class Pause(Exception):
@@ -88,9 +125,12 @@ async def test_interrupting_siblings_finish_before_pause_and_ordinary_tools_neve
         return item.name
 
     with pytest.raises(Pause):
-        await execute_tool_batch([call("1", "pause"), call("2", "child"), call("3", "write")],
-                                 execute, interrupting_names=frozenset({"pause", "child"}),
-                                 is_interrupt=lambda error: isinstance(error, Pause))
+        await execute_tool_batch(
+            [call("1", "pause"), call("2", "child"), call("3", "write")],
+            execute,
+            interrupting_names=frozenset({"pause", "child"}),
+            is_interrupt=lambda error: isinstance(error, Pause),
+        )
     assert order == ["child"]
 
 
@@ -102,8 +142,11 @@ async def test_successful_interrupting_group_then_regular_group_keep_original_po
         order.append(item.name)
         return item.call_id
 
-    assert await execute_tool_batch([call("1", "write"), call("2", "child")], execute,
-                                    interrupting_names=frozenset({"child"})) == ["1", "2"]
+    assert await execute_tool_batch(
+        [call("1", "write"), call("2", "child")],
+        execute,
+        interrupting_names=frozenset({"child"}),
+    ) == ["1", "2"]
     assert order == ["child", "write"]
 
 
@@ -118,8 +161,11 @@ async def test_safety_errors_beat_pause_in_normal_group_and_wait_for_siblings():
         raise PermissionError("revoked")
 
     with pytest.raises(PermissionError, match="revoked"):
-        await execute_tool_batch([call("1", "pause"), call("2", "denied")], execute,
-                                 is_interrupt=lambda error: isinstance(error, Pause))
+        await execute_tool_batch(
+            [call("1", "pause"), call("2", "denied")],
+            execute,
+            is_interrupt=lambda error: isinstance(error, Pause),
+        )
     assert settled == ["pause", "denied"]
 
 
@@ -146,8 +192,12 @@ async def test_breaker_before_dispatch_and_after_interrupting_group():
             raise PermissionError("revoked")
 
     with pytest.raises(PermissionError):
-        await execute_tool_batch([call("1", "child"), call("2", "write")], execute,
-                                 interrupting_names=frozenset({"child"}), check_breaker=later)
+        await execute_tool_batch(
+            [call("1", "child"), call("2", "write")],
+            execute,
+            interrupting_names=frozenset({"child"}),
+            check_breaker=later,
+        )
     assert executed == ["child"]
 
 
@@ -164,7 +214,9 @@ async def test_cancel_stops_every_sibling_and_does_not_cache_unfinished_work():
         finally:
             finished.append(item.call_id)
 
-    task = asyncio.create_task(execute_tool_batch([call("1"), call("2")], execute, settled=cache))
+    task = asyncio.create_task(
+        execute_tool_batch([call("1"), call("2")], execute, settled=cache)
+    )
     await started.wait()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -184,7 +236,9 @@ async def test_failed_completion_persistence_does_not_mark_tool_replayable():
         raise OSError("database full")
 
     with pytest.raises(OSError, match="database full"):
-        await execute_tool_batch([call("1")], execute, settled=cache, on_completed=complete)
+        await execute_tool_batch(
+            [call("1")], execute, settled=cache, on_completed=complete
+        )
     assert cache == {}
     assert await execute_tool_batch([], execute) == []
 
@@ -196,8 +250,10 @@ async def test_duplicate_call_ids_rejected_before_any_side_effects():
     async def execute(item):
         executed.append(item.call_id)
 
-    with pytest.raises(ValueError, match="Duplicate tool call ID"):
-        await execute_tool_batch([call("same"), call("same"), call("other")], execute)
+    with pytest.raises(ValueError, match="duplicate model tool call ID"):
+        await execute_tool_batch(
+            [call("same"), call("same"), call("other")], execute
+        )
     assert executed == []
 
 
@@ -214,6 +270,48 @@ async def test_replay_mismatch_rejected_before_unrelated_siblings_execute():
     with pytest.raises(ValueError, match="Cannot change"):
         await execute_tool_batch(
             [call("new"), call("previous", arguments={"changed": True})],
-            execute, settled=cache,
+            execute,
+            settled=cache,
         )
     assert executed == ["previous"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        call(""),
+        call("x", ""),
+        call("x", arguments=[1]),
+        call("x", arguments={"n": float("nan")}),
+    ],
+)
+async def test_invalid_proposal_rejected_before_dispatch(invalid):
+    async def execute(item):
+        pytest.fail("Invalid batch must not execute any sibling")
+
+    with pytest.raises(ValueError):
+        await execute_tool_batch([call("valid"), invalid], execute)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_and_completion_cannot_mutate_replay_proposal():
+    proposal = call("x", arguments={"nested": [1]})
+    cache = {}
+
+    async def execute(item):
+        item.arguments["nested"].append(2)
+        return {"result": "done"}
+
+    async def complete(item, result):
+        assert item.arguments == {"nested": [1]}
+        assert result["proposal"]["args"] == item.arguments
+        result["output"]["result"] = "changed"
+
+    assert await execute_tool_batch(
+        [proposal], execute, settled=cache, on_completed=complete
+    ) == [{"result": "done"}]
+    assert proposal.arguments == {"nested": [1]}
+    assert await execute_tool_batch([proposal], execute, settled=cache) == [
+        {"result": "done"}
+    ]
