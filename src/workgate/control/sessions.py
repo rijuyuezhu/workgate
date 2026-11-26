@@ -349,6 +349,21 @@ class ControlSessionCoordinator:
             )
             return await self._end_record_locked(record, force=force)
 
+    async def end_reserved_session(
+        self, session_id: str, *, executor_id: str
+    ) -> bool:
+        """Terminate the exact private reservation; absence must be confirmed."""
+        async with self._lock(session_id):
+            record = self._state.snapshot_sessions().get(session_id)
+            if record is None:
+                return False
+            if record.executor_id != executor_id:
+                raise PermissionError("Session reservation binding mismatch")
+            if record.status == "ended":
+                return record.executor_absence_confirmed
+            result = await self._end_record_locked(record, force=False)
+            return result["ended"] is True and not result["force_released"]
+
     async def _end_record_locked(
         self, record: ControlSessionRecord, *, force: bool
     ) -> dict[str, Any]:

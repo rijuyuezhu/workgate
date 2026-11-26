@@ -1188,6 +1188,10 @@ class ControlTaskService:
             else:
                 if current not in {"active", "blocked"}:
                     raise ValueError(f"cannot cancel a {current} task")
+                if require_no_live_sessions and self._has_live_session(task_id):
+                    raise ValueError(
+                        "cannot cancel task while execution sessions remain active"
+                    )
                 document.status = "cancelled"
             return ["status"], []
 
@@ -1208,8 +1212,14 @@ class ControlTaskService:
             require_no_live_sessions=require_no_live_sessions,
         )
 
-    async def cancel_task(self, task_id: str) -> TaskOutput:
-        return await self._set_status(task_id, action="cancel")
+    async def cancel_task(
+        self, task_id: str, *, require_no_live_sessions: bool = False
+    ) -> TaskOutput:
+        return await self._set_status(
+            task_id,
+            action="cancel",
+            require_no_live_sessions=require_no_live_sessions,
+        )
 
     def _delete_sync(self, task_id: str) -> TaskDeleteOutput:
         path = self._path(task_id)

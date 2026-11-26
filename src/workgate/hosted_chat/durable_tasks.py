@@ -406,7 +406,106 @@ class DurableTaskRepository:
                 (run_id, now),
             )
             db.execute(
-                "UPDATE agent_durable_tasks SET state='cancel_pending',updated_at=? "
+                "UPDATE agent_durable_tasks SET state=CASE WHEN state='reserved' "
+                "THEN 'stopped' ELSE 'cancel_pending' END,updated_at=?,next_attempt_at=NULL "
                 "WHERE owner=? AND run_id=? AND state IN ('reserved','active','unknown')",
                 (now, owner, run_id),
+            )
+
+    def _revoked(self, db, row, registered: Collection[str]) -> bool:
+        """Recheck original grant and current policy; interruption alone is not revocation."""
+        owner = row["owner"]
+        for conversation_id in (
+            row["conversation_id"],
+            row["authorization_conversation_id"],
+        ):
+            if (
+                db.execute(
+                    "SELECT 1 FROM conversations WHERE id=? AND owner=?",
+                    (conversation_id, owner),
+                ).fetchone()
+                is None
+            ):
+                return True
+        if (
+            row["run_id"] is not None
+            and db.execute(
+                "SELECT 1 FROM agent_run_cancellations WHERE run_id=? "
+                "UNION ALL SELECT 1 FROM runs WHERE id=? AND status='aborted'",
+                (row["run_id"], row["run_id"]),
+            ).fetchone()
+        ):
+            return True
+        try:
+            self._authorize(
+                db,
+                row,
+                row["machine"],
+                row["kind"],
+                set(json.loads(row["scopes"])),
+                row["grant_expires"],
+                registered,
+                row["authorization_conversation_id"],
+            )
+        except PermissionError, KeyError, ValueError:
+            return True
+        return False
+
+    def cancellation_batch(
+        self, registered: Collection[str], *, limit: int = 32
+    ) -> list[dict]:
+        """Latch revocation and select bounded due cleanup work in a single transaction."""
+        if not 1 <= limit <= 64:
+            raise ValueError("Invalid cancellation batch size")
+        now = _now()
+        pending = []
+        with self.database.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT * FROM agent_durable_tasks "
+                "WHERE state IN ('reserved','unknown','active','cancel_pending') "
+                "AND (next_attempt_at IS NULL OR next_attempt_at<=?) "
+                "ORDER BY COALESCE(next_attempt_at,0),created_at,id LIMIT ?",
+                (now, limit),
+            ).fetchall()
+            for row in rows:
+                revoked = row["state"] == "cancel_pending" or self._revoked(
+                    db, row, registered
+                )
+                if not revoked:
+                    db.execute(
+                        "UPDATE agent_durable_tasks SET next_attempt_at=? WHERE id=?",
+                        (now + 5_000_000, row["id"]),
+                    )
+                    continue
+                if row["state"] == "reserved":
+                    # The single dispatch claim has never been issued.
+                    db.execute(
+                        "UPDATE agent_durable_tasks SET state='stopped',updated_at=?,next_attempt_at=NULL WHERE id=?",
+                        (now, row["id"]),
+                    )
+                    continue
+                db.execute(
+                    "UPDATE agent_durable_tasks SET state='cancel_pending',updated_at=?,next_attempt_at=? WHERE id=?",
+                    (now, now + 120_000_000, row["id"]),
+                )
+                pending.append(dict(row))
+        return pending
+
+    def finish_cancellation(self, identity: str, *, stopped: bool) -> None:
+        """Only positive native evidence settles a claimed cancellation."""
+        now = _now()
+        with self.database.connect() as db:
+            db.execute(
+                "UPDATE agent_durable_tasks SET state=?,updated_at=?,next_attempt_at=?,last_error=?,"
+                "native_id=CASE WHEN ? THEN idempotency_key ELSE native_id END "
+                "WHERE id=? AND state='cancel_pending'",
+                (
+                    "stopped" if stopped else "cancel_pending",
+                    now,
+                    None if stopped else now + 5_000_000,
+                    None if stopped else "Native cancellation unconfirmed",
+                    stopped,
+                    identity,
+                ),
             )
