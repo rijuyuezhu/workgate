@@ -138,6 +138,11 @@ class StateLayout:
         return self.jobs_dir / "deferred"
 
     @property
+    def ui_sessions_path(self) -> Path:
+        """Return private renewable browser-session revocation state."""
+        return self.control_dir / "ui-sessions.json"
+
+    @property
     def oauth_clients_path(self) -> Path:
         """Return the approved OAuth client registry path."""
         return self.root / "oauth-clients.json"

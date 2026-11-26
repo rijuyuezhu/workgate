@@ -16,11 +16,14 @@ from ..session import (
     UI_CSRF_HEADER,
     UI_SESSION_BINDING_HEADER,
     UI_SESSION_BINDING_PROTOCOL_PREFIX,
+    BrowserSessionUnavailable,
     canonical_ui_origin,
     has_valid_ui_csrf_tokens,
     is_valid_ui_origin,
     is_valid_ui_session_binding_token,
     issue_ui_session,
+    renew_ui_session,
+    revoke_ui_session,
     ui_csrf_cookie_name,
     ui_origin,
     ui_session_cookie_name,
@@ -141,6 +144,17 @@ def set_ui_session_cookies(
         binding_token,
         origin,
     )
+    _set_cookie_pair(response, session_token, csrf_token, origin, max_age)
+    return max_age
+
+
+def _set_cookie_pair(
+    response: Response,
+    session_token: str,
+    csrf_token: str,
+    origin: str,
+    max_age: int | None,
+) -> None:
     cookie_options = {
         "path": "/",
         "secure": origin.startswith("https://"),
@@ -159,7 +173,6 @@ def set_ui_session_cookies(
         httponly=False,
         **cookie_options,
     )
-    return max_age
 
 
 def clear_ui_session_cookies(response: Response, origin: str) -> None:
@@ -215,16 +228,19 @@ async def api_ui_session_oauth(request: Request) -> Response:
         return oauth_error(exc)
 
     claims = validate_bearer_token(token_response.access_token)
-    response = _json_ok(
-        {"expires_in": token_response.expires_in},
-        "WebUI session established",
-    )
-    expires_in = set_ui_session_cookies(
-        response,
-        claims,
-        binding_token,
-        origin,
-    )
+    try:
+        token, csrf_token, expires_in = issue_ui_session(
+            claims,
+            binding_token,
+            origin,
+            first_party_redirect=token_request.redirect_uri,
+        )
+    except OSError, ValueError, RuntimeError:
+        return _json_error(
+            "Unable to establish browser session", status_code=503
+        )
+    response = _json_ok({"expires_in": expires_in}, "WebUI session established")
+    _set_cookie_pair(response, token, csrf_token, origin, expires_in)
     audit(
         "ui_session_issued",
         client_id=claims.get("client_id"),
@@ -267,6 +283,37 @@ async def api_ui_session_token(request: Request) -> Response:
     return response
 
 
+async def api_ui_session_renew(request: Request) -> Response:
+    """Slide a live first-party cookie on explicit browser activity."""
+    origin, error = _require_origin(request)
+    if error is not None:
+        return error
+    try:
+        claims = ui_session_claims(request)
+        if claims is None:
+            return _json_error("WebUI session required", status_code=401)
+        if not has_valid_ui_csrf(request, claims):
+            return _json_error("WebUI CSRF validation failed", status_code=403)
+        renewed = renew_ui_session(claims, origin)
+    except BrowserSessionUnavailable:
+        return _json_error("Unable to check browser session", status_code=503)
+    except jwt.PyJWTError:
+        return _json_error("Invalid WebUI session", status_code=401)
+    except OSError, ValueError, RuntimeError:
+        return _json_error("Unable to renew browser session", status_code=503)
+    response = _json_ok({"renewed": renewed is not None})
+    if renewed is not None:
+        token, max_age = renewed
+        _set_cookie_pair(
+            response,
+            token,
+            request.cookies[ui_csrf_cookie_name(origin)],
+            origin,
+            max_age,
+        )
+    return response
+
+
 async def api_ui_session_logout(request: Request) -> Response:
     """Clear WebUI cookies after same-origin and CSRF validation."""
     origin, error = _require_origin(request)
@@ -274,11 +321,20 @@ async def api_ui_session_logout(request: Request) -> Response:
         return error
     try:
         claims = ui_session_claims(request)
+    except BrowserSessionUnavailable:
+        return _json_error("Unable to revoke browser session", status_code=503)
     except jwt.PyJWTError:
         claims = None
     if claims is not None and not has_valid_ui_csrf(request, claims):
         return _json_error("WebUI CSRF validation failed", status_code=403)
 
+    if claims is not None:
+        try:
+            revoke_ui_session(claims)
+        except OSError, ValueError, RuntimeError:
+            return _json_error(
+                "Unable to revoke browser session", status_code=503
+            )
     response = _json_ok(message="WebUI session cleared")
     clear_ui_session_cookies(response, origin)
     audit(

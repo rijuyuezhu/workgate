@@ -7,6 +7,7 @@ A Workgate Executor runs files, shells and other tools with the permissions of i
 - Keep local Control on loopback. For remote connections, serve it through HTTPS and use OAuth.
 - Keep the admin approval PIN, signing state and backups private.
 - Approve only trusted MCP clients and revoke access when needed.
+- Browser sign-in through the WebUI uses a renewable 30-day session. Sign out on shared computers; external OAuth access tokens and sessions established from pasted tokens retain their configured lifetime.
 
 ## Protect Executors
 

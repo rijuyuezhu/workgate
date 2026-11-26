@@ -4,80 +4,89 @@ Source: f0ecf8f8039345f24d0de4402983766787f4574e,
 webui/auth.py (6c45a247603a559aac56bf877ccf600138efe812).
 """
 
+import hashlib
+import time
+
+from ..persistence import StateStore
+
+SESSION_TTL = 30 * 24 * 60 * 60
+_MAX_SESSIONS = 4096
+_MAX_STORE_BYTES = 1024 * 1024
+
+
 class WebAuthStore:
-    def __init__(self, directory: Path):
-        from ..sqlite_store import shared_database
+    """Store only hashed renewable session identities and bounded deadlines.
 
-        self.database = shared_database(directory.resolve())
+    The signed native browser cookie already carries owner, scope, origin and
+    binding information. Use the existing private Control state transaction
+    rather than create a second login-ticket or Chat database dependency.
+    """
 
-    def issue_ticket(self, owner: str, scopes: str, grant_until: int, *, renewable: bool = False) -> str:
+    def __init__(self, store: StateStore):
+        self.store = store
+        self.path = store.layout.ui_sessions_path
+
+    @staticmethod
+    def _hash(identity: str) -> str:
+        return hashlib.sha256(identity.encode("ascii")).hexdigest()
+
+    def _read(self) -> dict[str, int]:
+        value = self.store.read_json(self.path, max_bytes=_MAX_STORE_BYTES)
+        if value is None:
+            return {}
+        if (
+            not isinstance(value, dict)
+            or len(value) > _MAX_SESSIONS
+            or any(
+                not isinstance(key, str)
+                or len(key) != 64
+                or type(expiry) is not int
+                for key, expiry in value.items()
+            )
+        ):
+            raise ValueError("Invalid browser session registry")
+        return value
+
+    def issue(self, identity: str, expires_at: int) -> None:
         now = int(time.time())
-        if not owner or grant_until <= now:
-            raise ValueError("An active authenticated identity is required")
-        secret = secrets.token_urlsafe(32)
-        with self.database.connect() as db:
-            db.execute("DELETE FROM web_login_tickets WHERE expires_at<=?", (now,))
-            db.execute("INSERT INTO web_login_tickets(hash,owner,scopes,grant_until,expires_at,renewable) VALUES(?,?,?,?,?,?)",
-                       (_hash(secret), owner, scopes, grant_until, now + TICKET_TTL, int(renewable)))
-        return secret
+        if expires_at <= now or expires_at > now + SESSION_TTL:
+            raise ValueError("Invalid browser session deadline")
+        with self.store.transaction(self.path):
+            records = {
+                key: expiry
+                for key, expiry in self._read().items()
+                if expiry > now
+            }
+            key = self._hash(identity)
+            if key in records or len(records) >= _MAX_SESSIONS:
+                raise ValueError("Browser session capacity reached")
+            records[key] = expires_at
+            self.store.write_json(self.path, records)
 
-    def redeem(self, ticket: str) -> tuple[str, WebSession]:
-        if len(ticket) > 256 or len(ticket) < 32:
-            raise ValueError("Invalid login ticket")
-        now = int(time.time())
-        with self.database.connect() as db:
-            db.execute("DELETE FROM web_sessions WHERE expires_at<=?", (now,))
-            row = db.execute("DELETE FROM web_login_tickets WHERE hash=? RETURNING owner,scopes,grant_until,expires_at,renewable",
-                             (_hash(ticket),)).fetchone()
-            if not row or row["expires_at"] < now or row["grant_until"] < now:
-                raise ValueError("Invalid or expired login ticket")
-            raw = secrets.token_urlsafe(48)
-            expiry = min(row["grant_until"], now + SESSION_TTL)
-            db.execute("INSERT INTO web_sessions(hash,owner,scopes,grant_until,expires_at,renewable) VALUES(?,?,?,?,?,?)",
-                       (_hash(raw), row["owner"], row["scopes"], row["grant_until"], expiry, row["renewable"]))
-            return raw, WebSession(row["owner"], row["scopes"], row["grant_until"])
+    def session(self, identity: str) -> int | None:
+        with self.store.transaction(self.path):
+            expiry = self._read().get(self._hash(identity))
+            return (
+                expiry
+                if expiry is not None and expiry > int(time.time())
+                else None
+            )
 
-    def session(self, cookie: str) -> WebSession | None:
-        if not cookie or len(cookie) > 256:
-            return None
-        now = int(time.time())
-        with self.database.connect() as db:
-            row = db.execute("SELECT owner,scopes,grant_until,expires_at FROM web_sessions WHERE hash=?",
-                             (_hash(cookie),)).fetchone()
-            if not row or row["expires_at"] <= now or row["grant_until"] <= now:
-                return None
-            return WebSession(row["owner"], row["scopes"], row["grant_until"])
-
-    def renew(self, cookie: str) -> WebSession | None:
-        """Slide an authenticated browser session on actual frontend activity.
-
-        A revoked or expired cookie is never resurrected. The cookie itself is
-        the revocable, HttpOnly browser credential; external OAuth tokens keep
-        their own independent, shorter expiry.
-        """
-        if not cookie or len(cookie) > 256:
-            return None
+    def renew(self, identity: str) -> int | None:
+        """Extend only a live session, never resurrect an expired/revoked one."""
         now = int(time.time())
         until = now + SESSION_TTL
-        with self.database.connect() as db:
-            row = db.execute(
-                "UPDATE web_sessions SET expires_at=?,grant_until=? "
-                "WHERE hash=? AND expires_at>? AND grant_until>? AND renewable=1 "
-                "RETURNING owner,scopes,grant_until",
-                (until, until, _hash(cookie), now, now),
-            ).fetchone()
-            if row is None:
-                # Legacy and explicitly bounded OAuth grants stay valid, but
-                # no independent connection or 30-day promotion is necessary.
-                row = db.execute(
-                    "SELECT owner,scopes,grant_until FROM web_sessions "
-                    "WHERE hash=? AND expires_at>? AND grant_until>?",
-                    (_hash(cookie), now, now),
-                ).fetchone()
-            return (WebSession(row["owner"], row["scopes"], row["grant_until"])
-                    if row is not None else None)
+        with self.store.transaction(self.path):
+            records = self._read()
+            key = self._hash(identity)
+            if records.get(key, 0) <= now:
+                return None
+            records[key] = until
+            self.store.write_json(self.path, records)
+            return until
 
-    def revoke(self, cookie: str) -> None:
-        with self.database.connect() as db:
-            db.execute("DELETE FROM web_sessions WHERE hash=?", (_hash(cookie),))
-
+    def revoke(self, identity: str) -> None:
+        with self.store.transaction(self.path):
+            records = self._read()
+            if records.pop(self._hash(identity), None) is not None:
+                self.store.write_json(self.path, records)
