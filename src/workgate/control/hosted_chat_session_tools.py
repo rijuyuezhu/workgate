@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, TypeAdapter, model_validator
 from ..hosted_chat.durable_tasks import (
     SESSION_COMMAND_EFFECT_TOOLS,
     SESSION_FILE_EFFECT_TOOLS,
+    SESSION_METADATA_EFFECT_TOOLS,
     SESSION_SHELL_EFFECT_TOOLS,
     DurableTaskRepository,
 )
@@ -35,6 +36,7 @@ from ..schemas.input_models.files import (
     SnapshotIdArg,
 )
 from ..schemas.input_models.patch import PatchCwdArg, PatchTextArg
+from ..schemas.input_models.session import SessionWorkdirArg
 from ..schemas.input_models.shell import (
     EnterArg,
     InputTextArg,
@@ -52,6 +54,7 @@ from ..schemas.input_models.shell import (
     ShellTimeoutArg,
     ToolPurposeArg,
 )
+from ..schemas.result_models.session import SessionStartOutput
 from ..schemas.result_models.shell import (
     ListPersistentShellsOutput,
     PersistentShellInfo,
@@ -153,6 +156,10 @@ class _BoundedPython(_BoundedCommand):
     code: PythonCodeArg
 
 
+class _ChangeWorkdir(_SessionEffect):
+    workdir: SessionWorkdirArg
+
+
 _EFFECT_REQUESTS = {
     "send_persistent_shell_input": _ShellSend,
     "resize_persistent_shell": _ShellResize,
@@ -163,6 +170,7 @@ _EFFECT_REQUESTS = {
     "apply_patch": _ApplyPatch,
     "bash": _BoundedBash,
     "run_python_code": _BoundedPython,
+    "session_change_workdir": _ChangeWorkdir,
 }
 
 
@@ -216,6 +224,7 @@ class NativeSessionDispatcher:
             in SESSION_SHELL_EFFECT_TOOLS
             | SESSION_FILE_EFFECT_TOOLS
             | SESSION_COMMAND_EFFECT_TOOLS
+            | SESSION_METADATA_EFFECT_TOOLS
         ):
             return await self._effect(
                 repository,
@@ -417,6 +426,17 @@ class NativeSessionDispatcher:
             ):
                 raise NativeCreationUncertain(
                     "Native bounded command returned an unexpected resource"
+                )
+        elif isinstance(request, _ChangeWorkdir):
+            changed = SessionStartOutput.model_validate(
+                result.structured_content
+            )
+            if (
+                changed.session_id != request.session_id
+                or changed.executor_id != machine
+            ):
+                raise NativeCreationUncertain(
+                    "Native Session workdir receipt is mismatched"
                 )
         if output is not None:
             projection = output.model_dump(mode="json")

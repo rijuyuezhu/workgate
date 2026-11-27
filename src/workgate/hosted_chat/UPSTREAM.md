@@ -201,8 +201,17 @@ response is reconciled by exact native absence; it does not invent a successful
 kill receipt or authorize another Shell. Owned PTY input and resize reuse
 the native MCP dispatcher. An immutable effect claim is committed before
 invocation, a confirmed matching receipt is persisted before model disclosure,
-and uncertain calls are never resent. General native tool dispatch and runtime
-wiring follow.
+and uncertain calls are never resent. Native file mutations and bounded
+Bash/Python execution share the effect ledger, retaining native grounding,
+watchdog, and result projection. Tracked and PTY execution never fall through
+to bounded execution. Native Task metadata and Todo/plan operations use the
+same canonical Task owner, with only conversation-owned attached Session IDs
+disclosed. Session workdir changes retain native read scope and exact binding;
+explicit Session close requires the live execute grant and positive native
+absence, never force release. Cancellation latches related owned child
+intents for exact reconciliation, without manufacturing individual stop
+receipts or closing the attached Task. General native tool dispatch and
+runtime wiring follow.
 
 
 Agent authoring starts with the final upstream repository and validators.
