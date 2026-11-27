@@ -687,6 +687,31 @@ class DetachedExecutionScope:
         return self.resolve_owned(db, lease.owner, lease.run_id)
 
 
+def validate_detached_descendants(
+    db: sqlite3.Connection,
+    owner: str,
+    task_id: str,
+    child_run_id: str | None,
+    scopes: set[str],
+    expires: int | None,
+) -> None:
+    """Fence any executed nested child's revisions before disclosing its result."""
+    if child_run_id is None:
+        return
+    detached = DetachedExecutionScope.load(db, owner, child_run_id)
+    if detached.task_id != task_id:
+        raise PermissionError("Detached descendant belongs to another task")
+    row = detached._run(db, owner, child_run_id)
+    for value in (
+        json.loads(row["state"]).get("ownedSubagentScopes", {}).values()
+    ):
+        scope = SubagentScope.from_record(value)
+        if detached_root_scope(scope) != detached or scope.detached:
+            raise PermissionError("Detached descendant ancestry changed")
+        scope.resolve_owned(db, owner, child_run_id)
+        scope.effective_grant(scopes, expires)
+
+
 def detached_root_scope(scope) -> DetachedExecutionScope | None:
     """Resolve the detached actor ceiling beneath a private descendant."""
     while isinstance(scope, (SubagentScope, SubagentGraphScope)):

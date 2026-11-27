@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 
 from .loop_checkpoint import OwnedLoopCheckpoint
 from .provider_common import ModelToolCall
-from .subagent_scope import SubagentScope
+from .subagent_scope import SubagentScope, validate_detached_descendants
 from .subagent_wakeup import register_wakeup
 from .subagents import SubagentInvocation
 
@@ -123,6 +123,15 @@ def reserve_detached_child(
                 or not set(previous.scopes).issubset(scope.scopes)
             ):
                 raise PermissionError("Subagent thread authority changed")
+            if previous_options["child_configs"]:
+                validate_detached_descendants(
+                    db,
+                    owner,
+                    latest["id"],
+                    latest["child_run_id"],
+                    set(scope.scopes),
+                    scope.grant_expires,
+                )
             prior = json.loads(thread["messages"])
         else:
             thread_id = "subthread_" + secrets.token_hex(16)

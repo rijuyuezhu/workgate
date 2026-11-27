@@ -29,6 +29,7 @@ from ..hosted_chat.subagent_scope import DetachedExecutionScope
 from .hosted_chat_graph_loop import run_native_graph
 from .hosted_chat_native_creation import _grant
 from .hosted_chat_native_tool_node import NativeLoopToolNode
+from .hosted_chat_subagent_loop import ForegroundDelegation
 from .runtime import ControlRuntime
 
 _RENEW_SECONDS = 5
@@ -168,6 +169,21 @@ async def run_detached_subagent(
             compaction_semantic_index=None,
             fading_tier=None,
         )
+
+        async def resolve_nested(member: dict) -> AgentContext:
+            resolved = await resolve_context(generation, member)
+            check()
+            if (
+                member.get("model")
+                and resolved.profile.model != member["model"]
+            ) or (
+                resolved.profile.channel or resolved.profile.provider
+            ) != selected_provider({}, member):
+                raise PermissionError(
+                    "Nested member provider resolution changed"
+                )
+            return resolved
+
         checkpoint = OwnedLoopCheckpoint(actor, scope=scope)
         node = NativeLoopToolNode(
             runtime,
@@ -178,6 +194,13 @@ async def run_detached_subagent(
             expires=scope.admission.grant_expires,
             task_machine=disclosure_access.get("task_machine"),
             check_grant=check,
+            delegation=ForegroundDelegation(
+                lease.child_catalogue(**grant()),
+                resolve_nested,
+                max_depth=scope.admission.remaining_depth,
+                stream_tools=stream_tools,
+                stream_text=stream_text,
+            ),
         )
         recovered = checkpoint.restore(context)
         if recovered is not None and (

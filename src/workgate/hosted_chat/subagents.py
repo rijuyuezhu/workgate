@@ -53,6 +53,17 @@ class SubagentConfig:
     ordinary_chat: bool = False
     parent_revision: tuple[str, int] | None = None
 
+    @classmethod
+    def from_record(cls, value: dict) -> SubagentConfig:
+        """Reconstruct the immutable admitted catalogue, not a new live expansion."""
+        fields = dict(value)
+        fields["children"] = tuple(
+            cls.from_record(child) for child in fields["children"]
+        )
+        if fields["parent_revision"] is not None:
+            fields["parent_revision"] = tuple(fields["parent_revision"])
+        return cls(**fields)
+
 
 @dataclass(frozen=True)
 class SubagentInvocation:

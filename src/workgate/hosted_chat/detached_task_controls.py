@@ -10,7 +10,11 @@ from .checkpoint_types import LoopSnapshot
 from .detached_task_lease import _now, _request_cancel_locked
 from .loop_checkpoint import OwnedLoopCheckpoint
 from .provider_common import ModelToolCall
-from .subagent_scope import SubagentScope, _digest
+from .subagent_scope import (
+    SubagentScope,
+    _digest,
+    validate_detached_descendants,
+)
 
 CHECK_BACKGROUND_TASK = "check_background_task"
 
@@ -54,6 +58,10 @@ def _authorize_result(db, row, scopes, expires, disclosure_access):
         raise PermissionError("Detached result authority changed")
     scope.resolve_owned(db, row["owner"], row["parent_run_id"])
     scope.effective_grant(scopes, expires)
+    if row["status"] == "completed" and options["child_configs"]:
+        validate_detached_descendants(
+            db, row["owner"], row["id"], row["child_run_id"], scopes, expires
+        )
 
 
 def check_detached_task(

@@ -23,8 +23,9 @@ from .subagent_scope import (
     DetachedExecutionScope,
     SubagentGraphScope,
     SubagentScope,
+    validate_detached_descendants,
 )
-from .subagents import filter_subagent_result
+from .subagents import SubagentConfig, filter_subagent_result
 
 _LEASE_MS = 30_000
 _MAX_RESULT = 100_000
@@ -482,6 +483,15 @@ class DetachedTaskLease:
                 options.get("recursion_limit"),
             )
 
+    def child_catalogue(self, **grant) -> list[SubagentConfig]:
+        with self.database.read_snapshot() as db:
+            self.assert_current(db=db, **grant)
+            options = json.loads(self._current(db)["execution_options"])
+            return [
+                SubagentConfig.from_record(value)
+                for value in options["child_configs"]
+            ]
+
     def materialize(
         self,
         *,
@@ -554,6 +564,15 @@ class DetachedTaskLease:
                 db=db,
             )
             row = self._current(db)
+            if json.loads(row["execution_options"])["child_configs"]:
+                validate_detached_descendants(
+                    db,
+                    self.owner,
+                    self.task_id,
+                    row["child_run_id"],
+                    scopes,
+                    expires,
+                )
             initial = json.loads(row["initial_messages"])
             if messages[: len(initial)] != initial:
                 raise ValueError(

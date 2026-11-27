@@ -7384,3 +7384,241 @@ async def test_detached_team_result_only_native_effects_and_recovery(
             generation.conversation_id
         }
     assert not await execute()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["normal", "restart", "revoke"])
+async def test_detached_worker_nested_foreground_catalogue(bound, mode):
+    import asyncio
+
+    from workgate.control.hosted_chat_detached_worker import (
+        run_detached_subagent,
+    )
+    from workgate.hosted_chat.agent_runtime import AgentContext, AgentLoopState
+    from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.detached_subagents import reserve_detached_child
+    from workgate.hosted_chat.detached_task_controls import check_detached_task
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+    from workgate.hosted_chat.subagent_wakeup import WakeupLease
+    from workgate.hosted_chat.subagents import (
+        build_subagent_configs,
+        invoke_subagent,
+    )
+
+    harness, original, lease, _ = bound
+    db = original.database
+    agents = AgentRepository(db)
+    leaf = agents.create(lease.owner, {"provider": "openai", "model": "leaf"})
+    child = agents.create(
+        lease.owner,
+        {
+            "provider": "openai",
+            "model": "child",
+            "subagents": {
+                "enabled": True,
+                "allowSelf": False,
+                "agent_ids": [leaf["id"]],
+            },
+        },
+    )
+    parent = agents.create(
+        lease.owner,
+        {
+            "provider": "openai",
+            "model": "parent",
+            "subagents": {
+                "enabled": True,
+                "allowSelf": False,
+                "agent_ids": [child["id"]],
+            },
+        },
+    )
+    store = GenerationStore(db)
+    run, _ = store.begin(
+        lease.owner, {"text": "private root", "agent_id": parent["id"]}
+    )
+    actor = ActorLease.claim(db, lease.owner, run.run_id)
+    assert actor is not None
+    checkpoint = OwnedLoopCheckpoint(actor)
+    access = {
+        "scopes": sorted(SCOPES),
+        "machines": {harness.executor_id: "write"},
+        "task_machine": harness.executor_id,
+        "allowed_tools": ["task"],
+    }
+
+    async def resolve(_generation, agent):
+        return AgentContext(
+            ProviderConfig(
+                "openai", agent["model"], "https://example.invalid", "fake"
+            ),
+            [],
+            agent=agent,
+        )
+
+    context = await resolve(run, parent)
+    call = ModelToolCall(
+        "detach",
+        "subagent",
+        {
+            "subagent_type": child["id"],
+            "description": "private child",
+            "run_in_background": True,
+        },
+    )
+    await checkpoint.save(
+        AgentLoopState(
+            context,
+            [{"role": "user", "content": "private root"}],
+            pending_calls=[call],
+            tool_step_started=True,
+        ),
+        [call],
+    )
+
+    async def reserve(value):
+        return reserve_detached_child(
+            checkpoint, call, value, disclosure_access=access
+        ).task_id
+
+    async def no_foreground(_value):
+        pytest.fail("unexpected foreground")
+
+    task_id = await invoke_subagent(
+        call,
+        build_subagent_configs(lease.owner, parent, db),
+        execute_child=no_foreground,
+        execute_background=reserve,
+        current_grant=lambda: (set(SCOPES), None),
+        owner=lease.owner,
+        conversation_id=run.conversation_id,
+        parent_run_id=actor.run_id,
+        database=db,
+        parent_agent_id=parent["id"],
+    )
+
+    paused = asyncio.Event()
+    resume = asyncio.Event()
+    block = mode == "restart"
+    native_calls = []
+
+    async def stream(profile, messages, *, tools, **_kwargs):
+        assert "private root" not in str(messages)
+        if profile.model == "child":
+            definition = next(
+                tool["function"]
+                for tool in tools
+                if tool["function"]["name"] == "subagent"
+            )
+            fields = definition["parameters"]["properties"]
+            assert fields["subagent_type"]["enum"] == [leaf["id"]]
+            assert "run_in_background" not in fields
+            if not any(message["role"] == "tool" for message in messages):
+                yield ModelToolCall(
+                    "nested",
+                    "subagent",
+                    {"subagent_type": leaf["id"], "description": "leaf input"},
+                )
+            else:
+                assert "leaf result" in str(messages)
+                yield "child final"
+        else:
+            assert profile.model == "leaf"
+            assert "private child" not in str(messages)
+            assert "subagent" not in {
+                tool["function"]["name"] for tool in tools
+            }
+            if not any(message["role"] == "tool" for message in messages):
+                yield ModelToolCall("native", "task", {"action": "create"})
+            else:
+                if block:
+                    paused.set()
+                    await resume.wait()
+                yield "leaf result"
+
+    async def authorize(calls, _state):
+        native_calls.extend(call.call_id for call in calls)
+
+    async def execute():
+        return await run_detached_subagent(
+            harness.control,
+            db,
+            lease.owner,
+            run.conversation_id,
+            task_id,
+            scopes=set(SCOPES),
+            expires=None,
+            disclosure_access=access,
+            allowed_tools={"task"},
+            check_grant=lambda: None,
+            resolve_context=resolve,
+            authorize_batch=authorize,
+            stream_tools=stream,
+        )
+
+    if block:
+        running = asyncio.create_task(execute())
+        await asyncio.wait_for(paused.wait(), timeout=30)
+        running.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await running
+        block = False
+    assert await execute()
+    assert len(await harness.control.task_service.list_tasks()) == 1
+    # The interrupted outer delegation is reauthorized; its durable native
+    # child effect is not replayed.
+    assert native_calls == (
+        ["nested", "native", "nested"]
+        if mode == "restart"
+        else ["nested", "native"]
+    )
+    if mode == "revoke":
+        agents.update(lease.owner, leaf["id"], {"instructions": "changed"})
+    poll = ModelToolCall(
+        "poll", "check_background_task", {"background_task_id": task_id}
+    )
+    await checkpoint.save(
+        AgentLoopState(
+            context, [], pending_calls=[poll], tool_step_started=True
+        ),
+        [poll],
+    )
+    if mode == "revoke":
+        with pytest.raises(PermissionError, match="target revision changed"):
+            check_detached_task(
+                checkpoint,
+                poll,
+                scopes=set(SCOPES),
+                expires=None,
+                disclosure_access=access,
+            )
+    else:
+        assert (
+            check_detached_task(
+                checkpoint,
+                poll,
+                scopes=set(SCOPES),
+                expires=None,
+                disclosure_access=access,
+            )["result"]
+            == "child final"
+        )
+    if mode == "revoke":
+        assert store.finish(
+            lease.owner,
+            actor.run_id,
+            status="complete",
+            text="accepted",
+            actor_lease=actor,
+        )
+        with pytest.raises(PermissionError, match="target revision changed"):
+            WakeupLease.claim(
+                db,
+                lease.owner,
+                task_id,
+                scopes=set(SCOPES),
+                expires=None,
+                disclosure_access=access,
+            )
+    actor.release()

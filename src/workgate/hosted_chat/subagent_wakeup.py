@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from .database import SQLiteDatabase
 from .generation_actor_lease import ActorLease, ActorLeaseLost
 from .generations import Generation, GenerationConflict, GenerationStore
-from .subagent_scope import SubagentScope
+from .subagent_scope import SubagentScope, validate_detached_descendants
 
 _LEASE_MS = 120_000
 _MAX_ATTEMPTS = 8
@@ -313,6 +313,15 @@ def _source(
         raise PermissionError("Completion wakeup authority changed")
     scope.resolve_owned(db, row["owner"], row["parent_run_id"])
     scope.effective_grant(scopes, expires)
+    if row["child_status"] == "completed" and options["child_configs"]:
+        validate_detached_descendants(
+            db,
+            row["owner"],
+            row["task_id"],
+            row["child_run_id"],
+            scopes,
+            expires,
+        )
     parent = db.execute(
         "SELECT r.* FROM runs r JOIN conversations c ON c.id=r.conversation_id "
         "WHERE r.id=? AND c.owner=? AND c.id=?",
