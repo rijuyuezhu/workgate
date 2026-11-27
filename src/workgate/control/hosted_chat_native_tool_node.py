@@ -39,7 +39,11 @@ from ..hosted_chat.machine_permissions import effective_machine_access
 from ..hosted_chat.mcp_projection import native_tool_history_message
 from ..hosted_chat.provider_common import ModelToolCall, complete_tool_batch
 from ..hosted_chat.storage import WorkspaceRepository
-from ..hosted_chat.subagent_scope import SubagentGraphScope, SubagentScope
+from ..hosted_chat.subagent_scope import (
+    DetachedExecutionScope,
+    SubagentGraphScope,
+    SubagentScope,
+)
 from ..hosted_chat.subagents import SUBAGENT_TOOL_NAME
 from .hosted_chat_native_creation import _grant, _registered
 from .hosted_chat_native_dispatch import NativeToolDispatcher, _selected_tools
@@ -107,6 +111,14 @@ class NativeLoopToolNode:
                 "Native node does not belong to checkpoint database"
             )
 
+        if isinstance(
+            checkpoint.scope, DetachedExecutionScope
+        ) and task_machine != (checkpoint.scope.disclosure_access or {}).get(
+            "task_machine"
+        ):
+            raise PermissionError(
+                "Detached task machine differs from admission"
+            )
         self.native = NativeToolDispatcher(runtime)
 
     def current_grant(self) -> tuple[set[str], int | None]:
@@ -127,7 +139,10 @@ class NativeLoopToolNode:
     def _question_enabled(self, agent: dict | None) -> bool:
         # For ephemeral turns the trusted caller supplies the opt-in through
         # allowed_tools. Saved Agents must also retain their explicit selection.
-        if ASK_USER_QUESTION_TOOL_NAME not in self.allowed_tools:
+        if (
+            isinstance(self.checkpoint.scope, DetachedExecutionScope)
+            or ASK_USER_QUESTION_TOOL_NAME not in self.allowed_tools
+        ):
             return False
         if self.checkpoint.scope is None:
             return agent is None or ask_user_requested(agent, {})
@@ -285,7 +300,9 @@ class NativeLoopToolNode:
 
     def _decision(self, call: ModelToolCall) -> dict:
         lease = self.checkpoint.lease
-        conversation, agents = self.repository.tool_context_chain(lease)
+        conversation, agents = self.repository.tool_context_chain(
+            lease, authorization=True
+        )
         repo = WorkspaceRepository(self.repository.database)
         mode = None
         for agent in agents:
@@ -306,7 +323,9 @@ class NativeLoopToolNode:
         """
         scopes, expires = self.current_grant()
         lease = self.checkpoint.lease
-        conversation, agents = self.repository.tool_context_chain(lease)
+        conversation, agents = self.repository.tool_context_chain(
+            lease, authorization=True
+        )
         policy, _ = effective_machine_access(
             lease.owner,
             conversation,
@@ -317,6 +336,7 @@ class NativeLoopToolNode:
             repo=WorkspaceRepository(self.repository.database),
             registered=_registered(self.runtime),
         )
+        policy = self.repository.cap_machine_access(policy)
         return {
             "scopes": sorted(scopes),
             "machines": {
@@ -494,7 +514,8 @@ class NativeLoopToolNode:
 
         async def preflight_unsettled(unsettled: list[ModelToolCall]) -> None:
             child = isinstance(
-                self.checkpoint.scope, (SubagentScope, SubagentGraphScope)
+                self.checkpoint.scope,
+                (SubagentScope, SubagentGraphScope, DetachedExecutionScope),
             )
             claim = (
                 None if child else claim_store.approved_batch(self.checkpoint)

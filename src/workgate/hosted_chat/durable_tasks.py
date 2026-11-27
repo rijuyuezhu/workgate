@@ -42,7 +42,11 @@ from .native_tool_kinds import (
 )
 from .provider_common import ModelToolCall, complete_tool_batch
 from .storage import WorkspaceRepository, _now
-from .subagent_scope import SubagentGraphScope, SubagentScope
+from .subagent_scope import (
+    DetachedExecutionScope,
+    SubagentGraphScope,
+    SubagentScope,
+)
 
 
 def _task_metadata_effect(call: ModelToolCall) -> bool:
@@ -209,6 +213,7 @@ class DurableTaskRepository:
         scope: GraphMemberScope
         | SubagentScope
         | SubagentGraphScope
+        | DetachedExecutionScope
         | None = None,
     ):
         if isinstance(scope, SubagentScope) and scope.detached:
@@ -223,9 +228,17 @@ class DurableTaskRepository:
     ) -> tuple[set[str], int | None]:
         return (
             self.scope.effective_grant(scopes, expires)
-            if isinstance(self.scope, (SubagentScope, SubagentGraphScope))
+            if isinstance(
+                self.scope,
+                (SubagentScope, SubagentGraphScope, DetachedExecutionScope),
+            )
             else (scopes, expires)
         )
+
+    def cap_machine_access(self, policy: dict[str, str]) -> dict[str, str]:
+        if isinstance(self.scope, DetachedExecutionScope):
+            return self.scope.cap_machine_access(policy)
+        return policy
 
     def _ledger_call(self, call: ModelToolCall) -> ModelToolCall:
         return (
@@ -251,9 +264,11 @@ class DurableTaskRepository:
         )
 
     def _run(self, db, lease: ActorLease):
-        if lease.detached_task_id is not None:
+        if lease.detached_task_id is not None and not isinstance(
+            self.scope, DetachedExecutionScope
+        ):
             raise PermissionError(
-                "Detached native effect authority is not enabled"
+                "Detached native effect requires its admitted execution scope"
             )
         if lease.database.path != self.database.path:
             raise ActorLeaseLost("Generation actor database mismatch")
@@ -299,7 +314,7 @@ class DurableTaskRepository:
     @staticmethod
     def _child_scope_for_run(
         db, run
-    ) -> SubagentScope | SubagentGraphScope | None:
+    ) -> SubagentScope | SubagentGraphScope | DetachedExecutionScope | None:
         namespace = run["member_namespace"]
         if namespace is None or ":child:" not in namespace:
             return None
@@ -311,6 +326,14 @@ class DurableTaskRepository:
         ).fetchone()
         if row is None:
             raise PermissionError("Native child generation no longer exists")
+        if json.loads(row["state"]).get("detachedTaskId") is not None:
+            detached = DetachedExecutionScope.load(db, run["owner"], run_id)
+            if (
+                detached.checkpoint_namespace != namespace
+                or detached.member_id != run["member_agent_id"]
+            ):
+                raise PermissionError("Detached native scope identity changed")
+            return detached
         try:
             child_namespace, separator, activation = namespace.partition(
                 ":graph:team:member:"
@@ -364,11 +387,17 @@ class DurableTaskRepository:
         return root, json.loads(row["config"])
 
     def tool_context_chain(
-        self, lease: ActorLease
+        self, lease: ActorLease, *, authorization: bool = False
     ) -> tuple[str, tuple[dict | None, ...]]:
         with self.database.read_snapshot() as db:
             run = self._run(db, lease)
-            return run["conversation_id"], self._agents_for_run(db, run)
+            conversation = (
+                self.scope.authorization_conversation_id
+                if authorization
+                and isinstance(self.scope, DetachedExecutionScope)
+                else run["conversation_id"]
+            )
+            return conversation, self._agents_for_run(db, run)
 
     def tool_context(self, lease: ActorLease) -> tuple[str, dict | None]:
         """Resolve the current generation and owner-scoped member selection."""
@@ -390,12 +419,31 @@ class DurableTaskRepository:
         child_scope = self._child_scope_for_run(db, run)
         if child_scope is not None:
             scopes, expires = child_scope.effective_grant(scopes, expires)
+        if isinstance(child_scope, DetachedExecutionScope):
+            if authorization_id not in {
+                run["conversation_id"],
+                child_scope.authorization_conversation_id,
+            }:
+                raise PermissionError(
+                    "Detached authorization conversation changed"
+                )
+            authorization_id = child_scope.authorization_conversation_id
         chain = self._agents_for_run(db, run)
         # Task is Control-owned metadata, but reserve it only for a selected
         # authorized Executor; no implicit Controller machine target.
         for target, operation in _requirements(
             machine, kind, destination_machine
         ).items():
+            if isinstance(child_scope, DetachedExecutionScope):
+                ceiling = child_scope.cap_machine_access({target: "write"})[
+                    target
+                ]
+                if ceiling == "none" or (
+                    operation != "read" and ceiling != "write"
+                ):
+                    raise PermissionError(
+                        "Native machine exceeds detached admission ceiling"
+                    )
             authorize_machine_action(
                 run["owner"],
                 authorization_id,
@@ -1291,8 +1339,15 @@ class DurableTaskRepository:
             },
         )
         conversation_id = run["conversation_id"]
-        authorization_id = authorization_conversation_id or conversation_id
-        if authorization_id != conversation_id:
+        expected_authorization = (
+            self.scope.authorization_conversation_id
+            if isinstance(self.scope, DetachedExecutionScope)
+            else conversation_id
+        )
+        authorization_id = (
+            authorization_conversation_id or expected_authorization
+        )
+        if authorization_id != expected_authorization:
             raise PermissionError(
                 "Inherited authorization requires a verified child lineage"
             )

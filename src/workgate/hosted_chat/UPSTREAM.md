@@ -570,3 +570,9 @@ child registration settle in one SQLite transaction. Ordinary admission and
 message mutation cannot reopen or overwrite a registered child transcript;
 active children must settle before conversation deletion. Native execution
 and background tool advertisement remain gated on inherited effect authority.
+
+Detached single-Agent execution now has a private checkpoint scope carrying
+its original admission, parent conversation authority and machine-access
+ceiling. Native resources remain owned by the child conversation; permissions,
+approval settings and historical revocation use the original parent chain.
+Detached team/nested execution and host scheduling are separate units.
