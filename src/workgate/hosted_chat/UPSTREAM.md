@@ -427,3 +427,12 @@ scope, transfer commands, parallel Send aggregation and recipient context
 projection match the source. Destination ownership is checked on definition
 and invocation; saved JSON authoring never creates executable condition
 resolvers. StateGraph execution and checkpoint integration remain separate.
+
+Graph checkpoint adapter and canonical message reducers adapt pinned
+`webui/graph_checkpoint.py` (blob `45661a6667534c713a464d5663c4ef258c394e0c`)
+and `webui/message_reducers.py` (blob `94c352240be542c1900198c88401d6dafcbae590`).
+The adapter requires a live WorkGate generation actor lease for reads and
+writes, checks the graph namespace and conversation, and filters decoded
+metadata before limiting results. The SDK's typed serialization preserves
+Send and pending-write values; real LangGraph restart/resume tests verify
+that a completed node is not rerun. Graph execution remains unexposed.
