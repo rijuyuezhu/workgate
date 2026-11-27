@@ -516,6 +516,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_durable_native
     WHERE native_id IS NOT NULL AND kind != 'retry';
 CREATE INDEX IF NOT EXISTS idx_agent_durable_recovery ON agent_durable_tasks(state,next_attempt_at);
 CREATE INDEX IF NOT EXISTS idx_agent_durable_call ON agent_durable_tasks(owner,run_id,call_id);
+CREATE TABLE IF NOT EXISTS agent_job_cancel_calls (
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    call_id TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    intent_ids TEXT NOT NULL,
+    scopes TEXT NOT NULL,
+    grant_expires INTEGER,
+    PRIMARY KEY (run_id, call_id)
+);
 CREATE TABLE IF NOT EXISTS agent_run_cancellations (
     run_id TEXT PRIMARY KEY,
     created_at INTEGER NOT NULL

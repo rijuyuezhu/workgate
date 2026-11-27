@@ -1,12 +1,22 @@
 """Private native cleanup for the final Hosted Chat durable cancellation ledger."""
 
 import asyncio
+import copy
 import logging
-from typing import Literal
+import time
+from typing import Any, Literal
 
-from ..audit import audit
+from ..audit import (
+    audit,
+    audit_call_context,
+    audit_tool_call_end,
+    audit_tool_call_start,
+    new_audit_call_id,
+)
 from ..errors import PublicToolValueError
 from ..hosted_chat.durable_tasks import DurableTaskRepository
+from ..hosted_chat.generation_actor_lease import ActorLease
+from ..hosted_chat.provider_common import ModelToolCall
 from ..jobs.managed import (
     lookup_managed_job_attempt,
     stop_managed_job_without_session_admission,
@@ -19,11 +29,21 @@ from ..protocol.executor import (
     ReservedJobAttemptRequest,
     ReservedShellLookupResult,
 )
-from ..schemas.result_models.jobs import ReservedJobAttemptReceipt
+from ..schemas.result_models.jobs import (
+    JobOutput,
+    JobStopOutput,
+    ReservedJobCancelReceipt,
+)
 from ..schemas.result_models.shell import KillPersistentShellOutput
 from .execution_context import control_execution_context
+from .hosted_chat_native_creation import (
+    NativeCreationUncertain,
+    _grant,
+    _registered,
+)
 from .runtime import ControlRuntime
 from .session_copy import SESSION_COPY_MANAGED_KIND
+from .tool_timeouts import tool_timeout_s
 
 logger = logging.getLogger(__name__)
 
@@ -31,42 +51,51 @@ logger = logging.getLogger(__name__)
 type CleanupOutcome = Literal["stopped", "absent", "pending"]
 
 
-async def _stop_job(
+async def _stop_job_result(
     runtime: ControlRuntime, row: dict, key: str
-) -> CleanupOutcome:
+) -> tuple[CleanupOutcome, JobStopOutput | None]:
     session_id = row["native_session_id"]
     if not session_id:
-        return "pending"
+        return "pending", None
     record = runtime.control_state.snapshot_sessions().get(session_id)
     if record is None or record.executor_id != row["machine"]:
-        return "pending"
+        return "pending", None
     if record.status == "ended":
-        return "absent" if record.executor_absence_confirmed else "pending"
+        return (
+            "absent" if record.executor_absence_confirmed else "pending"
+        ), None
     if record.status != "active":
-        return "pending"
+        return "pending", None
 
     request = ReservedJobAttemptRequest(
         job_id=key,
         attempt=row["native_attempt"],
         retry_key=row["idempotency_key"] if row["kind"] == "retry" else None,
     )
-    receipt = ReservedJobAttemptReceipt.model_validate(
+    receipt = ReservedJobCancelReceipt.model_validate(
         await runtime.session_coordinator.call_session_tool(
             JOB_CANCEL_ATTEMPT_OP,
             request.model_dump(mode="json") | {"session_id": session_id},
         )
     )
     if not receipt.matches(request, session_id):
-        return "pending"
+        return "pending", None
     if receipt.state == "superseded":
-        return "absent"
+        return "absent", None
     if receipt.state != "matching" or receipt.job is None:
-        return "pending"
+        return "pending", None
     return (
         "stopped"
         if receipt.job.status in CONFIRMED_TERMINAL_STATUSES
         else "pending"
-    )
+    ), receipt.stop
+
+
+async def _stop_job(
+    runtime: ControlRuntime, row: dict, key: str
+) -> CleanupOutcome:
+    outcome, _ = await _stop_job_result(runtime, row, key)
+    return outcome
 
 
 async def _stop_shell(
@@ -112,11 +141,13 @@ async def _stop_shell(
     )
 
 
-async def _stop_copy(row: dict, key: str) -> CleanupOutcome:
+async def _stop_copy_result(
+    row: dict, key: str
+) -> tuple[CleanupOutcome, JobStopOutput | None]:
     source = row["native_session_id"]
     destination = row["destination_session_id"]
     if not source or not destination:
-        return "pending"
+        return "pending", None
     # Managed work is owned by Control, even if either Executor is offline.
     request = ReservedJobAttemptRequest(
         job_id=key,
@@ -124,7 +155,7 @@ async def _stop_copy(row: dict, key: str) -> CleanupOutcome:
         retry_key=row["idempotency_key"] if row["kind"] == "retry" else None,
     )
     binding = {"src_session_id": source, "dst_session_id": destination}
-    await stop_managed_job_without_session_admission(
+    result = await stop_managed_job_without_session_admission(
         source,
         key,
         expected_attempt=request.attempt,
@@ -139,12 +170,22 @@ async def _stop_copy(row: dict, key: str) -> CleanupOutcome:
         expected_payload=binding,
     )
     if state == "superseded":
-        return "absent"
+        return "absent", None
     return (
-        "stopped"
-        if job is not None and job.status in CONFIRMED_TERMINAL_STATUSES
-        else "pending"
+        (
+            "stopped"
+            if job is not None and job.status in CONFIRMED_TERMINAL_STATUSES
+            else "pending"
+        ),
+        result.model_copy(update={"job": job})
+        if job is not None and job.attempts == result.job.attempts
+        else None,
     )
+
+
+async def _stop_copy(row: dict, key: str) -> CleanupOutcome:
+    outcome, _ = await _stop_copy_result(row, key)
+    return outcome
 
 
 async def _stop(
@@ -247,3 +288,118 @@ async def sweep_native_cancellations(
                 return int(stopped)
 
     return sum(await asyncio.gather(*(reconcile(row) for row in rows)))
+
+
+async def cancel_native_jobs(
+    runtime: ControlRuntime,
+    repository: DurableTaskRepository,
+    lease: ActorLease,
+    call: ModelToolCall,
+    *,
+    machine: str,
+    scopes: set[str],
+    expires: int | None,
+) -> dict[str, Any]:
+    """Persist explicit exact-attempt cancellation before native dispatch."""
+    if repository.database.root != runtime.config.state_dir / "hosted-chat":
+        raise PermissionError(
+            "Native intent belongs to another Control runtime"
+        )
+    scopes, expires = _grant(runtime, lease.owner, scopes, expires)
+    call = copy.deepcopy(call)
+
+    def authorize():
+        return repository.cancel_attempts(
+            lease,
+            call,
+            machine=machine,
+            scopes=scopes,
+            expires=expires,
+            registered=_registered(runtime),
+        )
+
+    rows = authorize()
+
+    async def stop_all():
+        results = []
+        uncertain = False
+        for row in rows:
+            # All targets have durable cancellation intent already. Do not
+            # abandon later siblings merely because a response was lost.
+            key = row["native_id"]
+            try:
+                if row["destination_session_id"] is not None:
+                    outcome, result = await _stop_copy_result(row, key)
+                else:
+                    outcome, result = await _stop_job_result(runtime, row, key)
+            except (
+                RuntimeError,
+                ValueError,
+                KeyError,
+                PermissionError,
+                TimeoutError,
+            ):
+                outcome, result = "pending", None
+            repository.finish_cancellation(
+                row["id"],
+                stopped=outcome != "pending",
+                native_confirmed=outcome == "stopped",
+            )
+            if outcome != "stopped" or result is None:
+                uncertain = True
+            else:
+                results.append(result)
+        if uncertain:
+            raise NativeCreationUncertain(
+                "Native Job cancellation is unconfirmed or superseded"
+            )
+        return JobOutput(operation="cancel", cancelled=results).model_dump(
+            mode="json"
+        )
+
+    with control_execution_context(
+        config=runtime.config,
+        state_store=runtime.state_store,
+        oauth_state=runtime.oauth_state,
+        managed_jobs_runtime=runtime.managed_jobs_runtime,
+    ):
+        audit_id = new_audit_call_id()
+        start = time.monotonic()
+        sessions, tasks = audit_tool_call_start(
+            call_id=audit_id,
+            transport="hosted-chat",
+            tool=call.name,
+            input=call.arguments,
+        )
+        try:
+            with audit_call_context(audit_id, sessions, tasks):
+                result = await asyncio.wait_for(
+                    stop_all(),
+                    timeout=tool_timeout_s(
+                        call.name, config=runtime.config, args=call.arguments
+                    ),
+                )
+            authorize()
+        except BaseException as exc:
+            audit_tool_call_end(
+                call_id=audit_id,
+                transport="hosted-chat",
+                tool=call.name,
+                ok=False,
+                duration_ms=int((time.monotonic() - start) * 1000),
+                error={"type": type(exc).__name__},
+                session_ids=sessions,
+                task_ids=tasks,
+            )
+            raise
+        audit_tool_call_end(
+            call_id=audit_id,
+            transport="hosted-chat",
+            tool=call.name,
+            ok=True,
+            duration_ms=int((time.monotonic() - start) * 1000),
+            output=result,
+            session_ids=sessions,
+            task_ids=tasks,
+        )
+        return result

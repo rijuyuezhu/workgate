@@ -2039,3 +2039,70 @@ async def test_empty_job_list_requires_owned_session(bound):
         await poll_native(
             harness, repo, lease, {"session_id": new_session_id()}
         )
+
+
+async def cancel_native(harness, repo, lease, call, *, scopes=None):
+    from workgate.control.hosted_chat_cancellation import cancel_native_jobs
+
+    return await cancel_native_jobs(
+        harness.control,
+        repo,
+        lease,
+        call,
+        machine=harness.executor_id,
+        scopes=SCOPES if scopes is None else scopes,
+        expires=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_explicit_cancel_preflights_and_pins_replayed_attempt(
+    bound,
+    tracked_shells,
+):
+    from workgate.protocol.ids import new_reserved_job_id
+
+    harness, repo, lease, generation = bound
+    _, sid = await native_session(harness, repo, lease)
+    _, jid = await create_tracked_job(harness, repo, lease, sid)
+    args = {"session_id": sid, "cancel": [jid]}
+    call = ModelToolCall("explicit-cancel", "job", args)
+    with pytest.raises(PermissionError):
+        await cancel_native(harness, repo, lease, call, scopes={"shell:read"})
+    with pytest.raises(PermissionError, match="shell:execute"):
+        await cancel_native(
+            harness, repo, lease, call, scopes={"shell:read", "shell:write"}
+        )
+    with pytest.raises(PermissionError):
+        await cancel_native(
+            harness,
+            repo,
+            lease,
+            ModelToolCall(
+                "invalid-cancel",
+                "job",
+                args | {"cancel": [jid, new_reserved_job_id()]},
+            ),
+        )
+    assert (
+        await poll_native(
+            harness, repo, lease, {"session_id": sid, "poll": [jid]}
+        )
+    )["outputs"][0]["job"]["status"] == "running"
+    result = await cancel_native(harness, repo, lease, call)
+    assert result["cancelled"][0]["job"]["status"] == "stopped"
+    assert result["cancelled"][0]["killed"] is True
+    repeat = await cancel_native(harness, repo, lease, call)
+    assert repeat["cancelled"][0]["killed"] is False
+    assert (
+        await harness.call(
+            harness.executor_id, "job", {"retry": [jid]}, session_id=sid
+        )
+    ).ok
+    with pytest.raises(NativeCreationUncertain, match="superseded"):
+        await cancel_native(harness, repo, lease, call)
+    native = await harness.call(
+        harness.executor_id, "job", {"poll": [jid]}, session_id=sid
+    )
+    assert native.ok
+    assert native.result["outputs"][0]["job"]["status"] == "running"

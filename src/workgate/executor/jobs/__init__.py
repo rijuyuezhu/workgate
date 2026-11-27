@@ -23,6 +23,7 @@ from ...schemas.result_models.jobs import (
     JobStopOutput,
     JobTailOutput,
     ReservedJobAttemptReceipt,
+    ReservedJobCancelReceipt,
 )
 from ..errors import ExecutorResourceInventoryUnavailable
 from ..tool_session.lifecycle import session_lifecycle_lock
@@ -187,7 +188,10 @@ class ExecutorJobService:
                     result = await self.stop_unlocked(
                         session_id, request.job_id
                     )
-                    return receipt.model_copy(update={"job": result.job})
+                    return ReservedJobCancelReceipt.model_validate(
+                        receipt.model_dump()
+                        | {"job": result.job, "stop": result}
+                    )
                 tail = await shell_jobs.tail_shell_job_unlocked(
                     self.config, self.store, session_id, request.job_id, lines
                 )
