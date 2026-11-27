@@ -57,7 +57,9 @@ from workgate.protocol.pairing import (
 )
 from workgate.schemas.result_models.jobs import (
     JobInfo,
+    JobStopOutput,
     ReservedJobAttemptReceipt,
+    ReservedJobCancelReceipt,
 )
 
 
@@ -410,6 +412,49 @@ def test_reserved_job_attempt_receipt_validates_native_identity() -> None:
             ReservedJobAttemptReceipt.model_validate(
                 {**args, "state": "unknown", **extra}
             )
+
+
+def test_reserved_job_cancel_receipt_validates_stop_identity() -> None:
+    job = JobInfo(
+        job_id=new_reserved_job_id(),
+        name="test",
+        status="stopped",
+        command="echo 1",
+        cwd=".",
+        session_id=new_session_id(),
+        created_at=1,
+        updated_at=2,
+        attempts=1,
+    )
+    args = dict(job_id=job.job_id, session_id=job.session_id, attempt=1)
+    stop = JobStopOutput(job=job, killed=True)
+    matching = ReservedJobCancelReceipt.model_validate(
+        {**args, "state": "matching", "job": job, "stop": stop}
+    )
+    assert matching.stop == stop
+    legacy = ReservedJobCancelReceipt.model_validate(
+        {**args, "state": "matching", "job": job}
+    )
+    assert legacy.stop is None
+    with pytest.raises(
+        ValidationError, match="Mismatched native Job stop receipt"
+    ):
+        ReservedJobCancelReceipt.model_validate(
+            {
+                **args,
+                "state": "matching",
+                "job": job,
+                "stop": JobStopOutput(
+                    job=job.model_copy(update={"attempts": 2}), killed=True
+                ),
+            }
+        )
+    with pytest.raises(
+        ValidationError, match="Mismatched native Job stop receipt"
+    ):
+        ReservedJobCancelReceipt.model_validate(
+            {**args, "state": "superseded", "stop": stop}
+        )
 
 
 def test_protocol_error_taxonomy_is_intentionally_small() -> None:

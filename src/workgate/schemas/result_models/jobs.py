@@ -173,6 +173,20 @@ class JobStopOutput(BaseModel):
     )
 
 
+class ReservedJobCancelReceipt(ReservedJobAttemptReceipt):
+    """Exact cancellation result; older cleanup receipts may omit stop details."""
+
+    stop: JobStopOutput | None = None
+
+    @model_validator(mode="after")
+    def validate_stop(self) -> Self:
+        if self.stop is not None and (
+            self.state != "matching" or self.stop.job != self.job
+        ):
+            raise ValueError("Mismatched native Job stop receipt")
+        return self
+
+
 class JobOutput(BaseModel):
     """Unified companion result for tracked shell and managed jobs."""
 

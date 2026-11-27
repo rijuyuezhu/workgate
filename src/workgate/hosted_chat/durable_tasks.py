@@ -139,6 +139,12 @@ class ReservedCopyRequest(BaseModel):
 def _requirements(
     machine: str, kind: str, destination_machine: str | None
 ) -> dict[str, str]:
+    if kind == "cancel":
+        return (
+            {machine: "execute"}
+            if destination_machine is None
+            else {machine: "read", destination_machine: "write"}
+        )
     if kind == "poll":
         return (
             {machine: "read"}
@@ -457,6 +463,130 @@ class DurableTaskRepository:
                     continue
                 result.append(self._intent(row))
             return result
+
+    def cancel_attempts(
+        self,
+        lease: ActorLease,
+        call: ModelToolCall,
+        *,
+        machine: str,
+        scopes: set[str],
+        expires: int | None,
+        registered: Collection[str],
+    ) -> list[dict]:
+        """Atomically authorize and latch a whole immutable cancellation batch."""
+        complete_tool_batch([call])
+        arguments = call.arguments
+        targets = arguments.get("cancel")
+        if (
+            call.name != "job"
+            or arguments.keys() - {"session_id", "cancel"}
+            or not isinstance(targets, list)
+            or not 1 <= len(targets) <= 64
+        ):
+            raise ValueError("Durable Job cancel requires 1 to 64 Jobs")
+        session_id = TypeAdapter(SessionId).validate_python(
+            arguments.get("session_id"), strict=True
+        )
+        targets = [
+            TypeAdapter(ReservedJobId).validate_python(target, strict=True)
+            for target in targets
+        ]
+        if len(set(targets)) != len(targets):
+            raise ValueError("Duplicate durable Job cancel target")
+        fingerprint = _fingerprint(call.name, arguments)
+        with self.database.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            run = self._run(db, lease)
+            prior = db.execute(
+                "SELECT * FROM agent_job_cancel_calls WHERE run_id=? AND call_id=?",
+                (lease.run_id, call.call_id),
+            ).fetchone()
+            if prior is not None:
+                if prior["fingerprint"] != fingerprint:
+                    raise PermissionError(
+                        "A replayed tool call cannot change a durable request"
+                    )
+                scopes, expires = self._grant(prior, scopes, expires)
+                identities = json.loads(prior["intent_ids"])
+                rows = [
+                    db.execute(
+                        "SELECT * FROM agent_durable_tasks WHERE id=?",
+                        (identity,),
+                    ).fetchone()
+                    for identity in identities
+                ]
+            else:
+                rows = [
+                    db.execute(
+                        "SELECT * FROM agent_durable_tasks WHERE owner=? AND conversation_id=? "
+                        "AND machine=? AND native_session_id=? AND native_id=? "
+                        "AND kind IN ('job','retry','copy') AND state IN ('active','stopped','cancel_pending') "
+                        "ORDER BY native_attempt DESC LIMIT 1",
+                        (
+                            run["owner"],
+                            run["conversation_id"],
+                            machine,
+                            session_id,
+                            target,
+                        ),
+                    ).fetchone()
+                    for target in targets
+                ]
+            for target, row in zip(targets, rows, strict=True):
+                if (
+                    row is None
+                    or row["owner"] != lease.owner
+                    or row["conversation_id"] != run["conversation_id"]
+                    or row["machine"] != machine
+                    or row["native_session_id"] != session_id
+                    or row["native_id"] != target
+                    or row["native_attempt"] is None
+                    or row["state"]
+                    not in {"active", "stopped", "cancel_pending"}
+                ):
+                    raise PermissionError(
+                        "Native Job does not belong to this conversation"
+                    )
+                self._require_parent(
+                    db,
+                    run,
+                    "retry",
+                    machine,
+                    {"session_id": session_id},
+                    row["destination_machine"],
+                    row["destination_session_id"],
+                )
+                self._authorize(
+                    db,
+                    run,
+                    machine,
+                    "cancel",
+                    scopes,
+                    expires,
+                    registered,
+                    run["conversation_id"],
+                    row["destination_machine"],
+                )
+            if prior is None:
+                db.execute(
+                    "INSERT INTO agent_job_cancel_calls(run_id,call_id,fingerprint,intent_ids,scopes,grant_expires) VALUES(?,?,?,?,?,?)",
+                    (
+                        lease.run_id,
+                        call.call_id,
+                        fingerprint,
+                        json.dumps([row["id"] for row in rows]),
+                        json.dumps(sorted(scopes)),
+                        expires,
+                    ),
+                )
+            for row in rows:
+                db.execute(
+                    "UPDATE agent_durable_tasks SET state='cancel_pending',updated_at=?,next_attempt_at=NULL "
+                    "WHERE id=? AND state='active'",
+                    (_now(), row["id"]),
+                )
+            return [dict(row) for row in rows]
 
     def reserve(
         self,

@@ -183,7 +183,10 @@ bounded log-tail length; a superseding public retry is never projected as
 owned work. Authorization and ownership are rechecked before publishing the
 result. Owned Job listing uses bounded exact-attempt metadata batches, without
 reading logs. It filters out unrelated, superseded and unauthorized Jobs before
-computing counts or pagination. Explicit cancellation and runtime wiring follow.
+computing counts or pagination. Explicit cancellation preflights the complete
+owned batch, records immutable target attempts before stopping native work, and
+retains pending cleanup if a response is unconfirmed. Replaying an older call
+never selects a newer attempt. Runtime wiring follows.
 
 
 Agent authoring starts with the final upstream repository and validators.
