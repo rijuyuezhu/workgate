@@ -2106,3 +2106,51 @@ async def test_explicit_cancel_preflights_and_pins_replayed_attempt(
     )
     assert native.ok
     assert native.result["outputs"][0]["job"]["status"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_unified_owned_job_dispatch_uses_exact_operation_adapters(
+    bound, tracked_shells
+):
+    from workgate.control.hosted_chat_job_dispatch import dispatch_native_job
+
+    harness, repo, lease, _ = bound
+    _, sid = await native_session(harness, repo, lease)
+    _, jid = await create_tracked_job(harness, repo, lease, sid)
+
+    async def dispatch(call_id, args, scopes=SCOPES):
+        return await dispatch_native_job(
+            harness.control,
+            repo,
+            lease,
+            ModelToolCall(call_id, "job", {"session_id": sid} | args),
+            machine=harness.executor_id,
+            scopes=scopes,
+            expires=None,
+        )
+
+    assert (await dispatch("list", {"list_jobs": True}, {"shell:read"}))[
+        "total"
+    ] == 1
+    for args in (
+        {"poll": [jid], "cancel": [jid]},
+        {"list_jobs": True, "retry": [jid]},
+        {"cancel": [jid, jid]},
+        {"poll": []},
+    ):
+        with pytest.raises(ValueError):
+            await dispatch("invalid", args)
+    poll = await dispatch(
+        "read", {"poll": [jid], "cancel": None, "retry": None}, {"shell:read"}
+    )
+    assert poll["outputs"][0]["job"]["status"] == "running"
+    result = await dispatch("stop", {"cancel": [jid], "list_jobs": False})
+    assert result["cancelled"][0]["job"]["status"] == "stopped"
+    with pytest.raises(PermissionError, match="cannot change"):
+        await dispatch("stop", {"retry": [jid]})
+    retry = await dispatch("retry", {"retry": [jid], "poll": None})
+    assert retry["retried"][0]["attempts"] == 2
+    with pytest.raises(PermissionError, match="cannot change"):
+        await dispatch("retry", {"cancel": [jid]})
+    poll = await dispatch("read-new", {"poll": [jid]}, {"shell:read"})
+    assert poll["outputs"][0]["job"]["attempts"] == 2
