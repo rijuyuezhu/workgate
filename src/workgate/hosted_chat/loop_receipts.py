@@ -25,6 +25,7 @@ async def execute_checkpointed_batch(
     check_grant: Callable[[], None],
     preflight_unsettled: Callable[[list[ModelToolCall]], Awaitable[None]]
     | None = None,
+    authorize_receipt: Callable[[ModelToolCall, Any], None] | None = None,
     interrupting_names: frozenset[str] = frozenset(),
     is_interrupt: Callable[[BaseException], bool] = lambda error: False,
 ) -> list[Any]:
@@ -73,6 +74,8 @@ async def execute_checkpointed_batch(
         key = replay_key(call, position)
         if key in settled:
             raise ValueError("Duplicate settled tool receipt")
+        if authorize_receipt is not None:
+            authorize_receipt(call, record["output"])
         settled[key] = record
 
     if preflight_unsettled is not None:
@@ -84,19 +87,27 @@ async def execute_checkpointed_batch(
             ]
         )
 
+    if authorize_receipt is not None:
+        for position, call in enumerate(calls):
+            record = settled.get(replay_key(call, position))
+            if record is not None:
+                authorize_receipt(call, record["output"])
+
     async def run(call: ModelToolCall) -> Any:
         check()
         return await execute(call)
 
     async def complete(call: ModelToolCall, record: dict) -> None:
         check()
+        if authorize_receipt is not None:
+            authorize_receipt(call, record["output"])
         checkpoint.saver.put_writes(
             config,
             [(_RECEIPT_CHANNEL, record)],
             task_id=f"receipt:{call.call_id}",
         )
 
-    return await execute_tool_batch(
+    outputs = await execute_tool_batch(
         calls,
         run,
         settled=settled,
@@ -105,3 +116,8 @@ async def execute_checkpointed_batch(
         is_interrupt=is_interrupt,
         on_completed=complete,
     )
+
+    if authorize_receipt is not None:
+        for call, output in zip(calls, outputs, strict=True):
+            authorize_receipt(call, output)
+    return outputs

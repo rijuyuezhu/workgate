@@ -403,3 +403,59 @@ async def test_pruned_checkpoint_never_restarts_an_owned_generation(lease):
         fresh.restore(context())
     with pytest.raises(RuntimeSafetyError, match="Restore existing"):
         await fresh.save(state, [])
+
+
+@pytest.mark.asyncio
+async def test_settled_receipt_authorization_precedes_pending_siblings(lease):
+    from workgate.hosted_chat.loop_receipts import execute_checkpointed_batch
+
+    checkpoint = OwnedLoopCheckpoint(lease)
+    calls = [
+        ModelToolCall("one", "read", {}),
+        ModelToolCall("two", "write", {}),
+    ]
+    state = AgentLoopState(
+        context(),
+        [],
+        step=2,
+        model_turn=1,
+        pending_calls=calls,
+        tool_step_started=True,
+    )
+    await checkpoint.save(state, calls)
+    checkpoint.saver.put_writes(
+        checkpoint.active,
+        [
+            (
+                "tool_receipt",
+                {"proposal": {"name": "read", "args": {}}, "output": "private"},
+            )
+        ],
+        "receipt:one",
+    )
+    revoked = False
+    seen = []
+
+    async def execute(call):
+        seen.append(call.call_id)
+        return "new"
+
+    async def preflight(unsettled):
+        nonlocal revoked
+        assert unsettled == [calls[1]]
+        revoked = True
+
+    def authorize(call, output):
+        if revoked and call.call_id == "one":
+            raise PermissionError("receipt revoked")
+
+    with pytest.raises(PermissionError, match="receipt revoked"):
+        await execute_checkpointed_batch(
+            checkpoint,
+            calls,
+            execute,
+            check_grant=lambda: None,
+            preflight_unsettled=preflight,
+            authorize_receipt=authorize,
+        )
+    assert seen == []

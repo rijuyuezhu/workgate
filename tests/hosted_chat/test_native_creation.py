@@ -3890,6 +3890,18 @@ async def test_native_tool_node_checks_current_selection_and_principal_on_replay
     finally:
         reset_oauth_claims(token)
 
+    settings = WorkspaceRepository(repo.database)
+    policy_key = (
+        "agent.machine_policy.conversation." + generation.conversation_id
+    )
+    settings.save_setting(
+        lease.owner, policy_key, {harness.executor_id: "none"}
+    )
+    with pytest.raises(PermissionError, match="disclosure grant was reduced"):
+        await node.dispatch(calls, state)
+    settings.save_setting(lease.owner, policy_key, {})
+    assert (await node.dispatch(calls, state)).messages == result.messages
+
     agents.update(lease.owner, agent["id"], {"tools": []})
     with pytest.raises(PermissionError, match="no longer selected"):
         await node.dispatch(calls, state)
@@ -5157,3 +5169,101 @@ async def test_graph_native_activation_identity_and_live_member_ceiling(bound):
     assert len(rows) == 2
     assert all(row["call_id"].startswith("graph:") for row in rows)
     assert len({row["member_namespace"] for row in rows}) == 2
+
+
+@pytest.mark.asyncio
+async def test_graph_cached_native_receipt_cannot_cross_member_revocation(
+    bound,
+):
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.hosted_chat.agent_runtime import AgentContext, AgentLoopState
+    from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.graph_runtime import (
+        GraphMemberResult,
+        run_multi_agent_graph,
+    )
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+
+    pytest.importorskip("langgraph")
+    harness, original, lease, _ = bound
+    agents = AgentRepository(original.database)
+    member = agents.create(
+        lease.owner, {"provider": "openai", "model": "member"}
+    )
+    root = agents.create(lease.owner, {"provider": "openai", "model": "root"})
+    agents.update(
+        lease.owner,
+        root["id"],
+        {
+            "edges": [
+                {"from": root["id"], "to": member["id"], "edgeType": "direct"}
+            ],
+        },
+    )
+    generation, _ = GenerationStore(original.database).begin(
+        lease.owner,
+        {"text": "graph", "agent_id": root["id"]},
+    )
+    actor = ActorLease.claim(original.database, lease.owner, generation.run_id)
+    assert actor is not None
+
+    async def execute(activation):
+        if activation.scope.member_id == member["id"]:
+            repo = DurableTaskRepository(
+                original.database, scope=activation.scope
+            )
+            checkpoint = OwnedLoopCheckpoint(actor, scope=activation.scope)
+            state = AgentLoopState(
+                AgentContext(
+                    ProviderConfig(
+                        "openai", "model", "https://example.invalid", "fake"
+                    ),
+                    [],
+                    agent=member,
+                ),
+                [],
+            )
+            node = NativeLoopToolNode(
+                harness.control,
+                repo,
+                checkpoint,
+                allowed_tools={"task"},
+                scopes=SCOPES,
+                expires=None,
+                task_machine=harness.executor_id,
+                check_grant=lambda: None,
+            )
+            await node.refresh_tools(state)
+            calls = node.preflight(
+                [ModelToolCall("same", "task", {"action": "create"})], state
+            )
+            state.pending_calls = calls
+            state.tool_step_started = True
+            await checkpoint.save(state, calls)
+            result = await node.dispatch(calls, state)
+            assert (
+                await node.dispatch(calls, state)
+            ).messages == result.messages
+            agents.update(
+                lease.owner,
+                member["id"],
+                {"machine_default_permission": "none"},
+            )
+            with pytest.raises(
+                PermissionError, match="disclosure grant was reduced"
+            ):
+                await node.dispatch(calls, state)
+            assert len(await harness.control.task_service.list_tasks()) == 1
+        return GraphMemberResult(
+            [*activation.history, {"role": "assistant", "content": "done"}]
+        )
+
+    await run_multi_agent_graph(
+        actor,
+        root["id"],
+        [{"role": "user", "content": "graph"}],
+        execute_member=execute,
+        check_grant=lambda: None,
+        recursion_limit=30,
+    )
