@@ -1567,3 +1567,97 @@ async def test_detached_steering_claim_withdraw_recover_and_acknowledge(setup):
         queued["control_id"]: "rejected",
         interrupted["control_id"]: "applied",
     }
+
+
+@pytest.mark.asyncio
+async def test_detached_steering_validation_capacity_and_terminal_controls(
+    setup,
+):
+    from workgate.hosted_chat.detached_task_controls import check_detached_task
+    from workgate.hosted_chat.detached_task_lease import DetachedTaskLease
+
+    lease, parent, child, _ = setup
+    root = OwnedLoopCheckpoint(lease)
+    call = await edge(root, parent, child["id"], background=True)
+    value = await invocation(root, parent, call)
+    reservation = reserve_detached_child(root, call, value)
+    grant = {"scopes": set(value.scopes), "expires": value.grant_expires}
+    db = lease.database
+
+    async def control(call_id, **arguments):
+        proposal = ModelToolCall(
+            call_id,
+            "check_background_task",
+            {"background_task_id": reservation.task_id, **arguments},
+        )
+        state = AgentLoopState(
+            context(parent),
+            [],
+            step=1,
+            pending_calls=[proposal],
+            tool_step_started=True,
+        )
+        await root.save(state, [proposal])
+        return proposal
+
+    for idx, (arguments, error) in enumerate(
+        [
+            ({"action": "steer", "message": " "}, "non-empty"),
+            ({"action": "queue", "message": "x" * 65537}, "65536"),
+            (
+                {"action": "poll", "message": "unexpected"},
+                "Unexpected control message",
+            ),
+            ({"action": "cancel_message"}, "control ID"),
+            (
+                {
+                    "action": "interrupt",
+                    "message": "valid",
+                    "control_id": "wrong",
+                },
+                "Unexpected control ID",
+            ),
+            (
+                {
+                    "action": "steer",
+                    "message": "valid",
+                    "background_task_id": None,
+                },
+                "task ID",
+            ),
+        ]
+    ):
+        proposal = await control(f"invalid-{idx}", **arguments)
+        with pytest.raises(ValueError, match=error):
+            check_detached_task(root, proposal, **grant)
+
+    ids = []
+    for idx in range(32):
+        proposal = await control(
+            f"queue-{idx}", action="queue", message=f"message {idx}"
+        )
+        ids.append(check_detached_task(root, proposal, **grant)["control_id"])
+    overflow = await control("overflow", action="queue", message="one too many")
+    with pytest.raises(ValueError, match="32 pending messages"):
+        check_detached_task(root, overflow, **grant)
+    worker = DetachedTaskLease.claim(
+        db, lease.owner, "chat", reservation.task_id, **grant
+    )
+    assert worker is not None
+    assert worker.claim_controls("tool", **grant) == []
+    assert [
+        item["id"] for item in worker.claim_controls("turn", **grant)
+    ] == ids
+    worker.fail()
+    terminal = await control("terminal", action="steer", message="too late")
+    assert (
+        check_detached_task(root, terminal, **grant)["status"] == "not_running"
+    )
+    with db.read_snapshot() as conn:
+        assert (
+            conn.execute(
+                "SELECT count(*) FROM subagent_task_controls WHERE task_id=? AND status='failed'",
+                (reservation.task_id,),
+            ).fetchone()[0]
+            == 32
+        )
