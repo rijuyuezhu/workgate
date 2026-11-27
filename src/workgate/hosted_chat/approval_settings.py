@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from .approval_runtime import approval_policy_decision, ask_user_approval_policy
-from .durable_tasks import SESSION_FILE_READ_TOOLS, SESSION_SHELL_READ_TOOLS
+from .native_tool_kinds import SESSION_FILE_READ_TOOLS, SESSION_SHELL_READ_TOOLS
 from .storage import WorkspaceRepository
 
 MODES = ("automatic", "dangerous", "all")
