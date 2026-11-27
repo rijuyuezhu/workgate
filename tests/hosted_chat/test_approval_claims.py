@@ -16,7 +16,7 @@ from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
 from workgate.hosted_chat.provider_common import ModelToolCall, ProviderConfig
 
 
-async def started(tmp_path):
+async def started(tmp_path, calls=None):
     database = SQLiteDatabase(tmp_path)
     store = GenerationStore(database)
     job, _ = store.begin("alice", {"text": "hello", "model": "m"})
@@ -26,10 +26,14 @@ async def started(tmp_path):
     context = AgentContext(
         ProviderConfig("openai", "m", "https://provider.invalid", "secret"), []
     )
-    calls = [
-        ModelToolCall("read-1", "read", {"path": "a"}),
-        ModelToolCall("write-2", "write_file", {"path": "b"}),
-    ]
+    calls = (
+        calls
+        if calls is not None
+        else [
+            ModelToolCall("read-1", "read", {"path": "a"}),
+            ModelToolCall("write-2", "write_file", {"path": "b"}),
+        ]
+    )
     state = AgentLoopState(
         context,
         [{"role": "user", "content": "hello"}],
@@ -330,3 +334,146 @@ async def test_abort_pending_and_claim_compete_on_same_transition(tmp_path):
     assert current is not None
     assert current.status == ("aborted" if won_abort else "running")
     assert not store.abort_pending("alice", job.run_id, action)
+
+
+@pytest.mark.asyncio
+async def test_batched_question_one_shot_answer_and_actor_replacement(tmp_path):
+    proposal = ModelToolCall(
+        "question",
+        "ask_user_question",
+        {
+            "questions": [
+                {"id": "file", "question": "File?"},
+                {"id": "format", "question": "Format?"},
+            ]
+        },
+    )
+    (
+        database,
+        generations,
+        job,
+        checkpoint,
+        context,
+        state,
+        calls,
+    ) = await started(tmp_path, [proposal])
+    store = ApprovalClaimStore(database)
+    pending = store.pause_question(checkpoint, proposal)
+    action = pending["actionId"]
+    assert pending["payload"]["type"] == "ask_user_question"
+    assert store.pending("bob", job.run_id) is None
+    assert not checkpoint.lease.is_current()
+    with pytest.raises(KeyError):
+        store.claim_question("bob", job.run_id, action, {})
+    with pytest.raises(ValueError, match="Stale"):
+        store.claim_question("alice", job.run_id, "stale", {})
+    with pytest.raises(ValueError, match="every question"):
+        store.claim_question(
+            "alice", job.run_id, action, {"answers": {"file": "a"}}
+        )
+    with pytest.raises(ValueError, match="Expected tool approval"):
+        store.claim("alice", job.run_id, action, [])
+    assert store.pending("alice", job.run_id) == pending
+    answer = store.claim_question(
+        "alice",
+        job.run_id,
+        action,
+        {"answers": {"format": "json", "file": "a"}},
+    )
+    assert list(answer["answers"]) == ["file", "format"]
+    with pytest.raises(KeyError):
+        store.claim_question("alice", job.run_id, action, {})
+    fresh = ActorLease.claim(database, "alice", job.run_id)
+    assert fresh is not None
+    resumed = OwnedLoopCheckpoint(fresh)
+    with pytest.raises(ValueError, match="Restore"):
+        store.answered_question(resumed)
+    assert resumed.restore(context) is not None
+    assert store.answered_question(resumed) == answer
+    with pytest.raises(ValueError, match="already been answered"):
+        store.pause_question(resumed, proposal)
+    with pytest.raises(ValueError, match="already been answered"):
+        store.pause(resumed, calls)
+    await resumed.save(state, calls)
+    assert store.answered_question(resumed) is None
+
+
+@pytest.mark.parametrize("decision", ["approve", "edit", "reject"])
+@pytest.mark.asyncio
+async def test_reviewed_question_retains_exact_approval_across_second_pause(
+    tmp_path, decision
+):
+    proposal = ModelToolCall(
+        "question", "ask_user_question", {"question": "Original?"}
+    )
+    database, _, job, checkpoint, context, _, calls = await started(
+        tmp_path, [proposal]
+    )
+    store = ApprovalClaimStore(database)
+    review = store.pause(checkpoint, calls)
+    with pytest.raises(ValueError, match="Expected Ask User"):
+        store.claim_question(
+            "alice", job.run_id, review["actionId"], {"answer": "a"}
+        )
+    resolution = {"tool_call_id": "question", "decision": decision}
+    if decision == "edit":
+        resolution["editedArguments"] = {"question": "Edited?"}
+    batch = store.claim("alice", job.run_id, review["actionId"], [resolution])
+    fresh = ActorLease.claim(database, "alice", job.run_id)
+    assert fresh is not None
+    resumed = OwnedLoopCheckpoint(fresh)
+    assert resumed.restore(context) is not None
+    if decision == "reject":
+        with pytest.raises(ValueError, match="did not authorize"):
+            store.pause_question(resumed, proposal)
+        assert fresh.is_current()
+        return
+    pending = store.pause_question(resumed, proposal)
+    assert pending["payload"]["question"]["question"] == (
+        "Edited?" if decision == "edit" else "Original?"
+    )
+    assert pending["actionId"] != review["actionId"]
+    with pytest.raises(ValueError, match="Stale"):
+        store.claim_question(
+            "alice", job.run_id, review["actionId"], {"answer": "a"}
+        )
+    answer = store.claim_question(
+        "alice", job.run_id, pending["actionId"], {"answer": "yes"}
+    )
+    last = ActorLease.claim(database, "alice", job.run_id)
+    assert last is not None
+    checkpoint = OwnedLoopCheckpoint(last)
+    assert checkpoint.restore(context) is not None
+    assert store.approved_batch(checkpoint) == batch
+    assert store.answered_question(checkpoint) == answer == {"answer": "yes"}
+
+
+@pytest.mark.asyncio
+async def test_question_requires_lone_exact_proposal_and_expires_without_dispatch(
+    tmp_path,
+):
+    proposal = ModelToolCall(
+        "question", "ask_user_question", {"question": "Choose?"}
+    )
+    database, generations, job, checkpoint, _, state, _ = await started(
+        tmp_path, [proposal, ModelToolCall("read", "read", {})]
+    )
+    store = ApprovalClaimStore(database)
+    with pytest.raises(ValueError, match="one exact saved"):
+        store.pause_question(checkpoint, proposal)
+    state.pending_calls = [proposal]
+    await checkpoint.save(state, [proposal])
+    with pytest.raises(ValueError, match="unsettled saved"):
+        store.pause_question(
+            checkpoint,
+            ModelToolCall(
+                "question", "ask_user_question", {"question": "Changed?"}
+            ),
+        )
+    pending = store.pause_question(checkpoint, proposal)
+    assert not store.expire_pending("alice", job.run_id, pending["actionId"])
+    with database.connect() as db:
+        db.execute("DELETE FROM agent_checkpoints")
+    assert store.expire_pending("alice", job.run_id, pending["actionId"])
+    current = generations.get("alice", job.run_id)
+    assert current is not None and current.status == "interrupted"

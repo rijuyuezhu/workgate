@@ -370,3 +370,10 @@ manifest, legacy single and batched question formats, UTF-16 limits and
 resume validation match the original HITL oracle. The optional tool is
 independent of machine grants; its durable question and execution lifecycle
 are integrated separately.
+
+Ask User reuses the owned human-action transaction and checkpoint interruption
+rather than introducing a parallel state store. A question is bound to a lone
+saved tool call and, if explicitly reviewed, its exact claimed edited input.
+Validated single/batched answers are consumed once and remain recoverable
+across actor replacement at that checkpoint. The shared abort/expiry lifecycle
+also applies to questions. Catalog selection and execution integration follow.
