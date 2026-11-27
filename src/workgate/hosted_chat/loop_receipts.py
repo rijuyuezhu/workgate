@@ -11,7 +11,8 @@ from .agent_execution import (
     replay_key,
     validate_settled_proposal,
 )
-from .loop_checkpoint import OwnedLoopCheckpoint, _Snapshot
+from .checkpoint_types import LoopSnapshot
+from .loop_checkpoint import OwnedLoopCheckpoint
 from .provider_common import ModelToolCall, complete_tool_batch
 
 _RECEIPT_CHANNEL = "tool_receipt"
@@ -50,7 +51,7 @@ async def execute_checkpointed_batch(
         or row["metadata"].get("source") != "loop"
     ):
         raise ValueError("Missing owned tool batch checkpoint")
-    snapshot = _Snapshot.model_validate(row["checkpoint"]["channel_values"])
+    snapshot = LoopSnapshot.model_validate(row["checkpoint"]["channel_values"])
     saved = snapshot.calls()
     if not snapshot.tool_step_started or json.dumps(
         [asdict(call) for call in saved], sort_keys=True, allow_nan=False

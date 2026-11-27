@@ -8,45 +8,13 @@ import json
 import time
 from dataclasses import asdict, dataclass
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from .agent_runtime import AgentContext, AgentLoopState, RuntimeSafetyError
+from .checkpoint_types import LoopSnapshot
 from .checkpoints import SQLiteCheckpointSaver
 from .generation_actor_lease import ActorLease, ActorLeaseLost
 from .graph_member_scope import GraphMemberScope
-from .provider_common import ModelToolCall, complete_tool_batch
+from .provider_common import ModelToolCall
 from .subagent_scope import SubagentScope
-
-
-class _Snapshot(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid")
-
-    messages: list[dict]
-    step: int = Field(ge=0)
-    model_turn: int = Field(ge=0)
-    agent_id: str | None
-    pending_calls: list[dict]
-    tool_step_started: bool
-    completed: bool
-    partial_text: str
-    public_delta_cursor: int = Field(default=0, ge=0)
-    graph_commands: list[dict]
-    repeated_tool_batches: int = Field(ge=0)
-    last_tool_batch: str | None
-
-    def calls(self) -> list[ModelToolCall]:
-        calls = complete_tool_batch(
-            [ModelToolCall(**value) for value in self.pending_calls]
-        )
-        if (
-            self.model_turn > self.step
-            or (self.tool_step_started and not calls)
-            or (self.completed and calls)
-        ):
-            raise ValueError("Inconsistent Agent loop checkpoint boundary")
-        if self.last_tool_batch is None and self.repeated_tool_batches:
-            raise ValueError("Inconsistent Agent loop checkpoint progress")
-        return calls
 
 
 @dataclass(frozen=True)
@@ -138,7 +106,7 @@ class OwnedLoopCheckpoint:
         checkpoint = row["checkpoint"]
         if checkpoint.get("v") != 1 or row["metadata"].get("source") != "loop":
             raise ValueError("Invalid Agent loop checkpoint")
-        snapshot = _Snapshot.model_validate(checkpoint["channel_values"])
+        snapshot = LoopSnapshot.model_validate(checkpoint["channel_values"])
         if snapshot.agent_id != (context.agent or {}).get("id"):
             raise RuntimeSafetyError("Checkpoint Agent is no longer available")
         state = AgentLoopState(
@@ -177,7 +145,7 @@ class OwnedLoopCheckpoint:
             raise ValueError(
                 "Checkpoint proposal does not match the loop state"
             )
-        snapshot = _Snapshot(
+        snapshot = LoopSnapshot(
             messages=state.messages,
             step=state.step,
             model_turn=state.model_turn,

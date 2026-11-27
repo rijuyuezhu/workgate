@@ -4,13 +4,16 @@ No separate scheduler: the parent generation actor owns foreground child
 checkpoints. Detached children require a separate durable lease.
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import sqlite3
 import time
 from dataclasses import asdict, dataclass, replace
-from typing import TYPE_CHECKING
+from typing import Protocol
 
+from .checkpoint_types import NAMESPACE_KEY, LoopSnapshot
 from .generation_actor_lease import ActorLease
 from .graph_member_scope import GraphMemberScope
 from .graph_topology import graph_members
@@ -21,8 +24,16 @@ from .subagents import (
     SubagentInvocation,
 )
 
-if TYPE_CHECKING:
-    from .loop_checkpoint import OwnedLoopCheckpoint
+
+class _ParentCheckpoint(Protocol):
+    @property
+    def lease(self) -> ActorLease: ...
+
+    @property
+    def active(self) -> dict: ...
+
+    @property
+    def scope(self) -> GraphMemberScope | SubagentScope | None: ...
 
 
 def _json(value: object) -> str:
@@ -139,8 +150,6 @@ class SubagentScope:
         # Read the exact current parent edge inside the same transaction as
         # admission/effect fencing. Expired, missing or advanced heads cannot
         # be used to start a new child.
-        from .loop_checkpoint import _Snapshot
-
         row = db.execute(
             "SELECT checkpoint_id,checkpoint,metadata FROM agent_checkpoints "
             "WHERE owner=? AND thread_id=? AND checkpoint_ns=? AND expires_at>? "
@@ -164,7 +173,7 @@ class SubagentScope:
             raise PermissionError(
                 "Subagent parent is not a committed loop checkpoint"
             )
-        snapshot = _Snapshot.model_validate(checkpoint["channel_values"])
+        snapshot = LoopSnapshot.model_validate(checkpoint["channel_values"])
         if (
             not snapshot.tool_step_started
             or snapshot.agent_id
@@ -220,12 +229,10 @@ class SubagentScope:
     @classmethod
     def admit(
         cls,
-        checkpoint: OwnedLoopCheckpoint,
+        checkpoint: _ParentCheckpoint,
         call: ModelToolCall,
         invocation: SubagentInvocation,
     ) -> SubagentScope:
-        from .checkpoints import NAMESPACE_KEY
-
         lease = checkpoint.lease
         active = checkpoint.active["configurable"]
         identity = active.get("checkpoint_id")

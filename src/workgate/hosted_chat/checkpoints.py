@@ -16,13 +16,13 @@ import time
 from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
+from .checkpoint_types import NAMESPACE_KEY as NAMESPACE_KEY
 from .database import SQLiteDatabase
 from .generation_actor_lease import ActorLease, ActorLeaseLost
 from .graph_member_scope import GraphMemberScope
 from .subagent_scope import SubagentScope
 
 OWNER_KEY = "__librechat_checkpoint_owner"
-NAMESPACE_KEY = "__librechat_checkpoint_ns"
 EVENT_ACTOR_KEY = "__librechat_event_actor_invocation_id"
 WRITES_IDX_MAP = {
     "__error__": -1,
