@@ -36,7 +36,7 @@ async def execute_checkpointed_batch(
     """
 
     def check() -> None:
-        checkpoint.lease.assert_current()
+        checkpoint.assert_current()
         check_grant()
 
     check()

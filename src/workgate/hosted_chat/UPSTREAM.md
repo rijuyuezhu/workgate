@@ -448,3 +448,12 @@ root membership, live grants and each transfer. Tests retain the original
 real JS message-class and graph traces; the live npm oracle is development-only.
 Native member dispatch, graph-aware public output and human/steer integration
 remain dependent work.
+
+Each foreground StateGraph task uses its own owned loop checkpoint namespace
+and recovery marker, corresponding to the pinned AgentRunner's
+`/graph:<agent>:<activation>` namespace. Graph member identity, root revision,
+membership and actor lease are checked before restore, receipt replay and
+inside checkpoint writes. Provider call IDs remain unchanged in model history;
+a derived activation-scoped native identity is available to the native
+dispatcher. Root-only human claims cannot be published from member checkpoints
+until graph-aware claim recovery is connected.
