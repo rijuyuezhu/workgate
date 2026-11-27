@@ -337,3 +337,12 @@ native asynchronous/PTY execution, environment overrides, Session termination
 and Job mutation require review in dangerous mode. Approval never changes
 native authorization. Owner-scoped settings and versioned Agent configuration
 are private pending human-action route integration.
+
+Foreground human-review admission and resolution (`approval_claims.py`) adapt
+`generations.py` pause/claim/recovery and `AgentRunner._pause` at the pinned
+source. The owned checkpoint interrupt, pending action, actor retirement and
+public pending event commit together; a one-shot validated resolution retains
+its original started-edge identity through actor replacement. Expired or
+missing checkpoints cannot authorize a continuation. Review remains private
+until the execution and authenticated route units; a pending action with lost
+checkpoint evidence needs terminal cancellation/recovery before exposure.

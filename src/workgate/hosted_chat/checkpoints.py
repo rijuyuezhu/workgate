@@ -255,6 +255,17 @@ class SQLiteCheckpointSaver:
     def put_writes(
         self, config: Mapping, writes: Sequence[tuple[str, Any]], task_id: str
     ) -> None:
+        with self.database.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._put_writes(db, config, writes, task_id)
+
+    def _put_writes(
+        self,
+        db: sqlite3.Connection,
+        config: Mapping,
+        writes: Sequence[tuple[str, Any]],
+        task_id: str,
+    ) -> None:
         thread, namespace, checkpoint_id = self._identity(config)
         if checkpoint_id is None:
             raise ValueError("Owned writes require a checkpoint id")
@@ -279,34 +290,32 @@ class SQLiteCheckpointSaver:
         ]
         anchored = int(has_resumable_write(writes))
         all_special = all(channel in WRITES_IDX_MAP for channel, _ in writes)
-        with self.database.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            self._assert_write(db, thread, namespace)
-            db.execute(
-                "INSERT INTO agent_checkpoints(owner,thread_id,checkpoint_ns,checkpoint_id,anchored,expires_at) "
-                "VALUES(?,?,?,?,?,?) ON CONFLICT(owner,thread_id,checkpoint_ns,checkpoint_id) DO UPDATE SET "
-                "anchored=max(anchored,excluded.anchored)",
-                (
-                    self.owner,
-                    thread,
-                    namespace,
-                    checkpoint_id,
-                    anchored,
-                    time.time() + self.ttl_seconds,
-                ),
-            )
-            conflict = (
-                "DO UPDATE SET channel=excluded.channel,value=excluded.value"
-                if all_special
-                else "DO NOTHING"
-            )
-            db.executemany(
-                "INSERT INTO agent_checkpoint_writes VALUES(?,?,?,?,?,?,?,?) "
-                "ON CONFLICT(owner,thread_id,checkpoint_ns,checkpoint_id,task_id,idx) "
-                + conflict,
-                rows,
-            )
-            self._check_size(db, (self.owner, thread, namespace, checkpoint_id))
+        self._assert_write(db, thread, namespace)
+        db.execute(
+            "INSERT INTO agent_checkpoints(owner,thread_id,checkpoint_ns,checkpoint_id,anchored,expires_at) "
+            "VALUES(?,?,?,?,?,?) ON CONFLICT(owner,thread_id,checkpoint_ns,checkpoint_id) DO UPDATE SET "
+            "anchored=max(anchored,excluded.anchored)",
+            (
+                self.owner,
+                thread,
+                namespace,
+                checkpoint_id,
+                anchored,
+                time.time() + self.ttl_seconds,
+            ),
+        )
+        conflict = (
+            "DO UPDATE SET channel=excluded.channel,value=excluded.value"
+            if all_special
+            else "DO NOTHING"
+        )
+        db.executemany(
+            "INSERT INTO agent_checkpoint_writes VALUES(?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(owner,thread_id,checkpoint_ns,checkpoint_id,task_id,idx) "
+            + conflict,
+            rows,
+        )
+        self._check_size(db, (self.owner, thread, namespace, checkpoint_id))
 
     def put(
         self, config: Mapping, checkpoint: Mapping, metadata: Mapping
@@ -386,6 +395,12 @@ class SQLiteCheckpointSaver:
         return result
 
     def get_tuple(self, config: Mapping) -> dict | None:
+        with self.database.read_snapshot() as db:
+            return self._get_tuple(db, config)
+
+    def _get_tuple(
+        self, db: sqlite3.Connection, config: Mapping
+    ) -> dict | None:
         thread, namespace, checkpoint_id = self._identity(config)
         parameters: list[Any] = [self.owner, thread, namespace, time.time()]
         query = "SELECT * FROM agent_checkpoints WHERE owner=? AND thread_id=? AND checkpoint_ns=? "
@@ -393,11 +408,10 @@ class SQLiteCheckpointSaver:
         if checkpoint_id is not None:
             query += " AND checkpoint_id=?"
             parameters.append(checkpoint_id)
-        with self.database.read_snapshot() as db:
-            row = db.execute(
-                query + " ORDER BY checkpoint_id DESC LIMIT 1", parameters
-            ).fetchone()
-            return self._tuple(db, row, config) if row else None
+        row = db.execute(
+            query + " ORDER BY checkpoint_id DESC LIMIT 1", parameters
+        ).fetchone()
+        return self._tuple(db, row, config) if row else None
 
     def list(
         self,
