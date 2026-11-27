@@ -21,10 +21,11 @@ from ..hosted_chat.ask_user_tools import (
 from ..hosted_chat.durable_tasks import DurableTaskRepository
 from ..hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
 from ..hosted_chat.loop_receipts import execute_checkpointed_batch
+from ..hosted_chat.machine_permissions import effective_machine_access
 from ..hosted_chat.mcp_projection import native_tool_history_message
 from ..hosted_chat.provider_common import ModelToolCall, complete_tool_batch
 from ..hosted_chat.storage import WorkspaceRepository
-from .hosted_chat_native_creation import _grant
+from .hosted_chat_native_creation import _grant, _registered
 from .hosted_chat_native_dispatch import NativeToolDispatcher, _selected_tools
 from .runtime import ControlRuntime
 
@@ -154,6 +155,79 @@ class NativeLoopToolNode:
         legacy = (endpoints.get("agents") or {}).get("toolApproval")
         return call_decision(mode, legacy, call.name, call.arguments) or {}
 
+    def _receipt_access(self) -> dict:
+        """Capture the effective disclosure ceiling, not a new grant.
+
+        Some results (Job listings and Task metadata) contain more than one
+        native resource. Preserve the full readable/writable ceiling rather
+        than infer authorization from the provider's argument shape.
+        """
+        scopes, expires = self.current_grant()
+        lease = self.checkpoint.lease
+        conversation, agents = self.repository.tool_context_chain(lease)
+        policy, _ = effective_machine_access(
+            lease.owner,
+            conversation,
+            agent=agents[-1],
+            ancestors=agents[:-1],
+            scopes=scopes,
+            expires=expires,
+            repo=WorkspaceRepository(self.repository.database),
+            registered=_registered(self.runtime),
+        )
+        return {
+            "scopes": sorted(scopes),
+            "machines": {
+                machine: level
+                for machine, level in policy.items()
+                if level != "none"
+            },
+            "task_machine": self.task_machine,
+        }
+
+    def _authorize_receipt(self, _call: ModelToolCall, receipt: dict) -> None:
+        if not isinstance(receipt, dict) or set(receipt) != {
+            "result",
+            "access",
+        }:
+            raise PermissionError(
+                "Native receipt lacks disclosure authorization evidence"
+            )
+        access = receipt["access"]
+        if not isinstance(access, dict) or set(access) != {
+            "scopes",
+            "machines",
+            "task_machine",
+        }:
+            raise PermissionError(
+                "Invalid native receipt authorization evidence"
+            )
+        old_scopes = access["scopes"]
+        old_machines = access["machines"]
+        if (
+            not isinstance(old_scopes, list)
+            or any(not isinstance(scope, str) for scope in old_scopes)
+            or not isinstance(old_machines, dict)
+            or any(
+                not isinstance(machine, str) or level not in ("read", "write")
+                for machine, level in old_machines.items()
+            )
+        ):
+            raise PermissionError(
+                "Invalid native receipt authorization evidence"
+            )
+        current = self._receipt_access()
+        if (
+            not set(old_scopes).issubset(current["scopes"])
+            or any(
+                current["machines"].get(machine)
+                not in ({"read", "write"} if level == "read" else {"write"})
+                for machine, level in old_machines.items()
+            )
+            or access["task_machine"] != current["task_machine"]
+        ):
+            raise PermissionError("Native receipt disclosure grant was reduced")
+
     async def dispatch(
         self,
         calls: list[ModelToolCall],
@@ -202,7 +276,7 @@ class NativeLoopToolNode:
                     "Native approval policy changed before execution"
                 )
 
-        async def execute(call: ModelToolCall) -> dict:
+        async def execute_native(call: ModelToolCall) -> dict:
             if call.call_id not in blocked:
                 refresh_decision(effective[call.call_id])
             if call.call_id in blocked:
@@ -234,6 +308,15 @@ class NativeLoopToolNode:
                 expires=expires,
                 task_machine=self.task_machine,
             )
+
+        async def execute(call: ModelToolCall) -> dict:
+            access = self._receipt_access()
+            result = await execute_native(call)
+            if access != self._receipt_access():
+                raise PermissionError(
+                    "Native receipt disclosure grant changed during execution"
+                )
+            return {"result": result, "access": access}
 
         async def preflight_unsettled(unsettled: list[ModelToolCall]) -> None:
             claim = (
@@ -314,11 +397,14 @@ class NativeLoopToolNode:
             execute,
             check_grant=check,
             preflight_unsettled=preflight_unsettled,
+            authorize_receipt=self._authorize_receipt,
         )
         return ToolBatchOutput(
             [
                 native_tool_history_message(
-                    call.call_id, output, state.context.profile.provider
+                    call.call_id,
+                    output["result"],
+                    state.context.profile.provider,
                 )
                 for call, output in zip(calls, outputs, strict=True)
             ]
