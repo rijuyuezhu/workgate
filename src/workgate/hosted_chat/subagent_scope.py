@@ -74,7 +74,9 @@ def _revision(agent: dict | None) -> tuple[str, int] | None:
 @dataclass(frozen=True)
 class SubagentScope:
     run_id: str
-    parent_scope: GraphMemberScope | SubagentScope | None
+    parent_scope: (
+        GraphMemberScope | SubagentScope | DetachedExecutionScope | None
+    )
     parent_checkpoint_id: str
     call_id: str
     proposal_hash: str
@@ -157,7 +159,9 @@ class SubagentScope:
         parent = fields["parent_scope"]
         if parent is not None:
             fields["parent_scope"] = (
-                cls.from_record(parent)
+                DetachedExecutionScope.from_record(parent)
+                if "task_id" in parent
+                else cls.from_record(parent)
                 if "run_id" in parent
                 else GraphMemberScope(**parent)
             )
@@ -285,6 +289,9 @@ class SubagentScope:
         self, db: sqlite3.Connection, lease: ActorLease
     ) -> tuple[dict | None, ...]:
         lease.assert_current(db)
+        detached = detached_root_scope(self)
+        if detached is not None:
+            detached.resolve(db, lease)
         return self.resolve_owned(
             db, lease.owner, lease.run_id, current_edges=True
         )
@@ -338,15 +345,20 @@ class SubagentScope:
                 "Subagent input does not match the delegated task"
             )
         parent = checkpoint.scope
-        if isinstance(parent, DetachedExecutionScope):
-            raise PermissionError("Nested detached delegation is not enabled")
         if isinstance(parent, SubagentGraphScope):
             raise PermissionError("Team graph member delegation is not enabled")
+        if detached and detached_root_scope(parent) is not None:
+            raise PermissionError("Nested background delegation is not enabled")
         expires = invocation.grant_expires
-        if isinstance(parent, SubagentScope):
+        ceiling = (
+            parent.admission
+            if isinstance(parent, DetachedExecutionScope)
+            else parent
+        )
+        if isinstance(ceiling, SubagentScope):
             if (
-                invocation.remaining_depth >= parent.remaining_depth
-                or not invocation.scopes.issubset(parent.scopes)
+                invocation.remaining_depth >= ceiling.remaining_depth
+                or not invocation.scopes.issubset(ceiling.scopes)
             ):
                 raise PermissionError(
                     "Subagent child exceeds parent scope or nesting budget"
@@ -354,7 +366,7 @@ class SubagentScope:
             expires = min(
                 (
                     value
-                    for value in (expires, parent.grant_expires)
+                    for value in (expires, ceiling.grant_expires)
                     if value is not None
                 ),
                 default=None,
@@ -371,6 +383,8 @@ class SubagentScope:
         with lease.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             lease.assert_current(db)
+            if isinstance(parent, DetachedExecutionScope):
+                parent.resolve(db, lease)
             row = db.execute(
                 "SELECT conversation_id,agent_id,state FROM runs WHERE id=?",
                 (lease.run_id,),
@@ -531,8 +545,9 @@ class SubagentGraphScope:
         self, db: sqlite3.Connection, lease: ActorLease
     ) -> tuple[dict | None, ...]:
         lease.assert_current(db)
-        if isinstance(self.team, DetachedExecutionScope):
-            self.team.resolve(db, lease)
+        detached = detached_root_scope(self)
+        if detached is not None:
+            detached.resolve(db, lease)
         return self.resolve_owned(
             db, lease.owner, lease.run_id, current_edges=True
         )
@@ -601,6 +616,15 @@ class DetachedExecutionScope:
         }
 
     @classmethod
+    def from_record(cls, value: dict) -> DetachedExecutionScope:
+        fields = dict(value)
+        fields["admission"] = SubagentScope.from_record(fields["admission"])
+        scope = cls(**fields)
+        if json.loads(_json(asdict(scope))) != value:
+            raise PermissionError("Invalid detached execution scope record")
+        return scope
+
+    @classmethod
     def load(
         cls, db: sqlite3.Connection, owner: str, run_id: str
     ) -> DetachedExecutionScope:
@@ -664,7 +688,11 @@ class DetachedExecutionScope:
 
 
 def detached_root_scope(scope) -> DetachedExecutionScope | None:
-    """Unwrap the detached execution admission for a private team activation."""
-    if isinstance(scope, SubagentGraphScope):
-        scope = scope.team
+    """Resolve the detached actor ceiling beneath a private descendant."""
+    while isinstance(scope, (SubagentScope, SubagentGraphScope)):
+        scope = (
+            scope.parent_scope
+            if isinstance(scope, SubagentScope)
+            else scope.team
+        )
     return scope if isinstance(scope, DetachedExecutionScope) else None
