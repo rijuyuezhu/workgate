@@ -35,7 +35,11 @@ from .handoff import (
     receive_handoff,
 )
 from .message_reducers import agent_messages_reducer, messages_state_reducer
-from .subagent_scope import SubagentGraphScope, SubagentScope
+from .subagent_scope import (
+    DetachedExecutionScope,
+    SubagentGraphScope,
+    SubagentScope,
+)
 
 
 def _merge_prompt_inputs(current: dict | None, updates: dict | None) -> dict:
@@ -134,7 +138,7 @@ def _mark_graph_started(
     fingerprint: str,
     *,
     stored: bool,
-    team_scope: SubagentScope | None = None,
+    team_scope: SubagentScope | DetachedExecutionScope | None = None,
 ) -> None:
     """Never resume an expired graph as a fresh sequence of native effects."""
     with lease.database.connect() as db:
@@ -175,7 +179,7 @@ async def run_multi_agent_graph(
     namespace: str = "foreground",
     result_only: bool = False,
     human_actions: bool = False,
-    team_scope: SubagentScope | None = None,
+    team_scope: SubagentScope | DetachedExecutionScope | None = None,
     team_root: dict | None = None,
 ) -> list[dict]:
     """Execute the pinned workflow via a caller-authorized member callback.

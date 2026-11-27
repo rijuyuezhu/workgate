@@ -46,6 +46,7 @@ from .subagent_scope import (
     DetachedExecutionScope,
     SubagentGraphScope,
     SubagentScope,
+    detached_root_scope,
 )
 
 
@@ -220,6 +221,13 @@ class DurableTaskRepository:
             raise PermissionError(
                 "Detached child requires its own execution lease"
             )
+        if (
+            isinstance(scope, DetachedExecutionScope)
+            and scope.team_definition_hash is not None
+        ):
+            raise PermissionError(
+                "Detached team requires a scheduler or member scope"
+            )
         self.database = database
         self.scope = scope
 
@@ -236,8 +244,9 @@ class DurableTaskRepository:
         )
 
     def cap_machine_access(self, policy: dict[str, str]) -> dict[str, str]:
-        if isinstance(self.scope, DetachedExecutionScope):
-            return self.scope.cap_machine_access(policy)
+        detached = detached_root_scope(self.scope)
+        if detached is not None:
+            return detached.cap_machine_access(policy)
         return policy
 
     def _ledger_call(self, call: ModelToolCall) -> ModelToolCall:
@@ -264,8 +273,9 @@ class DurableTaskRepository:
         )
 
     def _run(self, db, lease: ActorLease):
-        if lease.detached_task_id is not None and not isinstance(
-            self.scope, DetachedExecutionScope
+        if (
+            lease.detached_task_id is not None
+            and detached_root_scope(self.scope) is None
         ):
             raise PermissionError(
                 "Detached native effect requires its admitted execution scope"
@@ -328,12 +338,24 @@ class DurableTaskRepository:
             raise PermissionError("Native child generation no longer exists")
         if json.loads(row["state"]).get("detachedTaskId") is not None:
             detached = DetachedExecutionScope.load(db, run["owner"], run_id)
+            child_namespace, separator, activation = namespace.partition(
+                ":graph:team:member:"
+            )
+            if detached.team_definition_hash is not None and not separator:
+                raise PermissionError(
+                    "Detached team native effect requires a member scope"
+                )
+            scope = (
+                SubagentGraphScope(detached, run["member_agent_id"], activation)
+                if separator
+                else detached
+            )
             if (
-                detached.checkpoint_namespace != namespace
-                or detached.member_id != run["member_agent_id"]
+                scope.checkpoint_namespace != namespace
+                or scope.member_id != run["member_agent_id"]
             ):
                 raise PermissionError("Detached native scope identity changed")
-            return detached
+            return scope
         try:
             child_namespace, separator, activation = namespace.partition(
                 ":graph:team:member:"
@@ -391,10 +413,10 @@ class DurableTaskRepository:
     ) -> tuple[str, tuple[dict | None, ...]]:
         with self.database.read_snapshot() as db:
             run = self._run(db, lease)
+            detached = detached_root_scope(self.scope)
             conversation = (
-                self.scope.authorization_conversation_id
-                if authorization
-                and isinstance(self.scope, DetachedExecutionScope)
+                detached.authorization_conversation_id
+                if authorization and detached is not None
                 else run["conversation_id"]
             )
             return conversation, self._agents_for_run(db, run)
@@ -419,25 +441,24 @@ class DurableTaskRepository:
         child_scope = self._child_scope_for_run(db, run)
         if child_scope is not None:
             scopes, expires = child_scope.effective_grant(scopes, expires)
-        if isinstance(child_scope, DetachedExecutionScope):
+        detached = detached_root_scope(child_scope)
+        if detached is not None:
             if authorization_id not in {
                 run["conversation_id"],
-                child_scope.authorization_conversation_id,
+                detached.authorization_conversation_id,
             }:
                 raise PermissionError(
                     "Detached authorization conversation changed"
                 )
-            authorization_id = child_scope.authorization_conversation_id
+            authorization_id = detached.authorization_conversation_id
         chain = self._agents_for_run(db, run)
         # Task is Control-owned metadata, but reserve it only for a selected
         # authorized Executor; no implicit Controller machine target.
         for target, operation in _requirements(
             machine, kind, destination_machine
         ).items():
-            if isinstance(child_scope, DetachedExecutionScope):
-                ceiling = child_scope.cap_machine_access({target: "write"})[
-                    target
-                ]
+            if detached is not None:
+                ceiling = detached.cap_machine_access({target: "write"})[target]
                 if ceiling == "none" or (
                     operation != "read" and ceiling != "write"
                 ):
@@ -1339,9 +1360,10 @@ class DurableTaskRepository:
             },
         )
         conversation_id = run["conversation_id"]
+        detached = detached_root_scope(self.scope)
         expected_authorization = (
-            self.scope.authorization_conversation_id
-            if isinstance(self.scope, DetachedExecutionScope)
+            detached.authorization_conversation_id
+            if detached is not None
             else conversation_id
         )
         authorization_id = (

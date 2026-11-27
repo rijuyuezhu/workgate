@@ -453,7 +453,7 @@ class SubagentGraphScope:
     Team members are pinned by the admitted child's entire revision list.
     """
 
-    team: SubagentScope
+    team: SubagentScope | DetachedExecutionScope
     member_id: str | None = None
     activation_id: str | None = None
 
@@ -489,12 +489,16 @@ class SubagentGraphScope:
     ) -> tuple[dict | None, ...]:
         from uuid import UUID
 
-        if self.team.detached:
+        if isinstance(self.team, SubagentScope) and self.team.detached:
             raise PermissionError(
                 "Detached team requires its own execution lease"
             )
-        chain = self.team.resolve_owned(
-            db, owner, run_id, current_edges=current_edges
+        chain = (
+            self.team.resolve_owned(
+                db, owner, run_id, current_edges=current_edges
+            )
+            if isinstance(self.team, SubagentScope)
+            else self.team.resolve_owned(db, owner, run_id)
         )
         if (
             not self.team.target_revisions
@@ -527,6 +531,8 @@ class SubagentGraphScope:
         self, db: sqlite3.Connection, lease: ActorLease
     ) -> tuple[dict | None, ...]:
         lease.assert_current(db)
+        if isinstance(self.team, DetachedExecutionScope):
+            self.team.resolve(db, lease)
         return self.resolve_owned(
             db, lease.owner, lease.run_id, current_edges=True
         )
@@ -541,6 +547,28 @@ class DetachedExecutionScope:
     authorization_conversation_id: str
     admission: SubagentScope
     disclosure_access: dict | None
+
+    @property
+    def target_revisions(self) -> tuple[tuple[str, int], ...]:
+        return self.admission.target_revisions
+
+    @property
+    def team_definition_hash(self) -> str | None:
+        return self.admission.team_definition_hash
+
+    def assert_team_root(self, root: dict) -> None:
+        self.admission.assert_team_root(root)
+
+    def _run(self, db: sqlite3.Connection, owner: str, run_id: str):
+        if run_id != self.run_id:
+            raise PermissionError("Detached team belongs to another generation")
+        row = db.execute(
+            "SELECT r.state FROM runs r JOIN conversations c ON c.id=r.conversation_id WHERE r.id=? AND c.owner=?",
+            (run_id, owner),
+        ).fetchone()
+        if row is None:
+            raise PermissionError("Detached team generation no longer owned")
+        return row
 
     @property
     def member_id(self) -> str | None:
@@ -601,8 +629,6 @@ class DetachedExecutionScope:
             or json.loads(row["child_state"]).get("detachedTaskId") != row["id"]
         ):
             raise PermissionError("Detached child admission identity changed")
-        if admission.team_definition_hash is not None:
-            raise PermissionError("Detached team execution is not enabled")
         return cls(
             row["id"],
             run_id,
@@ -635,3 +661,10 @@ class DetachedExecutionScope:
         if lease.detached_task_id != self.task_id:
             raise PermissionError("Detached scope requires its task actor")
         return self.resolve_owned(db, lease.owner, lease.run_id)
+
+
+def detached_root_scope(scope) -> DetachedExecutionScope | None:
+    """Unwrap the detached execution admission for a private team activation."""
+    if isinstance(scope, SubagentGraphScope):
+        scope = scope.team
+    return scope if isinstance(scope, DetachedExecutionScope) else None
