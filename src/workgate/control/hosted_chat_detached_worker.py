@@ -20,8 +20,13 @@ from ..hosted_chat.generation_actor_lease import ActorLeaseLost
 from ..hosted_chat.generations import Generation
 from ..hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
 from ..hosted_chat.provider_common import ModelToolCall
-from ..hosted_chat.providers import stream_model, stream_model_with_tools
+from ..hosted_chat.providers import (
+    selected_provider,
+    stream_model,
+    stream_model_with_tools,
+)
 from ..hosted_chat.subagent_scope import DetachedExecutionScope
+from .hosted_chat_graph_loop import run_native_graph
 from .hosted_chat_native_creation import _grant
 from .hosted_chat_native_tool_node import NativeLoopToolNode
 from .runtime import ControlRuntime
@@ -51,7 +56,7 @@ async def run_detached_subagent(
     stream_tools=stream_model_with_tools,
     stream_text=stream_model,
 ) -> bool:
-    """Execute one reserved single-Agent child under a live authenticated caller.
+    """Execute one reserved child or team under a live authenticated caller.
 
     No process-global scheduler or unattended grant is implied. A replacement
     caller may recover the same child using the durable task lease/checkpoint.
@@ -92,9 +97,51 @@ async def run_detached_subagent(
     async def execute() -> list[dict]:
         generation, actor = lease.materialize(**grant())
         scope = DetachedExecutionScope.from_actor(actor)
-        if scope.team_definition_hash is not None:
-            raise PermissionError("Detached team worker is not enabled")
         agent, history, recursion_limit = lease.execution_input(**grant())
+        if scope.team_definition_hash is not None:
+            if agent is None:
+                raise PermissionError("Detached team definition unavailable")
+            scope.assert_team_root(agent)
+
+            async def resolve_member(member: dict) -> AgentContext:
+                # The generation identifies the private team; the member
+                # definition identifies the provider selection for its loop.
+                resolved = await resolve_context(generation, member)
+                check()
+                if (
+                    member.get("model")
+                    and resolved.profile.model != member["model"]
+                ) or (
+                    resolved.profile.channel or resolved.profile.provider
+                ) != selected_provider({}, member):
+                    raise PermissionError(
+                        "Detached member provider resolution changed"
+                    )
+                return resolved
+
+            result = await run_native_graph(
+                runtime,
+                actor,
+                agent["id"],
+                history,
+                resolve_context=resolve_member,
+                authorize_batch=authorize_batch,
+                allowed_tools=allowed_tools,
+                scopes=set(scope.admission.scopes),
+                expires=scope.admission.grant_expires,
+                task_machine=disclosure_access.get("task_machine"),
+                check_grant=check,
+                recursion_limit=recursion_limit
+                if recursion_limit is not None
+                else 2**31 - 1,
+                stream_tools=stream_tools,
+                stream_text=stream_text,
+                result_only=True,
+                team_scope=scope,
+                team_root=agent,
+            )
+            check()
+            return [*history, *result]
         context = await resolve_context(generation, copy.deepcopy(agent))
         check()
         if (

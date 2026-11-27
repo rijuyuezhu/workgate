@@ -630,3 +630,9 @@ branch, caps scopes and tool selection to admission, and rechecks live
 machine disclosure on every loop boundary. A separate dispatch heartbeat
 owns the wakeup token; permission loss is terminal rather than retryable.
 Human interruptions and full route/attachment projection remain gated.
+
+Detached team workers reuse the existing private StateGraph runtime and
+member-native authority under the detached task token. The original input
+prefix is preserved while only the designated result member is appended to
+the durable task transcript. Team steering remains disabled until a durable
+member recipient election is implemented; ordinary cancellation still works.
