@@ -9,12 +9,13 @@ import copy
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
-from typing import Any
+from typing import Any, Self
 
 from mcp.types import CallToolResult, TextContent
-from pydantic import BaseModel, ConfigDict, TypeAdapter
+from pydantic import BaseModel, ConfigDict, TypeAdapter, model_validator
 
 from ..hosted_chat.durable_tasks import (
+    SESSION_COMMAND_EFFECT_TOOLS,
     SESSION_FILE_EFFECT_TOOLS,
     SESSION_SHELL_EFFECT_TOOLS,
     DurableTaskRepository,
@@ -37,15 +38,28 @@ from ..schemas.input_models.patch import PatchCwdArg, PatchTextArg
 from ..schemas.input_models.shell import (
     EnterArg,
     InputTextArg,
+    PythonCodeArg,
+    ShellAsyncArg,
     ShellColumnsArg,
+    ShellCommandArg,
+    ShellCwdArg,
+    ShellEnvArg,
+    ShellMaxOutputBytesArg,
+    ShellNameArg,
+    ShellPersistOnTimeoutArg,
+    ShellPtyArg,
     ShellRowsArg,
+    ShellTimeoutArg,
+    ToolPurposeArg,
 )
 from ..schemas.result_models.shell import (
     ListPersistentShellsOutput,
     PersistentShellInfo,
     ReadPersistentShellOutput,
     ResizePersistentShellOutput,
+    RunPythonCodeOutput,
     SendPersistentShellInputOutput,
+    ShellExecutionOutput,
 )
 from .hosted_chat_native_creation import (
     NativeCreationUncertain,
@@ -111,6 +125,34 @@ class _ApplyPatch(_SessionEffect):
     cwd: PatchCwdArg = "."
 
 
+class _BoundedCommand(_SessionEffect):
+    cwd: ShellCwdArg = "."
+    timeout_s: ShellTimeoutArg = None
+    max_output_bytes: ShellMaxOutputBytesArg = None
+    env: ShellEnvArg = None
+    async_: ShellAsyncArg = False
+    pty: ShellPtyArg = False
+    name: ShellNameArg = None
+    purpose: ToolPurposeArg = None
+    persist_on_timeout: ShellPersistOnTimeoutArg = False
+
+    @model_validator(mode="after")
+    def bounded_only(self) -> Self:
+        if self.async_ or self.pty or self.persist_on_timeout:
+            raise ValueError(
+                "Tracked or PTY execution requires native reservation"
+            )
+        return self
+
+
+class _BoundedBash(_BoundedCommand):
+    command: ShellCommandArg
+
+
+class _BoundedPython(_BoundedCommand):
+    code: PythonCodeArg
+
+
 _EFFECT_REQUESTS = {
     "send_persistent_shell_input": _ShellSend,
     "resize_persistent_shell": _ShellResize,
@@ -119,6 +161,8 @@ _EFFECT_REQUESTS = {
     "hashline_edit": _HashlineEdit,
     "delete_file_or_dir": _FileDelete,
     "apply_patch": _ApplyPatch,
+    "bash": _BoundedBash,
+    "run_python_code": _BoundedPython,
 }
 
 
@@ -167,7 +211,12 @@ class NativeSessionDispatcher:
         scopes, expires = _grant(runtime, lease.owner, scopes, expires)
         call = copy.deepcopy(call)
         complete_tool_batch([call])
-        if call.name in SESSION_SHELL_EFFECT_TOOLS | SESSION_FILE_EFFECT_TOOLS:
+        if (
+            call.name
+            in SESSION_SHELL_EFFECT_TOOLS
+            | SESSION_FILE_EFFECT_TOOLS
+            | SESSION_COMMAND_EFFECT_TOOLS
+        ):
             return await self._effect(
                 repository,
                 lease,
@@ -352,6 +401,22 @@ class NativeSessionDispatcher:
             ):
                 raise NativeCreationUncertain(
                     "Native Shell resize receipt is mismatched"
+                )
+        elif isinstance(request, _BoundedCommand):
+            response_model = (
+                ShellExecutionOutput
+                if isinstance(request, _BoundedBash)
+                else RunPythonCodeOutput
+            )
+            command_result = response_model.model_validate(
+                result.structured_content
+            )
+            if (
+                command_result.mode != "command"
+                or {"job_id", "shell_id"} & command_result.result.keys()
+            ):
+                raise NativeCreationUncertain(
+                    "Native bounded command returned an unexpected resource"
                 )
         if output is not None:
             projection = output.model_dump(mode="json")
