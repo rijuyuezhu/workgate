@@ -3565,3 +3565,126 @@ async def test_native_catalog_uses_live_machine_scope_and_selected_agent(bound):
             scopes=SCOPES,
             expires=None,
         )
+
+
+@pytest.mark.asyncio
+async def test_model_batch_resolves_only_confirmed_owned_native_targets(
+    bound, tmp_path, monkeypatch
+):
+    from workgate.control.hosted_chat_native_dispatch import (
+        NATIVE_TOOLS,
+        NativeToolDispatcher,
+    )
+
+    harness, repo, lease, _ = bound
+    dispatcher = NativeToolDispatcher(harness.control)
+    executor = harness.executor_id
+
+    async def dispatch(call_id, name, args, *, target=None):
+        result = await dispatcher.dispatch_model_call(
+            repo,
+            lease,
+            ModelToolCall(call_id, name, args),
+            allowed_tools=NATIVE_TOOLS,
+            scopes=SCOPES,
+            expires=None,
+            task_machine=target,
+        )
+        return result["structuredContent"]
+
+    def prepare(*calls):
+        return dispatcher.prepare_model_batch(
+            repo, lease, list(calls), allowed_tools=NATIVE_TOOLS
+        )
+
+    with pytest.raises(PermissionError, match="explicit Executor"):
+        await dispatch("unbound-task", "task", {"action": "create"})
+    task = await dispatch(
+        "model-task", "task", {"action": "create"}, target=executor
+    )
+    task_id = task["task_id"]
+    session = await dispatch(
+        "model-start",
+        "session_start",
+        {"executor_id": executor, "task_id": task_id},
+    )
+    sid = session["session_id"]
+    foreign = await harness.control.session_coordinator.start_session(
+        executor_id=executor
+    )
+    other_sid = foreign["session_id"]
+    path = tmp_path / "model-preflight.txt"
+    write = ModelToolCall(
+        "prepared-write",
+        "write_file",
+        {"session_id": sid, "path": str(path), "content": "prepared"},
+    )
+    with pytest.raises(PermissionError, match="does not belong"):
+        prepare(
+            write,
+            ModelToolCall(
+                "foreign-read",
+                "read",
+                {"session_id": other_sid, "path": str(path)},
+            ),
+        )
+    assert not path.exists()
+    with pytest.raises(ValueError, match="duplicate"):
+        prepare(write, write)
+    [(prepared, target)] = prepare(write)
+    assert target == executor
+    assert prepared.arguments == write.arguments
+    prepared.arguments["content"] = "modified"
+    assert write.arguments["content"] == "prepared"
+    assert not path.exists()
+    assert (await dispatch(write.call_id, write.name, write.arguments))[
+        "created"
+    ] is True
+    assert path.read_text() == "prepared"
+
+    original_lookup = harness.control.session_coordinator.require_session_status
+
+    def no_native_lookup(*args, **kwargs):
+        raise AssertionError(
+            "Foreign Session must be rejected before native lookup"
+        )
+
+    monkeypatch.setattr(
+        harness.control.session_coordinator,
+        "require_session_status",
+        no_native_lookup,
+    )
+    with pytest.raises(PermissionError, match="does not belong"):
+        await dispatch(
+            "foreign-copy",
+            "session_copy",
+            {
+                "src_session_id": sid,
+                "src_path": str(path),
+                "dst_session_id": other_sid,
+                "dst_path": str(path),
+            },
+        )
+    monkeypatch.setattr(
+        harness.control.session_coordinator,
+        "require_session_status",
+        original_lookup,
+    )
+    with pytest.raises(PermissionError, match="does not belong"):
+        await dispatch("foreign-end", "session_end", {"session_id": other_sid})
+    assert (
+        await dispatch(
+            "model-get", "task", {"action": "get", "task_id": task_id}
+        )
+    )["task_id"] == task_id
+    closed = await dispatch("model-end", "session_end", {"session_id": sid})
+    assert closed["ended"]
+    assert (
+        await dispatch("model-end", "session_end", {"session_id": sid})
+        == closed
+    )
+    with pytest.raises(PermissionError, match="does not belong"):
+        await dispatch(
+            "after-end", "read", {"session_id": sid, "path": str(path)}
+        )
+    assert harness.executor.sessions.lookup(other_sid) is not None

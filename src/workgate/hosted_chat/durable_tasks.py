@@ -402,6 +402,34 @@ class DurableTaskRepository:
             )
         return row
 
+    def resolve_session_executor(
+        self,
+        lease: ActorLease,
+        session_id: object,
+        *,
+        closing: bool = False,
+    ) -> str:
+        """Resolve a confirmed owned Session without consulting native inventory."""
+        session_id = TypeAdapter(SessionId).validate_python(
+            session_id, strict=True
+        )
+        states = (
+            ("active", "cancel_pending", "stopped") if closing else ("active",)
+        )
+        with self.database.read_snapshot() as db:
+            run = self._run(db, lease)
+            rows = db.execute(
+                "SELECT DISTINCT machine FROM agent_durable_tasks WHERE owner=? AND conversation_id=? "
+                "AND kind='session' AND native_id=? AND idempotency_key=native_id "
+                f"AND state IN ({','.join('?' for _ in states)})",
+                (lease.owner, run["conversation_id"], session_id, *states),
+            ).fetchall()
+            if len(rows) != 1:
+                raise PermissionError(
+                    "Native Session does not belong to this conversation"
+                )
+            return rows[0]["machine"]
+
     def authorize_session_read(
         self,
         lease: ActorLease,
