@@ -72,6 +72,7 @@ class SubagentInvocation:
     child_configs: tuple[SubagentConfig, ...]
     parent_agent_id: str | None = None
     ordinary_chat: bool = False
+    parent_revision: tuple[str, int] | None = None
 
 
 def chat_subagent_config(owner: str) -> SubagentConfig:
@@ -574,6 +575,7 @@ async def invoke_subagent(
         else (),
         parent_agent_id=parent_agent_id,
         ordinary_chat=config.ordinary_chat,
+        parent_revision=config.parent_revision,
     )
     try:
         result = await execute_child(invocation)

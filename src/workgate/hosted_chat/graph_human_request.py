@@ -35,7 +35,9 @@ class GraphHumanRequest:
         question: bool = False,
     ):
         identity = checkpoint.active["configurable"].get("checkpoint_id")
-        if checkpoint.scope is None or not isinstance(identity, str):
+        if not isinstance(checkpoint.scope, GraphMemberScope) or not isinstance(
+            identity, str
+        ):
             raise ValueError(
                 "Graph human request requires a saved member tool edge"
             )

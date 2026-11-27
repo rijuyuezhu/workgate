@@ -512,6 +512,17 @@ explicit depth and recursion budgets, parent edge identity and final text.
 Workgate additionally fences the saved parent and target revisions, checks
 live inherited grants before admission and before returning results, and
 does not return raw provider exception strings (which may contain secrets).
-Native child checkpoints, per-effect inherited ACL enforcement, artifact
-prompt composition, and detached execution remain separate integration work;
+Per-effect inherited ACL enforcement, artifact prompt composition, and
+detached execution remain separate integration work;
 the callback cannot be reached from a public generation route.
+
+Foreground child checkpoint ownership is a Workgate-native adaptation. The
+parent generation actor admits a child against its exact started tool
+checkpoint and immutable invocation digest. Separate private checkpoint
+namespaces preserve isolated history and deterministic replay across actor
+replacement. Parent and all child target revisions are checked live, nested
+children cannot enlarge inherited scope or depth, and a replacement grant
+cannot extend the original admitted grant. The existing saver and loop
+checkpoint implement the recovery obligation; no second scheduler is
+introduced. Native effect authorization and team runtime execution remain
+gated until their dependent units.

@@ -19,6 +19,7 @@ from .ask_user_tools import (
     build_ask_user_payload,
     resolve_ask_user_question_resume,
 )
+from .checkpoint_types import LoopSnapshot
 from .checkpoints import SQLiteCheckpointSaver
 from .database import SQLiteDatabase
 from .durable_tasks import DurableTaskRepository
@@ -27,7 +28,7 @@ from .generation_protocol import EVENT_LIMIT, MAX_EVENT_BYTES
 from .generations import GenerationStore, _json
 from .graph_human_request import GraphHumanRequest
 from .graph_member_scope import GraphMemberScope
-from .loop_checkpoint import OwnedLoopCheckpoint, _Snapshot
+from .loop_checkpoint import OwnedLoopCheckpoint
 from .provider_common import ModelToolCall
 from .storage import _now
 
@@ -80,7 +81,9 @@ class ApprovalClaimStore:
             or row["metadata"].get("source") != "loop"
         ):
             raise ValueError("Approval checkpoint is missing or stale")
-        snapshot = _Snapshot.model_validate(row["checkpoint"]["channel_values"])
+        snapshot = LoopSnapshot.model_validate(
+            row["checkpoint"]["channel_values"]
+        )
         if not snapshot.tool_step_started or snapshot.completed:
             raise ValueError("Approval requires a started tool edge")
         snapshot.calls()
@@ -90,7 +93,7 @@ class ApprovalClaimStore:
     def _verify_requests(
         edge: dict, payload: dict, *, allow_settled: bool = False
     ) -> None:
-        snapshot = _Snapshot.model_validate(
+        snapshot = LoopSnapshot.model_validate(
             edge["checkpoint"]["channel_values"]
         )
         saved = {call.call_id: call for call in snapshot.calls()}
@@ -124,7 +127,7 @@ class ApprovalClaimStore:
         *,
         allow_settled: bool = False,
     ) -> dict:
-        calls = _Snapshot.model_validate(
+        calls = LoopSnapshot.model_validate(
             edge["checkpoint"]["channel_values"]
         ).calls()
         if (

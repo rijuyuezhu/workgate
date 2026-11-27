@@ -16,12 +16,13 @@ import time
 from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
+from .checkpoint_types import NAMESPACE_KEY as NAMESPACE_KEY
 from .database import SQLiteDatabase
 from .generation_actor_lease import ActorLease, ActorLeaseLost
 from .graph_member_scope import GraphMemberScope
+from .subagent_scope import SubagentScope
 
 OWNER_KEY = "__librechat_checkpoint_owner"
-NAMESPACE_KEY = "__librechat_checkpoint_ns"
 EVENT_ACTOR_KEY = "__librechat_event_actor_invocation_id"
 WRITES_IDX_MAP = {
     "__error__": -1,
@@ -106,7 +107,7 @@ class SQLiteCheckpointSaver:
         hard_limit_bytes: int = CHECKPOINT_HARD_LIMIT_BYTES,
         warn_bytes: int = CHECKPOINT_WARN_BYTES,
         actor_lease: ActorLease | None = None,
-        member_scope: GraphMemberScope | None = None,
+        member_scope: GraphMemberScope | SubagentScope | None = None,
     ):
         if not isinstance(owner, str) or not owner:
             raise ValueError("Checkpoint owner is required")
@@ -199,7 +200,8 @@ class SQLiteCheckpointSaver:
     ) -> None:
         """Fence foreground writes against the owning run and conversation."""
         generation = namespace.split("|", 1)[0]
-        run_id = generation.split(":graph:", 1)[0]
+        child_namespace = ":child:" in generation
+        run_id = generation.split(":graph:", 1)[0].split(":child:", 1)[0]
         row = db.execute(
             "SELECT r.conversation_id,r.status,c.owner FROM runs r "
             "JOIN conversations c ON c.id=r.conversation_id WHERE r.id=?",
@@ -209,10 +211,11 @@ class SQLiteCheckpointSaver:
         if lease is None:
             # Standalone saver namespaces do not have an HTTP generation. A
             # persisted run may not use that path to bypass its actor fence.
-            if row is None:
+            if row is None and not child_namespace:
                 return
             if (
                 cleanup
+                and row is not None
                 and row["owner"] == self.owner
                 and row["conversation_id"] == thread
                 and row["status"]
@@ -231,10 +234,16 @@ class SQLiteCheckpointSaver:
                 "Checkpoint identity does not match generation actor lease"
             )
         lease.assert_current(db)
+        if child_namespace and not isinstance(self.member_scope, SubagentScope):
+            raise ActorLeaseLost(
+                "Child checkpoint requires its admitted delegation scope"
+            )
         if self.member_scope is not None:
             if namespace != self.member_scope.checkpoint_namespace:
                 raise ActorLeaseLost(
-                    "Checkpoint namespace does not match graph member activation"
+                    "Checkpoint namespace does not match scoped activation"
+                    if isinstance(self.member_scope, SubagentScope)
+                    else "Checkpoint namespace does not match graph member activation"
                 )
             self.member_scope.resolve(db, lease)
 
@@ -415,6 +424,11 @@ class SQLiteCheckpointSaver:
         self, db: sqlite3.Connection, config: Mapping
     ) -> dict | None:
         thread, namespace, checkpoint_id = self._identity(config)
+        if (
+            isinstance(self.member_scope, SubagentScope)
+            or ":child:" in namespace.split("|", 1)[0]
+        ):
+            self._assert_write(db, thread, namespace)
         parameters: list[Any] = [self.owner, thread, namespace, time.time()]
         query = "SELECT * FROM agent_checkpoints WHERE owner=? AND thread_id=? AND checkpoint_ns=? "
         query += "AND expires_at>? AND checkpoint IS NOT NULL"
@@ -453,6 +467,11 @@ class SQLiteCheckpointSaver:
         if limit == 0:
             return
         with self.database.read_snapshot() as db:
+            if (
+                isinstance(self.member_scope, SubagentScope)
+                or ":child:" in namespace.split("|", 1)[0]
+            ):
+                self._assert_write(db, thread, namespace)
             rows = db.execute(
                 "SELECT * FROM agent_checkpoints WHERE owner=? AND thread_id=? AND checkpoint_ns=? "
                 "AND expires_at>? AND checkpoint IS NOT NULL ORDER BY checkpoint_id DESC",
