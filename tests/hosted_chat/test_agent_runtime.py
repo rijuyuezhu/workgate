@@ -1,0 +1,901 @@
+"""Model/tools/model topology from agents Graph.ts and shared runtime boundaries."""
+
+import asyncio
+import copy
+import json
+
+import httpx
+import pytest
+
+from workgate.hosted_chat.agent_runtime import (
+    AgentContext,
+    AgentLoopState,
+    AgentSuspended,
+    ToolBatchOutput,
+    run_agent_loop,
+)
+from workgate.hosted_chat.provider_common import ModelToolCall, ProviderConfig
+
+
+def profile(name="root"):
+    return ProviderConfig(
+        "openai", name, "https://model.invalid", "test-secret"
+    )
+
+
+async def forbidden(*args, **kwargs):
+    raise AssertionError("This graph edge must not execute")
+
+
+async def forbidden_stream(*args, **kwargs):
+    await forbidden(*args, **kwargs)
+    yield ""
+
+
+@pytest.mark.asyncio
+async def test_no_tools_routes_directly_to_model_and_end_with_parameters():
+    state = AgentLoopState(
+        AgentContext(
+            profile(),
+            [],
+            {
+                "max_tokens": 999999,
+                "temperature": -10,
+            },
+        ),
+        [{"role": "user", "content": "question"}],
+    )
+    rendered = []
+    saved = []
+
+    async def stream(model, messages, **kwargs):
+        assert model.model == "root" and messages == [
+            {"role": "user", "content": "question"}
+        ]
+        assert kwargs == {"max_tokens": 999999, "temperature": 0.0}
+        yield "Hello"
+        yield ""
+        yield " world"
+
+    async def on_text(text):
+        rendered.append(text)
+
+    async def save(current, calls):
+        saved.append(
+            (
+                current.step,
+                current.model_turn,
+                copy.deepcopy(current.messages),
+                list(calls),
+            )
+        )
+
+    result = await run_agent_loop(
+        state,
+        stream_tools=forbidden_stream,
+        stream_text=stream,
+        dispatch=forbidden,
+        on_text=on_text,
+        save_state=save,
+    )
+    assert result is state.messages
+    assert result[-1] == {"role": "assistant", "content": "Hello world"}
+    assert rendered == ["Hello", " world"]
+    assert saved == [(1, 1, result, [])]
+
+
+@pytest.mark.asyncio
+async def test_more_than_three_tool_rounds_follow_source_model_tools_cycle():
+    tools = [{"type": "function", "function": {"name": "file_read"}}]
+    state = AgentLoopState(
+        AgentContext(
+            profile(), tools, {"max_output_tokens": 32, "temperature": 9}
+        ),
+        [{"role": "user", "content": "read files"}],
+    )
+    dispatches = []
+    rendered = []
+    checkpoints = []
+    turns = 0
+
+    async def stream(model, messages, **kwargs):
+        nonlocal turns
+        turns += 1
+        assert kwargs == {"tools": tools, "max_tokens": 32, "temperature": 2.0}
+        if turns <= 5:
+            if turns > 1:
+                assert messages[-1]["role"] == "tool"
+                assert messages[-1]["content"] == "native result " + str(
+                    turns - 1
+                )
+            yield "before tool " + str(turns)
+            yield ModelToolCall(
+                "call-" + str(turns),
+                "file_read",
+                {"path": "/tmp/" + str(turns)},
+            )
+        else:
+            yield "final answer"
+
+    async def dispatch(calls, current):
+        assert current.messages[-1]["content"] == "before tool " + str(turns)
+        serialized = current.messages[-1]["tool_calls"][0]
+        assert serialized["id"] == calls[0].call_id
+        assert (
+            json.loads(serialized["function"]["arguments"])
+            == calls[0].arguments
+        )
+        dispatches.append((current.step, calls[0].name, calls[0].arguments))
+        return ToolBatchOutput(
+            [
+                {
+                    "role": "tool",
+                    "tool_call_id": calls[0].call_id,
+                    "content": "native result " + str(turns),
+                }
+            ]
+        )
+
+    async def on_text(text):
+        rendered.append(text)
+
+    async def save(current, calls):
+        checkpoints.append(
+            (
+                current.step,
+                current.model_turn,
+                len(calls),
+                copy.deepcopy(current.messages),
+            )
+        )
+
+    await run_agent_loop(
+        state,
+        stream_tools=stream,
+        stream_text=forbidden_stream,
+        dispatch=dispatch,
+        on_text=on_text,
+        save_state=save,
+    )
+    assert state.step == 11 and state.model_turn == 6
+    assert [step for step, _, _ in dispatches] == [2, 4, 6, 8, 10]
+    assert len(state.messages) == 12
+    assert rendered == ["before tool " + str(i) for i in range(1, 6)] + [
+        "final answer"
+    ]
+    assert [pending for _, _, pending, _ in checkpoints] == [1, 1, 0] * 5 + [0]
+
+
+@pytest.mark.asyncio
+async def test_handoff_switches_profile_tools_messages_and_checkpoint_context_before_resuming():
+    root = AgentContext(
+        profile(),
+        [{"name": "transfer_to_writer"}],
+        tool_end=True,
+        agent={"id": "root"},
+    )
+    writer = AgentContext(profile("writer"), [], agent={"id": "writer"})
+    state = AgentLoopState(root, [{"role": "user", "content": "write"}])
+    checkpoints = []
+    replacements = [
+        {"role": "system", "content": "writer instructions"},
+        {"role": "user", "content": "handoff context"},
+    ]
+
+    async def root_stream(model, messages, **kwargs):
+        assert model.model == "root"
+        yield ModelToolCall("handoff-1", "transfer_to_writer", {})
+
+    async def writer_stream(model, messages, **kwargs):
+        assert model.model == "writer"
+        assert messages == replacements + [
+            {
+                "role": "tool",
+                "tool_call_id": "handoff-1",
+                "content": "transferred",
+            }
+        ]
+        yield "written"
+
+    async def dispatch(calls, current):
+        return ToolBatchOutput(
+            [
+                {
+                    "role": "tool",
+                    "tool_call_id": "handoff-1",
+                    "content": "transferred",
+                }
+            ],
+            next_context=writer,
+            replace_messages=copy.deepcopy(replacements),
+        )
+
+    async def save(current, calls):
+        checkpoints.append(
+            (
+                current.context.profile.model,
+                len(calls),
+                copy.deepcopy(current.messages),
+            )
+        )
+
+    async def on_text(text):
+        assert text == "written"
+
+    await run_agent_loop(
+        state,
+        stream_tools=root_stream,
+        stream_text=writer_stream,
+        dispatch=dispatch,
+        on_text=on_text,
+        save_state=save,
+    )
+    assert (
+        state.context is writer and state.messages[-1]["content"] == "written"
+    )
+    assert [name for name, _, _ in checkpoints] == [
+        "root",
+        "root",
+        "writer",
+        "writer",
+    ]
+    assert checkpoints[2][2] == replacements + [
+        {"role": "tool", "tool_call_id": "handoff-1", "content": "transferred"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_tool_end_stops_after_tool_results_without_another_provider_call():
+    state = AgentLoopState(
+        AgentContext(profile(), [{"name": "file_read"}], tool_end=True), []
+    )
+    calls = 0
+
+    async def stream(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        yield ModelToolCall("call", "file_read", {"path": "/tmp/a"})
+
+    async def dispatch(batch, current):
+        return ToolBatchOutput(
+            [{"role": "tool", "tool_call_id": "call", "content": "result"}]
+        )
+
+    result = await run_agent_loop(
+        state,
+        stream_tools=stream,
+        stream_text=forbidden_stream,
+        dispatch=dispatch,
+        on_text=forbidden,
+    )
+    assert calls == 1 and result[-1]["content"] == "result" and state.step == 2
+
+
+@pytest.mark.asyncio
+async def test_human_suspend_propagates_after_proposal_checkpoint_without_finalization():
+    state = AgentLoopState(
+        AgentContext(profile(), [{"name": "ask_user_question"}]), []
+    )
+    saves = []
+
+    async def stream(*args, **kwargs):
+        yield ModelToolCall(
+            "question",
+            "ask_user_question",
+            {"questions": [{"id": "where", "question": "Where?"}]},
+        )
+
+    async def dispatch(calls, current):
+        assert current.step == 2 and calls[0].name == "ask_user_question"
+        raise AgentSuspended("durable question saved")
+
+    async def save(current, calls):
+        saves.append(
+            (
+                current.step,
+                copy.deepcopy(current.messages),
+                [call.call_id for call in calls],
+            )
+        )
+
+    with pytest.raises(AgentSuspended, match="durable question"):
+        await run_agent_loop(
+            state,
+            stream_tools=stream,
+            stream_text=forbidden_stream,
+            dispatch=dispatch,
+            on_text=forbidden,
+            save_state=save,
+        )
+    assert len(saves) == 2 and saves[0][2] == ["question"] and saves[1][0] == 2
+    assert state.messages[-1]["tool_calls"][0]["id"] == "question"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "budget,dispatch_count", [(0, 0), (1, 0), (2, 1), (3, 1), (4, 2)]
+)
+async def test_recursion_budget_counts_model_and_tools_nodes(
+    budget, dispatch_count
+):
+    state = AgentLoopState(
+        AgentContext(profile(), [{"name": "job_get"}], recursion_limit=budget),
+        [],
+    )
+    dispatched = []
+
+    async def stream(*args, **kwargs):
+        yield ModelToolCall(
+            "call-" + str(state.model_turn), "job_get", {"job_id": "job"}
+        )
+
+    async def dispatch(calls, current):
+        dispatched.append(calls[0].call_id)
+        return ToolBatchOutput(
+            [
+                {
+                    "role": "tool",
+                    "tool_call_id": calls[0].call_id,
+                    "content": "result",
+                }
+            ]
+        )
+
+    with pytest.raises(ValueError, match="Recursion limit"):
+        await run_agent_loop(
+            state,
+            stream_tools=stream,
+            stream_text=forbidden_stream,
+            dispatch=dispatch,
+            on_text=forbidden,
+        )
+    assert state.step == budget and len(dispatched) == dispatch_count
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_and_cancellation_propagate_without_fabricating_messages():
+    state = AgentLoopState(AgentContext(profile(), []), [])
+
+    async def failed(*args, **kwargs):
+        raise RuntimeError("provider failed")
+        yield "unreachable"
+
+    with pytest.raises(RuntimeError, match="provider failed"):
+        await run_agent_loop(
+            state,
+            stream_tools=forbidden_stream,
+            stream_text=failed,
+            dispatch=forbidden,
+            on_text=forbidden,
+        )
+    assert state.messages == []
+    ready = asyncio.Event()
+
+    async def blocked(*args, **kwargs):
+        ready.set()
+        await asyncio.Event().wait()
+        yield "unreachable"
+
+    task = asyncio.create_task(
+        run_agent_loop(
+            state,
+            stream_tools=forbidden_stream,
+            stream_text=blocked,
+            dispatch=forbidden,
+            on_text=forbidden,
+        )
+    )
+    await ready.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert state.messages == []
+
+
+@pytest.mark.asyncio
+async def test_disconnect_after_completed_tools_retries_model_without_repeating_tools(
+    monkeypatch,
+):
+    from workgate.hosted_chat import agent_runtime
+
+    monkeypatch.setattr(agent_runtime, "_MODEL_RETRY_DELAYS", (0, 0))
+    state = AgentLoopState(
+        AgentContext(profile(), [{"name": "read_file"}]),
+        [{"role": "user", "content": "read"}],
+    )
+    model_attempts = 0
+    dispatches = 0
+    text = []
+
+    async def stream(*args, **kwargs):
+        nonlocal model_attempts
+        model_attempts += 1
+        if model_attempts == 1:
+            yield ModelToolCall("call-1", "read_file", {"path": "/tmp/test"})
+        elif model_attempts == 2:
+            assert state.messages[-1]["content"] == "file contents"
+            raise httpx.RemoteProtocolError("upstream closed early")
+        else:
+            assert state.messages[-1]["content"] == "file contents"
+            yield "Answer based on file contents"
+
+    async def dispatch(calls, current):
+        nonlocal dispatches
+        dispatches += 1
+        assert [call.call_id for call in calls] == ["call-1"]
+        return ToolBatchOutput(
+            [
+                {
+                    "role": "tool",
+                    "tool_call_id": "call-1",
+                    "content": "file contents",
+                }
+            ]
+        )
+
+    async def on_text(chunk):
+        text.append(chunk)
+
+    await run_agent_loop(
+        state,
+        stream_tools=stream,
+        stream_text=forbidden_stream,
+        dispatch=dispatch,
+        on_text=on_text,
+    )
+    assert model_attempts == 3 and dispatches == 1
+    assert state.model_turn == 2
+    assert text == ["Answer based on file contents"]
+    assert state.messages[-1]["content"] == text[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status,retries", [(429, True), (503, True), (401, False), (400, False)]
+)
+async def test_retry_only_transient_http_statuses(monkeypatch, status, retries):
+    from workgate.hosted_chat import agent_runtime
+
+    monkeypatch.setattr(agent_runtime, "_MODEL_RETRY_DELAYS", (0, 0))
+    state = AgentLoopState(AgentContext(profile(), []), [])
+    attempts = 0
+
+    async def stream(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            request = httpx.Request("POST", "https://example.invalid/chat")
+            response = httpx.Response(status, request=request)
+            raise httpx.HTTPStatusError(
+                "private upstream details", request=request, response=response
+            )
+        yield "ok"
+
+    if retries:
+        await run_agent_loop(
+            state,
+            stream_tools=forbidden_stream,
+            stream_text=stream,
+            dispatch=forbidden,
+            on_text=lambda _: asyncio.sleep(0),
+        )
+        assert state.messages[-1]["content"] == "ok"
+        assert attempts == 2
+    else:
+        with pytest.raises(httpx.HTTPStatusError):
+            await run_agent_loop(
+                state,
+                stream_tools=forbidden_stream,
+                stream_text=stream,
+                dispatch=forbidden,
+                on_text=forbidden,
+            )
+        assert attempts == 1 and state.messages == []
+
+
+@pytest.mark.asyncio
+async def test_disconnect_after_visible_text_never_replays_model_output(
+    monkeypatch,
+):
+    from workgate.hosted_chat import agent_runtime
+
+    monkeypatch.setattr(agent_runtime, "_MODEL_RETRY_DELAYS", (0, 0))
+    state = AgentLoopState(AgentContext(profile(), []), [])
+    chunks = []
+    attempts = 0
+
+    async def stream(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        yield "partial response"
+        raise httpx.RemoteProtocolError("closed after text")
+
+    async def on_text(chunk):
+        chunks.append(chunk)
+
+    with pytest.raises(httpx.RemoteProtocolError):
+        await run_agent_loop(
+            state,
+            stream_tools=forbidden_stream,
+            stream_text=stream,
+            dispatch=forbidden,
+            on_text=on_text,
+        )
+    assert attempts == 1 and chunks == ["partial response"]
+    assert state.messages == []
+
+
+@pytest.mark.asyncio
+async def test_repeated_empty_disconnects_fail_after_bounded_attempts(
+    monkeypatch,
+):
+    from workgate.hosted_chat import agent_runtime
+
+    monkeypatch.setattr(agent_runtime, "_MODEL_RETRY_DELAYS", (0, 0))
+    state = AgentLoopState(AgentContext(profile(), []), [])
+    attempts = 0
+
+    async def stream(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        raise httpx.RemoteProtocolError("closed early")
+        yield "unreachable"
+
+    with pytest.raises(httpx.RemoteProtocolError):
+        await run_agent_loop(
+            state,
+            stream_tools=forbidden_stream,
+            stream_text=stream,
+            dispatch=forbidden,
+            on_text=forbidden,
+        )
+    assert attempts == 3 and state.model_turn == 1 and state.messages == []
+
+
+@pytest.mark.asyncio
+async def test_resuming_started_tool_node_replays_tools_before_model_without_recharging_step():
+    call = ModelToolCall("pending", "file_read", {"path": "/tmp/a"})
+    state = AgentLoopState(
+        AgentContext(profile(), [{"name": "file_read"}], recursion_limit=3),
+        [
+            {
+                "role": "assistant",
+                "content": "before tool",
+                "tool_calls": [{"id": "pending"}],
+            }
+        ],
+        step=2,
+        model_turn=1,
+        pending_calls=[call],
+        tool_step_started=True,
+    )
+    order = []
+    saves = []
+
+    async def dispatch(calls, current):
+        order.append("tools")
+        assert current.step == 2 and current.model_turn == 1 and calls == [call]
+        return ToolBatchOutput(
+            [
+                {
+                    "role": "tool",
+                    "tool_call_id": "pending",
+                    "content": "restored output",
+                }
+            ]
+        )
+
+    async def stream(model, messages, **kwargs):
+        order.append("model")
+        assert messages[-1]["content"] == "restored output"
+        yield "final"
+
+    async def save(current, calls):
+        saves.append(
+            (
+                current.step,
+                current.tool_step_started,
+                [item.call_id for item in current.pending_calls],
+            )
+        )
+
+    async def on_text(text):
+        assert text == "final"
+
+    await run_agent_loop(
+        state,
+        stream_tools=stream,
+        stream_text=forbidden_stream,
+        dispatch=dispatch,
+        on_text=on_text,
+        save_state=save,
+    )
+    assert order == ["tools", "model"]
+    assert saves == [(2, False, []), (3, False, [])]
+    assert state.step == 3 and state.model_turn == 2
+
+
+@pytest.mark.asyncio
+async def test_suspend_then_resume_same_checkpoint_advances_without_another_proposal():
+    state = AgentLoopState(
+        AgentContext(
+            profile(), [{"name": "ask_user_question"}], recursion_limit=3
+        ),
+        [],
+    )
+    provider_calls = 0
+    dispatch_calls = 0
+
+    async def stream(*args, **kwargs):
+        nonlocal provider_calls
+        provider_calls += 1
+        if provider_calls == 1:
+            yield ModelToolCall(
+                "question",
+                "ask_user_question",
+                {"questions": [{"id": "where", "question": "Where?"}]},
+            )
+        else:
+            assert (
+                state.messages[-1]["content"] == '{"answers":{"where":"here"}}'
+            )
+            yield "done"
+
+    async def dispatch(calls, current):
+        nonlocal dispatch_calls
+        dispatch_calls += 1
+        assert current.step == 2 and calls[0].call_id == "question"
+        if dispatch_calls == 1:
+            raise AgentSuspended()
+        return ToolBatchOutput(
+            [
+                {
+                    "role": "tool",
+                    "tool_call_id": "question",
+                    "content": '{"answers":{"where":"here"}}',
+                }
+            ]
+        )
+
+    async def on_text(text):
+        assert text == "done"
+
+    with pytest.raises(AgentSuspended):
+        await run_agent_loop(
+            state,
+            stream_tools=stream,
+            stream_text=forbidden_stream,
+            dispatch=dispatch,
+            on_text=on_text,
+        )
+    assert (
+        state.step == 2
+        and state.tool_step_started
+        and len(state.pending_calls) == 1
+    )
+    await run_agent_loop(
+        state,
+        stream_tools=stream,
+        stream_text=forbidden_stream,
+        dispatch=dispatch,
+        on_text=on_text,
+    )
+    assert provider_calls == 2 and dispatch_calls == 2 and state.step == 3
+    assert not state.pending_calls and not state.tool_step_started
+
+
+@pytest.mark.asyncio
+async def test_reasoning_signature_and_redaction_are_kept_out_of_answer_text():
+    from workgate.hosted_chat.provider_common import ModelThought
+
+    state = AgentLoopState(
+        AgentContext(profile(), [{"name": "file_read"}]),
+        [{"role": "user", "content": "trace"}],
+    )
+
+    async def stream(*args, **kwargs):
+        yield ModelThought("thinking", text="step-one")
+        yield ModelThought("thinking", text=" step-two")
+        yield ModelThought("signature", signature="signed-reasoning")
+        yield ModelThought("redacted_thinking", data="redacted-by-provider")
+        yield ModelThought("thinking", text="separate")
+        yield "final answer"
+        yield ModelToolCall(
+            "read",
+            "file_read",
+            {"path": "test.txt"},
+            {"thoughtSignature": "gemini-sig"},
+        )
+
+    async def dispatch(calls, current):
+        return ToolBatchOutput(
+            [{"role": "tool", "tool_call_id": "read", "content": "done"}],
+            next_context=None,
+        )
+
+    async def stop(*args, **kwargs):
+        yield "completed"
+
+    output = []
+
+    async def on_text(chunk):
+        output.append(chunk)
+
+    calls = 0
+
+    async def model(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            async for part in stream(*args, **kwargs):
+                yield part
+        else:
+            async for part in stop(*args, **kwargs):
+                yield part
+
+    await run_agent_loop(
+        state,
+        stream_tools=model,
+        stream_text=forbidden_stream,
+        dispatch=dispatch,
+        on_text=on_text,
+    )
+    first = state.messages[1]
+    assert first["reasoning"] == [
+        {
+            "type": "thinking",
+            "thinking": "step-one step-two",
+            "signature": "signed-reasoning",
+        },
+        {"type": "redacted_thinking", "data": "redacted-by-provider"},
+        {"type": "thinking", "thinking": "separate"},
+    ]
+    assert (
+        first["tool_calls"][0]["provider_data"]["thoughtSignature"]
+        == "gemini-sig"
+    )
+    assert first["content"] == "final answer"
+    assert output == ["final answer", "completed"]
+    assert state.messages[-1]["content"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_invalid_whole_batch_never_checkpoints_or_dispatches():
+    state = AgentLoopState(
+        AgentContext(
+            profile(), [{"type": "function", "function": {"name": "read"}}]
+        ),
+        [{"role": "user", "content": "question"}],
+    )
+
+    async def stream(*args, **kwargs):
+        yield ModelToolCall("same", "read", {"path": "one"})
+        yield ModelToolCall("same", "read", {"path": "two"})
+
+    with pytest.raises(ValueError, match="duplicate"):
+        await run_agent_loop(
+            state,
+            stream_tools=stream,
+            stream_text=forbidden_stream,
+            dispatch=forbidden,
+            on_text=forbidden,
+            save_state=forbidden,
+        )
+    assert state.pending_calls == []
+    assert state.messages == [{"role": "user", "content": "question"}]
+    state.pending_calls = [
+        ModelToolCall("same", "read", {}),
+        ModelToolCall("same", "read", {}),
+    ]
+    with pytest.raises(ValueError, match="duplicate"):
+        await run_agent_loop(
+            state,
+            stream_tools=forbidden_stream,
+            stream_text=forbidden_stream,
+            dispatch=forbidden,
+            on_text=forbidden,
+            save_state=forbidden,
+        )
+
+
+@pytest.mark.asyncio
+async def test_preflight_replacement_is_validated_before_checkpoint():
+    state = AgentLoopState(AgentContext(profile(), [{"name": "read"}]), [])
+
+    async def stream(*args, **kwargs):
+        yield ModelToolCall("one", "read", {"path": "file"})
+
+    with pytest.raises(ValueError, match="duplicate"):
+        await run_agent_loop(
+            state,
+            stream_tools=stream,
+            stream_text=forbidden_stream,
+            dispatch=forbidden,
+            on_text=forbidden,
+            save_state=forbidden,
+            preflight_calls=lambda calls, _: calls + calls,
+        )
+    assert state.messages == [] and not state.pending_calls
+
+
+@pytest.mark.asyncio
+async def test_no_progress_guard_ignores_provider_correlation_ids():
+    from workgate.hosted_chat.agent_runtime import RuntimeSafetyError
+
+    state = AgentLoopState(AgentContext(profile(), [{"name": "read"}]), [])
+    calls = []
+
+    async def stream(*args, **kwargs):
+        yield ModelToolCall(
+            f"call-{state.model_turn}", "read", {"path": "same-file"}
+        )
+
+    async def dispatch(proposals, _):
+        calls.extend(proposals)
+        return ToolBatchOutput(
+            [
+                {
+                    "role": "tool",
+                    "tool_call_id": proposals[0].call_id,
+                    "content": "unchanged",
+                }
+            ]
+        )
+
+    with pytest.raises(RuntimeSafetyError, match="without making progress"):
+        await run_agent_loop(
+            state,
+            stream_tools=stream,
+            stream_text=forbidden_stream,
+            dispatch=dispatch,
+            on_text=forbidden,
+        )
+    assert [call.call_id for call in calls] == ["call-1", "call-2", "call-3"]
+    assert state.repeated_tool_batches == 2
+
+
+@pytest.mark.asyncio
+async def test_stream_preemption_never_dispatches_uncommitted_tool_proposals():
+    state = AgentLoopState(AgentContext(profile(), [{"name": "read"}]), [])
+    saved = []
+    injected = []
+    rendered = []
+
+    async def stream(*args, **kwargs):
+        if state.model_turn == 1:
+            yield ModelToolCall("preempted", "read", {"path": "ignored"})
+        else:
+            yield "answer after steer"
+
+    async def check_stream():
+        return state.model_turn == 1
+
+    async def inject(current, boundary):
+        injected.append(boundary)
+        if boundary == "preempt":
+            current.messages.append(
+                {"role": "user", "content": "new direction"}
+            )
+            return True
+        return False
+
+    async def save(current, calls):
+        saved.append((copy.deepcopy(current.messages), list(calls)))
+
+    async def render(value):
+        rendered.append(value)
+
+    await run_agent_loop(
+        state,
+        stream_tools=stream,
+        stream_text=forbidden_stream,
+        dispatch=forbidden,
+        on_text=render,
+        save_state=save,
+        on_stream_chunk=check_stream,
+        inject_controls=inject,
+    )
+    assert "preempt" in injected
+    assert all(not pending for _, pending in saved)
+    assert all("tool_calls" not in message for message in state.messages)
+    assert rendered == ["answer after steer"]
