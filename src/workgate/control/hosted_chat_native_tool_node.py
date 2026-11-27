@@ -10,6 +10,7 @@ from ..hosted_chat.agent_runtime import (
     AgentSuspended,
     ToolBatchOutput,
 )
+from ..hosted_chat.agents import AgentRepository
 from ..hosted_chat.approval_claims import ApprovalClaimStore
 from ..hosted_chat.approval_settings import call_decision, effective_mode
 from ..hosted_chat.ask_user_tools import (
@@ -19,6 +20,13 @@ from ..hosted_chat.ask_user_tools import (
     build_ask_user_payload,
 )
 from ..hosted_chat.durable_tasks import DurableTaskRepository
+from ..hosted_chat.graph_runtime import GraphActivation
+from ..hosted_chat.handoff import (
+    build_handoff_command,
+    handoff_edge_for_call,
+    handoff_tools,
+    is_transfer_tool,
+)
 from ..hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
 from ..hosted_chat.loop_receipts import execute_checkpointed_batch
 from ..hosted_chat.machine_permissions import effective_machine_access
@@ -49,6 +57,7 @@ class NativeLoopToolNode:
         expires: int | None,
         task_machine: str | None,
         check_grant: Callable[[], None],
+        activation: GraphActivation | None = None,
     ) -> None:
         self.runtime = runtime
         self.repository = repository
@@ -58,8 +67,10 @@ class NativeLoopToolNode:
         self.expires = expires
         self.task_machine = task_machine
         self._check_grant = check_grant
+        self.activation = activation
         if (
-            repository.scope != checkpoint.scope
+            (activation is not None and activation.scope != checkpoint.scope)
+            or repository.scope != checkpoint.scope
             or repository.database.path != checkpoint.lease.database.path
             or repository.database.root
             != runtime.config.state_dir / "hosted-chat"
@@ -103,6 +114,95 @@ class NativeLoopToolNode:
                 )
             build_ask_user_payload(calls[0].arguments, calls[0].call_id)
 
+    def _handoffs(self) -> tuple[dict, list[dict]]:
+        if self.activation is None:
+            return {}, []
+        self.current_grant()
+        lease = self.checkpoint.lease
+        agents = AgentRepository(lease.database)
+        root = agents.get(lease.owner, self.activation.scope.root_id)
+        if root is None:
+            raise PermissionError("Graph root Agent is no longer owned")
+        tools = handoff_tools(
+            lease.owner,
+            root,
+            agents,
+            source_agent_id=self.activation.scope.member_id,
+        )
+        if tools != self.activation.handoff_tools:
+            raise PermissionError(
+                "Graph handoff definitions changed during activation"
+            )
+        return root, tools
+
+    def _transfer(self, call: ModelToolCall, messages: list[dict]) -> dict:
+        root, tools = self._handoffs()
+        if self.activation is None:
+            raise PermissionError("Handoff requires a graph activation")
+        definition = next(
+            (
+                tool["function"]
+                for tool in tools
+                if tool["function"]["name"] == call.name
+            ),
+            None,
+        )
+        if definition is None:
+            raise PermissionError(
+                "Handoff tool is not declared for this activation"
+            )
+        schema = definition["parameters"]
+        if (
+            set(call.arguments) - set(schema["properties"])
+            or any(
+                key not in call.arguments for key in schema.get("required", [])
+            )
+            or any(
+                not isinstance(value, str) for value in call.arguments.values()
+            )
+        ):
+            raise ValueError("Invalid handoff arguments")
+        lease = self.checkpoint.lease
+        edge = handoff_edge_for_call(
+            lease.owner,
+            root,
+            AgentRepository(lease.database),
+            call.name,
+            source_agent_id=self.activation.scope.member_id,
+        )
+        command = build_handoff_command(
+            edge,
+            self.activation.scope.member_id,
+            self.activation.agent.get("name")
+            or self.activation.scope.member_id,
+            call.name,
+            call.arguments,
+            call.call_id,
+            messages,
+        )
+        if command is None:
+            raise ValueError("Conditional handoff did not select a destination")
+        return command
+
+    def _prepare(self, calls: list[ModelToolCall]) -> list[ModelToolCall]:
+        # Validate every transfer and native target before releasing siblings.
+        for call in calls:
+            if is_transfer_tool(call.name):
+                self._transfer(call, [])
+        self.native.prepare_model_batch(
+            self.repository,
+            self.checkpoint.lease,
+            [
+                call
+                for call in calls
+                if not is_transfer_tool(call.name)
+                and call.name != ASK_USER_QUESTION_TOOL_NAME
+            ],
+            allowed_tools=self.allowed_tools,
+            task_machine=self.task_machine,
+        )
+        return calls
+
     async def refresh_tools(self, state: AgentLoopState) -> None:
         scopes, expires = self.current_grant()
         state.context.tools = await self.native.definitions(
@@ -117,6 +217,7 @@ class NativeLoopToolNode:
         _, agent = self.repository.tool_context(self.checkpoint.lease)
         if self._question_enabled(agent):
             state.context.tools.extend(copy.deepcopy(ASK_USER_TOOLS))
+        state.context.tools.extend(copy.deepcopy(self._handoffs()[1]))
 
     def preflight(
         self, calls: list[ModelToolCall], state: AgentLoopState
@@ -132,14 +233,7 @@ class NativeLoopToolNode:
             if not self._question_enabled(agent):
                 raise PermissionError("Ask User is no longer selected")
             return calls
-        prepared = self.native.prepare_model_batch(
-            self.repository,
-            self.checkpoint.lease,
-            calls,
-            allowed_tools=self.allowed_tools,
-            task_machine=self.task_machine,
-        )
-        return [call for call, _ in prepared]
+        return self._prepare(calls)
 
     def _decision(self, call: ModelToolCall) -> dict:
         lease = self.checkpoint.lease
@@ -253,6 +347,9 @@ class NativeLoopToolNode:
             enabled = _selected_tools(agents, self.allowed_tools)
             if self._question_enabled(agents[-1]):
                 enabled = enabled | {ASK_USER_QUESTION_TOOL_NAME}
+            enabled |= {
+                tool["function"]["name"] for tool in self._handoffs()[1]
+            }
             if any(call.name not in enabled for call in calls):
                 raise PermissionError("Native tool no longer selected")
 
@@ -297,6 +394,10 @@ class NativeLoopToolNode:
                             ),
                         }
                     ]
+                }
+            if is_transfer_tool(prepared.name):
+                return {
+                    "graphCommand": self._transfer(prepared, state.messages)
                 }
             scopes, expires = self.current_grant()
             return await self.native.dispatch_model_call(
@@ -359,17 +460,7 @@ class NativeLoopToolNode:
                 )
             candidates = [*effective.values(), *ask]
             self._validate_question_batch(candidates)
-            self.native.prepare_model_batch(
-                self.repository,
-                self.checkpoint.lease,
-                [
-                    call
-                    for call in candidates
-                    if call.name != ASK_USER_QUESTION_TOOL_NAME
-                ],
-                allowed_tools=self.allowed_tools,
-                task_machine=self.task_machine,
-            )
+            self._prepare(candidates)
             if authorize_effects is not None and candidates:
                 await authorize_effects(copy.deepcopy(candidates), state)
             check()
@@ -399,13 +490,20 @@ class NativeLoopToolNode:
             preflight_unsettled=preflight_unsettled,
             authorize_receipt=self._authorize_receipt,
         )
-        return ToolBatchOutput(
-            [
-                native_tool_history_message(
-                    call.call_id,
-                    output["result"],
-                    state.context.profile.provider,
+        messages = []
+        commands = []
+        for call, output in zip(calls, outputs, strict=True):
+            result = output["result"]
+            if is_transfer_tool(call.name) and "graphCommand" in result:
+                # StateGraph owns transfer acknowledgement projection and
+                # parallel metadata. Do not emit a duplicate ordinary result.
+                commands.append(result["graphCommand"])
+            else:
+                messages.append(
+                    native_tool_history_message(
+                        call.call_id,
+                        result,
+                        state.context.profile.provider,
+                    )
                 )
-                for call, output in zip(calls, outputs, strict=True)
-            ]
-        )
+        return ToolBatchOutput(messages, graph_commands=commands)
