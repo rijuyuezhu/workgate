@@ -304,3 +304,75 @@ def test_replay_cannot_extend_original_grant_or_inherit_unrelated_chat(
             db.execute("SELECT state FROM agent_durable_tasks").fetchone()[0]
             == "reserved"
         )
+
+
+def test_copy_intent_authorizes_both_executors_and_revokes_on_destination_loss(
+    bound,
+):
+    database, generation, lease = bound
+    repo = DurableTaskRepository(database)
+    proposal = task()
+    task_intent = reserve(repo, lease, proposal)
+    assert claim(repo, lease, task_intent, proposal)
+    repo.bind(lease, task_intent, task_intent.key)
+    sessions = []
+    for i, machine in enumerate((MACHINE, OTHER)):
+        proposal = ModelToolCall(
+            f"session-{i}",
+            "session_start",
+            {"executor_id": machine, "task_id": task_intent.key},
+        )
+        intent = reserve(repo, lease, proposal, machine=machine)
+        assert claim(repo, lease, intent, proposal)
+        repo.bind(lease, intent, intent.key)
+        sessions.append(intent.key)
+    copy_call = ModelToolCall(
+        "copy",
+        "session_copy",
+        {
+            "src_session_id": sessions[0],
+            "src_path": "source",
+            "dst_session_id": sessions[1],
+            "dst_path": "dest",
+        },
+    )
+    workspace = WorkspaceRepository(database)
+    policy_key = (
+        "agent.machine_policy.conversation." + generation.conversation_id
+    )
+    workspace.save_setting(
+        "alice", policy_key, {MACHINE: "read", OTHER: "read"}
+    )
+    with pytest.raises(PermissionError, match="read-only"):
+        reserve(repo, lease, copy_call, destination_machine=OTHER)
+    workspace.save_setting(
+        "alice", policy_key, {MACHINE: "read", OTHER: "write"}
+    )
+    with pytest.raises(PermissionError, match="shell:write"):
+        reserve(
+            repo,
+            lease,
+            copy_call,
+            destination_machine=OTHER,
+            scopes={"shell:read"},
+        )
+    intent = reserve(
+        repo,
+        lease,
+        copy_call,
+        destination_machine=OTHER,
+        scopes={"shell:read", "shell:write"},
+    )
+    assert (
+        intent.destination_session_id == sessions[1]
+        and intent.destination_machine == OTHER
+    )
+    assert claim(
+        repo, lease, intent, copy_call, scopes={"shell:read", "shell:write"}
+    )
+    repo.bind(lease, intent, intent.key)
+    workspace.save_setting(
+        "alice", policy_key, {MACHINE: "read", OTHER: "read"}
+    )
+    pending = repo.cancellation_batch((MACHINE, OTHER))
+    assert {row["id"] for row in pending} == {intent.id}

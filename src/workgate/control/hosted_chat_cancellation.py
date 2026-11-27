@@ -7,6 +7,7 @@ from typing import Literal
 from ..audit import audit
 from ..errors import PublicToolValueError
 from ..hosted_chat.durable_tasks import DurableTaskRepository
+from ..jobs.managed import stop_managed_job_without_session_admission
 from ..jobs.state import CONFIRMED_TERMINAL_STATUSES
 from ..oauth.core.context import bind_oauth_claims, reset_oauth_claims
 from ..protocol.executor import (
@@ -19,6 +20,7 @@ from ..schemas.result_models.jobs import ReservedJobAttemptReceipt
 from ..schemas.result_models.shell import KillPersistentShellOutput
 from .execution_context import control_execution_context
 from .runtime import ControlRuntime
+from .session_copy import SESSION_COPY_MANAGED_KIND
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +109,34 @@ async def _stop_shell(
     )
 
 
+async def _stop_copy(row: dict, key: str) -> CleanupOutcome:
+    source = row["native_session_id"]
+    destination = row["destination_session_id"]
+    if not source or not destination:
+        return "pending"
+    # Managed work is owned by Control, even if either Executor is offline.
+    result = await stop_managed_job_without_session_admission(
+        source,
+        key,
+        expected_attempt=1,
+        expected_kind=SESSION_COPY_MANAGED_KIND,
+        expected_payload={
+            "src_session_id": source,
+            "dst_session_id": destination,
+        },
+    )
+    job = result.job
+    if job.job_id != key or job.session_id != source or job.kind != "managed":
+        return "pending"
+    if job.attempts > 1:
+        return "absent"
+    return (
+        "stopped"
+        if job.attempts == 1 and job.status in CONFIRMED_TERMINAL_STATUSES
+        else "pending"
+    )
+
+
 async def _stop(
     runtime: ControlRuntime, repository: DurableTaskRepository, row: dict
 ) -> CleanupOutcome:
@@ -115,6 +145,8 @@ async def _stop(
     key = row["target_job_id"] or row["idempotency_key"]
     if not key or row["native_id"] not in (None, key):
         return "pending"
+    if row["kind"] == "copy":
+        return await _stop_copy(row, key)
     if row["kind"] in {"job", "retry"}:
         return await _stop_job(runtime, row, key)
     if row["kind"] == "shell":

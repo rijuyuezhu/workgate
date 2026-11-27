@@ -1128,3 +1128,298 @@ async def test_explicit_retry_rejection_does_not_block_later_valid_retry(
         harness, repo, lease, ModelToolCall("later", "job", arguments)
     )
     assert result["retried"][0]["attempts"] == 2 and len(started) == 2
+
+
+async def copy_sessions(harness, repo, lease):
+    task_id, source = await native_session(harness, repo, lease)
+    destination = await invoke(
+        harness,
+        repo,
+        lease,
+        ModelToolCall(
+            "copy-destination",
+            "session_start",
+            {
+                "task_id": task_id,
+                "executor_id": harness.executor_id,
+                "workdir": "project",
+            },
+        ),
+    )
+    return source, destination["session_id"]
+
+
+@pytest.mark.asyncio
+async def test_managed_copy_lost_response_recovers_actual_file_and_refuses_duplicate(
+    bound, tmp_path, monkeypatch
+):
+    harness, repo, lease, generation = bound
+    runtime = harness.control
+    source, destination = await copy_sessions(harness, repo, lease)
+    _, actor = await next_generation(repo, lease, generation, "copy file")
+    data = b"native reserved copy" * 1024
+    (tmp_path / "payload.bin").write_bytes(data)
+    await runtime.managed_jobs_runtime.start()
+    original = runtime.session_copy_service.start_background
+    offered = []
+
+    async def lost(**kwargs):
+        result = await original(**kwargs)
+        offered.append(result.job_id)
+        raise TimeoutError("copy response lost")
+
+    monkeypatch.setattr(runtime.session_copy_service, "start_background", lost)
+    args = {
+        "src_session_id": source,
+        "src_path": "payload.bin",
+        "dst_session_id": destination,
+        "dst_path": "result.bin",
+    }
+    call = ModelToolCall("copy", "session_copy", args)
+    try:
+        with pytest.raises(TimeoutError):
+            await invoke(
+                harness, repo, actor, call, scopes={"shell:read", "shell:write"}
+            )
+        row = intent_rows(repo)["copy"]
+        assert row["state"] == "unknown" and row["native_id"] is None
+        result = {}
+        for _ in range(100):
+            result = await invoke(
+                harness, repo, actor, call, scopes={"shell:read", "shell:write"}
+            )
+            if result["status"] in {"succeeded", "failed"}:
+                break
+            await asyncio.sleep(0.02)
+        assert result["status"] == "succeeded", result
+        assert (
+            result["recovered"] is True
+            and result["job_id"] == row["idempotency_key"]
+        )
+        assert (tmp_path / "project" / "result.bin").read_bytes() == data
+        assert offered == [result["job_id"]]
+        with control_execution_context(
+            config=runtime.config,
+            state_store=runtime.state_store,
+            oauth_state=runtime.oauth_state,
+            managed_jobs_runtime=runtime.managed_jobs_runtime,
+        ):
+            with pytest.raises((RuntimeError, ValueError)):
+                await original(**args, reserved_job_id=result["job_id"])
+            receipt = await runtime.job_service.execute(
+                session_id=source, poll=[result["job_id"]]
+            )
+        assert receipt.outputs[0].job.status == "succeeded"
+        assert receipt.outputs[0].job.attempts == 1
+        assert (tmp_path / "project" / "result.bin").read_bytes() == data
+    finally:
+        await runtime.managed_jobs_runtime.aclose()
+
+
+@pytest.mark.asyncio
+async def test_managed_copy_cancels_on_revocation_without_ending_reused_sessions(
+    bound, monkeypatch
+):
+    from workgate.control.session_copy import SESSION_COPY_MANAGED_KIND
+
+    harness, repo, lease, generation = bound
+    runtime = harness.control
+    source, destination = await copy_sessions(harness, repo, lease)
+    _, actor = await next_generation(repo, lease, generation, "copy file")
+    entered = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def wait(_context, _payload):
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    monkeypatch.setitem(
+        runtime.managed_jobs_runtime.handlers, SESSION_COPY_MANAGED_KIND, wait
+    )
+    await runtime.managed_jobs_runtime.start()
+    call = ModelToolCall(
+        "copy",
+        "session_copy",
+        {
+            "src_session_id": source,
+            "src_path": "payload.bin",
+            "dst_session_id": destination,
+            "dst_path": "result.bin",
+        },
+    )
+    try:
+        result = await invoke(
+            harness, repo, actor, call, scopes={"shell:read", "shell:write"}
+        )
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        job_id = result["job_id"]
+        native_lease = runtime.managed_jobs_runtime.leases[job_id]
+        with (
+            control_execution_context(
+                config=runtime.config,
+                state_store=runtime.state_store,
+                oauth_state=runtime.oauth_state,
+                managed_jobs_runtime=runtime.managed_jobs_runtime,
+            ),
+            pytest.raises(RuntimeError),
+        ):
+            await runtime.session_copy_service.start_background(
+                src_session_id=source,
+                src_path="payload.bin",
+                dst_session_id=destination,
+                dst_path="other.bin",
+                reserved_job_id=job_id,
+            )
+        assert runtime.managed_jobs_runtime.leases[job_id] is native_lease
+        assert not cancelled.is_set()
+        WorkspaceRepository(repo.database).save_setting(
+            actor.owner,
+            "agent.machine_policy.conversation." + generation.conversation_id,
+            {harness.executor_id: "read"},
+        )
+        assert await sweep_native_cancellations(runtime, repo) == 1
+        assert cancelled.is_set()
+        assert intent_rows(repo)["copy"]["state"] == "stopped"
+        assert harness.executor.sessions.lookup(source) is not None
+        assert harness.executor.sessions.lookup(destination) is not None
+        assert result["job_id"] == intent_rows(repo)["copy"]["native_id"]
+    finally:
+        await runtime.managed_jobs_runtime.aclose()
+
+
+@pytest.mark.asyncio
+async def test_managed_copy_requires_both_owned_sessions_and_background_mode(
+    bound,
+):
+    harness, repo, lease, _ = bound
+    source, destination = await copy_sessions(harness, repo, lease)
+    args = {
+        "src_session_id": source,
+        "src_path": "payload.bin",
+        "dst_session_id": destination,
+        "dst_path": "result.bin",
+    }
+    foreign = await harness.control.session_coordinator.start_session(
+        executor_id=harness.executor_id
+    )
+    with pytest.raises(PermissionError, match="does not belong"):
+        await invoke(
+            harness,
+            repo,
+            lease,
+            ModelToolCall(
+                "foreign",
+                "session_copy",
+                args | {"dst_session_id": foreign["session_id"]},
+            ),
+        )
+    for extra in (
+        {"background": False},
+        {"background": 1},
+        {"reserved_job_id": "injected"},
+        {"overwrite": "true"},
+    ):
+        with pytest.raises(ValueError):
+            await invoke(
+                harness,
+                repo,
+                lease,
+                ModelToolCall("invalid", "session_copy", args | extra),
+            )
+    assert "foreign" not in intent_rows(repo) and "invalid" not in intent_rows(
+        repo
+    )
+
+
+@pytest.mark.asyncio
+async def test_copy_cleanup_does_not_cancel_newer_native_retry(
+    bound, monkeypatch
+):
+    from workgate.control.session_copy import SESSION_COPY_MANAGED_KIND
+
+    harness, repo, lease, generation = bound
+    runtime = harness.control
+    source, destination = await copy_sessions(harness, repo, lease)
+    run, actor = await next_generation(repo, lease, generation, "copy file")
+    launches = []
+    stopped = []
+
+    async def wait(_context, _payload):
+        index = len(launches) + 1
+        launches.append(index)
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.append(index)
+
+    monkeypatch.setitem(
+        runtime.managed_jobs_runtime.handlers, SESSION_COPY_MANAGED_KIND, wait
+    )
+    await runtime.managed_jobs_runtime.start()
+    call = ModelToolCall(
+        "copy",
+        "session_copy",
+        {
+            "src_session_id": source,
+            "src_path": "payload.bin",
+            "dst_session_id": destination,
+            "dst_path": "result.bin",
+        },
+    )
+    try:
+        result = await invoke(
+            harness, repo, actor, call, scopes={"shell:read", "shell:write"}
+        )
+        jid = result["job_id"]
+        assert repo.owned(
+            actor.owner,
+            generation.conversation_id,
+            "job",
+            jid,
+            machine=harness.executor_id,
+            session_id=source,
+        )
+        with control_execution_context(
+            config=runtime.config,
+            state_store=runtime.state_store,
+            oauth_state=runtime.oauth_state,
+            managed_jobs_runtime=runtime.managed_jobs_runtime,
+        ):
+            for _ in range(10):
+                if launches:
+                    break
+                await asyncio.sleep(0)
+            assert launches == [1]
+            original = await runtime.job_service.execute(
+                session_id=source, cancel=[jid]
+            )
+            assert original.cancelled[0].job.status == "stopped"
+            newer = await runtime.job_service.execute(
+                session_id=source, retry=[jid]
+            )
+            assert newer.retried[0].attempts == 2
+            for _ in range(10):
+                if len(launches) == 2:
+                    break
+                await asyncio.sleep(0)
+        repo.cancel_run(actor.owner, run.run_id)
+        assert await sweep_native_cancellations(runtime, repo) == 1
+        assert intent_rows(repo)["copy"]["state"] == "stopped"
+        assert launches == [1, 2] and stopped == [1]
+        with control_execution_context(
+            config=runtime.config,
+            state_store=runtime.state_store,
+            oauth_state=runtime.oauth_state,
+            managed_jobs_runtime=runtime.managed_jobs_runtime,
+        ):
+            current = await runtime.job_service.execute(
+                session_id=source, poll=[jid]
+            )
+            assert current.outputs[0].job.status == "running"
+            await runtime.job_service.execute(session_id=source, cancel=[jid])
+        assert stopped == [1, 2]
+    finally:
+        await runtime.managed_jobs_runtime.aclose()

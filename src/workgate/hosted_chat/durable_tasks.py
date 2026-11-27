@@ -9,8 +9,9 @@ import hashlib
 import json
 from collections.abc import Collection
 from dataclasses import dataclass
+from typing import Literal, Self
 
-from pydantic import TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
 from ..protocol.executor import (
     ReservedJobStartRequest,
@@ -93,6 +94,36 @@ def reserved_shell_request(
     )
 
 
+class ReservedCopyRequest(BaseModel):
+    """Exact background copy arguments; native Job identity is private."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    src_session_id: SessionId
+    src_path: str = Field(min_length=1)
+    dst_session_id: SessionId
+    dst_path: str = Field(min_length=1)
+    kind: Literal["auto", "file", "dir"] = "auto"
+    overwrite: bool = False
+    chunk_size: int | None = Field(default=None, ge=1)
+    background: bool = True
+
+    @model_validator(mode="after")
+    def require_background(self) -> Self:
+        if not self.background:
+            raise ValueError("Reserved copy requires background mode")
+        return self
+
+
+def _requirements(
+    machine: str, kind: str, destination_machine: str | None
+) -> dict[str, str]:
+    if kind == "copy":
+        if destination_machine is None:
+            raise PermissionError("Missing destination Executor binding")
+        return {machine: "read", destination_machine: "write"}
+    return {machine: "execute" if kind in {"job", "shell", "retry"} else "read"}
+
+
 @dataclass(frozen=True)
 class Intent:
     id: str
@@ -104,6 +135,8 @@ class Intent:
     session_id: str | None
     target_job_id: str | None
     attempt: int | None
+    destination_session_id: str | None
+    destination_machine: str | None
 
 
 class DurableTaskRepository:
@@ -128,6 +161,8 @@ class DurableTaskRepository:
             row["native_session_id"],
             row["target_job_id"],
             row["native_attempt"],
+            row["destination_session_id"],
+            row["destination_machine"],
         )
 
     def _run(self, db, lease: ActorLease):
@@ -159,6 +194,7 @@ class DurableTaskRepository:
         expires: int | None,
         registered: Collection[str],
         authorization_id: str,
+        destination_machine: str | None = None,
     ) -> None:
         agent = None
         if run["agent_id"] is not None:
@@ -171,17 +207,20 @@ class DurableTaskRepository:
             agent = json.loads(row[0])
         # Task is Control-owned metadata, but reserve it only for a selected
         # authorized Executor; no implicit Controller machine target.
-        authorize_machine_action(
-            run["owner"],
-            authorization_id,
-            machine,
-            "execute" if kind in {"job", "shell", "retry"} else "read",
-            agent=agent,
-            scopes=scopes,
-            expires=expires,
-            repo=WorkspaceRepository(self.database),
-            registered=registered,
-        )
+        for target, operation in _requirements(
+            machine, kind, destination_machine
+        ).items():
+            authorize_machine_action(
+                run["owner"],
+                authorization_id,
+                target,
+                operation,
+                agent=agent,
+                scopes=scopes,
+                expires=expires,
+                repo=WorkspaceRepository(self.database),
+                registered=registered,
+            )
         if kind == "task":
             require_machine_scope(scopes, "write", expires=expires)
 
@@ -195,14 +234,14 @@ class DurableTaskRepository:
         machine: str | None = None,
         session_id: str | None = None,
     ) -> bool:
-        if kind in {"job", "shell", "retry"} and session_id is None:
+        if kind in {"job", "shell", "retry", "copy"} and session_id is None:
             return False
         if kind != "task" and machine is None:
             return False
         return (
             db.execute(
                 "SELECT 1 FROM agent_durable_tasks WHERE owner=? AND conversation_id=? "
-                "AND (kind=? OR (?='job' AND kind='retry')) AND native_id=? AND state='active' "
+                "AND (kind=? OR (?='job' AND kind IN ('retry','copy'))) AND native_id=? AND state='active' "
                 "AND (? IS NULL OR machine=?) AND (? IS NULL OR native_session_id=?) LIMIT 1",
                 (
                     owner,
@@ -220,7 +259,13 @@ class DurableTaskRepository:
         )
 
     def _require_parent(
-        self, db, run, kind: str, machine: str, arguments: dict
+        self,
+        db,
+        run,
+        kind: str,
+        machine: str,
+        arguments: dict,
+        destination_machine: str | None = None,
     ) -> None:
         if kind == "session" and not self._owned(
             db,
@@ -243,6 +288,23 @@ class DurableTaskRepository:
             raise PermissionError(
                 "Native Session does not belong to this conversation and Executor"
             )
+
+        if kind == "copy":
+            for sid, executor_id in (
+                (arguments["src_session_id"], machine),
+                (arguments["dst_session_id"], destination_machine),
+            ):
+                if not self._owned(
+                    db,
+                    run["owner"],
+                    run["conversation_id"],
+                    "session",
+                    sid,
+                    executor_id,
+                ):
+                    raise PermissionError(
+                        "Managed copy Session does not belong to this conversation and Executor"
+                    )
 
     @staticmethod
     def _last_owned_attempt(
@@ -270,11 +332,13 @@ class DurableTaskRepository:
         expires: int | None,
         registered: Collection[str],
         authorization_conversation_id: str | None = None,
+        destination_machine: str | None = None,
     ) -> Intent:
         """Reserve one stable identity for the immutable native creation request."""
         complete_tool_batch([call])
         arguments = call.arguments
         session_id = None
+        destination_session_id = None
         target_job_id = None
         attempt = None
         if call.name == "task" and arguments.get("action") == "create":
@@ -298,6 +362,14 @@ class DurableTaskRepository:
             session_id = arguments.get("session_id")
             if kind == "job":
                 attempt = 1
+        elif call.name == "session_copy":
+            kind = "copy"
+            request = ReservedCopyRequest.model_validate(arguments)
+            session_id = request.src_session_id
+            destination_session_id = request.dst_session_id
+            attempt = 1
+            if destination_machine is None:
+                raise PermissionError("Missing destination Executor binding")
         elif call.name == "job":
             kind = "retry"
             session_id = TypeAdapter(SessionId).validate_python(
@@ -315,6 +387,8 @@ class DurableTaskRepository:
             )
         else:
             raise ValueError("Not a supported native creation")
+        if kind != "copy" and destination_machine is not None:
+            raise ValueError("Unexpected destination Executor binding")
         if kind == "shell":
             name = arguments.get("name")
             if name is not None and not isinstance(name, str):
@@ -327,6 +401,7 @@ class DurableTaskRepository:
                 "session": new_session_id,
                 "job": new_reserved_job_id,
                 "retry": new_command_id,
+                "copy": new_reserved_job_id,
             }[kind]()
             if kind == "job":
                 reserved_job_request(call, key)
@@ -356,6 +431,8 @@ class DurableTaskRepository:
                     prior["fingerprint"] != fingerprint
                     or prior["machine"] != machine
                     or prior["native_session_id"] != session_id
+                    or prior["destination_session_id"] != destination_session_id
+                    or prior["destination_machine"] != destination_machine
                     or prior["target_job_id"] != target_job_id
                     or prior["agent_id"] != run["agent_id"]
                     or prior["authorization_conversation_id"]
@@ -376,8 +453,11 @@ class DurableTaskRepository:
                 expires,
                 registered,
                 authorization_id,
+                destination_machine,
             )
-            self._require_parent(db, run, kind, machine, arguments)
+            self._require_parent(
+                db, run, kind, machine, arguments, destination_machine
+            )
             if kind == "retry":
                 assert session_id is not None and target_job_id is not None
                 last_attempt = self._last_owned_attempt(
@@ -398,8 +478,8 @@ class DurableTaskRepository:
             now = _now()
             db.execute(
                 "INSERT INTO agent_durable_tasks(id,owner,conversation_id,authorization_conversation_id,"
-                "run_id,call_id,agent_id,tool,kind,machine,native_session_id,target_job_id,native_attempt,requirements,fingerprint,idempotency_key,key_hash,"
-                "scopes,grant_expires,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "run_id,call_id,agent_id,tool,kind,machine,native_session_id,destination_session_id,destination_machine,target_job_id,native_attempt,requirements,fingerprint,idempotency_key,key_hash,"
+                "scopes,grant_expires,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     identity,
                     lease.owner,
@@ -412,14 +492,12 @@ class DurableTaskRepository:
                     kind,
                     machine,
                     session_id,
+                    destination_session_id,
+                    destination_machine,
                     target_job_id,
                     attempt,
                     json.dumps(
-                        {
-                            machine: "execute"
-                            if kind in {"job", "shell", "retry"}
-                            else "read"
-                        }
+                        _requirements(machine, kind, destination_machine)
                     ),
                     fingerprint,
                     key,
@@ -462,6 +540,8 @@ class DurableTaskRepository:
             or row["tool"] != intent.name
             or row["machine"] != intent.machine
             or row["native_session_id"] != intent.session_id
+            or row["destination_session_id"] != intent.destination_session_id
+            or row["destination_machine"] != intent.destination_machine
             or row["target_job_id"] != intent.target_job_id
             or row["native_attempt"] != intent.attempt
         ):
@@ -493,7 +573,12 @@ class DurableTaskRepository:
                     "A replayed tool call cannot change a durable request"
                 )
             self._require_parent(
-                db, run, row["kind"], row["machine"], call.arguments
+                db,
+                run,
+                row["kind"],
+                row["machine"],
+                call.arguments,
+                row["destination_machine"],
             )
             scopes, expires = self._grant(row, scopes, expires)
             self._authorize(
@@ -505,6 +590,7 @@ class DurableTaskRepository:
                 expires,
                 registered,
                 row["authorization_conversation_id"],
+                row["destination_machine"],
             )
             if row["state"] != "reserved":
                 return False
@@ -656,6 +742,7 @@ class DurableTaskRepository:
                 row["grant_expires"],
                 registered,
                 row["authorization_conversation_id"],
+                row["destination_machine"],
             )
         except PermissionError, KeyError, ValueError:
             return True

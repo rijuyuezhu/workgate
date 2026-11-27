@@ -15,11 +15,13 @@ from ..errors import PublicToolError, PublicToolValueError
 from ..hosted_chat.durable_tasks import (
     DurableTaskRepository,
     Intent,
+    ReservedCopyRequest,
     reserved_job_request,
     reserved_shell_request,
 )
 from ..hosted_chat.generation_actor_lease import ActorLease
 from ..hosted_chat.provider_common import ModelToolCall, complete_tool_batch
+from ..jobs.managed import managed_job_tail_execute
 from ..oauth.core.context import current_oauth_claims
 from ..oauth.core.scopes import scope_set
 from ..protocol.executor import (
@@ -34,6 +36,7 @@ from ..protocol.executor import (
 from ..schemas.result_models.jobs import (
     JobOutput,
     JobRetryOutput,
+    JobStartOutput,
     ReservedJobAttemptReceipt,
 )
 from ..schemas.result_models.session import SessionStartOutput
@@ -43,6 +46,7 @@ from ..schemas.result_models.shell import (
 )
 from .execution_context import control_execution_context
 from .runtime import ControlRuntime
+from .session_copy import SESSION_COPY_MANAGED_KIND
 from .tool_timeouts import tool_timeout_s
 
 
@@ -263,6 +267,65 @@ async def _native_shell_result(
     }
 
 
+async def _native_copy_result(
+    runtime: ControlRuntime,
+    intent: Intent,
+    call: ModelToolCall,
+    *,
+    dispatch: bool,
+) -> tuple[str, dict]:
+    request = ReservedCopyRequest.model_validate(call.arguments)
+    if (
+        intent.session_id != request.src_session_id
+        or intent.destination_session_id != request.dst_session_id
+        or intent.destination_machine is None
+    ):
+        raise PermissionError("Managed copy reservation binding mismatch")
+    if dispatch:
+        result = await runtime.session_copy_service.start_background(
+            **request.model_dump(exclude={"background"}),
+            reserved_job_id=intent.key,
+            expected_executors={
+                request.src_session_id: intent.machine,
+                request.dst_session_id: intent.destination_machine,
+            },
+        )
+    else:
+        try:
+            tail = await managed_job_tail_execute(
+                request.src_session_id,
+                intent.key,
+                expected_kind=SESSION_COPY_MANAGED_KIND,
+                expected_payload={
+                    "src_session_id": request.src_session_id,
+                    "dst_session_id": request.dst_session_id,
+                },
+            )
+        except (
+            PublicToolError,
+            RuntimeError,
+            ValueError,
+            KeyError,
+            TimeoutError,
+        ):
+            raise NativeCreationUncertain(
+                "Managed copy creation is unconfirmed"
+            ) from None
+        result = JobStartOutput(**tail.job.model_dump())
+    if (
+        result.job_id != intent.key
+        or result.session_id != intent.session_id
+        or result.kind != "managed"
+        or result.attempts != 1
+    ):
+        raise NativeCreationUncertain(
+            "Managed copy receipt is mismatched or superseded"
+        )
+    return intent.key, result.model_dump(mode="json") | (
+        {"recovered": True} if not dispatch else {}
+    )
+
+
 async def _native_result(
     runtime: ControlRuntime,
     intent: Intent,
@@ -277,6 +340,10 @@ async def _native_result(
                 runtime, intent, call, dispatch=dispatch
             )
         return await _native_job_result(
+            runtime, intent, call, dispatch=dispatch
+        )
+    if call.name == "session_copy":
+        return await _native_copy_result(
             runtime, intent, call, dispatch=dispatch
         )
     if call.name == "job":
@@ -358,6 +425,20 @@ async def create_native(
         value = call.arguments.get(key)
         if value is not None and not isinstance(value, str):
             raise ValueError("Invalid native creation arguments")
+    destination_machine = None
+    if call.name == "session_copy":
+        request = ReservedCopyRequest.model_validate(call.arguments)
+        source = runtime.session_coordinator.require_session_status(
+            request.src_session_id, {"active"}
+        )
+        destination = runtime.session_coordinator.require_session_status(
+            request.dst_session_id, {"active"}
+        )
+        if str(source.executor_id) != machine:
+            raise PermissionError(
+                "Managed copy source Executor binding mismatch"
+            )
+        destination_machine = str(destination.executor_id)
     intent = repository.reserve(
         lease,
         call,
@@ -365,6 +446,7 @@ async def create_native(
         scopes=scopes,
         expires=expires,
         registered=_registered(runtime),
+        destination_machine=destination_machine,
     )
     with control_execution_context(
         config=runtime.config,
@@ -416,6 +498,7 @@ async def create_native(
                 scopes=scopes,
                 expires=expires,
                 registered=_registered(runtime),
+                destination_machine=destination_machine,
             )
         except BaseException as exc:
             audit_tool_call_end(
