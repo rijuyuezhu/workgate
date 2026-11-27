@@ -20,8 +20,10 @@ from ..config.role_config import (
 )
 from ..errors import public_error_type
 from ..persistence import StateStore, use_state_store
+from ..protocol.executor import ReservedJobAttemptRequest
 from ..protocol.ids import ReservedJobId
 from ..schemas.result_models.jobs import (
+    JobInfo,
     JobListOutput,
     JobRetryOutput,
     JobStartOutput,
@@ -52,10 +54,12 @@ from .state import (
     ACTIVE_STATUSES,
     CONFIRMED_TERMINAL_STATUSES,
     JobAttemptPaths,
+    JobAttemptState,
     JobIdentityInUseError,
     JobRow,
     JobStore,
     MutableJobRow,
+    job_attempt_state,
 )
 from .state import (
     begin_job_operation as _begin_job_operation,
@@ -763,11 +767,28 @@ def _require_managed_binding(
             )
 
 
+def lookup_managed_job_attempt(
+    session_id: str,
+    request: ReservedJobAttemptRequest,
+    *,
+    expected_kind: str,
+    expected_payload: Mapping[str, Any],
+) -> tuple[JobAttemptState, JobInfo | None]:
+    """Read the exact private attempt, never another attempt's output."""
+    with _store_transaction() as store:
+        job = _find_session_job(store, session_id, request.job_id)
+        _require_managed_binding(job, expected_kind, expected_payload)
+        job = _refresh_job_status(job, set())
+        state = job_attempt_state(job, request.attempt, request.retry_key)
+        return state, _public_job(job) if state == "matching" else None
+
+
 async def _stop_managed_job_without_session_admission(
     session_id: str,
     job_id: str,
     *,
     expected_attempt: int | None = None,
+    expected_retry_key: str | None = None,
     expected_kind: str | None = None,
     expected_payload: Mapping[str, Any] | None = None,
 ) -> JobStopOutput:
@@ -779,10 +800,10 @@ async def _stop_managed_job_without_session_admission(
             if expected_kind is not None or expected_payload is not None:
                 _require_managed_binding(job, expected_kind, expected_payload)
             job = _refresh_job_status(job, set())
-            if expected_attempt is not None and (
-                int(job.get("attempts") or 1) != expected_attempt
-                or int(job.get("pending_attempt") or expected_attempt)
-                != expected_attempt
+            if (
+                expected_attempt is not None
+                and job_attempt_state(job, expected_attempt, expected_retry_key)
+                != "matching"
             ):
                 return JobStopOutput(
                     job=_public_job(job), killed=False, stderr=""
@@ -818,6 +839,7 @@ async def stop_managed_job_without_session_admission(
     job_id: str,
     *,
     expected_attempt: int | None = None,
+    expected_retry_key: str | None = None,
     expected_kind: str | None = None,
     expected_payload: Mapping[str, Any] | None = None,
 ) -> JobStopOutput:
@@ -826,6 +848,7 @@ async def stop_managed_job_without_session_admission(
         session_id,
         job_id,
         expected_attempt=expected_attempt,
+        expected_retry_key=expected_retry_key,
         expected_kind=expected_kind,
         expected_payload=expected_payload,
     )
@@ -875,20 +898,46 @@ async def job_stop_managed_references_execute(
     return stopped
 
 
-async def _retry_managed_job(session_id: str, job_id: str) -> JobRetryOutput:
+class ReservedManagedJobRetryRejected(RuntimeError):
+    """Exact managed retry was refused before publishing a new attempt."""
+
+
+async def _retry_managed_job(
+    session_id: str,
+    job_id: str,
+    *,
+    reservation: ReservedJobAttemptRequest | None = None,
+    expected_kind: str | None = None,
+    expected_payload: Mapping[str, Any] | None = None,
+) -> JobRetryOutput:
     """Relaunch one terminal managed operation from its durable handler payload."""
     runtime = managed_jobs_runtime()
     runtime.require_admission()
     operation_id = ""
     paths: JobAttemptPaths | None = None
     attempts = 0
+    lease_acquired = False
+    launched = False
+    admission_error = (
+        ReservedManagedJobRetryRejected
+        if reservation is not None
+        else RuntimeError
+    )
     try:
         with _store_transaction() as store:
-            job = _refresh_job_status(
-                _find_session_job(store, session_id, job_id), set()
-            )
+            job = _find_session_job(store, session_id, job_id)
+            _require_managed_binding(job, expected_kind, expected_payload)
+            job = _refresh_job_status(job, set())
             if job.get("status") in ACTIVE_STATUSES:
-                raise RuntimeError(f"job is still active: {job_id}")
+                raise admission_error(f"job is still active: {job_id}")
+            if reservation is not None and (
+                reservation.job_id != job_id
+                or reservation.retry_key is None
+                or reservation.attempt != int(job.get("attempts") or 1) + 1
+            ):
+                raise ReservedManagedJobRetryRejected(
+                    "Native managed Job attempt changed before retry"
+                )
             kind = str(job.get("managed_kind") or "")
             if kind not in runtime.handlers:
                 raise RuntimeError(
@@ -899,14 +948,18 @@ async def _retry_managed_job(session_id: str, job_id: str) -> JobRetryOutput:
             )
             attempts = int(job.get("attempts") or 1) + 1
         runtime.acquire_lease(job_id)
-        paths = _attempt_paths(job_id, attempts)
-        write_private_text(paths["log"], "")
+        lease_acquired = True
         with _store_transaction() as store:
-            job = _refresh_job_status(
-                _find_session_job(store, session_id, job_id), set()
-            )
-            if job.get("status") in ACTIVE_STATUSES:
-                raise RuntimeError(f"job became active during retry: {job_id}")
+            job = _find_session_job(store, session_id, job_id)
+            _require_managed_binding(job, expected_kind, expected_payload)
+            job = _refresh_job_status(job, set())
+            if (
+                job.get("status") in ACTIVE_STATUSES
+                or int(job.get("attempts") or 1) + 1 != attempts
+            ):
+                raise admission_error(f"job changed during retry: {job_id}")
+            paths = _attempt_paths(job_id, attempts)
+            write_private_text(paths["log"], "")
             job.update(
                 {
                     "status": "retrying",
@@ -924,6 +977,11 @@ async def _retry_managed_job(session_id: str, job_id: str) -> JobRetryOutput:
                     "managed_lease_version": MANAGED_JOB_LEASE_VERSION,
                 }
             )
+            if reservation is None:
+                job.pop("retry_key", None)
+            else:
+                assert reservation.retry_key is not None
+                job["retry_key"] = reservation.retry_key
             operation_id = _begin_job_operation(job, "retry")
         _launch_managed_job(
             runtime,
@@ -933,6 +991,7 @@ async def _retry_managed_job(session_id: str, job_id: str) -> JobRetryOutput:
             payload,
             str(paths["log"]),
         )
+        launched = True
         with _store_transaction() as store:
             current = _find_session_job(store, session_id, job_id)
             if current.get("status") == "retrying" and _job_operation_matches(
@@ -960,12 +1019,14 @@ async def _retry_managed_job(session_id: str, job_id: str) -> JobRetryOutput:
         )
         return JobRetryOutput(**public.model_dump())
     except BaseException as exc:
-        task = runtime.tasks.get(job_id)
-        if task is not None and not task.done():
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-        runtime.release_lease(job_id)
+        if launched:
+            task = runtime.tasks.get(job_id)
+            if task is not None and not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+        if lease_acquired:
+            runtime.release_lease(job_id)
         _remove_attempt_paths(paths)
         if operation_id:
             with contextlib.suppress(Exception), _store_transaction() as store:
@@ -991,10 +1052,21 @@ async def _retry_managed_job(session_id: str, job_id: str) -> JobRetryOutput:
 
 
 async def retry_managed_job_without_session_admission(
-    session_id: str, job_id: str
+    session_id: str,
+    job_id: str,
+    *,
+    reservation: ReservedJobAttemptRequest | None = None,
+    expected_kind: str | None = None,
+    expected_payload: Mapping[str, Any] | None = None,
 ) -> JobRetryOutput:
     """Retry managed work after an external session authority admitted it."""
-    return await _retry_managed_job(session_id, job_id)
+    return await _retry_managed_job(
+        session_id,
+        job_id,
+        reservation=reservation,
+        expected_kind=expected_kind,
+        expected_payload=expected_payload,
+    )
 
 
 async def managed_job_list_execute(

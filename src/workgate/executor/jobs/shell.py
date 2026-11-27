@@ -30,6 +30,7 @@ from ...jobs.state import (
     JobRow,
     JobStatusPayload,
     MutableJobRow,
+    job_attempt_state,
 )
 from ...jobs.state import (
     begin_job_operation as _begin_job_operation,
@@ -888,23 +889,12 @@ async def lookup_job_attempt_unlocked(
         if str(job.get("kind") or "shell") != "shell":
             raise ValueError("Reserved attempt requires a shell-backed Job")
         job = _refresh_job_status(job, active)
-        current = int(job.get("attempts") or 1)
-        pending = int(job.get("pending_attempt") or current)
         receipt: dict[str, Any] = request.model_dump() | {
             "session_id": session_id
         }
-        # A new retry is admitted only after the previous attempt is absent.
-        if max(current, pending) > request.attempt or (
-            max(current, pending) == request.attempt
-            and job.get("retry_key") != request.retry_key
-        ):
-            return ReservedJobAttemptReceipt(**receipt, state="superseded")
-        if (
-            current != request.attempt
-            or pending != current
-            or job.get("retry_key") != request.retry_key
-        ):
-            return ReservedJobAttemptReceipt(**receipt, state="unknown")
+        state = job_attempt_state(job, request.attempt, request.retry_key)
+        if state != "matching":
+            return ReservedJobAttemptReceipt(**receipt, state=state)
         return ReservedJobAttemptReceipt(
             **receipt, state="matching", job=_public_job(job)
         )

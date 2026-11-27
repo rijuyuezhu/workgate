@@ -371,8 +371,25 @@ def test_copy_intent_authorizes_both_executors_and_revokes_on_destination_loss(
         repo, lease, intent, copy_call, scopes={"shell:read", "shell:write"}
     )
     repo.bind(lease, intent, intent.key)
+    retry_call = ModelToolCall(
+        "retry-copy", "job", {"session_id": sessions[0], "retry": [intent.key]}
+    )
+    retry = reserve(
+        repo, lease, retry_call, scopes={"shell:read", "shell:write"}
+    )
+    assert retry.attempt == 2
+    assert (
+        retry.destination_session_id == sessions[1]
+        and retry.destination_machine == OTHER
+    )
+    assert claim(
+        repo, lease, retry, retry_call, scopes={"shell:read", "shell:write"}
+    )
+    repo.bind(lease, retry, intent.key)
     workspace.save_setting(
         "alice", policy_key, {MACHINE: "read", OTHER: "read"}
     )
+    with pytest.raises(PermissionError, match="read-only"):
+        reserve(repo, lease, retry_call, scopes={"shell:read", "shell:write"})
     pending = repo.cancellation_batch((MACHINE, OTHER))
-    assert {row["id"] for row in pending} == {intent.id}
+    assert {row["id"] for row in pending} == {intent.id, retry.id}

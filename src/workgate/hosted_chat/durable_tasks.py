@@ -117,7 +117,7 @@ class ReservedCopyRequest(BaseModel):
 def _requirements(
     machine: str, kind: str, destination_machine: str | None
 ) -> dict[str, str]:
-    if kind == "copy":
+    if kind == "copy" or (kind == "retry" and destination_machine is not None):
         if destination_machine is None:
             raise PermissionError("Missing destination Executor binding")
         return {machine: "read", destination_machine: "write"}
@@ -266,6 +266,7 @@ class DurableTaskRepository:
         machine: str,
         arguments: dict,
         destination_machine: str | None = None,
+        destination_session_id: str | None = None,
     ) -> None:
         if kind == "session" and not self._owned(
             db,
@@ -277,50 +278,54 @@ class DurableTaskRepository:
             raise PermissionError(
                 "Native Task does not belong to this conversation"
             )
-        if kind in {"job", "shell", "retry"} and not self._owned(
-            db,
-            run["owner"],
-            run["conversation_id"],
-            "session",
-            arguments["session_id"],
-            machine,
-        ):
-            raise PermissionError(
-                "Native Session does not belong to this conversation and Executor"
+        if kind in {"job", "shell", "retry", "copy"}:
+            source = (
+                arguments["src_session_id"]
+                if kind == "copy"
+                else arguments["session_id"]
             )
-
-        if kind == "copy":
-            for sid, executor_id in (
-                (arguments["src_session_id"], machine),
-                (arguments["dst_session_id"], destination_machine),
+            if not self._owned(
+                db,
+                run["owner"],
+                run["conversation_id"],
+                "session",
+                source,
+                machine,
             ):
-                if not self._owned(
-                    db,
-                    run["owner"],
-                    run["conversation_id"],
-                    "session",
-                    sid,
-                    executor_id,
-                ):
-                    raise PermissionError(
-                        "Managed copy Session does not belong to this conversation and Executor"
-                    )
+                raise PermissionError(
+                    "Native Session does not belong to this conversation and Executor"
+                )
+        if kind == "copy" or (
+            kind == "retry" and destination_machine is not None
+        ):
+            if destination_session_id is None or destination_machine is None:
+                raise PermissionError("Missing destination Session binding")
+            if not self._owned(
+                db,
+                run["owner"],
+                run["conversation_id"],
+                "session",
+                destination_session_id,
+                destination_machine,
+            ):
+                raise PermissionError(
+                    "Managed copy Session does not belong to this conversation and Executor"
+                )
 
     @staticmethod
-    def _last_owned_attempt(
-        db, run, machine: str, session_id: str, job_id: str
-    ) -> int:
+    def _last_owned_job(db, run, machine: str, session_id: str, job_id: str):
         row = db.execute(
-            "SELECT MAX(native_attempt) FROM agent_durable_tasks "
+            "SELECT native_attempt,destination_session_id,destination_machine FROM agent_durable_tasks "
             "WHERE owner=? AND conversation_id=? AND machine=? AND native_session_id=? "
-            "AND native_id=? AND kind IN ('job','retry') AND state IN ('active','stopped')",
+            "AND native_id=? AND kind IN ('job','retry','copy') AND state IN ('active','stopped') "
+            "ORDER BY native_attempt DESC LIMIT 1",
             (run["owner"], run["conversation_id"], machine, session_id, job_id),
         ).fetchone()
         if row is None or row[0] is None:
             raise PermissionError(
                 "Native Job does not belong to this conversation"
             )
-        return int(row[0])
+        return row
 
     def reserve(
         self,
@@ -426,6 +431,15 @@ class DurableTaskRepository:
             prior = db.execute(
                 "SELECT * FROM agent_durable_tasks WHERE id=?", (identity,)
             ).fetchone()
+            last_attempt = None
+            if kind == "retry":
+                assert session_id is not None and target_job_id is not None
+                owned = self._last_owned_job(
+                    db, run, machine, session_id, target_job_id
+                )
+                last_attempt = int(owned["native_attempt"])
+                destination_session_id = owned["destination_session_id"]
+                destination_machine = owned["destination_machine"]
             if prior is not None:
                 if (
                     prior["fingerprint"] != fingerprint
@@ -456,13 +470,16 @@ class DurableTaskRepository:
                 destination_machine,
             )
             self._require_parent(
-                db, run, kind, machine, arguments, destination_machine
+                db,
+                run,
+                kind,
+                machine,
+                arguments,
+                destination_machine,
+                destination_session_id,
             )
             if kind == "retry":
-                assert session_id is not None and target_job_id is not None
-                last_attempt = self._last_owned_attempt(
-                    db, run, machine, session_id, target_job_id
-                )
+                assert last_attempt is not None
                 if prior is None:
                     if db.execute(
                         "SELECT 1 FROM agent_durable_tasks WHERE machine=? AND native_session_id=? "
@@ -579,6 +596,7 @@ class DurableTaskRepository:
                 row["machine"],
                 call.arguments,
                 row["destination_machine"],
+                row["destination_session_id"],
             )
             scopes, expires = self._grant(row, scopes, expires)
             self._authorize(
@@ -594,14 +612,17 @@ class DurableTaskRepository:
             )
             if row["state"] != "reserved":
                 return False
-            if row["kind"] == "retry" and row[
-                "native_attempt"
-            ] != 1 + self._last_owned_attempt(
-                db,
-                run,
-                row["machine"],
-                row["native_session_id"],
-                row["target_job_id"],
+            if (
+                row["kind"] == "retry"
+                and row["native_attempt"]
+                != 1
+                + self._last_owned_job(
+                    db,
+                    run,
+                    row["machine"],
+                    row["native_session_id"],
+                    row["target_job_id"],
+                )["native_attempt"]
             ):
                 raise PermissionError("Native retry reservation is stale")
             db.execute(
