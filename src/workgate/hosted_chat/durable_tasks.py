@@ -361,6 +361,41 @@ class DurableTaskRepository:
             )
         return row
 
+    def authorize_session_read(
+        self,
+        lease: ActorLease,
+        session_id: str,
+        *,
+        machine: str,
+        scopes: set[str],
+        expires: int | None,
+        registered: Collection[str],
+    ) -> None:
+        """Require a live generation and its confirmed native Session."""
+        with self.database.read_snapshot() as db:
+            run = self._run(db, lease)
+            if not self._owned(
+                db,
+                lease.owner,
+                run["conversation_id"],
+                "session",
+                session_id,
+                machine,
+            ):
+                raise PermissionError(
+                    "Native Session does not belong to this conversation and Executor"
+                )
+            self._authorize(
+                db,
+                run,
+                machine,
+                "session_read",
+                scopes,
+                expires,
+                registered,
+                run["conversation_id"],
+            )
+
     def poll_attempts(
         self,
         lease: ActorLease,
