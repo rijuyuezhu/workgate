@@ -45,6 +45,28 @@ def _fingerprint(name: str, arguments: dict) -> str:
     ).hexdigest()
 
 
+_RETRY_REFUSED = "Native retry admission refused"
+
+
+def _retry_targets(call: ModelToolCall) -> list[str]:
+    arguments = call.arguments
+    requested = arguments.get("retry")
+    if (
+        arguments.keys() - {"session_id", "retry"}
+        or not isinstance(requested, list)
+        or not requested
+        or len(requested) > 64
+    ):
+        raise ValueError("Durable Job retry requires 1 to 64 Jobs")
+    validator = TypeAdapter(ReservedJobId)
+    targets = [
+        validator.validate_python(item, strict=True) for item in requested
+    ]
+    if len(set(targets)) != len(targets):
+        raise ValueError("Duplicate durable Job retry target")
+    return targets
+
+
 def reserved_job_request(
     call: ModelToolCall, key: str
 ) -> ReservedJobStartRequest:
@@ -341,10 +363,88 @@ class DurableTaskRepository:
     ) -> Intent:
         """Reserve one stable identity for the immutable native creation request."""
         complete_tool_batch([call])
+        if call.name == "job" and len(_retry_targets(call)) != 1:
+            raise ValueError("Use batch reservation for multiple Jobs")
+        return self.reserve_all(
+            lease,
+            call,
+            machine=machine,
+            scopes=scopes,
+            expires=expires,
+            registered=registered,
+            authorization_conversation_id=authorization_conversation_id,
+            destination_machine=destination_machine,
+        )[0]
+
+    def reserve_all(
+        self,
+        lease: ActorLease,
+        call: ModelToolCall,
+        *,
+        machine: str,
+        scopes: set[str],
+        expires: int | None,
+        registered: Collection[str],
+        authorization_conversation_id: str | None = None,
+        destination_machine: str | None = None,
+    ) -> list[Intent]:
+        """Reserve the complete call atomically, one intent per retry target."""
+        complete_tool_batch([call])
+        targets = _retry_targets(call) if call.name == "job" else [None]
+        fingerprint = _fingerprint(call.name, call.arguments)
+        with self.database.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            run = self._run(db, lease)
+            prior_rows = db.execute(
+                "SELECT fingerprint FROM agent_durable_tasks WHERE owner=? AND run_id=? AND call_id=?",
+                (lease.owner, lease.run_id, call.call_id),
+            ).fetchall()
+            if prior_rows and (
+                len(prior_rows) != len(targets)
+                or any(row["fingerprint"] != fingerprint for row in prior_rows)
+            ):
+                raise PermissionError(
+                    "A replayed tool call cannot change a durable request"
+                )
+            return [
+                self._reserve_one(
+                    db,
+                    run,
+                    lease,
+                    call,
+                    machine=machine,
+                    scopes=scopes,
+                    expires=expires,
+                    registered=registered,
+                    authorization_conversation_id=authorization_conversation_id,
+                    destination_machine=destination_machine,
+                    target_job_id=target,
+                    batch=len(targets) > 1,
+                    fingerprint=fingerprint,
+                )
+                for target in targets
+            ]
+
+    def _reserve_one(
+        self,
+        db,
+        run,
+        lease: ActorLease,
+        call: ModelToolCall,
+        *,
+        machine: str,
+        scopes: set[str],
+        expires: int | None,
+        registered: Collection[str],
+        authorization_conversation_id: str | None,
+        destination_machine: str | None,
+        target_job_id: str | None,
+        batch: bool,
+        fingerprint: str,
+    ) -> Intent:
         arguments = call.arguments
         session_id = None
         destination_session_id = None
-        target_job_id = None
         attempt = None
         if call.name == "task" and arguments.get("action") == "create":
             kind = "task"
@@ -380,16 +480,7 @@ class DurableTaskRepository:
             session_id = TypeAdapter(SessionId).validate_python(
                 arguments.get("session_id"), strict=True
             )
-            requested = arguments.get("retry")
-            if (
-                arguments.keys() - {"session_id", "retry"}
-                or not isinstance(requested, list)
-                or len(requested) != 1
-            ):
-                raise ValueError("Durable Job retry requires exactly one Job")
-            target_job_id = TypeAdapter(ReservedJobId).validate_python(
-                requested[0], strict=True
-            )
+            assert target_job_id is not None
         else:
             raise ValueError("Not a supported native creation")
         if kind != "copy" and destination_machine is not None:
@@ -416,121 +507,124 @@ class DurableTaskRepository:
                 "owner": lease.owner,
                 "run": lease.run_id,
                 "call": call.call_id,
+                **({"target": target_job_id} if batch else {}),
             },
         )
-        fingerprint = _fingerprint(call.name, arguments)
-        with self.database.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            run = self._run(db, lease)
-            conversation_id = run["conversation_id"]
-            authorization_id = authorization_conversation_id or conversation_id
-            if authorization_id != conversation_id:
+        conversation_id = run["conversation_id"]
+        authorization_id = authorization_conversation_id or conversation_id
+        if authorization_id != conversation_id:
+            raise PermissionError(
+                "Inherited authorization requires a verified child lineage"
+            )
+        prior = db.execute(
+            "SELECT * FROM agent_durable_tasks WHERE id=?", (identity,)
+        ).fetchone()
+        last_attempt = None
+        if kind == "retry":
+            assert session_id is not None and target_job_id is not None
+            owned = self._last_owned_job(
+                db, run, machine, session_id, target_job_id
+            )
+            last_attempt = int(owned["native_attempt"])
+            destination_session_id = owned["destination_session_id"]
+            destination_machine = owned["destination_machine"]
+        if prior is not None:
+            if (
+                prior["fingerprint"] != fingerprint
+                or prior["machine"] != machine
+                or prior["native_session_id"] != session_id
+                or prior["destination_session_id"] != destination_session_id
+                or prior["destination_machine"] != destination_machine
+                or prior["target_job_id"] != target_job_id
+                or prior["agent_id"] != run["agent_id"]
+                or prior["authorization_conversation_id"] != authorization_id
+            ):
                 raise PermissionError(
-                    "Inherited authorization requires a verified child lineage"
+                    "A replayed tool call cannot change a durable request"
                 )
-            prior = db.execute(
+            rejected = (
+                batch
+                and prior["state"] == "stopped"
+                and prior["native_id"] is None
+                and prior["last_error"] == _RETRY_REFUSED
+            )
+            if (
+                prior["state"] not in {"reserved", "unknown", "active"}
+                and not rejected
+            ):
+                raise PermissionError("Durable task request was cancelled")
+            scopes, expires = self._grant(prior, scopes, expires)
+        self._authorize(
+            db,
+            run,
+            machine,
+            kind,
+            scopes,
+            expires,
+            registered,
+            authorization_id,
+            destination_machine,
+        )
+        self._require_parent(
+            db,
+            run,
+            kind,
+            machine,
+            arguments,
+            destination_machine,
+            destination_session_id,
+        )
+        if kind == "retry":
+            assert last_attempt is not None
+            if prior is None:
+                if db.execute(
+                    "SELECT 1 FROM agent_durable_tasks WHERE machine=? AND native_session_id=? "
+                    "AND target_job_id=? AND state IN ('reserved','unknown','cancel_pending') LIMIT 1",
+                    (machine, session_id, target_job_id),
+                ).fetchone():
+                    raise PermissionError(
+                        "Previous native Job retry is unresolved"
+                    )
+                attempt = last_attempt + 1
+        if prior is not None:
+            return self._intent(prior)
+        now = _now()
+        db.execute(
+            "INSERT INTO agent_durable_tasks(id,owner,conversation_id,authorization_conversation_id,"
+            "run_id,call_id,agent_id,tool,kind,machine,native_session_id,destination_session_id,destination_machine,target_job_id,native_attempt,requirements,fingerprint,idempotency_key,key_hash,"
+            "scopes,grant_expires,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                identity,
+                lease.owner,
+                conversation_id,
+                authorization_id,
+                lease.run_id,
+                call.call_id,
+                run["agent_id"],
+                call.name,
+                kind,
+                machine,
+                session_id,
+                destination_session_id,
+                destination_machine,
+                target_job_id,
+                attempt,
+                json.dumps(_requirements(machine, kind, destination_machine)),
+                fingerprint,
+                key,
+                hashlib.sha256(key.encode()).hexdigest(),
+                json.dumps(sorted(scopes)),
+                expires,
+                "reserved",
+                now,
+                now,
+            ),
+        )
+        return self._intent(
+            db.execute(
                 "SELECT * FROM agent_durable_tasks WHERE id=?", (identity,)
             ).fetchone()
-            last_attempt = None
-            if kind == "retry":
-                assert session_id is not None and target_job_id is not None
-                owned = self._last_owned_job(
-                    db, run, machine, session_id, target_job_id
-                )
-                last_attempt = int(owned["native_attempt"])
-                destination_session_id = owned["destination_session_id"]
-                destination_machine = owned["destination_machine"]
-            if prior is not None:
-                if (
-                    prior["fingerprint"] != fingerprint
-                    or prior["machine"] != machine
-                    or prior["native_session_id"] != session_id
-                    or prior["destination_session_id"] != destination_session_id
-                    or prior["destination_machine"] != destination_machine
-                    or prior["target_job_id"] != target_job_id
-                    or prior["agent_id"] != run["agent_id"]
-                    or prior["authorization_conversation_id"]
-                    != authorization_id
-                ):
-                    raise PermissionError(
-                        "A replayed tool call cannot change a durable request"
-                    )
-                if prior["state"] not in {"reserved", "unknown", "active"}:
-                    raise PermissionError("Durable task request was cancelled")
-                scopes, expires = self._grant(prior, scopes, expires)
-            self._authorize(
-                db,
-                run,
-                machine,
-                kind,
-                scopes,
-                expires,
-                registered,
-                authorization_id,
-                destination_machine,
-            )
-            self._require_parent(
-                db,
-                run,
-                kind,
-                machine,
-                arguments,
-                destination_machine,
-                destination_session_id,
-            )
-            if kind == "retry":
-                assert last_attempt is not None
-                if prior is None:
-                    if db.execute(
-                        "SELECT 1 FROM agent_durable_tasks WHERE machine=? AND native_session_id=? "
-                        "AND target_job_id=? AND state IN ('reserved','unknown','cancel_pending') LIMIT 1",
-                        (machine, session_id, target_job_id),
-                    ).fetchone():
-                        raise PermissionError(
-                            "Previous native Job retry is unresolved"
-                        )
-                    attempt = last_attempt + 1
-            if prior is not None:
-                return self._intent(prior)
-            now = _now()
-            db.execute(
-                "INSERT INTO agent_durable_tasks(id,owner,conversation_id,authorization_conversation_id,"
-                "run_id,call_id,agent_id,tool,kind,machine,native_session_id,destination_session_id,destination_machine,target_job_id,native_attempt,requirements,fingerprint,idempotency_key,key_hash,"
-                "scopes,grant_expires,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    identity,
-                    lease.owner,
-                    conversation_id,
-                    authorization_id,
-                    lease.run_id,
-                    call.call_id,
-                    run["agent_id"],
-                    call.name,
-                    kind,
-                    machine,
-                    session_id,
-                    destination_session_id,
-                    destination_machine,
-                    target_job_id,
-                    attempt,
-                    json.dumps(
-                        _requirements(machine, kind, destination_machine)
-                    ),
-                    fingerprint,
-                    key,
-                    hashlib.sha256(key.encode()).hexdigest(),
-                    json.dumps(sorted(scopes)),
-                    expires,
-                    "reserved",
-                    now,
-                    now,
-                ),
-            )
-            return self._intent(
-                db.execute(
-                    "SELECT * FROM agent_durable_tasks WHERE id=?", (identity,)
-                ).fetchone()
-            )
+        )
 
     @staticmethod
     def _grant(
@@ -649,8 +743,8 @@ class DurableTaskRepository:
                 )
             db.execute(
                 "UPDATE agent_durable_tasks SET state='stopped',updated_at=?,next_attempt_at=NULL,"
-                "last_error='Native retry admission refused' WHERE id=?",
-                (_now(), intent.id),
+                "last_error=? WHERE id=?",
+                (_now(), _RETRY_REFUSED, intent.id),
             )
 
     def bind(self, lease: ActorLease, intent: Intent, native_id: str) -> Intent:
