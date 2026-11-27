@@ -419,3 +419,11 @@ also preserve the topology's validated handoffScope and rebind explicit
 self destinations/member/entry/result references on duplication so a copied
 cyclic or self-entry graph remains a graph of the copy. Stored JSON does not
 introduce executable conditional callbacks. Graph execution remains private.
+
+Graph handoff contracts adapt pinned `webui/handoff.py` (blob
+`b44dd394fe70472b89ca74d60786269603e8673f`) and its original SDK differential
+oracle. Shared handoff budget and identity-union checks, turn/conversation
+scope, transfer commands, parallel Send aggregation and recipient context
+projection match the source. Destination ownership is checked on definition
+and invocation; saved JSON authoring never creates executable condition
+resolvers. StateGraph execution and checkpoint integration remain separate.
