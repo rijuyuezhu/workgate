@@ -54,7 +54,13 @@ class AgentRepository:
     def _validate_graph(db, owner: str, agent_id: str, config: dict) -> None:
         graph = {**config, "id": agent_id}
         members = graph_members(graph)
-        for ident in members:
+        references = set(members)
+        subagents = config.get("subagents", {})
+        if subagents.get("enabled") is True:
+            references.update(subagents.get("agent_ids", []))
+            for team in subagents.get("graphs", []):
+                references.update(team["agent_ids"])
+        for ident in sorted(references):
             if ident == agent_id:
                 continue
             row = db.execute(
@@ -214,6 +220,7 @@ class AgentRepository:
             "entryAgentId",
             "resultAgentId",
             "maxHandoffs",
+            "subagents",
         }:
             self._validate_graph(db, owner, agent_id, config)
         version = int(config.get("_version", 1)) + 1
