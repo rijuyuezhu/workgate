@@ -210,7 +210,10 @@ disclosed. Session workdir changes retain native read scope and exact binding;
 explicit Session close requires the live execute grant and positive native
 absence, never force release. Cancellation latches related owned child
 intents for exact reconciliation, without manufacturing individual stop
-receipts or closing the attached Task. General native tool dispatch and
+receipts or closing the attached Task. Task finish and cancel preserve native
+plan guards and independent Session lifecycle. Only an explicit matching
+deletion receipt retires Task ownership; uncertain deletion is not replayed.
+General native tool dispatch and
 runtime wiring follow.
 
 

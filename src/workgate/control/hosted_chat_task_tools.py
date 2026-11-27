@@ -21,7 +21,7 @@ from ..schemas.input_models.task import (
     TaskObjectiveArg,
 )
 from ..schemas.input_models.todo import TodosArg
-from ..schemas.result_models.task import TaskOutput
+from ..schemas.result_models.task import TaskDeleteOutput, TaskOutput
 from ..schemas.result_models.todo import ReadTodosOutput
 from .hosted_chat_native_creation import NativeCreationUncertain, _grant
 from .hosted_chat_session_tools import _await_authorized
@@ -36,7 +36,9 @@ class _TaskRequest(BaseModel):
 
 
 class _TaskMetadata(_TaskRequest):
-    action: Literal["get", "report", "block", "resume"]
+    action: Literal[
+        "get", "report", "block", "resume", "finish", "cancel", "delete"
+    ]
     label: TaskLabelArg = None
     objective: TaskObjectiveArg = None
     summary: ProgressSummaryArg = None
@@ -107,10 +109,16 @@ class NativeTaskDispatcher:
         mutation = call.name != "read_todos" and not (
             isinstance(request, _TaskMetadata) and request.action == "get"
         )
+        deleting = (
+            isinstance(request, _TaskMetadata) and request.action == "delete"
+        )
         owned_sessions: frozenset[str] = frozenset()
 
         def authorize() -> None:
             nonlocal owned_sessions
+            if deleting:
+                check_effect()
+                return
             owned_sessions = repository.authorize_task_metadata(
                 lease,
                 request.task_id,
@@ -134,7 +142,22 @@ class NativeTaskDispatcher:
             )
 
         def project(content: dict) -> dict:
-            if call.name in {"task", "task_plan"}:
+            if deleting:
+                body = content.get("result", content)
+                if (
+                    not isinstance(body, dict)
+                    or body.get("deleted") is not True
+                ):
+                    raise NativeCreationUncertain(
+                        "Native Task deletion is unconfirmed"
+                    )
+                deleted = TaskDeleteOutput.model_validate(body)
+                if deleted.task_id != request.task_id:
+                    raise NativeCreationUncertain(
+                        "Native Task deletion receipt is mismatched"
+                    )
+                data = deleted.model_dump(mode="json")
+            elif call.name in {"task", "task_plan"}:
                 output = TaskOutput.model_validate(
                     content.get("result", content)
                     if call.name == "task"
@@ -144,6 +167,19 @@ class NativeTaskDispatcher:
                     raise NativeCreationUncertain(
                         "Native Task receipt is mismatched"
                     )
+                if isinstance(request, _TaskMetadata) and request.action in {
+                    "finish",
+                    "cancel",
+                }:
+                    expected = (
+                        "completed"
+                        if request.action == "finish"
+                        else "cancelled"
+                    )
+                    if output.status != expected:
+                        raise NativeCreationUncertain(
+                            "Native Task terminal receipt is mismatched"
+                        )
                 output.session_ids = [
                     item
                     for item in output.session_ids

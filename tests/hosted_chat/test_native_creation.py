@@ -2962,7 +2962,7 @@ async def test_owned_task_metadata_and_plan(bound):
             scopes={"shell:read"},
         )
     with pytest.raises(ValueError):
-        await task("forbidden-action", "delete")
+        await task("forbidden-action", "create")
     first = await task("report-once", "report", summary="first")
     await task("report-later", "report", summary="second")
     assert await task("report-once", "report", summary="first") == first
@@ -3150,4 +3150,148 @@ async def test_owned_native_session_lifecycle_recovers_close(
             ModelToolCall(
                 close.call_id, close.name, {"session_id": foreign["session_id"]}
             )
+        )
+
+
+@pytest.mark.asyncio
+async def test_owned_task_terminal_transitions_and_confirmed_deletion(bound):
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from workgate.control.hosted_chat_task_tools import NativeTaskDispatcher
+    from workgate.protocol.ids import new_task_id
+
+    harness, repo, lease, _ = bound
+    task_id, sid = await native_session(harness, repo, lease)
+    dispatcher = NativeTaskDispatcher(harness.control)
+
+    async def dispatch(call, scopes=SCOPES):
+        return await dispatcher.dispatch(
+            repo,
+            lease,
+            call,
+            scopes=scopes,
+            expires=None,
+        )
+
+    def task(call_id, action, **fields):
+        return ModelToolCall(
+            call_id,
+            "task",
+            {
+                "action": action,
+                "task_id": task_id,
+                **fields,
+            },
+        )
+
+    async def operation(call_id, action, **fields):
+        return (await dispatch(task(call_id, action, **fields)))[
+            "structuredContent"
+        ]
+
+    with pytest.raises(PermissionError, match="does not belong"):
+        await dispatch(task("foreign-delete", "delete", task_id=new_task_id()))
+    with pytest.raises((ToolError, NativeCreationUncertain)):
+        await operation("delete-active", "delete")
+    steps = [{"id": "one", "content": "Finish work", "status": "pending"}]
+    await dispatch(
+        ModelToolCall(
+            "unfinished", "task_plan", {"task_id": task_id, "steps": steps}
+        )
+    )
+    with pytest.raises((ToolError, NativeCreationUncertain)):
+        await operation("finish-unfinished", "finish")
+    await dispatch(
+        ModelToolCall(
+            "finished",
+            "task_plan",
+            {"task_id": task_id, "steps": [steps[0] | {"status": "completed"}]},
+        )
+    )
+    finished = await operation("finish-owned", "finish")
+    assert finished["status"] == "completed"
+    assert harness.executor.sessions.lookup(sid) is not None
+    assert (await operation("resume-completed", "resume"))["status"] == "active"
+    assert await operation("finish-owned", "finish") == finished
+    assert (await operation("get-resumed", "get"))["status"] == "active"
+    assert (await operation("cancel-owned", "cancel"))["status"] == "cancelled"
+    assert harness.executor.sessions.lookup(sid) is not None
+    delete = task("delete-terminal", "delete")
+    result = await dispatch(delete)
+    assert result["structuredContent"] == {"task_id": task_id, "deleted": True}
+    assert intent_rows(repo)["native-task"]["state"] == "stopped"
+    assert (
+        harness.control.control_state.snapshot_sessions()[sid].task_id is None
+    )
+    assert harness.executor.sessions.lookup(sid) is not None
+    assert await dispatch(delete) == result
+    with pytest.raises(PermissionError, match="shell:write"):
+        await dispatch(delete, {"shell:read"})
+    with pytest.raises(PermissionError, match="does not belong"):
+        await operation("get-deleted", "get")
+    with pytest.raises(PermissionError, match="does not belong"):
+        await invoke(
+            harness,
+            repo,
+            lease,
+            ModelToolCall(
+                "new-session-deleted-task",
+                "session_start",
+                {"executor_id": harness.executor_id, "task_id": task_id},
+            ),
+        )
+    with pytest.raises(PermissionError, match="cannot change"):
+        await dispatch(task(delete.call_id, "delete", task_id=new_task_id()))
+
+
+@pytest.mark.asyncio
+async def test_owned_task_delete_lost_response_is_not_reoffered(
+    bound, monkeypatch
+):
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from workgate.control.hosted_chat_task_tools import NativeTaskDispatcher
+
+    harness, repo, lease, _ = bound
+    task = await invoke(
+        harness,
+        repo,
+        lease,
+        ModelToolCall("task-to-remove", "task", {"action": "create"}),
+    )
+    task_id = task["task_id"]
+    dispatcher = NativeTaskDispatcher(harness.control)
+    service = harness.control.task_service
+    await service.finish_task(task_id)
+    original = service.delete_task
+    called = []
+
+    async def lost_response(identity):
+        called.append(identity)
+        await original(identity)
+        raise TimeoutError("lost native Task deletion response")
+
+    monkeypatch.setattr(service, "delete_task", lost_response)
+    call = ModelToolCall(
+        "lost-delete", "task", {"action": "delete", "task_id": task_id}
+    )
+
+    async def dispatch():
+        return await dispatcher.dispatch(
+            repo, lease, call, scopes=SCOPES, expires=None
+        )
+
+    with pytest.raises((ToolError, NativeCreationUncertain)):
+        await dispatch()
+    with pytest.raises(NativeCreationUncertain, match="do not resend"):
+        await dispatch()
+    assert called == [task_id]
+    assert intent_rows(repo)["task-to-remove"]["state"] == "active"
+    with repo.database.connect() as db:
+        assert (
+            db.execute(
+                "SELECT receipt FROM agent_native_effect_calls WHERE call_id=?",
+                (call.call_id,),
+            ).fetchone()[0]
+            is None
         )
