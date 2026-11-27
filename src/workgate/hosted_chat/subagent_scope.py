@@ -4,8 +4,6 @@ No separate scheduler: the parent generation actor owns foreground child
 checkpoints. Detached children require a separate durable lease.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import sqlite3
