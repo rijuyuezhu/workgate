@@ -623,3 +623,10 @@ run and one-shot claim across at most eight attempts; fenced exhaustion
 interrupts the run and restores manual result availability. Terminal
 reconciliation and owner-scoped dead letters/requeue do not execute work.
 A requeue allocates a new request identity and still requires live authority.
+
+The authenticated completion worker reuses the foreground native loop and
+its public-delta/checkpoint recovery. It resolves the exact persisted text
+branch, caps scopes and tool selection to admission, and rechecks live
+machine disclosure on every loop boundary. A separate dispatch heartbeat
+owns the wakeup token; permission loss is terminal rather than retryable.
+Human interruptions and full route/attachment projection remain gated.

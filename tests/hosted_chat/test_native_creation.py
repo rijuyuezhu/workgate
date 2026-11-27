@@ -6901,3 +6901,219 @@ async def test_detached_native_worker_recovery_and_cancellation(
         ]
         assert len(events) == 1 and events[0]["final"]
     assert not await execute()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["complete", "recover", "revoke"])
+async def test_authenticated_wakeup_reuses_foreground_loop(
+    bound, monkeypatch, outcome
+):
+    import asyncio
+
+    from workgate.control import hosted_chat_wakeup_worker as worker
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.hosted_chat.agent_runtime import AgentContext, AgentLoopState
+    from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.detached_subagents import reserve_detached_child
+    from workgate.hosted_chat.detached_task_lease import DetachedTaskLease
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+    from workgate.hosted_chat.storage import WorkspaceRepository
+    from workgate.hosted_chat.subagents import (
+        build_subagent_configs,
+        invoke_subagent,
+    )
+
+    harness, original, lease, _ = bound
+    db = original.database
+    agents = AgentRepository(db)
+    child = agents.create(lease.owner, {"provider": "openai", "model": "child"})
+    parent = agents.create(
+        lease.owner,
+        {
+            "provider": "openai",
+            "model": "parent",
+            "subagents": {
+                "enabled": True,
+                "allowSelf": False,
+                "agent_ids": [child["id"]],
+            },
+        },
+    )
+    store = GenerationStore(db)
+    generation, _ = store.begin(
+        lease.owner, {"text": "parent question", "agent_id": parent["id"]}
+    )
+    actor = ActorLease.claim(db, lease.owner, generation.run_id)
+    assert actor is not None
+    checkpoint = OwnedLoopCheckpoint(actor)
+    node = NativeLoopToolNode(
+        harness.control,
+        original,
+        checkpoint,
+        allowed_tools={"task"},
+        scopes=set(SCOPES),
+        expires=None,
+        task_machine=harness.executor_id,
+        check_grant=lambda: None,
+    )
+    access = node._receipt_access()
+    access["allowed_tools"] = ["task"]
+    call = ModelToolCall(
+        "detached",
+        "subagent",
+        {
+            "subagent_type": child["id"],
+            "description": "child task",
+            "run_in_background": True,
+        },
+    )
+    ctx = AgentContext(
+        ProviderConfig("openai", "parent", "https://example.invalid", "fake"),
+        [],
+        agent=parent,
+    )
+    await checkpoint.save(
+        AgentLoopState(
+            ctx,
+            [{"role": "user", "content": "parent question"}],
+            pending_calls=[call],
+            tool_step_started=True,
+        ),
+        [call],
+    )
+    reserved = []
+
+    async def reserve(value):
+        item = reserve_detached_child(
+            checkpoint, call, value, disclosure_access=access
+        )
+        reserved.append((item, value))
+        return item.task_id
+
+    async def not_foreground(_value):
+        pytest.fail("unexpected foreground delegation")
+
+    task_id = await invoke_subagent(
+        call,
+        build_subagent_configs(lease.owner, parent, db),
+        execute_child=not_foreground,
+        execute_background=reserve,
+        current_grant=lambda: (set(SCOPES), None),
+        owner=lease.owner,
+        conversation_id=generation.conversation_id,
+        parent_run_id=actor.run_id,
+        database=db,
+        parent_agent_id=parent["id"],
+    )
+    item, value = reserved[0]
+    assert item.task_id == task_id
+    child_lease = DetachedTaskLease.claim(
+        db,
+        lease.owner,
+        generation.conversation_id,
+        task_id,
+        scopes=set(SCOPES),
+        expires=None,
+        disclosure_access=access,
+    )
+    assert child_lease is not None
+    child_lease.materialize(
+        scopes=set(SCOPES), expires=None, disclosure_access=access
+    )
+    child_lease.complete(
+        value.messages
+        + [{"role": "assistant", "content": "private final answer"}],
+        scopes=set(SCOPES),
+        expires=None,
+        disclosure_access=access,
+    )
+    store.finish(
+        lease.owner,
+        actor.run_id,
+        status="complete",
+        text="parent reply",
+        actor_lease=actor,
+    )
+    actor.release()
+    paused = asyncio.Event()
+    resume = asyncio.Event()
+    waiting = outcome != "complete"
+    authorized = []
+
+    async def resolve(wakeup):
+        assert wakeup.agent_id == parent["id"]
+        return ctx
+
+    async def stream(profile, messages, *, tools, **kwargs):
+        assert profile.model == "parent"
+        assert messages[0]["content"] == "parent question"
+        assert messages[1]["content"] == "parent reply"
+        assert "private final answer" in messages[2]["content"]
+        assert {tool["function"]["name"] for tool in tools} == {"task"}
+        if not any(m["role"] == "tool" for m in messages):
+            yield ModelToolCall("native-task", "task", {"action": "create"})
+        else:
+            if waiting:
+                paused.set()
+                await resume.wait()
+            yield "continued answer"
+
+    async def authorize(calls, _state):
+        authorized.extend(call.call_id for call in calls)
+
+    async def execute():
+        return await worker.run_authenticated_wakeup(
+            harness.control,
+            db,
+            lease.owner,
+            task_id,
+            scopes=set(SCOPES),
+            expires=None,
+            disclosure_access=access,
+            allowed_tools={"task", "bash"},
+            check_grant=lambda: None,
+            resolve_context=resolve,
+            authorize_batch=authorize,
+            stream_tools=stream,
+        )
+
+    if outcome == "complete":
+        assert await execute()
+    else:
+        monkeypatch.setattr(worker, "_RENEW_SECONDS", 0.01)
+        running = asyncio.create_task(execute())
+        await asyncio.wait_for(paused.wait(), timeout=5)
+        if outcome == "recover":
+            running.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await running
+            waiting = False
+            assert await execute()
+        else:
+            WorkspaceRepository(db).save_setting(
+                lease.owner,
+                "agent.machine_policy.conversation."
+                + generation.conversation_id,
+                {harness.executor_id: "none"},
+            )
+            resume.set()
+            assert not await asyncio.wait_for(running, timeout=5)
+    assert len(await harness.control.task_service.list_tasks()) == 1
+    assert authorized == ["native-task"]
+    with db.read_snapshot() as conn:
+        row = conn.execute(
+            "SELECT w.status,w.run_id,t.result_claimed FROM subagent_wakeups w JOIN subagent_tasks t ON t.id=w.task_id WHERE w.task_id=?",
+            (task_id,),
+        ).fetchone()
+        if outcome == "revoke":
+            assert row["status"] == "dead" and row["result_claimed"] == 0
+        else:
+            assert row["status"] == "done" and row["result_claimed"] == 1
+            assert store.get(lease.owner, row["run_id"]) is not None
+            reply = conn.execute(
+                "SELECT text FROM messages WHERE conversation_id=? AND role='assistant' ORDER BY created_at DESC LIMIT 1",
+                (generation.conversation_id,),
+            ).fetchone()
+            assert reply["text"] == "continued answer"
+            assert not await execute()
