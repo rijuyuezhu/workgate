@@ -271,17 +271,11 @@ class GraphTopology:
         }
 
 
-def admit_agent_graph(
-    owner: str, agent: dict | None, repository: Any
-) -> GraphTopology | None:
-    """Validate all owned members before allowing a StateGraph execution."""
-    if not agent:
-        return None
+def graph_members(agent: dict) -> list[str]:
+    """Validate the stored membership shape before querying any principal."""
     edges = agent.get("edges", [])
     if not isinstance(edges, list):
         raise ValueError("Graph edges must be an array")
-    if not edges:
-        return None
     members = agent.get("graphAgentIds", [])
     if members is None:
         members = []
@@ -304,16 +298,34 @@ def admit_agent_graph(
                     "Graph edge endpoints must be non-empty Agent identifiers"
                 )
             identities.extend(values)
-    identities = list(dict.fromkeys(identities))
+    return list(dict.fromkeys(identities))
+
+
+def build_graph_topology(agent: dict, identities: list[str]) -> GraphTopology:
+    return GraphTopology(
+        identities,
+        agent.get("edges", []),
+        entry_agent_id=agent.get("entryAgentId"),
+        result_agent_id=agent.get("resultAgentId"),
+        max_handoffs=agent.get("maxHandoffs"),
+    )
+
+
+def admit_agent_graph(
+    owner: str, agent: dict | None, repository: Any
+) -> GraphTopology | None:
+    """Validate all owned members before allowing a StateGraph execution."""
+    if not agent:
+        return None
+    edges = agent.get("edges", [])
+    if not isinstance(edges, list):
+        raise ValueError("Graph edges must be an array")
+    if not edges:
+        return None
+    identities = graph_members(agent)
     for ident in identities:
         if repository.get(owner, ident) is None:
             raise PermissionError(
                 "Agent graph member is not owned by the current principal"
             )
-    return GraphTopology(
-        identities,
-        edges,
-        entry_agent_id=agent.get("entryAgentId"),
-        result_agent_id=agent.get("resultAgentId"),
-        max_handoffs=agent.get("maxHandoffs"),
-    )
+    return build_graph_topology(agent, identities)

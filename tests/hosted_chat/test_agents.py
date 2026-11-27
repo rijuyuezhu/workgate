@@ -270,3 +270,123 @@ def test_pinned_authoring_oracle(fixture):
             assert actual == {"ok": False}
         else:
             assert actual == expected, case
+
+
+def test_saved_graph_authoring_rebinds_self_and_preserves_revisions(tmp_path):
+    from workgate.hosted_chat.graph_topology import admit_agent_graph
+
+    repo = AgentRepository(SQLiteDatabase(tmp_path))
+    child = repo.create("alice", {"provider": "openai", "model": "child"})
+    parent = repo.create(
+        "alice",
+        {
+            "provider": "openai",
+            "model": "parent",
+            "edges": [
+                {
+                    "from": "",
+                    "to": child["id"],
+                    "handoffScope": "conversation",
+                    "untrusted": "drop",
+                }
+            ],
+            "maxHandoffs": 3,
+        },
+    )
+    assert parent["edges"] == [
+        {
+            "from": parent["id"],
+            "to": child["id"],
+            "handoffScope": "conversation",
+        }
+    ]
+    updated = repo.update(
+        "alice",
+        parent["id"],
+        {
+            "graphAgentIds": [parent["id"], child["id"]],
+            "entryAgentId": parent["id"],
+            "resultAgentId": parent["id"],
+            "edges": [
+                *parent["edges"],
+                {"from": child["id"], "to": parent["id"]},
+            ],
+        },
+    )
+    assert updated is not None
+    topology = admit_agent_graph("alice", updated, repo)
+    assert topology is not None and topology.default_agent_id == parent["id"]
+    duplicate = repo.duplicate("alice", parent["id"])
+    assert duplicate is not None
+    copy = duplicate["agent"]
+    assert copy["entryAgentId"] == copy["resultAgentId"] == copy["id"]
+    assert copy["graphAgentIds"] == [copy["id"], child["id"]]
+    assert copy["edges"][0]["from"] == copy["id"]
+    assert copy["edges"][1]["to"] == copy["id"]
+    cloned = admit_agent_graph("alice", copy, repo)
+    assert cloned is not None and cloned.default_agent_id == copy["id"]
+    restored = repo.revert("alice", parent["id"], 1)
+    assert restored is not None and restored["edges"] == parent["edges"]
+    assert "entryAgentId" not in restored
+
+
+def test_graph_references_fail_atomically_on_foreign_or_deleted_agents(
+    tmp_path,
+):
+    repo = AgentRepository(SQLiteDatabase(tmp_path))
+    owned = repo.create("alice", {"provider": "openai", "model": "child"})
+    foreign = repo.create("bob", {"provider": "openai", "model": "foreign"})
+    parent = repo.create("alice", {"provider": "openai", "model": "parent"})
+    before = repo.list("alice")
+    with pytest.raises(PermissionError, match="not accessible"):
+        repo.create(
+            "alice",
+            {
+                "provider": "openai",
+                "model": "bad",
+                "edges": [{"from": "", "to": foreign["id"]}],
+            },
+        )
+    assert repo.list("alice") == before
+    with pytest.raises(ValueError, match="does not exist"):
+        repo.update(
+            "alice", parent["id"], {"edges": [{"from": "", "to": "missing"}]}
+        )
+    with pytest.raises(PermissionError, match="not accessible"):
+        repo.update("alice", parent["id"], {"graphAgentIds": [foreign["id"]]})
+    with pytest.raises(ValueError, match="unknown entryAgentId"):
+        repo.update("alice", parent["id"], {"entryAgentId": owned["id"]})
+    assert repo.get("alice", parent["id"]) == parent
+    graph = repo.update(
+        "alice",
+        parent["id"],
+        {"edges": [{"from": "", "to": owned["id"], "edgeType": "direct"}]},
+    )
+    assert graph is not None
+    cleared = repo.update("alice", parent["id"], {"edges": []})
+    assert cleared is not None
+    assert repo.delete("alice", owned["id"])
+    with pytest.raises(ValueError, match="does not exist"):
+        repo.revert("alice", parent["id"], 1)
+    assert repo.get("alice", parent["id"]) == cleared
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"edges": [{"from": [], "to": "a"}]},
+        {"edges": [{"from": "", "to": ""}]},
+        {"edges": [{"to": "a"}]},
+        {"edges": [{"from": "", "to": "a", "edgeType": "invalid"}]},
+        {"edges": [{"from": "", "to": "a", "handoffScope": "invalid"}]},
+        {"edges": [{"from": "", "to": "a", "excludeResults": 1}]},
+        {"maxHandoffs": True},
+        {"maxHandoffs": -1},
+        {"maxHandoffs": 2**53},
+    ],
+)
+def test_graph_authoring_rejects_malformed_fields(tmp_path, changes):
+    repo = AgentRepository(SQLiteDatabase(tmp_path))
+    with pytest.raises(ValueError):
+        repo.create("alice", {"provider": "openai", "model": "m", **changes})
+    assert not repo.list("alice")["data"]

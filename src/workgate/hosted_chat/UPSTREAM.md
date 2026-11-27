@@ -410,3 +410,12 @@ The differential oracle tests construction, reachability, grouped prerequisites,
 handoff scopes and parallel capability, not execution. Workgate checks malformed
 endpoint shape before owner lookup and rejects missing or inaccessible members.
 Saved authoring and StateGraph execution are separate dependent units.
+
+Saved foreground graph authoring extends the pinned Agent validation and
+revision repository with edges, member/entry/result IDs, and max handoffs.
+Ownership and topology validation occur before committing a revision or
+restore. The source origin placeholder is expanded on create/update. We
+also preserve the topology's validated handoffScope and rebind explicit
+self destinations/member/entry/result references on duplication so a copied
+cyclic or self-entry graph remains a graph of the copy. Stored JSON does not
+introduce executable conditional callbacks. Graph execution remains private.
