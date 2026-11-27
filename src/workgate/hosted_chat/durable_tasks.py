@@ -33,6 +33,19 @@ from .machine_permissions import authorize_machine_action, require_machine_scope
 from .provider_common import ModelToolCall, complete_tool_batch
 from .storage import WorkspaceRepository, _now
 
+SESSION_SHELL_EFFECT_TOOLS = frozenset(
+    {"send_persistent_shell_input", "resize_persistent_shell"}
+)
+SESSION_FILE_EFFECT_TOOLS = frozenset(
+    {
+        "write_file",
+        "edit_lines",
+        "hashline_edit",
+        "delete_file_or_dir",
+        "apply_patch",
+    }
+)
+
 
 def _fingerprint(name: str, arguments: dict) -> str:
     return hashlib.sha256(
@@ -140,6 +153,8 @@ class ReservedCopyRequest(BaseModel):
 def _requirements(
     machine: str, kind: str, destination_machine: str | None
 ) -> dict[str, str]:
+    if kind == "session_write":
+        return {machine: "write"}
     if kind == "cancel":
         return (
             {machine: "execute"}
@@ -511,7 +526,7 @@ class DurableTaskRepository:
                 result.append(self._intent(row))
             return result
 
-    def shell_effect(
+    def native_effect(
         self,
         lease: ActorLease,
         call: ModelToolCall,
@@ -525,22 +540,23 @@ class DurableTaskRepository:
     ) -> tuple[bool, dict | None]:
         """Claim a finite native effect once, or check/settle that exact claim.
 
-        A NULL receipt is permanently uncertain: recovery must not resend input.
-        Unlike durable resource starts, native input has no lookup receipt.
+        A NULL receipt is permanently uncertain: recovery must not repeat a mutation.
+        Unlike durable resource starts, these effects have no lookup receipt.
         """
         complete_tool_batch([call])
-        if call.name not in {
-            "send_persistent_shell_input",
-            "resize_persistent_shell",
-        }:
-            raise ValueError("Expected native Shell effect")
+        shell = call.name in SESSION_SHELL_EFFECT_TOOLS
+        if not shell and call.name not in SESSION_FILE_EFFECT_TOOLS:
+            raise ValueError("Expected a finite native Session effect")
         session_id = TypeAdapter(SessionId).validate_python(
             call.arguments.get("session_id"),
             strict=True,
         )
-        shell_id = TypeAdapter(ReservedShellId).validate_python(
-            call.arguments.get("shell_id"),
-            strict=True,
+        shell_id = (
+            TypeAdapter(ReservedShellId).validate_python(
+                call.arguments.get("shell_id"), strict=True
+            )
+            if shell
+            else None
         )
         fingerprint = _fingerprint(call.name, call.arguments)
         with (
@@ -565,7 +581,7 @@ class DurableTaskRepository:
                     )
                 scopes, expires = self._grant(prior, scopes, expires)
             elif not claim:
-                raise PermissionError("Native Shell effect was not claimed")
+                raise PermissionError("Native Session effect was not claimed")
             if db.execute(
                 "SELECT 1 FROM agent_durable_tasks WHERE owner=? AND run_id=? AND call_id=? "
                 "UNION ALL SELECT 1 FROM agent_job_cancel_calls WHERE run_id=? AND call_id=?",
@@ -583,7 +599,7 @@ class DurableTaskRepository:
             self._require_parent(
                 db, run, "shell", machine, {"session_id": session_id}
             )
-            if not self._owned(
+            if shell_id is not None and not self._owned(
                 db,
                 lease.owner,
                 run["conversation_id"],
@@ -599,7 +615,7 @@ class DurableTaskRepository:
                 db,
                 run,
                 machine,
-                "shell",
+                "shell" if shell else "session_write",
                 scopes,
                 expires,
                 registered,
@@ -621,7 +637,7 @@ class DurableTaskRepository:
                 return True, None
             if receipt is not None:
                 if claim or prior["receipt"] is not None:
-                    raise ValueError("Native Shell effect is already settled")
+                    raise ValueError("Native Session effect is already settled")
                 db.execute(
                     "UPDATE agent_native_effect_calls SET receipt=? WHERE run_id=? AND call_id=?",
                     (
