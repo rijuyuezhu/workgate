@@ -4,6 +4,7 @@ import json
 from dataclasses import replace
 from typing import Literal, Self
 
+from mcp.server.mcpserver import MCPServer
 from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -82,9 +83,15 @@ _REQUESTS = {
 class NativeTaskDispatcher:
     """Use the native Task API, without implicit machine access."""
 
-    def __init__(self, runtime: ControlRuntime) -> None:
+    def __init__(
+        self, runtime: ControlRuntime, *, mcp: MCPServer | None = None
+    ) -> None:
         self._runtime = runtime
-        self._mcp = build_mcp(runtime=runtime, audit_transport="hosted-chat")
+        self._mcp = (
+            mcp
+            if mcp is not None
+            else build_mcp(runtime=runtime, audit_transport="hosted-chat")
+        )
 
     async def dispatch(
         self,
