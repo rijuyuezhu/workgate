@@ -4537,3 +4537,276 @@ async def test_pending_approval_terminal_preserves_native_cancellation_boundary(
     assert harness.executor.sessions.lookup(sid) is not None
     assert harness.executor.sessions.lookup(other_sid) is not None
     assert task_id != other_task
+
+
+@pytest.mark.asyncio
+async def test_foreground_ask_user_without_machine_grants_resumes_exact_answer(
+    bound,
+):
+    from workgate.control.hosted_chat_foreground_loop import (
+        run_foreground_native_loop,
+    )
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.hosted_chat.agent_runtime import AgentContext, AgentSuspended
+    from workgate.hosted_chat.approval_claims import ApprovalClaimStore
+    from workgate.hosted_chat.approval_settings import save_mode
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+
+    harness, repo, lease, generation = bound
+    store = ApprovalClaimStore(repo.database)
+    save_mode(
+        WorkspaceRepository(repo.database),
+        lease.owner,
+        "all",
+        conversation_id=generation.conversation_id,
+    )
+
+    def node(actor):
+        return NativeLoopToolNode(
+            harness.control,
+            repo,
+            OwnedLoopCheckpoint(actor),
+            allowed_tools={"ask_user_question"},
+            scopes=set(),
+            expires=None,
+            task_machine=None,
+            check_grant=lambda: None,
+        )
+
+    def context():
+        return AgentContext(
+            ProviderConfig(
+                "openai", "model", "https://example.invalid", "fake"
+            ),
+            [],
+        )
+
+    async def authorize(calls, state):
+        assert len(calls) == 1 and calls[0].name == "ask_user_question"
+
+    async def first(model, messages, **kwargs):
+        assert [tool["function"]["name"] for tool in kwargs["tools"]] == [
+            "ask_user_question"
+        ]
+        yield "Please choose. "
+        yield ModelToolCall(
+            "question",
+            "ask_user_question",
+            {"questions": [{"id": "format", "question": "Which format?"}]},
+        )
+
+    async def no_text(*args, **kwargs):
+        raise AssertionError("Question must be advertised")
+        yield ""
+
+    with pytest.raises(AgentSuspended, match="Ask User"):
+        await run_foreground_native_loop(
+            node(lease),
+            context(),
+            [],
+            authorize_batch=authorize,
+            stream_tools=first,
+            stream_text=no_text,
+        )
+    pending = store.pending(lease.owner, lease.run_id)
+    assert (
+        pending is not None
+        and pending["payload"]["type"] == "ask_user_question"
+    )
+    store.claim_question(
+        lease.owner,
+        lease.run_id,
+        pending["actionId"],
+        {"answers": {"format": "JSON"}},
+    )
+    fresh = ActorLease.claim(repo.database, lease.owner, lease.run_id)
+    assert fresh is not None
+
+    async def second(model, messages, **kwargs):
+        assert messages[-1]["tool_call_id"] == "question"
+        assert json.loads(messages[-1]["content"]) == {
+            "answers": {"format": "JSON"}
+        }
+        yield "Done."
+
+    result = await run_foreground_native_loop(
+        node(fresh),
+        context(),
+        [],
+        authorize_batch=authorize,
+        stream_tools=second,
+        stream_text=no_text,
+    )
+    assert result.completed
+    events = [
+        event
+        for _, event in GenerationStore(repo.database).events(
+            lease.owner, lease.run_id
+        )
+    ]
+    assert (
+        sum(event.get("event") == "on_pending_action" for event in events) == 1
+    )
+    assert events[-1]["responseMessage"]["text"] == "Please choose. Done."
+    assert not intent_rows(repo)
+
+
+@pytest.mark.asyncio
+async def test_ask_user_explicit_review_edit_then_answer_and_receipt_replay(
+    bound,
+):
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.hosted_chat.agent_runtime import (
+        AgentContext,
+        AgentLoopState,
+        AgentSuspended,
+    )
+    from workgate.hosted_chat.approval_claims import ApprovalClaimStore
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+
+    harness, repo, lease, _ = bound
+    store = ApprovalClaimStore(repo.database)
+    WorkspaceRepository(repo.database).save_setting(
+        lease.owner,
+        "endpoints",
+        {
+            "agents": {
+                "toolApproval": {"enabled": True, "ask": ["ask_user_question"]}
+            }
+        },
+    )
+    context = AgentContext(
+        ProviderConfig("openai", "model", "https://example.invalid", "fake"), []
+    )
+
+    def node(actor):
+        return NativeLoopToolNode(
+            harness.control,
+            repo,
+            OwnedLoopCheckpoint(actor),
+            allowed_tools={"ask_user_question"},
+            scopes=set(),
+            expires=None,
+            task_machine=None,
+            check_grant=lambda: None,
+        )
+
+    current = node(lease)
+    state = AgentLoopState(context, [])
+    await current.refresh_tools(state)
+    calls = current.preflight(
+        [ModelToolCall("q", "ask_user_question", {"question": "Original?"})],
+        state,
+    )
+    state.pending_calls = calls
+    state.tool_step_started = True
+    await current.checkpoint.save(state, calls)
+    with pytest.raises(AgentSuspended, match="approval"):
+        await current.dispatch(calls, state)
+    pending = store.pending(lease.owner, lease.run_id)
+    assert pending is not None and pending["payload"]["type"] == "tool_approval"
+    store.claim(
+        lease.owner,
+        lease.run_id,
+        pending["actionId"],
+        [
+            {
+                "tool_call_id": "q",
+                "decision": "edit",
+                "editedArguments": {"question": "Edited?"},
+            }
+        ],
+    )
+
+    def recover():
+        actor = ActorLease.claim(repo.database, lease.owner, lease.run_id)
+        assert actor is not None
+        restored_node = node(actor)
+        recovered = restored_node.checkpoint.restore(context)
+        assert recovered is not None
+        return restored_node, recovered.state
+
+    current, state = recover()
+    with pytest.raises(AgentSuspended, match="Ask User"):
+        await current.dispatch(calls, state)
+    pending = store.pending(lease.owner, lease.run_id)
+    assert (
+        pending is not None
+        and pending["payload"]["question"]["question"] == "Edited?"
+    )
+    store.claim_question(
+        lease.owner, lease.run_id, pending["actionId"], {"answer": "answer"}
+    )
+    current, state = recover()
+    result = await current.dispatch(calls, state)
+    assert json.loads(result.messages[0]["content"]) == {"answer": "answer"}
+    current.checkpoint.lease.release()
+    current, state = recover()
+    assert (await current.dispatch(calls, state)).messages == result.messages
+    assert not intent_rows(repo)
+
+
+@pytest.mark.asyncio
+async def test_ask_user_requires_live_opt_in_and_lone_valid_proposal(bound):
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.hosted_chat.agent_runtime import AgentContext, AgentLoopState
+    from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+
+    harness, repo, original, _ = bound
+    agents = AgentRepository(repo.database)
+    agent = agents.create(
+        original.owner, {"provider": "openai", "model": "m", "tools": []}
+    )
+    generation, _ = GenerationStore(repo.database).begin(
+        original.owner, {"text": "question", "agent_id": agent["id"]}
+    )
+    lease = ActorLease.claim(repo.database, original.owner, generation.run_id)
+    assert lease is not None
+    node = NativeLoopToolNode(
+        harness.control,
+        repo,
+        OwnedLoopCheckpoint(lease),
+        allowed_tools={"ask_user_question", "task"},
+        scopes=SCOPES,
+        expires=None,
+        task_machine=harness.executor_id,
+        check_grant=lambda: None,
+    )
+    state = AgentLoopState(
+        AgentContext(
+            ProviderConfig("openai", "m", "https://example.invalid", "fake"),
+            [],
+            agent=agent,
+        ),
+        [],
+    )
+    question = ModelToolCall("q", "ask_user_question", {"question": "Choose?"})
+    await node.refresh_tools(state)
+    assert "ask_user_question" not in {
+        tool["function"]["name"] for tool in state.context.tools
+    }
+    with pytest.raises(PermissionError, match="not advertised"):
+        node.preflight([question], state)
+    agents.update(lease.owner, agent["id"], {"tools": ["ask_user_question"]})
+    await node.refresh_tools(state)
+    with pytest.raises(ValueError, match="parallel"):
+        node.preflight(
+            [question, ModelToolCall("task", "task", {"action": "create"})],
+            state,
+        )
+    with pytest.raises(ValueError, match="Ask User"):
+        node.preflight([ModelToolCall("bad", "ask_user_question", {})], state)
+    calls = node.preflight([question], state)
+    state.pending_calls = calls
+    state.tool_step_started = True
+    await node.checkpoint.save(state, calls)
+    agents.update(lease.owner, agent["id"], {"tools": []})
+    with pytest.raises(PermissionError, match="no longer selected"):
+        node.preflight(calls, state)
+    with pytest.raises(PermissionError, match="no longer selected"):
+        await node.dispatch(calls, state)
+    assert not intent_rows(repo)
