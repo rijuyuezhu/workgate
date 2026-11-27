@@ -248,6 +248,25 @@ class DurableTaskRepository:
             raise PermissionError("Generation was cancelled")
         return row
 
+    @staticmethod
+    def _agent_for_run(db, run) -> dict | None:
+        agent = None
+        if run["agent_id"] is not None:
+            row = db.execute(
+                "SELECT config FROM agents WHERE id=? AND owner=?",
+                (run["agent_id"], run["owner"]),
+            ).fetchone()
+            if row is None:
+                raise PermissionError("Generation Agent no longer exists")
+            agent = json.loads(row[0])
+        return agent
+
+    def tool_context(self, lease: ActorLease) -> tuple[str, dict | None]:
+        """Resolve the current generation and owner-scoped Agent selection."""
+        with self.database.read_snapshot() as db:
+            run = self._run(db, lease)
+            return run["conversation_id"], self._agent_for_run(db, run)
+
     def _authorize(
         self,
         db,
@@ -260,15 +279,7 @@ class DurableTaskRepository:
         authorization_id: str,
         destination_machine: str | None = None,
     ) -> None:
-        agent = None
-        if run["agent_id"] is not None:
-            row = db.execute(
-                "SELECT config FROM agents WHERE id=? AND owner=?",
-                (run["agent_id"], run["owner"]),
-            ).fetchone()
-            if row is None:
-                raise PermissionError("Generation Agent no longer exists")
-            agent = json.loads(row[0])
+        agent = self._agent_for_run(db, run)
         # Task is Control-owned metadata, but reserve it only for a selected
         # authorized Executor; no implicit Controller machine target.
         for target, operation in _requirements(

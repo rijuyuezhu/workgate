@@ -17,7 +17,13 @@ from ..hosted_chat.durable_tasks import (
     DurableTaskRepository,
 )
 from ..hosted_chat.generation_actor_lease import ActorLease
+from ..hosted_chat.machine_permissions import (
+    agent_access_policy,
+    effective_machine_access,
+    require_machine_scope,
+)
 from ..hosted_chat.provider_common import ModelToolCall, complete_tool_batch
+from ..hosted_chat.storage import WorkspaceRepository
 from ..protocol.ids import ExecutorId, TaskId
 from ..schemas.input_models.session import (
     SessionLabelArg,
@@ -26,13 +32,14 @@ from ..schemas.input_models.session import (
 from ..schemas.input_models.task import TaskLabelArg, TaskObjectiveArg
 from .hosted_chat_cancellation import cancel_native_shell, close_native_session
 from .hosted_chat_job_dispatch import dispatch_native_job
-from .hosted_chat_native_creation import create_native
+from .hosted_chat_native_creation import _grant, _registered, create_native
 from .hosted_chat_session_tools import (
     SESSION_FILE_READ_TOOLS,
     SESSION_SHELL_READ_TOOLS,
     NativeSessionDispatcher,
 )
 from .hosted_chat_task_tools import NativeTaskDispatcher
+from .mcp.app import build_mcp
 from .runtime import ControlRuntime
 
 TASK_TOOLS = frozenset({"task", "task_plan", "read_todos", "write_todos"})
@@ -84,13 +91,139 @@ def _envelope(result: dict[str, Any]) -> dict[str, Any]:
     ).model_dump(mode="json", by_alias=True, exclude_none=True)
 
 
+def _selected_tools(
+    agent: dict | None, allowed: Collection[str]
+) -> frozenset[str]:
+    selected = NATIVE_TOOLS.intersection(allowed)
+    if agent is not None and agent_access_policy(agent) is None:
+        # Pinned legacy Agent selection, with the native equivalents of the
+        # always-present logical Session and plan management tools.
+        selected &= frozenset(agent.get("tools") or ()) | {"task", "task_plan"}
+    return selected
+
+
+def _scope_allows(
+    scopes: set[str], operation: str, expires: int | None
+) -> bool:
+    try:
+        require_machine_scope(scopes, operation, expires=expires)
+    except PermissionError:
+        return False
+    return True
+
+
 class NativeToolDispatcher:
     """Trusted runner supplies selected tool names and the exact Executor target."""
 
     def __init__(self, runtime: ControlRuntime) -> None:
         self._runtime = runtime
-        self._session = NativeSessionDispatcher(runtime)
-        self._task = NativeTaskDispatcher(runtime)
+        self._mcp = build_mcp(runtime=runtime, audit_transport="hosted-chat")
+        self._session = NativeSessionDispatcher(runtime, mcp=self._mcp)
+        self._task = NativeTaskDispatcher(runtime, mcp=self._mcp)
+
+    async def definitions(
+        self,
+        repository: DurableTaskRepository,
+        lease: ActorLease,
+        *,
+        allowed_tools: Collection[str],
+        scopes: set[str],
+        expires: int | None,
+        task_machine: str | None = None,
+    ) -> list[dict]:
+        """Advertise only the canonical, adapted surface for the live grant."""
+        runtime = self._runtime
+        if repository.database.root != runtime.config.state_dir / "hosted-chat":
+            raise PermissionError(
+                "Native intent belongs to another Control runtime"
+            )
+        tools = await self._mcp.list_tools()
+        scopes, expires = _grant(runtime, lease.owner, scopes, expires)
+        conversation_id, agent = repository.tool_context(lease)
+        selected = _selected_tools(agent, allowed_tools)
+        policy, _ = effective_machine_access(
+            lease.owner,
+            conversation_id,
+            agent=agent,
+            scopes=scopes,
+            expires=expires,
+            repo=WorkspaceRepository(repository.database),
+            registered=_registered(runtime),
+        )
+        readable = [
+            key for key, level in policy.items() if level in {"read", "write"}
+        ]
+        writable = any(level == "write" for level in policy.values())
+        execute = writable and _scope_allows(scopes, "execute", expires)
+        task_write = _scope_allows(scopes, "write", expires)
+        task_read = _scope_allows(scopes, "read", expires)
+        read_tools = (
+            SESSION_FILE_READ_TOOLS
+            | SESSION_SHELL_READ_TOOLS
+            | SESSION_METADATA_EFFECT_TOOLS
+            | {"session_start", "job"}
+        )
+        write_tools = SESSION_FILE_EFFECT_TOOLS | {"session_copy"}
+        execute_tools = (
+            SESSION_COMMAND_EFFECT_TOOLS
+            | SESSION_SHELL_EFFECT_TOOLS
+            | {"kill_persistent_shell", "session_end"}
+        )
+        available = set()
+        if readable:
+            available.update(read_tools)
+        if writable:
+            available.update(write_tools)
+        if execute:
+            available.update(execute_tools)
+        if task_write:
+            available.update(TASK_TOOLS - {"read_todos"})
+        if task_read:
+            available.add("read_todos")
+
+        definitions = []
+        for tool in tools:
+            if tool.name not in selected or tool.name not in available:
+                continue
+            schema = copy.deepcopy(tool.input_schema)
+            schema["additionalProperties"] = False
+            properties = schema["properties"]
+            description = tool.description or ""
+            if tool.name == "task":
+                if task_machine not in readable:
+                    properties["action"]["enum"].remove("create")
+                else:
+                    description += " Create requires the explicitly selected Executor; other actions require an owned Task."
+            elif tool.name == "session_start":
+                schema = _StartSession.model_json_schema()
+                schema["properties"]["executor_id"]["enum"] = readable
+                description += " Supply an authorized executor_id and owned task_id explicitly."
+            elif tool.name == "session_end":
+                properties.pop("force", None)
+                description = "End an owned execution Session after positive native absence confirmation; attached Task remains."
+            elif tool.name == "session_copy":
+                properties.pop("background", None)
+                description = "Start a durable managed copy between owned Sessions with readable source and writable destination."
+            elif tool.name == "job":
+                if not writable:
+                    for key in ("cancel", "retry"):
+                        properties.pop(key, None)
+                    description = (
+                        "List or poll exact owned native Job attempts."
+                    )
+                else:
+                    description += " Mutating tracked Jobs requires execute; managed copies require source read and destination write."
+            definitions.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": description[:2048],
+                        "parameters": schema,
+                    },
+                }
+            )
+        return definitions
 
     async def dispatch(
         self,
@@ -106,8 +239,17 @@ class NativeToolDispatcher:
         runtime = self._runtime
         call = copy.deepcopy(call)
         complete_tool_batch([call])
+        if repository.database.root != runtime.config.state_dir / "hosted-chat":
+            raise PermissionError(
+                "Native intent belongs to another Control runtime"
+            )
         if call.name not in NATIVE_TOOLS or call.name not in allowed_tools:
             raise PermissionError("Native tool is not selected and adapted")
+        _, agent = repository.tool_context(lease)
+        if call.name not in _selected_tools(agent, allowed_tools):
+            raise PermissionError(
+                "Native tool is not selected by the live Agent"
+            )
         if call.name in TASK_TOOLS:
             if call.name == "task" and call.arguments.get("action") == "create":
                 if machine is None:

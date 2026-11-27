@@ -3438,3 +3438,130 @@ async def test_native_dispatch_composes_only_selected_owned_adapters(
             "dispatch-get-after", "task", {"action": "get", "task_id": tid}
         )
     )["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_native_catalog_uses_live_machine_scope_and_selected_agent(bound):
+    from workgate.control.hosted_chat_native_dispatch import (
+        NATIVE_TOOLS,
+        NativeToolDispatcher,
+    )
+    from workgate.hosted_chat.agents import AgentRepository
+
+    harness, repo, lease, generation = bound
+    dispatcher = NativeToolDispatcher(harness.control)
+    machine = harness.executor_id
+    settings = WorkspaceRepository(repo.database)
+    policy_key = (
+        "agent.machine_policy.conversation." + generation.conversation_id
+    )
+
+    async def definitions(
+        actor=lease,
+        scopes=SCOPES,
+        target=machine,
+        expires=None,
+        allowed=NATIVE_TOOLS,
+    ):
+        return {
+            tool["function"]["name"]: tool["function"]["parameters"]
+            for tool in await dispatcher.definitions(
+                repo,
+                actor,
+                allowed_tools=allowed,
+                scopes=scopes,
+                expires=expires,
+                task_machine=target,
+            )
+        }
+
+    full = await definitions()
+    assert set(full) == NATIVE_TOOLS
+    assert full["session_start"]["properties"]["executor_id"]["enum"] == [
+        machine
+    ]
+    assert set(full["session_start"]["required"]) == {"executor_id", "task_id"}
+    assert "force" not in full["session_end"]["properties"]
+    assert "background" not in full["session_copy"]["properties"]
+    assert "create" in full["task"]["properties"]["action"]["enum"]
+    assert (
+        "create"
+        not in (await definitions(target=None))["task"]["properties"]["action"][
+            "enum"
+        ]
+    )
+    assert set(
+        await definitions(allowed=frozenset({"read", "executor_list"}))
+    ) == {"read"}
+    assert await definitions(expires=1) == {}
+    assert "bash" not in await definitions(scopes={"shell:read", "shell:write"})
+    settings.save_setting(lease.owner, policy_key, {machine: "read"})
+    readonly = await definitions()
+    assert {
+        "read",
+        "job",
+        "task",
+        "session_start",
+        "session_change_workdir",
+    } <= readonly.keys()
+    assert {
+        "bash",
+        "session_end",
+        "session_copy",
+        "write_file",
+        "kill_persistent_shell",
+    }.isdisjoint(readonly)
+    assert {"cancel", "retry"}.isdisjoint(readonly["job"]["properties"])
+    assert "task" not in await definitions(scopes={"shell:read"})
+    settings.save_setting(lease.owner, policy_key, {machine: "none"})
+    assert set(await definitions()) == {
+        "task",
+        "task_plan",
+        "read_todos",
+        "write_todos",
+    }
+    assert (
+        "create"
+        not in (await definitions())["task"]["properties"]["action"]["enum"]
+    )
+    assert (
+        "cancel" in full["job"]["properties"]
+    )  # Catalog copies must be independent.
+    assert "create" in full["task"]["properties"]["action"]["enum"]
+
+    agents = AgentRepository(repo.database)
+    agent = agents.create(
+        lease.owner,
+        {
+            "provider": "openai",
+            "model": "agent-model",
+            "tools": ["read", "bash"],
+        },
+    )
+    next_run, _ = GenerationStore(repo.database).begin(
+        lease.owner, {"text": "agent tools", "agent_id": agent["id"]}
+    )
+    next_lease = ActorLease.claim(repo.database, lease.owner, next_run.run_id)
+    assert next_lease is not None
+    assert set(await definitions(actor=next_lease)) == {
+        "task",
+        "task_plan",
+        "read",
+        "bash",
+    }
+    agents.update(lease.owner, agent["id"], {"tools": ["read"]})
+    assert set(await definitions(actor=next_lease)) == {
+        "task",
+        "task_plan",
+        "read",
+    }
+    with pytest.raises(PermissionError, match="live Agent"):
+        await dispatcher.dispatch(
+            repo,
+            next_lease,
+            ModelToolCall("removed", "bash", {"command": "echo unused"}),
+            machine=machine,
+            allowed_tools=NATIVE_TOOLS,
+            scopes=SCOPES,
+            expires=None,
+        )
