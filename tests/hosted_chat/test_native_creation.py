@@ -6106,3 +6106,330 @@ async def test_child_native_node_replays_private_receipt_without_parent_approval
             "SELECT state FROM runs WHERE id=?", (actor.run_id,)
         ).fetchone()
         assert "pendingApproval" not in json.loads(row["state"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ordinary", [False, True])
+async def test_foreground_subagent_model_loop_and_replay(bound, ordinary):
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.control.hosted_chat_subagent_loop import ForegroundDelegation
+    from workgate.hosted_chat.agent_runtime import AgentContext, AgentLoopState
+    from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import (
+        ModelThought,
+        ProviderConfig,
+    )
+    from workgate.hosted_chat.subagents import (
+        build_subagent_configs,
+        chat_subagent_config,
+    )
+
+    harness, original, lease, generation = bound
+    agents = AgentRepository(original.database)
+    child = agents.create(
+        lease.owner,
+        {
+            "provider": "openai",
+            "model": "child",
+            "instructions": "child instructions",
+        },
+    )
+    root = (
+        None
+        if ordinary
+        else agents.create(
+            lease.owner,
+            {
+                "provider": "openai",
+                "model": "parent",
+                "subagents": {"enabled": True, "agent_ids": [child["id"]]},
+            },
+        )
+    )
+    if root is not None:
+        generation, _ = GenerationStore(original.database).begin(
+            lease.owner,
+            {"text": "parent private", "agent_id": root["id"]},
+        )
+        actor = ActorLease.claim(
+            original.database, lease.owner, generation.run_id
+        )
+        assert actor is not None
+    else:
+        actor = lease
+    context = AgentContext(
+        ProviderConfig("openai", "parent", "https://example.invalid", "fake"),
+        [],
+        agent=root,
+    )
+    configs = (
+        [chat_subagent_config(lease.owner)]
+        if ordinary
+        else build_subagent_configs(lease.owner, root, original.database)
+    )
+    models = []
+    effects = []
+
+    async def resolve(agent):
+        assert not ordinary
+        assert agent["id"] == child["id"]
+        return AgentContext(
+            ProviderConfig(
+                "openai", "child", "https://example.invalid", "fake"
+            ),
+            [],
+            agent=agent,
+        )
+
+    async def stream(profile, messages, *, tools, **_kwargs):
+        assert profile.model == ("parent" if ordinary else "child")
+        assert "parent private" not in str(messages)
+        assert {"role": "user", "content": "child task"} in messages
+        assert "subagent" not in {tool["function"]["name"] for tool in tools}
+        models.append(profile.model)
+        if not any(message["role"] == "tool" for message in messages):
+            yield ModelThought("thinking", text="private reasoning")
+            yield ModelToolCall("same", "task", {"action": "create"})
+        else:
+            yield "child final"
+
+    async def authorize(calls, state):
+        effects.extend(call.name for call in calls)
+
+    delegation = ForegroundDelegation(configs, resolve, stream_tools=stream)
+
+    def make_node(checkpoint):
+        return NativeLoopToolNode(
+            harness.control,
+            original,
+            checkpoint,
+            allowed_tools={"task"},
+            scopes=set(SCOPES),
+            expires=None,
+            task_machine=harness.executor_id,
+            check_grant=lambda: None,
+            delegation=delegation,
+        )
+
+    parent = OwnedLoopCheckpoint(actor)
+    node = make_node(parent)
+    state = AgentLoopState(
+        context, [{"role": "user", "content": "parent private"}]
+    )
+    await node.refresh_tools(state)
+    assert "subagent" in {tool["function"]["name"] for tool in context.tools}
+    target = "self" if ordinary else child["id"]
+    call = ModelToolCall(
+        "delegate",
+        "subagent",
+        {"subagent_type": target, "description": "child task"},
+    )
+    calls = node.preflight([call], state)
+    state.pending_calls = calls
+    state.tool_step_started = True
+    await parent.save(state, calls)
+    # Simulate completion of the child just before parent receipt publication.
+    result, _ = await delegation.invoke(node, call, context, authorize)
+    assert result["content"] == [{"type": "text", "text": "child final"}]
+    assert len(models) == 2
+    actor.release()
+    actor = ActorLease.claim(original.database, lease.owner, generation.run_id)
+    assert actor is not None
+    parent = OwnedLoopCheckpoint(actor)
+    recovered = parent.restore(context)
+    assert recovered is not None
+    node = make_node(parent)
+    output = await node.dispatch(
+        calls, recovered.state, authorize_effects=authorize
+    )
+    assert output.messages[0]["content"] == "child final"
+    assert "private reasoning" not in str(output)
+    assert len(models) == 2
+    assert len(await harness.control.task_service.list_tasks()) == 1
+    assert effects == ["task", "subagent"]
+    assert (
+        await node.dispatch(calls, recovered.state)
+    ).messages == output.messages
+    if root is not None:
+        agents.update(lease.owner, child["id"], {"instructions": "updated"})
+        with pytest.raises(PermissionError, match="revision changed"):
+            await node.dispatch(calls, recovered.state)
+
+
+@pytest.mark.asyncio
+async def test_foreground_subagent_recovery_rejects_changed_disclosure_ceiling(
+    bound,
+):
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.control.hosted_chat_subagent_loop import ForegroundDelegation
+    from workgate.hosted_chat.agent_runtime import AgentContext, AgentLoopState
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+    from workgate.hosted_chat.subagents import chat_subagent_config
+
+    harness, original, actor, generation = bound
+    parent = OwnedLoopCheckpoint(actor)
+    context = AgentContext(
+        ProviderConfig("openai", "parent", "https://example.invalid", "fake"),
+        [],
+    )
+
+    async def unexpected(_agent):
+        pytest.fail("ordinary child must inherit provider")
+
+    async def stream(*_args, **_kwargs):
+        yield "child final"
+
+    delegation = ForegroundDelegation(
+        [chat_subagent_config(actor.owner)], unexpected, stream_tools=stream
+    )
+    node = NativeLoopToolNode(
+        harness.control,
+        original,
+        parent,
+        allowed_tools={"task"},
+        scopes=set(SCOPES),
+        expires=None,
+        task_machine=harness.executor_id,
+        check_grant=lambda: None,
+        delegation=delegation,
+    )
+    state = AgentLoopState(context, [])
+    await node.refresh_tools(state)
+    call = ModelToolCall(
+        "child", "subagent", {"subagent_type": "self", "description": "task"}
+    )
+    state.pending_calls = node.preflight([call], state)
+    state.tool_step_started = True
+    await parent.save(state, state.pending_calls)
+    await delegation.invoke(node, call, context, None)
+    WorkspaceRepository(original.database).save_setting(
+        actor.owner,
+        "agent.machine_policy.conversation." + generation.conversation_id,
+        {harness.executor_id: "none"},
+    )
+    with pytest.raises(PermissionError, match="changed after admission"):
+        await node.dispatch([call], state)
+    with pytest.raises(PermissionError, match="not an advertised"):
+        delegation.validate(
+            ModelToolCall(
+                "other",
+                "subagent",
+                {"subagent_type": "self", "run_in_background": True},
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_foreground_subagent_nested_result_is_fenced_by_leaf_revision(
+    bound,
+):
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.control.hosted_chat_subagent_loop import ForegroundDelegation
+    from workgate.hosted_chat.agent_runtime import AgentContext, AgentLoopState
+    from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+    from workgate.hosted_chat.subagents import build_subagent_configs
+
+    harness, original, lease, _ = bound
+    agents = AgentRepository(original.database)
+    leaf = agents.create(lease.owner, {"provider": "openai", "model": "leaf"})
+    child = agents.create(
+        lease.owner,
+        {
+            "provider": "openai",
+            "model": "child",
+            "subagents": {
+                "enabled": True,
+                "allowSelf": False,
+                "agent_ids": [leaf["id"]],
+            },
+        },
+    )
+    root = agents.create(
+        lease.owner,
+        {
+            "provider": "openai",
+            "model": "parent",
+            "subagents": {
+                "enabled": True,
+                "allowSelf": False,
+                "agent_ids": [child["id"]],
+            },
+        },
+    )
+    generation, _ = GenerationStore(original.database).begin(
+        lease.owner,
+        {"text": "parent private", "agent_id": root["id"]},
+    )
+    actor = ActorLease.claim(original.database, lease.owner, generation.run_id)
+    assert actor is not None
+    parent = OwnedLoopCheckpoint(actor)
+
+    async def resolve(agent):
+        return AgentContext(
+            ProviderConfig(
+                "openai", agent["model"], "https://example.invalid", "fake"
+            ),
+            [],
+            agent=agent,
+        )
+
+    async def stream(profile, messages, *, tools, **_kwargs):
+        assert "parent private" not in str(messages)
+        names = {tool["function"]["name"] for tool in tools}
+        if profile.model == "leaf":
+            assert "subagent" not in names
+            assert messages == [{"role": "user", "content": "leaf task"}]
+            yield "leaf result"
+        else:
+            assert profile.model == "child"
+            assert "subagent" in names
+            if any(message["role"] == "tool" for message in messages):
+                assert "leaf result" in str(messages)
+                yield "child result"
+            else:
+                yield ModelToolCall(
+                    "same",
+                    "subagent",
+                    {"subagent_type": leaf["id"], "description": "leaf task"},
+                )
+
+    delegation = ForegroundDelegation(
+        build_subagent_configs(lease.owner, root, original.database),
+        resolve,
+        stream_tools=stream,
+    )
+    node = NativeLoopToolNode(
+        harness.control,
+        original,
+        parent,
+        allowed_tools={"task"},
+        scopes=set(SCOPES),
+        expires=None,
+        task_machine=harness.executor_id,
+        check_grant=lambda: None,
+        delegation=delegation,
+    )
+    context = await resolve(root)
+    state = AgentLoopState(
+        context, [{"role": "user", "content": "parent private"}]
+    )
+    await node.refresh_tools(state)
+    call = ModelToolCall(
+        "same",
+        "subagent",
+        {"subagent_type": child["id"], "description": "child task"},
+    )
+    state.pending_calls = node.preflight([call], state)
+    state.tool_step_started = True
+    await parent.save(state, state.pending_calls)
+    output = await node.dispatch([call], state)
+    assert output.messages[0]["content"] == "child result"
+    assert "leaf result" not in str(output)
+    assert (await node.dispatch([call], state)).messages == output.messages
+    agents.update(lease.owner, leaf["id"], {"instructions": "revoked"})
+    with pytest.raises(PermissionError, match="revision changed"):
+        await node.dispatch([call], state)
