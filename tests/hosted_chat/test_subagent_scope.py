@@ -1366,3 +1366,109 @@ async def test_detached_native_scope_keeps_parent_authority_and_child_resources(
     assert {
         row["id"] for row in root_ledger.cancellation_batch(registered)
     } == {intent.id, session_intent.id}
+
+
+@pytest.mark.asyncio
+async def test_detached_controls_claim_and_replay(setup):
+    from workgate.hosted_chat.detached_task_controls import check_detached_task
+    from workgate.hosted_chat.detached_task_lease import DetachedTaskLease
+
+    lease, parent, child, _ = setup
+    root = OwnedLoopCheckpoint(lease)
+    call = await edge(root, parent, child["id"], background=True)
+    value = await invocation(root, parent, call)
+    reservation = reserve_detached_child(root, call, value)
+    grant = {"scopes": set(value.scopes), "expires": value.grant_expires}
+    db = lease.database
+
+    async def control(call_id, **arguments):
+        call = ModelToolCall(call_id, "check_background_task", arguments)
+        state = AgentLoopState(
+            context(parent),
+            [],
+            step=1,
+            pending_calls=[call],
+            tool_step_started=True,
+        )
+        await root.save(state, [call])
+        return call
+
+    listing = await control("list")
+    result = check_detached_task(root, listing, **grant)
+    assert result["outstanding"] == 1
+    assert result["tasks"][0]["background_task_id"] == reservation.task_id
+    assert "result" not in result["tasks"][0]
+    poll = await control("poll", background_task_id=reservation.task_id)
+    assert check_detached_task(root, poll, **grant)["status"] == "running"
+    child_lease = DetachedTaskLease.claim(
+        db, lease.owner, "chat", reservation.task_id, **grant
+    )
+    assert child_lease is not None
+    child_lease.complete(
+        value.messages + [{"role": "assistant", "content": "private final"}],
+        **grant,
+    )
+    assert check_detached_task(root, poll, **grant)["status"] == "running"
+    claim = await control("claim", background_task_id=reservation.task_id)
+    with pytest.raises(PermissionError, match="reduced"):
+        check_detached_task(root, claim, scopes=set(), expires=None)
+    first = check_detached_task(root, claim, **grant)
+    assert first["result"] == "private final"
+    assert first["result_claimed"] is True
+    assert check_detached_task(root, claim, **grant) == first
+    with pytest.raises(PermissionError, match="reduced"):
+        check_detached_task(root, claim, scopes=set(), expires=None)
+    second = await control("second", background_task_id=reservation.task_id)
+    result = check_detached_task(root, second, **grant)
+    assert result["status"] == "claimed" and "result" not in result
+    with pytest.raises(PermissionError, match="started parent edge"):
+        check_detached_task(root, claim, **grant)
+    foreign = await control("unknown", background_task_id="unknown")
+    assert check_detached_task(root, foreign, **grant)["status"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_detached_controls_cancel_fences_live_worker(setup):
+    from workgate.hosted_chat.detached_task_controls import check_detached_task
+    from workgate.hosted_chat.detached_task_lease import DetachedTaskLease
+
+    lease, parent, child, _ = setup
+    root = OwnedLoopCheckpoint(lease)
+    call = await edge(root, parent, child["id"], background=True)
+    value = await invocation(root, parent, call)
+    reservation = reserve_detached_child(root, call, value)
+    grant = {"scopes": set(value.scopes), "expires": value.grant_expires}
+    worker = DetachedTaskLease.claim(
+        lease.database, lease.owner, "chat", reservation.task_id, **grant
+    )
+    assert worker is not None
+    cancel = ModelToolCall(
+        "cancel",
+        "check_background_task",
+        {"background_task_id": reservation.task_id, "action": "cancel"},
+    )
+    state = AgentLoopState(
+        context(parent),
+        [],
+        step=1,
+        pending_calls=[cancel],
+        tool_step_started=True,
+    )
+    await root.save(state, [cancel])
+    assert (
+        check_detached_task(root, cancel, **grant)["status"]
+        == "cancellation_requested"
+    )
+    with pytest.raises(ActorLeaseLost, match="cancellation"):
+        worker.assert_current(**grant)
+    worker.acknowledge_cancel()
+    assert (
+        check_detached_task(root, cancel, **grant)["status"]
+        == "cancellation_requested"
+    )
+    another = replace(cancel, call_id="cancel-again")
+    state.pending_calls = [another]
+    await root.save(state, [another])
+    assert (
+        check_detached_task(root, another, **grant)["status"] == "not_running"
+    )

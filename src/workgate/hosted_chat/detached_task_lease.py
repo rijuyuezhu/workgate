@@ -417,6 +417,17 @@ class DetachedTaskLease:
             _settle(self.database, db, row, "cancelled")
 
 
+def _request_cancel_locked(database: SQLiteDatabase, db, row) -> None:
+    if row["status"] != "running":
+        return
+    db.execute(
+        "UPDATE subagent_tasks SET cancel_requested=1,updated_at=? WHERE id=?",
+        (_now(), row["id"]),
+    )
+    if row["lease_until"] is None or row["lease_until"] <= _now():
+        _settle(database, db, row, "cancelled")
+
+
 def request_cancel(
     database: SQLiteDatabase, owner: str, conversation: str, task_id: str
 ) -> None:
@@ -424,14 +435,7 @@ def request_cancel(
     with database.connect() as db:
         db.execute("BEGIN IMMEDIATE")
         row = _task(db, owner, conversation, task_id)
-        if row["status"] != "running":
-            return
-        db.execute(
-            "UPDATE subagent_tasks SET cancel_requested=1,updated_at=? WHERE id=?",
-            (_now(), task_id),
-        )
-        if row["lease_until"] is None or row["lease_until"] <= _now():
-            _settle(database, db, row, "cancelled")
+        _request_cancel_locked(database, db, row)
 
 
 def reconcile_reservations(
