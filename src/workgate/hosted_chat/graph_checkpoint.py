@@ -6,6 +6,7 @@ channel and write via the SDK serializer rather than lossy JSON conversion.
 """
 
 import base64
+import sqlite3
 from collections.abc import AsyncIterator, Iterator, Sequence
 from typing import Any, cast
 
@@ -17,10 +18,45 @@ from langgraph.checkpoint.base import (
     CheckpointMetadata,
     CheckpointTuple,
 )
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+from langgraph.types import Interrupt
 
 from .checkpoints import EVENT_ACTOR_KEY, NAMESPACE_KEY, SQLiteCheckpointSaver
 from .database import SQLiteDatabase
 from .generation_actor_lease import ActorLease, ActorLeaseLost
+
+
+def verify_graph_interrupt(
+    db: sqlite3.Connection,
+    storage: SQLiteCheckpointSaver,
+    thread: str,
+    namespace: str,
+    activation_id: str,
+    interrupt_id: str,
+    request: dict,
+) -> None:
+    """Fence a human action against the latest durable SDK task interruption.
+
+    This read also works while the generation is parked without an actor.
+    """
+    row = storage._get_tuple(
+        db, storage.config(thread, namespace, event_actor=True)
+    )
+    if row is not None:
+        for task, channel, value in row["pendingWrites"]:
+            if task != activation_id or channel != "__interrupt__":
+                continue
+            items = JsonPlusSerializer().loads_typed(
+                (value["type"], base64.b64decode(value["data"]))
+            )
+            if isinstance(items, list) and any(
+                isinstance(item, Interrupt)
+                and item.id == interrupt_id
+                and item.value == request
+                for item in items
+            ):
+                return
+    raise ValueError("Graph human action has no matching durable SDK interrupt")
 
 
 class OwnedGraphCheckpointer(BaseCheckpointSaver):

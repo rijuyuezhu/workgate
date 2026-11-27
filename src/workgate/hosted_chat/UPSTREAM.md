@@ -465,3 +465,12 @@ from live declared edges; their source Commands are settled with the same tool
 receipts and projected by StateGraph, never by an unrestricted MCP fallback.
 Provider correlation IDs remain round-local in handoff history. Member output
 stays private until graph-aware event, approval and steering integration.
+
+Graph human actions retain the source single pending-action protocol with
+member namespace binding. The official SDK interrupts the member task and
+persists settled sibling writes before Control publishes an action and
+releases the actor lease. Claims verify both the exact member tool edge and
+the latest SDK task interruption, including its proposal and activation.
+Prior SDK interrupt positions replay against their durable action IDs;
+approval and Ask User can occur successively at the same tool edge. Missing
+graph checkpoints or changed graph membership cannot authorize a resume.

@@ -20,6 +20,10 @@ from ..hosted_chat.ask_user_tools import (
     build_ask_user_payload,
 )
 from ..hosted_chat.durable_tasks import DurableTaskRepository
+from ..hosted_chat.graph_human_request import (
+    GraphHumanActionRequested,
+    GraphHumanRequest,
+)
 from ..hosted_chat.graph_runtime import GraphActivation
 from ..hosted_chat.handoff import (
     build_handoff_command,
@@ -99,10 +103,15 @@ class NativeLoopToolNode:
     def _question_enabled(self, agent: dict | None) -> bool:
         # For ephemeral turns the trusted caller supplies the opt-in through
         # allowed_tools. Saved Agents must also retain their explicit selection.
-        return (
-            self.checkpoint.scope is None
-            and ASK_USER_QUESTION_TOOL_NAME in self.allowed_tools
-            and (agent is None or ask_user_requested(agent, {}))
+        if ASK_USER_QUESTION_TOOL_NAME not in self.allowed_tools:
+            return False
+        if self.checkpoint.scope is None:
+            return agent is None or ask_user_requested(agent, {})
+        if self.activation is None:
+            return False
+        _, agents = self.repository.tool_context_chain(self.checkpoint.lease)
+        return all(
+            item is not None and ask_user_requested(item, {}) for item in agents
         )
 
     @staticmethod
@@ -420,11 +429,7 @@ class NativeLoopToolNode:
             return {"result": result, "access": access}
 
         async def preflight_unsettled(unsettled: list[ModelToolCall]) -> None:
-            claim = (
-                None
-                if self.checkpoint.scope is not None
-                else claim_store.approved_batch(self.checkpoint)
-            )
+            claim = claim_store.approved_batch(self.checkpoint)
             entries = (
                 {entry.call_id: entry for entry in claim.entries}
                 if claim
@@ -465,9 +470,9 @@ class NativeLoopToolNode:
                 await authorize_effects(copy.deepcopy(candidates), state)
             check()
             if ask:
-                if self.checkpoint.scope is not None:
-                    raise PermissionError(
-                        "Graph member approval requires graph-aware recovery"
+                if self.activation is not None:
+                    raise GraphHumanActionRequested(
+                        GraphHumanRequest.from_checkpoint(self.checkpoint, ask)
                     )
                 claim_store.pause(self.checkpoint, ask)
                 raise AgentSuspended("Waiting for native tool approval")
@@ -479,6 +484,12 @@ class NativeLoopToolNode:
                     original.call_id not in blocked
                     and claim_store.answered_question(self.checkpoint) is None
                 ):
+                    if self.activation is not None:
+                        raise GraphHumanActionRequested(
+                            GraphHumanRequest.from_checkpoint(
+                                self.checkpoint, [original], question=True
+                            )
+                        )
                     claim_store.pause_question(self.checkpoint, original)
                     raise AgentSuspended("Waiting for Ask User answer")
 

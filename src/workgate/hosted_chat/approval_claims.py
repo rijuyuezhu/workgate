@@ -22,12 +22,32 @@ from .ask_user_tools import (
 from .checkpoints import SQLiteCheckpointSaver
 from .database import SQLiteDatabase
 from .durable_tasks import DurableTaskRepository
-from .generation_actor_lease import ActorLeaseLost
+from .generation_actor_lease import ActorLease, ActorLeaseLost
 from .generation_protocol import EVENT_LIMIT, MAX_EVENT_BYTES
 from .generations import GenerationStore, _json
+from .graph_human_request import GraphHumanRequest
+from .graph_member_scope import GraphMemberScope
 from .loop_checkpoint import OwnedLoopCheckpoint, _Snapshot
 from .provider_common import ModelToolCall
 from .storage import _now
+
+
+def _claim_state(state: dict, namespace: str, *, create: bool = False) -> dict:
+    if not namespace:
+        return state
+    if create:
+        return state.setdefault("graphHumanClaims", {}).setdefault(
+            namespace, {}
+        )
+    return state.get("graphHumanClaims", {}).get(namespace, {})
+
+
+def _namespace(checkpoint: OwnedLoopCheckpoint) -> str:
+    return (
+        checkpoint.scope.checkpoint_namespace
+        if checkpoint.scope is not None
+        else ""
+    )
 
 
 class ApprovalClaimStore:
@@ -153,8 +173,9 @@ class ApprovalClaimStore:
         calls: list[ModelToolCall],
         *,
         question: bool,
+        graph_interrupt: tuple[str, GraphHumanRequest] | None = None,
     ) -> dict:
-        if checkpoint.scope is not None:
+        if checkpoint.scope is not None and graph_interrupt is None:
             raise PermissionError(
                 "Graph member human actions require graph-aware recovery"
             )
@@ -172,10 +193,14 @@ class ApprovalClaimStore:
             lease.assert_current(db)
             row = self._row(db, lease.owner, lease.run_id, "running")
             state = json.loads(row["state"])
+            if checkpoint.scope is not None:
+                checkpoint.scope.resolve(db, lease)
+            namespace = _namespace(checkpoint)
+            claims = _claim_state(state, namespace, create=True)
             edge = self._edge(db, checkpoint.saver, checkpoint.base, identity)
             self._verify_requests(edge, payload)
             if (
-                state.get("answeredQuestion", {}).get("checkpointId")
+                claims.get("answeredQuestion", {}).get("checkpointId")
                 == identity
             ):
                 raise ValueError(
@@ -183,10 +208,10 @@ class ApprovalClaimStore:
                 )
             if question:
                 payload = self._question_payload(
-                    edge, state, identity, calls[0].call_id
+                    edge, claims, identity, calls[0].call_id
                 )
             elif (
-                state.get("approvedToolBatch", {}).get("checkpointId")
+                claims.get("approvedToolBatch", {}).get("checkpointId")
                 == identity
             ):
                 raise ValueError(
@@ -199,7 +224,7 @@ class ApprovalClaimStore:
                 "runId": lease.run_id,
                 "responseMessageId": state["responseMessageId"],
                 "createdAt": int(time.time() * 1000),
-                "namespace": "",
+                "namespace": namespace,
                 "payload": payload,
             }
             event = _json({"event": "on_pending_action", "data": pending})
@@ -228,13 +253,30 @@ class ApprovalClaimStore:
             )
             state["pendingAction"] = pending
             state["approvalCheckpointId"] = identity
+            if graph_interrupt is not None:
+                from .graph_checkpoint import verify_graph_interrupt
+
+                interrupt_id, request = graph_interrupt
+                verify_graph_interrupt(
+                    db,
+                    checkpoint.saver,
+                    row["conversation_id"],
+                    request.scope.graph_namespace,
+                    request.scope.activation_id,
+                    interrupt_id,
+                    request.value(),
+                )
+                state["approvalGraphInterrupt"] = {
+                    "id": interrupt_id,
+                    "request": request.value(),
+                }
             if (
                 not question
-                or state.get("approvedToolBatch", {}).get("checkpointId")
+                or claims.get("approvedToolBatch", {}).get("checkpointId")
                 != identity
             ):
-                state.pop("approvedToolBatch", None)
-            state.pop("answeredQuestion", None)
+                claims.pop("approvedToolBatch", None)
+            claims.pop("answeredQuestion", None)
             db.execute(
                 "UPDATE runs SET state=?,status='requires_action',updated_at=? WHERE id=?",
                 (_json(state), _now(), lease.run_id),
@@ -248,6 +290,50 @@ class ApprovalClaimStore:
                 (lease.run_id, event),
             )
         return pending
+
+    def publish_graph_interrupt(
+        self, lease: ActorLease, interrupt_id: str, request: GraphHumanRequest
+    ) -> dict:
+        """Called only after the SDK has persisted its interrupted superstep."""
+        if not isinstance(interrupt_id, str) or not interrupt_id:
+            raise ValueError("Graph interrupt identity is required")
+        checkpoint = OwnedLoopCheckpoint(lease, scope=request.scope)
+        checkpoint.active = checkpoint.saver.config(
+            checkpoint.base["configurable"]["thread_id"],
+            request.scope.checkpoint_namespace,
+            checkpoint_id=request.checkpoint_id,
+            event_actor=True,
+        )
+        return self._pause(
+            checkpoint,
+            request.calls,
+            question=request.question,
+            graph_interrupt=(interrupt_id, request),
+        )
+
+    def resolved_graph_interrupts(
+        self, lease: ActorLease, scope: GraphMemberScope
+    ) -> list[dict]:
+        with self.database.read_snapshot() as db:
+            scope.resolve(db, lease)
+            row = self._row(db, lease.owner, lease.run_id, "running")
+            claims = _claim_state(
+                json.loads(row["state"]), scope.checkpoint_namespace
+            )
+            return claims.get("resolvedInterrupts", [])
+
+    @staticmethod
+    def _record_graph_resolution(
+        state: dict, claims: dict, pending: dict
+    ) -> None:
+        graph = state.pop("approvalGraphInterrupt", None)
+        if graph is not None:
+            claims.setdefault("resolvedInterrupts", []).append(
+                {
+                    **graph,
+                    "actionId": pending["actionId"],
+                }
+            )
 
     def pending(self, owner: str, run_id: str) -> dict | None:
         with self.database.read_snapshot() as db:
@@ -269,22 +355,60 @@ class ApprovalClaimStore:
     def _pending_edge(
         self, db, saver: SQLiteCheckpointSaver, row, state: dict, pending: dict
     ) -> dict:
+        namespace = pending["namespace"]
+        claims = _claim_state(state, namespace)
+        request = None
+        if namespace:
+            graph = state.get("approvalGraphInterrupt")
+            if not isinstance(graph, dict):
+                raise ValueError("Graph approval has no matching SDK interrupt")
+            request = GraphHumanRequest.parse(graph["request"])
+            if (
+                request.scope.checkpoint_namespace != namespace
+                or request.checkpoint_id != state["approvalCheckpointId"]
+            ):
+                raise ValueError("Graph approval checkpoint identity changed")
+            request.scope.resolve_owned(db, saver.owner, row["id"])
+            from .graph_checkpoint import verify_graph_interrupt
+
+            verify_graph_interrupt(
+                db,
+                saver,
+                row["conversation_id"],
+                request.scope.graph_namespace,
+                request.scope.activation_id,
+                graph["id"],
+                request.value(),
+            )
         edge = self._edge(
             db,
             saver,
-            saver.config(row["conversation_id"], row["id"], event_actor=True),
+            saver.config(
+                row["conversation_id"], namespace or row["id"], event_actor=True
+            ),
             state["approvalCheckpointId"],
         )
         marker = {"id": pending["actionId"], "value": pending}
         if ("human", "__interrupt__", marker) not in edge["pendingWrites"]:
             raise ValueError("Approval has no matching durable interruption")
         payload = pending["payload"]
+        if request is not None:
+            if request.question != (
+                payload.get("type") == ASK_USER_QUESTION_TOOL_NAME
+            ):
+                raise ValueError(
+                    "Graph human action kind differs from SDK request"
+                )
+            if not request.question and _json(
+                build_approval_payload(request.calls)
+            ) != _json(payload):
+                raise ValueError("Graph approval differs from SDK proposal")
         if payload.get("type") == "tool_approval":
             self._verify_requests(edge, payload)
         elif payload.get("type") == ASK_USER_QUESTION_TOOL_NAME:
             expected = self._question_payload(
                 edge,
-                state,
+                claims,
                 state["approvalCheckpointId"],
                 payload["tool_call_id"],
             )
@@ -325,7 +449,7 @@ class ApprovalClaimStore:
                 if not self._expired(pending):
                     try:
                         self._pending_edge(db, saver, row, state, pending)
-                    except ValueError, KeyError:
+                    except ValueError, KeyError, PermissionError:
                         pass
                     else:
                         return False
@@ -340,6 +464,8 @@ class ApprovalClaimStore:
                 "approvalCheckpointId",
                 "approvedToolBatch",
                 "answeredQuestion",
+                "approvalGraphInterrupt",
+                "graphHumanClaims",
             ):
                 state.pop(key, None)
             db.execute(
@@ -387,12 +513,14 @@ class ApprovalClaimStore:
                 elif kind == "respond":
                     item["responseText"] = decision["responseText"]
                 clean.append(item)
-            state["approvedToolBatch"] = {
+            claims = _claim_state(state, pending["namespace"], create=True)
+            claims["approvedToolBatch"] = {
                 "actionId": action_id,
                 "checkpointId": identity,
                 "payload": payload,
                 "resolutions": clean,
             }
+            self._record_graph_resolution(state, claims, pending)
             state.pop("pendingAction")
             state.pop("approvalCheckpointId")
             db.execute(
@@ -404,10 +532,6 @@ class ApprovalClaimStore:
     def approved_batch(
         self, checkpoint: OwnedLoopCheckpoint
     ) -> ApprovalBatch | None:
-        if checkpoint.scope is not None:
-            raise PermissionError(
-                "Graph member human actions require graph-aware recovery"
-            )
         lease = checkpoint.lease
         if lease.database.path != self.database.path:
             raise ActorLeaseLost(
@@ -416,7 +540,12 @@ class ApprovalClaimStore:
         with self.database.read_snapshot() as db:
             lease.assert_current(db)
             row = self._row(db, lease.owner, lease.run_id, "running")
-            claim = json.loads(row["state"]).get("approvedToolBatch")
+            if checkpoint.scope is not None:
+                checkpoint.scope.resolve(db, lease)
+            claims = _claim_state(
+                json.loads(row["state"]), _namespace(checkpoint)
+            )
+            claim = claims.get("approvedToolBatch")
             identity = checkpoint.active["configurable"].get("checkpoint_id")
             if claim is None:
                 return None
@@ -462,12 +591,14 @@ class ApprovalClaimStore:
             if "error" in resolution:
                 raise ValueError(resolution["error"])
             answer = resolution["resumeValue"]
-            state["answeredQuestion"] = {
+            claims = _claim_state(state, pending["namespace"], create=True)
+            claims["answeredQuestion"] = {
                 "actionId": action_id,
                 "checkpointId": state["approvalCheckpointId"],
                 "payload": payload,
                 "answer": answer,
             }
+            self._record_graph_resolution(state, claims, pending)
             state.pop("pendingAction")
             state.pop("approvalCheckpointId")
             db.execute(
@@ -477,10 +608,6 @@ class ApprovalClaimStore:
             return answer
 
     def answered_question(self, checkpoint: OwnedLoopCheckpoint) -> dict | None:
-        if checkpoint.scope is not None:
-            raise PermissionError(
-                "Graph member human actions require graph-aware recovery"
-            )
         lease = checkpoint.lease
         if lease.database.path != self.database.path:
             raise ActorLeaseLost(
@@ -489,8 +616,12 @@ class ApprovalClaimStore:
         with self.database.read_snapshot() as db:
             lease.assert_current(db)
             row = self._row(db, lease.owner, lease.run_id, "running")
-            state = json.loads(row["state"])
-            claim = state.get("answeredQuestion")
+            if checkpoint.scope is not None:
+                checkpoint.scope.resolve(db, lease)
+            claims = _claim_state(
+                json.loads(row["state"]), _namespace(checkpoint)
+            )
+            claim = claims.get("answeredQuestion")
             if claim is None:
                 return None
             identity = checkpoint.active["configurable"].get("checkpoint_id")
@@ -503,7 +634,7 @@ class ApprovalClaimStore:
                 return None
             payload = self._question_payload(
                 edge,
-                state,
+                claims,
                 identity,
                 claim["payload"]["tool_call_id"],
                 allow_settled=True,

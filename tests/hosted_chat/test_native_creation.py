@@ -5414,3 +5414,315 @@ async def test_native_graph_member_model_loop_and_completed_recovery(
     assert await execute(fresh) == result
     assert turns == before
     assert len(await harness.control.task_service.list_tasks()) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "recovery", ["normal", "prepublish-crash", "lost-graph", "revoked-root"]
+)
+async def test_native_graph_parallel_approval_preserves_completed_siblings(
+    bound,
+    monkeypatch,
+    recovery,
+):
+    from workgate.control.hosted_chat_graph_loop import run_native_graph
+    from workgate.hosted_chat.agent_runtime import AgentContext, AgentSuspended
+    from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.approval_claims import ApprovalClaimStore
+    from workgate.hosted_chat.provider_common import ProviderConfig
+
+    pytest.importorskip("langgraph")
+    harness, repo, lease, _ = bound
+    agents = AgentRepository(repo.database)
+    root = agents.create(lease.owner, {"provider": "openai", "model": "root"})
+    members = {
+        name: agents.create(
+            lease.owner,
+            {
+                "provider": "openai",
+                "model": name,
+                "approval_mode": "automatic" if name == "completed" else "all",
+            },
+        )
+        for name in ("left", "right", "completed")
+    }
+    agents.update(
+        lease.owner,
+        root["id"],
+        {
+            "edges": [
+                {
+                    "from": root["id"],
+                    "to": [a["id"] for a in members.values()],
+                    "edgeType": "direct",
+                }
+            ]
+        },
+    )
+    generation, _ = GenerationStore(repo.database).begin(
+        lease.owner, {"text": "graph", "agent_id": root["id"]}
+    )
+    store = ApprovalClaimStore(repo.database)
+    turns = []
+
+    async def resolve(agent):
+        return AgentContext(
+            ProviderConfig(
+                "openai", agent["model"], "https://example.invalid", "fake"
+            ),
+            [],
+        )
+
+    async def authorize(calls, state):
+        pass
+
+    async def stream(profile, messages, **kwargs):
+        name = profile.model
+        turns.append(name)
+        if name == "root" or turns.count(name) > 1:
+            yield name + " complete"
+        else:
+            yield ModelToolCall(
+                "same", "task", {"action": "create", "label": name}
+            )
+
+    async def execute():
+        actor = ActorLease.claim(repo.database, lease.owner, generation.run_id)
+        assert actor is not None
+        try:
+            return await run_native_graph(
+                harness.control,
+                actor,
+                root["id"],
+                [{"role": "user", "content": "graph"}],
+                resolve_context=resolve,
+                authorize_batch=authorize,
+                allowed_tools={"task"},
+                scopes=SCOPES,
+                expires=None,
+                task_machine=harness.executor_id,
+                check_grant=lambda: None,
+                recursion_limit=30,
+                stream_tools=stream,
+                stream_text=stream,
+            )
+        finally:
+            actor.release()
+
+    if recovery == "prepublish-crash":
+
+        def crash(*args, **kwargs):
+            raise RuntimeError(
+                "simulated crash before publishing graph interrupt"
+            )
+
+        with monkeypatch.context() as patch:
+            patch.setattr(ApprovalClaimStore, "publish_graph_interrupt", crash)
+            with pytest.raises(RuntimeError, match="simulated crash"):
+                await execute()
+        assert store.pending(lease.owner, generation.run_id) is None
+        assert len(await harness.control.task_service.list_tasks()) == 1
+
+    namespaces = set()
+    for expected in (1, 2):
+        with pytest.raises(AgentSuspended, match="graph member"):
+            await execute()
+        pending = store.pending(lease.owner, generation.run_id)
+        assert pending is not None
+        assert pending["namespace"].startswith(
+            generation.run_id + ":graph:foreground:member:"
+        )
+        assert pending["namespace"] not in namespaces
+        namespaces.add(pending["namespace"])
+        assert len(await harness.control.task_service.list_tasks()) == expected
+        assert store.pending("other", generation.run_id) is None
+        with pytest.raises(KeyError):
+            store.claim(
+                "other",
+                generation.run_id,
+                pending["actionId"],
+                [{"tool_call_id": "same", "decision": "approve"}],
+            )
+        if recovery in {"lost-graph", "revoked-root"}:
+            if recovery == "lost-graph":
+                with repo.database.connect() as db:
+                    db.execute(
+                        "UPDATE agent_checkpoints SET expires_at=0 WHERE checkpoint_ns=?",
+                        (generation.run_id + ":graph:foreground",),
+                    )
+            else:
+                agents.update(
+                    lease.owner, root["id"], {"name": "changed while parked"}
+                )
+            with pytest.raises((ValueError, PermissionError)):
+                store.claim(
+                    lease.owner,
+                    generation.run_id,
+                    pending["actionId"],
+                    [{"tool_call_id": "same", "decision": "approve"}],
+                )
+            assert store.expire_pending(
+                lease.owner, generation.run_id, pending["actionId"]
+            )
+            current = GenerationStore(repo.database).get(
+                lease.owner, generation.run_id
+            )
+            assert current is not None and current.status == "interrupted"
+            assert len(await harness.control.task_service.list_tasks()) == 1
+            return
+        store.claim(
+            lease.owner,
+            generation.run_id,
+            pending["actionId"],
+            [{"tool_call_id": "same", "decision": "approve"}],
+        )
+    result = await execute()
+    assert {
+        m["content"]
+        for m in result
+        if m.get("role") == "assistant" and m.get("content")
+    } == {
+        "root complete",
+        "left complete",
+        "right complete",
+        "completed complete",
+    }
+    assert len(await harness.control.task_service.list_tasks()) == 3
+    assert turns.count("root") == 1
+    assert all(turns.count(name) == 2 for name in members)
+    assert await execute() == result
+
+
+@pytest.mark.asyncio
+async def test_native_graph_approval_then_ask_user_same_activation(bound):
+    from workgate.control.hosted_chat_graph_loop import run_native_graph
+    from workgate.hosted_chat.agent_runtime import AgentContext, AgentSuspended
+    from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.approval_claims import ApprovalClaimStore
+    from workgate.hosted_chat.provider_common import ProviderConfig
+
+    pytest.importorskip("langgraph")
+    harness, repo, lease, _ = bound
+    agents = AgentRepository(repo.database)
+    root = agents.create(
+        lease.owner,
+        {"provider": "openai", "model": "root", "tools": ["ask_user_question"]},
+    )
+    member = agents.create(
+        lease.owner,
+        {
+            "provider": "openai",
+            "model": "member",
+            "tools": ["ask_user_question"],
+        },
+    )
+    agents.update(
+        lease.owner,
+        root["id"],
+        {
+            "edges": [
+                {"from": root["id"], "to": member["id"], "edgeType": "direct"}
+            ]
+        },
+    )
+    WorkspaceRepository(repo.database).save_setting(
+        lease.owner,
+        "endpoints",
+        {
+            "agents": {
+                "toolApproval": {"enabled": True, "ask": ["ask_user_question"]}
+            }
+        },
+    )
+    generation, _ = GenerationStore(repo.database).begin(
+        lease.owner, {"text": "graph", "agent_id": root["id"]}
+    )
+    store = ApprovalClaimStore(repo.database)
+    turns = []
+
+    async def resolve(agent):
+        return AgentContext(
+            ProviderConfig(
+                "openai", agent["model"], "https://example.invalid", "fake"
+            ),
+            [],
+        )
+
+    async def authorize(calls, state):
+        pass
+
+    async def stream(profile, messages, **kwargs):
+        turns.append(profile.model)
+        if profile.model == "root":
+            yield "root complete"
+        elif turns.count("member") == 1:
+            yield ModelToolCall(
+                "q", "ask_user_question", {"question": "Original?"}
+            )
+        else:
+            assert json.loads(messages[-1]["content"]) == {"answer": "answer"}
+            yield "member complete"
+
+    async def execute():
+        actor = ActorLease.claim(repo.database, lease.owner, generation.run_id)
+        assert actor is not None
+        try:
+            return await run_native_graph(
+                harness.control,
+                actor,
+                root["id"],
+                [{"role": "user", "content": "graph"}],
+                resolve_context=resolve,
+                authorize_batch=authorize,
+                allowed_tools={"ask_user_question"},
+                scopes=set(),
+                expires=None,
+                task_machine=None,
+                check_grant=lambda: None,
+                recursion_limit=20,
+                stream_tools=stream,
+                stream_text=stream,
+            )
+        finally:
+            actor.release()
+
+    with pytest.raises(AgentSuspended):
+        await execute()
+    pending = store.pending(lease.owner, generation.run_id)
+    assert pending is not None and pending["payload"]["type"] == "tool_approval"
+    store.claim(
+        lease.owner,
+        generation.run_id,
+        pending["actionId"],
+        [
+            {
+                "tool_call_id": "q",
+                "decision": "edit",
+                "editedArguments": {"question": "Edited?"},
+            }
+        ],
+    )
+    with pytest.raises(AgentSuspended):
+        await execute()
+    question = store.pending(lease.owner, generation.run_id)
+    assert question is not None
+    assert question["namespace"] == pending["namespace"]
+    assert question["payload"]["question"]["question"] == "Edited?"
+    assert question["actionId"] != pending["actionId"]
+    with pytest.raises(ValueError, match="Stale"):
+        store.claim_question(
+            lease.owner,
+            generation.run_id,
+            pending["actionId"],
+            {"answer": "stale"},
+        )
+    store.claim_question(
+        lease.owner,
+        generation.run_id,
+        question["actionId"],
+        {"answer": "answer"},
+    )
+    result = await execute()
+    assert result[-1]["content"] == "member complete"
+    assert turns == ["root", "member", "member"]
+    assert await execute() == result

@@ -13,9 +13,11 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Annotated, Any, TypedDict, cast
 
-from .agent_runtime import RuntimeSafetyError
+from .agent_runtime import AgentSuspended, RuntimeSafetyError
 from .agents import AgentRepository
+from .approval_claims import ApprovalClaimStore
 from .generation_actor_lease import ActorLease
+from .graph_human_request import GraphHumanActionRequested, GraphHumanRequest
 from .graph_member_scope import GraphMemberScope
 from .graph_topology import admit_agent_graph, endpoints
 from .handoff import (
@@ -155,6 +157,7 @@ async def run_multi_agent_graph(
     recursion_limit: int,
     namespace: str = "foreground",
     result_only: bool = False,
+    human_actions: bool = False,
 ) -> list[dict]:
     """Execute the pinned workflow via a caller-authorized member callback.
 
@@ -170,8 +173,10 @@ async def run_multi_agent_graph(
     )
     from langchain_core.runnables import RunnableConfig
     from langgraph.config import get_config
+    from langgraph.types import interrupt
 
     repository = AgentRepository(lease.database)
+    claims = ApprovalClaimStore(lease.database)
 
     def check() -> None:
         lease.assert_current()
@@ -206,6 +211,7 @@ async def run_multi_agent_graph(
                 root.get("resultAgentId"),
                 recursion_limit,
                 result_only,
+                human_actions,
             ],
             sort_keys=True,
             separators=(",", ":"),
@@ -343,21 +349,42 @@ async def run_multi_agent_graph(
         tools = handoff_tools(
             lease.owner, root, repository, source_agent_id=agent_id
         )
-        result = await execute_member(
-            GraphActivation(
-                member,
-                GraphMemberScope(
-                    graph_namespace,
-                    root_agent_id,
-                    root["version"],
-                    agent_id,
-                    activation_id,
-                ),
-                incoming,
-                tools,
-                route.snapshot(),
-            )
+        activation = GraphActivation(
+            member,
+            GraphMemberScope(
+                graph_namespace,
+                root_agent_id,
+                root["version"],
+                agent_id,
+                activation_id,
+            ),
+            incoming,
+            tools,
+            route.snapshot(),
         )
+        if human_actions:
+            # Replay prior SDK interrupt positions even when the member loop
+            # has already advanced beyond the reviewed edge.
+            for prior in claims.resolved_graph_interrupts(
+                lease, activation.scope
+            ):
+                if interrupt(prior["request"]) != prior["actionId"]:
+                    raise RuntimeSafetyError(
+                        "Graph resume does not match its durable human claim"
+                    )
+        try:
+            result = await execute_member(activation)
+        except GraphHumanActionRequested as error:
+            if not human_actions:
+                raise
+            if error.request.scope != activation.scope:
+                raise RuntimeSafetyError(
+                    "Human action belongs to another graph activation"
+                ) from error
+            interrupt(error.request.value())
+            raise RuntimeSafetyError(
+                "Graph resumed without matching member review evidence"
+            ) from error
         live_member(agent_id)
         messages = messages_state_reducer(
             [], result.messages, id_factory=make_id
@@ -613,14 +640,45 @@ async def run_multi_agent_graph(
             ).snapshot(),
         }
     )
-    outcome = await compiled.ainvoke(
-        initial,
-        cast(
-            RunnableConfig,
-            {**checkpoint_config, "recursion_limit": recursion_limit},
-        ),
+    config = cast(
+        RunnableConfig,
+        {**checkpoint_config, "recursion_limit": recursion_limit},
     )
+
+    async def pending_interrupts():
+        snapshot = await compiled.aget_state(config)
+        return [item for task in snapshot.tasks for item in task.interrupts]
+
+    if stored is not None and human_actions:
+        resume = {}
+        for item in await pending_interrupts():
+            request = GraphHumanRequest.parse(item.value)
+            if request.scope.graph_namespace != graph_namespace:
+                raise RuntimeSafetyError(
+                    "Graph interrupt belongs to another graph"
+                )
+            for prior in claims.resolved_graph_interrupts(lease, request.scope):
+                if prior["id"] == item.id and prior["request"] == item.value:
+                    resume[item.id] = prior["actionId"]
+        if resume:
+            initial = Command(resume=resume)
+    outcome = await compiled.ainvoke(initial, config)
     check()
+    if outcome.get("__interrupt__"):
+        if not human_actions:
+            raise RuntimeSafetyError("Graph human actions are not enabled")
+        persisted = await pending_interrupts()
+        item = min(outcome["__interrupt__"], key=lambda value: value.id)
+        if not any(
+            saved.id == item.id and saved.value == item.value
+            for saved in persisted
+        ):
+            raise RuntimeSafetyError("Graph interruption was not durably saved")
+        request = GraphHumanRequest.parse(item.value)
+        if request.scope.graph_namespace != graph_namespace:
+            raise RuntimeSafetyError("Graph interrupt belongs to another graph")
+        claims.publish_graph_interrupt(lease, item.id, request)
+        raise AgentSuspended("Waiting for graph member human action")
     if result_only and root.get("resultAgentId"):
         result = outcome.get("subagentResult") or {}
         message = (
