@@ -16,6 +16,7 @@ from ..jobs.managed import (
     stop_managed_job_without_session_admission,
     use_managed_jobs_runtime,
 )
+from ..jobs.projection import _preview, compact_job
 from ..schemas.result_models.jobs import JobInfo, JobOutput
 from .session_copy import SESSION_COPY_MANAGED_KIND
 from .sessions import ControlSessionCoordinator
@@ -48,27 +49,6 @@ def _ordered_rows(
 _JOB_LIST_MAX_BYTES = 32 * 1024
 
 
-def _preview(text: str, maximum_bytes: int) -> str:
-    raw = text.encode("utf-8")
-    if len(raw) <= maximum_bytes:
-        return text
-    return raw[: maximum_bytes - 3].decode("utf-8", errors="ignore") + "…"
-
-
-def _compact_job(job: JobInfo) -> JobInfo:
-    """Keep list entries useful without duplicating full Job details from poll."""
-    return job.model_copy(
-        update={
-            "name": _preview(job.name, 80),
-            "command": _preview(job.command, 240),
-            "cwd": _preview(job.cwd, 160),
-            "progress": None,
-            "result": None,
-            "error": None,
-        }
-    )
-
-
 def _list_page(
     jobs: list[JobInfo],
     counts: dict[str, int],
@@ -82,7 +62,7 @@ def _list_page(
     page: list[JobInfo] = []
     message = _preview(message, 320)
     for job in jobs[offset : offset + limit]:
-        candidate = [*page, _compact_job(job)]
+        candidate = [*page, compact_job(job)]
         next_offset = offset + len(candidate)
         output = JobOutput(
             operation="list",

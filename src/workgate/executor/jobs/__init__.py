@@ -11,6 +11,7 @@ from ...jobs.status import _read_status_path
 from ...platform.host import HostOS, host_os
 from ...protocol.executor import (
     JobInventorySummary,
+    ReservedJobAttemptBatchRequest,
     ReservedJobAttemptRequest,
     ReservedJobLookupRequest,
 )
@@ -194,6 +195,20 @@ class ExecutorJobService:
                     update={"job": tail.job, "output": tail.output}
                 )
             return receipt
+
+    async def list_reserved_attempts(
+        self, session_id: str, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        request = ReservedJobAttemptBatchRequest.model_validate(args)
+        async with session_lifecycle_lock(session_id):
+            receipts = await shell_jobs.list_job_attempts_unlocked(
+                self.config, self.store, session_id, request.attempts
+            )
+        return {
+            "receipts": [
+                receipt.model_dump(mode="json") for receipt in receipts
+            ]
+        }
 
     async def reconcile(self) -> bool:
         return await shell_jobs.reconcile_shell_jobs_execute(

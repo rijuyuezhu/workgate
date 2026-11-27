@@ -399,9 +399,22 @@ def test_copy_intent_authorizes_both_executors_and_revokes_on_destination_loss(
             expires=None,
             registered=(MACHINE, OTHER),
         )
+
+    def list_owned():
+        return repo.list_attempts(
+            lease,
+            sessions[0],
+            machine=MACHINE,
+            scopes={"shell:read"},
+            expires=None,
+            registered=(MACHINE, OTHER),
+        )
+
+    assert list_owned() == []
     workspace.save_setting(
         "alice", policy_key, {MACHINE: "read", OTHER: "read"}
     )
+    assert [row.id for row in list_owned()] == [retry.id]
     assert (
         repo.poll_attempts(
             lease,

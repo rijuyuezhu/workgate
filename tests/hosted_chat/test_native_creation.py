@@ -1897,6 +1897,13 @@ async def test_managed_poll_uses_read_grants_and_exact_native_attempt(
         poll = await poll_native(harness, repo, lease, args)
         assert poll["outputs"][0]["job"]["kind"] == "managed"
         assert "owned managed attempt" in poll["outputs"][0]["output"]
+        listing = await poll_native(
+            harness, repo, lease, {"session_id": source}
+        )
+        assert [job["job_id"] for job in listing["jobs"]] == [jid]
+        assert listing["jobs"][0]["kind"] == "managed"
+        assert listing["jobs"][0]["progress"] is None
+        assert listing["jobs"][0]["result"] is None
         workspace.save_setting(
             lease.owner, policy, {harness.executor_id: "none"}
         )
@@ -1915,6 +1922,10 @@ async def test_managed_poll_uses_read_grants_and_exact_native_attempt(
             await runtime.job_service.execute(session_id=source, retry=[jid])
         with pytest.raises(NativeCreationUncertain, match="superseded"):
             await poll_native(harness, repo, lease, args)
+        listing = await poll_native(
+            harness, repo, lease, {"session_id": source}
+        )
+        assert listing["total"] == 0
     finally:
         await runtime.managed_jobs_runtime.aclose()
 
@@ -1948,4 +1959,83 @@ async def test_poll_rechecks_revocation_after_native_reply(
     with pytest.raises(PermissionError):
         await poll_native(
             harness, repo, lease, {"session_id": sid, "poll": [jid]}
+        )
+
+
+@pytest.mark.asyncio
+async def test_owned_job_list_filters_manual_and_superseded_attempts(
+    bound, tracked_shells
+):
+    harness, repo, lease, _ = bound
+    _, sid = await native_session(harness, repo, lease)
+    ids = []
+    for i in range(3):
+        job = await invoke(
+            harness,
+            repo,
+            lease,
+            ModelToolCall(
+                f"owned-{i}",
+                "bash",
+                {
+                    "session_id": sid,
+                    "command": f"owned-{i}",
+                    "async_": True,
+                },
+            ),
+        )
+        ids.append(job["result"]["job_id"])
+    manual = await harness.call(
+        harness.executor_id,
+        "bash",
+        {"command": "manual secret", "async_": True},
+        session_id=sid,
+    )
+    assert manual.ok
+    for job_id in (ids[0], ids[1]):
+        assert (
+            await harness.call(
+                harness.executor_id, "job", {"cancel": [job_id]}, session_id=sid
+            )
+        ).ok
+    assert (
+        await harness.call(
+            harness.executor_id, "job", {"retry": [ids[0]]}, session_id=sid
+        )
+    ).ok
+
+    args = {"session_id": sid, "limit": 1}
+    first = await poll_native(harness, repo, lease, args)
+    assert first["operation"] == "list"
+    assert first["total"] == 2
+    assert sum(first["counts"].values()) == 2
+    assert first["next_offset"] == 1
+    second = await poll_native(harness, repo, lease, args | {"offset": 1})
+    assert {first["jobs"][0]["job_id"], second["jobs"][0]["job_id"]} == set(
+        ids[1:]
+    )
+    assert second["next_offset"] is None
+    running = await poll_native(
+        harness, repo, lease, args | {"include_finished": False}
+    )
+    assert running["total"] == 1
+    assert running["jobs"][0]["job_id"] == ids[2]
+    assert sum(running["counts"].values()) == 2
+    with pytest.raises(PermissionError, match="shell:read"):
+        await poll_native(harness, repo, lease, args, scopes=set())
+
+
+@pytest.mark.asyncio
+async def test_empty_job_list_requires_owned_session(bound):
+    harness, repo, lease, _ = bound
+    _, sid = await native_session(harness, repo, lease)
+    result = await poll_native(harness, repo, lease, {"session_id": sid})
+    assert result["total"] == 0
+    assert result["jobs"] == []
+    assert result["counts"] == {}
+    from workgate.protocol.ids import new_session_id
+
+    with pytest.raises(PermissionError, match="does not belong"):
+        await poll_native(
+            harness, repo, lease, {"session_id": new_session_id()}
         )

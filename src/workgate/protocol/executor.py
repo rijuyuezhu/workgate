@@ -36,6 +36,7 @@ SESSION_CHANGE_WORKDIR_OP = "session.change_workdir"
 JOB_START_RESERVED_OP = "job.start_reserved"
 JOB_RETRY_RESERVED_OP = "job.retry_reserved"
 JOB_LOOKUP_ATTEMPT_OP = "job.lookup_attempt"
+JOB_LIST_ATTEMPTS_OP = "job.list_attempts"
 JOB_CANCEL_ATTEMPT_OP = "job.cancel_attempt"
 SHELL_START_RESERVED_OP = "shell.start_reserved"
 SHELL_LOOKUP_RESERVED_OP = "shell.lookup_reserved"
@@ -101,6 +102,23 @@ class ReservedJobLookupRequest(ReservedJobAttemptRequest):
     """Exact attempt lookup with a bounded native log tail."""
 
     lines: int = Field(default=200, ge=1, le=5000)
+
+
+class ReservedJobAttemptBatchRequest(BaseModel):
+    """Bounded private metadata lookup, with no Job log reads."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    attempts: list[ReservedJobAttemptRequest] = Field(
+        min_length=1, max_length=64
+    )
+
+    @model_validator(mode="after")
+    def distinct_jobs(self) -> Self:
+        if len({attempt.job_id for attempt in self.attempts}) != len(
+            self.attempts
+        ):
+            raise ValueError("Duplicate Job metadata target")
+        return self
 
 
 class ReservedShellStartRequest(ReservedExecutionRequest):
