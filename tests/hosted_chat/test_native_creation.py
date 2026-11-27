@@ -6433,3 +6433,193 @@ async def test_foreground_subagent_nested_result_is_fenced_by_leaf_revision(
     agents.update(lease.owner, leaf["id"], {"instructions": "revoked"})
     with pytest.raises(PermissionError, match="revision changed"):
         await node.dispatch([call], state)
+
+
+@pytest.mark.asyncio
+async def test_foreground_team_result_only_native_effects_and_recovery(bound):
+    pytest.importorskip("langgraph")
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.control.hosted_chat_subagent_loop import ForegroundDelegation
+    from workgate.hosted_chat.agent_runtime import AgentContext, AgentLoopState
+    from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+    from workgate.hosted_chat.subagents import build_subagent_configs
+
+    harness, original, lease, _ = bound
+    agents = AgentRepository(original.database)
+    entry = agents.create(lease.owner, {"provider": "openai", "model": "entry"})
+    final = agents.create(lease.owner, {"provider": "openai", "model": "final"})
+    root = agents.create(
+        lease.owner,
+        {
+            "provider": "openai",
+            "model": "parent",
+            "subagents": {
+                "enabled": True,
+                "allowSelf": False,
+                "graphs": [
+                    {
+                        "type": "team",
+                        "name": "Review team",
+                        "description": "Review",
+                        "agent_ids": [entry["id"], final["id"]],
+                        "entry_agent_id": entry["id"],
+                        "result_agent_id": final["id"],
+                        "edges": [
+                            {
+                                "from": entry["id"],
+                                "to": final["id"],
+                                "edgeType": "direct",
+                            }
+                        ],
+                    }
+                ],
+            },
+        },
+    )
+    generation, _ = GenerationStore(original.database).begin(
+        lease.owner,
+        {"text": "parent private", "agent_id": root["id"]},
+    )
+    actor = ActorLease.claim(original.database, lease.owner, generation.run_id)
+    assert actor is not None
+    models = []
+
+    async def resolve(agent):
+        return AgentContext(
+            ProviderConfig(
+                "openai", agent["model"], "https://example.invalid", "fake"
+            ),
+            [],
+            agent=agent,
+        )
+
+    async def stream(profile, messages, *, tools, **_kwargs):
+        assert "parent private" not in str(messages)
+        assert "subagent" not in {tool["function"]["name"] for tool in tools}
+        models.append(profile.model)
+        if profile.model == "entry":
+            if not any(m["role"] == "tool" for m in messages):
+                yield ModelToolCall("same", "task", {"action": "create"})
+            else:
+                yield "intermediate team evidence"
+        else:
+            assert profile.model == "final"
+            assert "intermediate team evidence" in str(messages)
+            if not any(
+                m.get("role") == "tool"
+                and m.get("tool_call_id") == "final-call"
+                for m in messages
+            ):
+                yield ModelToolCall("final-call", "task", {"action": "create"})
+            else:
+                yield "designated team result"
+
+    delegation = ForegroundDelegation(
+        build_subagent_configs(lease.owner, root, original.database),
+        resolve,
+        stream_tools=stream,
+    )
+
+    def make_node(checkpoint):
+        return NativeLoopToolNode(
+            harness.control,
+            original,
+            checkpoint,
+            allowed_tools={"task"},
+            scopes=set(SCOPES),
+            expires=None,
+            task_machine=harness.executor_id,
+            check_grant=lambda: None,
+            delegation=delegation,
+        )
+
+    parent = OwnedLoopCheckpoint(actor)
+    node = make_node(parent)
+    context = await resolve(root)
+    state = AgentLoopState(
+        context, [{"role": "user", "content": "parent private"}]
+    )
+    await node.refresh_tools(state)
+    call = ModelToolCall(
+        "team-call",
+        "subagent",
+        {"subagent_type": "team", "description": "review"},
+    )
+    state.pending_calls = node.preflight([call], state)
+    state.tool_step_started = True
+    await parent.save(state, state.pending_calls)
+    result, _ = await delegation.invoke(node, call, context, None)
+    assert result["content"] == [
+        {"type": "text", "text": "designated team result"}
+    ]
+    assert models == ["entry", "entry", "final", "final"]
+    actor.release()
+    actor = ActorLease.claim(original.database, lease.owner, generation.run_id)
+    assert actor is not None
+    parent = OwnedLoopCheckpoint(actor)
+    recovered = parent.restore(context)
+    assert recovered is not None
+    node = make_node(parent)
+    output = await node.dispatch([call], recovered.state)
+    assert output.messages[0]["content"] == "designated team result"
+    assert len(models) == 4
+    assert len(await harness.control.task_service.list_tasks()) == 2
+    with original.database.read_snapshot() as db:
+        rows = db.execute(
+            "SELECT member_namespace,member_agent_id FROM agent_durable_tasks WHERE run_id=?",
+            (actor.run_id,),
+        ).fetchall()
+        assert len(rows) == 2
+        assert {row["member_agent_id"] for row in rows} == {
+            entry["id"],
+            final["id"],
+        }
+        assert all(
+            ":graph:team:member:" in row["member_namespace"] for row in rows
+        )
+    assert (
+        await node.dispatch([call], recovered.state)
+    ).messages == output.messages
+    assert original.cancellation_batch((harness.executor_id,)) == []
+    agents.update(lease.owner, final["id"], {"instructions": "changed"})
+    with pytest.raises(PermissionError, match="target revision changed"):
+        await node.dispatch([call], recovered.state)
+    with original.database.connect() as db:
+        db.execute(
+            "UPDATE agent_durable_tasks SET next_attempt_at=NULL WHERE run_id=?",
+            (actor.run_id,),
+        )
+    assert len(original.cancellation_batch((harness.executor_id,))) == 2
+
+
+def test_foreground_team_definition_requires_optional_graph_support(
+    monkeypatch,
+):
+    from workgate.control import hosted_chat_subagent_loop as module
+    from workgate.hosted_chat.subagents import (
+        SubagentConfig,
+        chat_subagent_config,
+    )
+
+    team = SubagentConfig(
+        "team",
+        "Team",
+        "Review",
+        {"id": "entry", "graphAgentIds": ["entry", "result"]},
+        5,
+        "alice",
+    )
+    ordinary = chat_subagent_config("alice")
+
+    async def resolve(_agent):
+        pytest.fail("advertisement must not resolve a provider")
+
+    monkeypatch.setattr(module, "find_spec", lambda _: None)
+    delegation = module.ForegroundDelegation([team, ordinary], resolve)
+    assert [item.type for item in delegation.configs] == ["self"]
+    with pytest.raises(PermissionError, match="advertised"):
+        delegation.validate(
+            ModelToolCall("id", "subagent", {"subagent_type": "team"})
+        )

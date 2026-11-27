@@ -39,7 +39,7 @@ from ..hosted_chat.machine_permissions import effective_machine_access
 from ..hosted_chat.mcp_projection import native_tool_history_message
 from ..hosted_chat.provider_common import ModelToolCall, complete_tool_batch
 from ..hosted_chat.storage import WorkspaceRepository
-from ..hosted_chat.subagent_scope import SubagentScope
+from ..hosted_chat.subagent_scope import SubagentGraphScope, SubagentScope
 from ..hosted_chat.subagents import SUBAGENT_TOOL_NAME
 from .hosted_chat_native_creation import _grant, _registered
 from .hosted_chat_native_dispatch import NativeToolDispatcher, _selected_tools
@@ -131,7 +131,9 @@ class NativeLoopToolNode:
             return False
         if self.checkpoint.scope is None:
             return agent is None or ask_user_requested(agent, {})
-        if self.activation is None:
+        if self.activation is None or isinstance(
+            self.checkpoint.scope, SubagentGraphScope
+        ):
             return False
         _, agents = self.repository.tool_context_chain(self.checkpoint.lease)
         return all(
@@ -153,7 +155,13 @@ class NativeLoopToolNode:
         self.current_grant()
         lease = self.checkpoint.lease
         agents = AgentRepository(lease.database)
-        root = agents.get(lease.owner, self.activation.scope.root_id)
+        scope = self.activation.scope
+        if isinstance(scope, SubagentGraphScope):
+            root = self.activation.graph_root
+            if root is not None:
+                scope.team.assert_team_root(root)
+        else:
+            root = agents.get(lease.owner, scope.root_id)
         if root is None:
             raise PermissionError("Graph root Agent is no longer owned")
         tools = handoff_tools(
@@ -170,7 +178,7 @@ class NativeLoopToolNode:
 
     def _transfer(self, call: ModelToolCall, messages: list[dict]) -> dict:
         root, tools = self._handoffs()
-        if self.activation is None:
+        if self.activation is None or self.activation.scope.member_id is None:
             raise PermissionError("Handoff requires a graph activation")
         definition = next(
             (
@@ -485,7 +493,9 @@ class NativeLoopToolNode:
             return receipt
 
         async def preflight_unsettled(unsettled: list[ModelToolCall]) -> None:
-            child = isinstance(self.checkpoint.scope, SubagentScope)
+            child = isinstance(
+                self.checkpoint.scope, (SubagentScope, SubagentGraphScope)
+            )
             claim = (
                 None if child else claim_store.approved_batch(self.checkpoint)
             )

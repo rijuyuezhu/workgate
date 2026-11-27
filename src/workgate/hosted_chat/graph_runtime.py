@@ -19,7 +19,12 @@ from .approval_claims import ApprovalClaimStore
 from .generation_actor_lease import ActorLease
 from .graph_human_request import GraphHumanActionRequested, GraphHumanRequest
 from .graph_member_scope import GraphMemberScope
-from .graph_topology import admit_agent_graph, endpoints
+from .graph_topology import (
+    admit_agent_graph,
+    build_graph_topology,
+    endpoints,
+    graph_members,
+)
 from .handoff import (
     PARENT,
     HandoffRouting,
@@ -30,6 +35,7 @@ from .handoff import (
     receive_handoff,
 )
 from .message_reducers import agent_messages_reducer, messages_state_reducer
+from .subagent_scope import SubagentGraphScope, SubagentScope
 
 
 def _merge_prompt_inputs(current: dict | None, updates: dict | None) -> dict:
@@ -102,14 +108,18 @@ class GraphActivation:
     """One durable LangGraph task, with live owner-scoped member configuration."""
 
     agent: dict
-    scope: GraphMemberScope
+    scope: GraphMemberScope | SubagentGraphScope
     history: list[dict]
     handoff_tools: list[dict]
     handoff_state: dict
+    graph_root: dict | None = None
 
     @property
     def activation_id(self) -> str:
-        return self.scope.activation_id
+        identity = self.scope.activation_id
+        if identity is None:
+            raise RuntimeSafetyError("Graph activation lacks member identity")
+        return identity
 
 
 @dataclass
@@ -119,12 +129,19 @@ class GraphMemberResult:
 
 
 def _mark_graph_started(
-    lease: ActorLease, namespace: str, fingerprint: str, *, stored: bool
+    lease: ActorLease,
+    namespace: str,
+    fingerprint: str,
+    *,
+    stored: bool,
+    team_scope: SubagentScope | None = None,
 ) -> None:
     """Never resume an expired graph as a fresh sequence of native effects."""
     with lease.database.connect() as db:
         db.execute("BEGIN IMMEDIATE")
         lease.assert_current(db)
+        if team_scope is not None:
+            team_scope.resolve(db, lease)
         row = db.execute(
             "SELECT state FROM runs WHERE id=?", (lease.run_id,)
         ).fetchone()
@@ -158,6 +175,8 @@ async def run_multi_agent_graph(
     namespace: str = "foreground",
     result_only: bool = False,
     human_actions: bool = False,
+    team_scope: SubagentScope | None = None,
+    team_root: dict | None = None,
 ) -> list[dict]:
     """Execute the pinned workflow via a caller-authorized member callback.
 
@@ -183,7 +202,11 @@ async def run_multi_agent_graph(
         check_grant()
 
     check()
-    if namespace == "foreground":
+    if (team_scope is None) != (team_root is None):
+        raise PermissionError("Team graph requires an admitted definition")
+    if team_scope is not None and human_actions:
+        raise PermissionError("Team graph human actions are not enabled")
+    if namespace == "foreground" and team_scope is None:
         with lease.database.read_snapshot() as db:
             lease.assert_current(db)
             row = db.execute(
@@ -193,10 +216,25 @@ async def run_multi_agent_graph(
                 raise PermissionError(
                     "Graph root does not match the admitted generation"
                 )
-    root = repository.get(lease.owner, root_agent_id)
-    if root is None:
-        raise PermissionError("Graph root Agent is not owned")
-    topology = admit_agent_graph(lease.owner, root, repository)
+    if team_scope is None:
+        root = repository.get(lease.owner, root_agent_id)
+        if root is None:
+            raise PermissionError("Graph root Agent is not owned")
+        topology = admit_agent_graph(lease.owner, root, repository)
+    else:
+        assert team_root is not None
+        team_scope.assert_team_root(team_root)
+        with lease.database.read_snapshot() as db:
+            team_scope.resolve(db, lease)
+        root = copy.deepcopy(team_root)
+        identities = graph_members(root)
+        if root_agent_id != team_scope.member_id or identities != [
+            member for member, _ in team_scope.target_revisions
+        ]:
+            raise PermissionError(
+                "Team graph membership does not match admission"
+            )
+        topology = build_graph_topology(root, identities)
     if topology is None or topology.default_agent_id is None:
         raise ValueError("Agent does not define a graph")
     entry = topology.default_agent_id
@@ -234,16 +272,27 @@ async def run_multi_agent_graph(
                     if edge in topology.direct_edges:
                         direct_destinations[src].add(dest)
 
-    saver = OwnedGraphCheckpointer(
-        lease.database, lease.owner, actor_lease=lease
+    graph_scope = (
+        SubagentGraphScope(team_scope) if team_scope is not None else None
     )
-    graph_namespace = lease.run_id + ":graph:" + namespace
+    saver = OwnedGraphCheckpointer(
+        lease.database, lease.owner, actor_lease=lease, scope=graph_scope
+    )
+    graph_namespace = (
+        graph_scope.graph_namespace
+        if graph_scope is not None
+        else lease.run_id + ":graph:" + namespace
+    )
     checkpoint_config = saver.storage.config(
         saver.thread_id, graph_namespace, event_actor=True
     )
     stored = saver.get_tuple(cast(RunnableConfig, checkpoint_config))
     _mark_graph_started(
-        lease, graph_namespace, fingerprint, stored=stored is not None
+        lease,
+        graph_namespace,
+        fingerprint,
+        stored=stored is not None,
+        team_scope=team_scope,
     )
     source_history = messages_state_reducer([], copy.deepcopy(history))
     initial_system = [m for m in source_history if m.get("role") == "system"]
@@ -265,6 +314,9 @@ async def run_multi_agent_graph(
             raise RuntimeSafetyError(
                 "Graph definition changed during execution"
             )
+        if team_scope is not None:
+            with lease.database.read_snapshot() as db:
+                team_scope.resolve(db, lease)
         member = repository.get(lease.owner, agent_id)
         if member is None:
             raise PermissionError("Graph member Agent was revoked")
@@ -351,7 +403,9 @@ async def run_multi_agent_graph(
         )
         activation = GraphActivation(
             member,
-            GraphMemberScope(
+            SubagentGraphScope(team_scope, agent_id, activation_id)
+            if team_scope is not None
+            else GraphMemberScope(
                 graph_namespace,
                 root_agent_id,
                 root["version"],
@@ -361,8 +415,10 @@ async def run_multi_agent_graph(
             incoming,
             tools,
             route.snapshot(),
+            copy.deepcopy(root) if team_scope is not None else None,
         )
         if human_actions:
+            assert isinstance(activation.scope, GraphMemberScope)
             # Replay prior SDK interrupt positions even when the member loop
             # has already advanced beyond the reviewed edge.
             for prior in claims.resolved_graph_interrupts(

@@ -14,6 +14,7 @@ from ..hosted_chat.agent_runtime import (
 )
 from ..hosted_chat.durable_tasks import DurableTaskRepository
 from ..hosted_chat.generation_actor_lease import ActorLease
+from ..hosted_chat.graph_member_scope import GraphMemberScope
 from ..hosted_chat.graph_runtime import (
     GraphActivation,
     GraphMemberResult,
@@ -23,6 +24,7 @@ from ..hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
 from ..hosted_chat.provider_common import ModelToolCall
 from ..hosted_chat.providers import stream_model, stream_model_with_tools
 from ..hosted_chat.steering import SteeringStore, reconcile_applied_steers
+from ..hosted_chat.subagent_scope import SubagentGraphScope, SubagentScope
 from .hosted_chat_native_creation import _grant
 from .hosted_chat_native_tool_node import NativeLoopToolNode
 from .runtime import ControlRuntime
@@ -37,7 +39,8 @@ async def run_native_graph(
     resolve_context: Callable[[dict], Awaitable[AgentContext]],
     authorize_batch: Callable[
         [list[ModelToolCall], AgentLoopState], Awaitable[None]
-    ],
+    ]
+    | None,
     allowed_tools: Collection[str],
     scopes: set[str],
     expires: int | None,
@@ -47,6 +50,8 @@ async def run_native_graph(
     stream_tools=stream_model_with_tools,
     stream_text=stream_model,
     result_only: bool = False,
+    team_scope: SubagentScope | None = None,
+    team_root: dict | None = None,
 ) -> list[dict]:
     """Bind StateGraph tasks to native effects without publishing member deltas.
 
@@ -59,7 +64,11 @@ async def run_native_graph(
         raise PermissionError(
             "Graph generation belongs to another Control runtime"
         )
+    if team_scope is None and authorize_batch is None:
+        raise PermissionError("Foreground graph requires content authorization")
     steering = SteeringStore(lease.database)
+    if (team_scope is None) != (team_root is None):
+        raise PermissionError("Team graph requires an admitted definition")
     scopes = set(scopes)
     allowed_tools = frozenset(allowed_tools)
 
@@ -73,6 +82,18 @@ async def run_native_graph(
             raise PermissionError("Native graph grant expired")
 
     async def execute(activation: GraphActivation) -> GraphMemberResult:
+        scope = activation.scope
+        if team_scope is None and not isinstance(scope, GraphMemberScope):
+            raise PermissionError(
+                "Foreground graph requires its root activation scope"
+            )
+        if team_scope is not None and (
+            not isinstance(scope, SubagentGraphScope)
+            or scope.team != team_scope
+        ):
+            raise PermissionError(
+                "Team graph requires its admitted member scope"
+            )
         checkpoint = OwnedLoopCheckpoint(lease, scope=activation.scope)
         node = NativeLoopToolNode(
             runtime,
@@ -98,6 +119,10 @@ async def run_native_graph(
             if context.recursion_limit is not None
             else recursion_limit,
         )
+        if team_scope is not None:
+            context = replace(
+                context, compaction_semantic_index=None, fading_tier=None
+            )
         recovered = checkpoint.restore(context)
         state = (
             recovered.state
@@ -110,12 +135,16 @@ async def run_native_graph(
 
         async def stream_boundary() -> bool:
             node.current_grant()
-            return steering.has_preempt(lease.owner, lease.run_id)
+            return isinstance(scope, GraphMemberScope) and steering.has_preempt(
+                lease.owner, lease.run_id
+            )
 
         def reconcile(loop: AgentLoopState) -> bool:
+            if not isinstance(scope, GraphMemberScope):
+                return False
             added = reconcile_applied_steers(
                 loop.messages,
-                steering.applied_parts(lease, scope=activation.scope),
+                steering.applied_parts(lease, scope=scope),
             )
             if added:
                 loop.completed = False
@@ -123,7 +152,8 @@ async def run_native_graph(
 
         async def boundary(loop: AgentLoopState, kind: str) -> bool:
             node.current_grant()
-            steering.drain(lease, boundary=kind, scope=activation.scope)
+            if isinstance(scope, GraphMemberScope):
+                steering.drain(lease, boundary=kind, scope=scope)
             return reconcile(loop)
 
         async def save(
@@ -156,7 +186,9 @@ async def run_native_graph(
         return GraphMemberResult(state.messages, state.graph_commands)
 
     check()
-    heartbeat = asyncio.create_task(lease.keep_alive())
+    heartbeat = (
+        asyncio.create_task(lease.keep_alive()) if team_scope is None else None
+    )
     try:
         return await run_multi_agent_graph(
             lease,
@@ -166,9 +198,12 @@ async def run_native_graph(
             check_grant=check,
             recursion_limit=recursion_limit,
             result_only=result_only,
-            human_actions=True,
+            human_actions=team_scope is None,
+            team_scope=team_scope,
+            team_root=team_root,
         )
     finally:
-        heartbeat.cancel()
-        with suppress(asyncio.CancelledError):
-            await heartbeat
+        if heartbeat is not None:
+            heartbeat.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat

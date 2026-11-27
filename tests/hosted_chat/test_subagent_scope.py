@@ -364,6 +364,9 @@ async def test_team_scope_pins_all_member_revisions(setup):
         (child["id"], child["version"]),
         (leaf["id"], leaf["version"]),
     )
+    scope.assert_team_root(value.agent)
+    with pytest.raises(PermissionError, match="definition"):
+        scope.assert_team_root({**value.agent, "resultAgentId": child["id"]})
     repo.update("alice", leaf["id"], {"instructions": "changed"})
     with pytest.raises(PermissionError, match="target revision changed"):
         OwnedLoopCheckpoint(lease, scope=scope)

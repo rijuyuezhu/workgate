@@ -4,6 +4,7 @@ import copy
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from importlib.util import find_spec
 
 from ..hosted_chat.agent_runtime import (
     AgentContext,
@@ -12,7 +13,6 @@ from ..hosted_chat.agent_runtime import (
     run_agent_loop,
 )
 from ..hosted_chat.durable_tasks import DurableTaskRepository
-from ..hosted_chat.graph_topology import graph_members
 from ..hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
 from ..hosted_chat.provider_common import ModelToolCall
 from ..hosted_chat.providers import stream_model, stream_model_with_tools
@@ -24,11 +24,12 @@ from ..hosted_chat.subagents import (
     invoke_subagent,
     subagent_tools,
 )
+from .hosted_chat_graph_loop import run_native_graph
 from .hosted_chat_native_tool_node import NativeLoopToolNode
 
 
 class ForegroundDelegation:
-    """Trusted opt-in; advertise only single-Agent foreground configurations."""
+    """Trusted opt-in for isolated foreground Agent and team configurations."""
 
     def __init__(
         self,
@@ -39,15 +40,16 @@ class ForegroundDelegation:
         stream_tools=stream_model_with_tools,
         stream_text=stream_model,
     ):
+        graph_available = find_spec("langgraph") is not None
         self.configs = [
             copy.deepcopy(config)
             for config in configs
             if max_depth > 0
             and (
-                config.ordinary_chat
-                or (
-                    len(graph_members(config.agent)) == 1
-                    and not config.agent.get("edges")
+                graph_available
+                or not (
+                    config.agent.get("graphAgentIds")
+                    or config.agent.get("edges")
                 )
             )
         ]
@@ -134,6 +136,40 @@ class ForegroundDelegation:
                 disclosure_access=node._receipt_access(),
             )
             admitted = scope
+            if scope.team_definition_hash is not None:
+
+                def check_parent() -> None:
+                    node.current_grant()
+
+                return await run_native_graph(
+                    node.runtime,
+                    lease,
+                    invocation.agent["id"],
+                    invocation.messages,
+                    resolve_context=self.resolve_context,
+                    authorize_batch=authorize_effects,
+                    allowed_tools=node.allowed_tools,
+                    scopes=set(scope.scopes),
+                    expires=scope.grant_expires,
+                    task_machine=node.task_machine,
+                    check_grant=check_parent,
+                    recursion_limit=min(
+                        (
+                            limit
+                            for limit in (
+                                context.recursion_limit,
+                                invocation.recursion_limit,
+                            )
+                            if limit is not None
+                        ),
+                        default=2**31 - 1,
+                    ),
+                    stream_tools=self.stream_tools,
+                    stream_text=self.stream_text,
+                    result_only=True,
+                    team_scope=scope,
+                    team_root=invocation.agent,
+                )
             child_checkpoint = OwnedLoopCheckpoint(lease, scope=scope)
             resolved = (
                 context
