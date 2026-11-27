@@ -482,3 +482,25 @@ only that member may reconcile delivery after a crash. The shared model
 history projection serves ordinary and graph turns. Tool-only preemption,
 post-tool transfer delivery, parallel election and actor replacement are
 covered with the existing native loop and SDK graph.
+
+### Subagent authoring and configuration (J3)
+
+The private delegation configuration follows the pinned source:
+
+| Workgate file | Upstream source at the pin | Git blob |
+| --- | --- | --- |
+| `subagents.py` | `src/local_shell_mcp/webui/subagents.py` (configuration, schema and projection) | `f36dc5d6e17ed63bb79de6c6eb145c76ce03012e` |
+| `agent_validation.py` | `src/local_shell_mcp/webui/agent_validation.py` (team authoring) | `b500411155f878f295a682697cf9a0211532dbab` |
+| `tests/hosted_chat/test_subagent_config.py` | `tests/test_webui_subagents_source_port.py` (configuration and oracle cases) | `6e8c12969ce0fe7d3dba87529264b0cd306f29c5` |
+| `tests/fixtures/hosted_chat/subagent_reference.cjs` | `tests/fixtures/librechat/subagent_reference.cjs` | `64858b708c9636c88778be1f77cc4b0a6af817f5` |
+| `tests/fixtures/hosted_chat/subagent_source_hashes.json` | `tests/fixtures/librechat/subagent_source_hashes.json` | `29afaedecdde1e2a9e43e4ac85c349a36db4f9c8` |
+
+Saved enabled targets are checked in the existing owner-scoped repository
+transaction and resolved again on expansion. The stricter direct-only team
+topology keeps explicit entry/result, grouped fan-in, acyclicity, and source
+prompt restrictions. Duplicate target IDs fail at authoring rather than
+during a model turn. Expansion retains source depth/count limits and explicit
+recursion budgets; child configuration omits Ask User and inherited discovery
+or summary state. This is not a permission or execution boundary: the schema
+builders are not wired to runtime tool advertisement, team execution is not
+enabled, and shareFiles/background/continuation require their own integration.
