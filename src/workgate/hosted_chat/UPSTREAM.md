@@ -600,3 +600,10 @@ private native worker injects messages at tool/turn/preemption boundaries;
 unconsumed controls are marked failed at terminal settlement. A provider
 stream interrupt is cooperative at stream boundaries, not an independent
 provider cancellation mechanism.
+
+Child completion wakeup registration now shares the detached reservation
+transaction. It uses the original root reply identity and owner preference;
+private nested/member edges have no independent root continuation. Manual
+result collection retires the pending intent atomically. The envelope contains
+routing metadata only, not a persisted execution credential. Wakeup dispatch
+and authenticated continuation remain separate units.
