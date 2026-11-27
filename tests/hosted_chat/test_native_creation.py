@@ -4475,3 +4475,65 @@ async def test_native_approval_live_policy_changes(bound, tmp_path, change):
         assert "Policy blocks write_file" in result.messages[0]["content"]
         assert not result.messages[1]["is_error"]
     assert not target.exists()
+
+
+@pytest.mark.parametrize("abort", [True, False])
+@pytest.mark.asyncio
+async def test_pending_approval_terminal_preserves_native_cancellation_boundary(
+    bound, abort
+):
+    from workgate.hosted_chat.agent_runtime import AgentContext, AgentLoopState
+    from workgate.hosted_chat.approval_claims import ApprovalClaimStore
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+
+    harness, repo, lease, generation = bound
+    task_id, sid = await native_session(harness, repo, lease)
+    unrelated, _ = GenerationStore(repo.database).begin(
+        lease.owner, {"text": "separate"}
+    )
+    other = ActorLease.claim(repo.database, lease.owner, unrelated.run_id)
+    assert other is not None
+    other_task, other_sid = await native_session(harness, repo, other)
+
+    checkpoint = OwnedLoopCheckpoint(lease)
+    context = AgentContext(
+        ProviderConfig("openai", "model", "https://example.invalid", "fake"), []
+    )
+    calls = [ModelToolCall("review", "session_end", {"session_id": sid})]
+    state = AgentLoopState(
+        context, [], pending_calls=calls, tool_step_started=True
+    )
+    await checkpoint.save(state, calls)
+    store = ApprovalClaimStore(repo.database)
+    pending = store.pause(checkpoint, calls)
+    if abort:
+        assert store.abort_pending(
+            lease.owner, lease.run_id, pending["actionId"]
+        )
+    else:
+        with repo.database.connect() as db:
+            db.execute(
+                "UPDATE agent_checkpoints SET expires_at=0 WHERE checkpoint_ns=?",
+                (lease.run_id,),
+            )
+        assert store.expire_pending(
+            lease.owner, lease.run_id, pending["actionId"]
+        )
+    with repo.database.read_snapshot() as db:
+        rows = db.execute(
+            "SELECT run_id,state FROM agent_durable_tasks"
+        ).fetchall()
+    owned = [row for row in rows if row["run_id"] == lease.run_id]
+    foreign = [row for row in rows if row["run_id"] == unrelated.run_id]
+    assert len(owned) == len(foreign) == 2
+    assert {row["state"] for row in owned} == (
+        {"cancel_pending"} if abort else {"active"}
+    )
+    assert {row["state"] for row in foreign} == {"active"}
+    assert repo.is_run_cancelled(lease.run_id) == abort
+    assert not repo.is_run_cancelled(unrelated.run_id)
+    # Pending-review finalization records cleanup intent; it does not execute a native stop.
+    assert harness.executor.sessions.lookup(sid) is not None
+    assert harness.executor.sessions.lookup(other_sid) is not None
+    assert task_id != other_task

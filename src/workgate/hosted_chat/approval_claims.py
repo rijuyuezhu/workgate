@@ -16,8 +16,9 @@ from .approval_runtime import (
 )
 from .checkpoints import SQLiteCheckpointSaver
 from .database import SQLiteDatabase
+from .durable_tasks import DurableTaskRepository
 from .generation_actor_lease import ActorLeaseLost
-from .generations import _EVENT_LIMIT, _MAX_EVENT_BYTES, _json
+from .generations import _EVENT_LIMIT, _MAX_EVENT_BYTES, GenerationStore, _json
 from .loop_checkpoint import OwnedLoopCheckpoint, _Snapshot
 from .provider_common import ModelToolCall
 from .storage import _now
@@ -173,6 +174,87 @@ class ApprovalClaimStore:
                 return None
             return json.loads(row["state"]).get("pendingAction")
 
+    @staticmethod
+    def _expired(pending: dict) -> bool:
+        expires = pending.get("expiresAt")
+        return (
+            isinstance(expires, (int, float))
+            and not isinstance(expires, bool)
+            and expires <= time.time() * 1000
+        )
+
+    def _pending_edge(
+        self, db, saver: SQLiteCheckpointSaver, row, state: dict, pending: dict
+    ) -> dict:
+        edge = self._edge(
+            db,
+            saver,
+            saver.config(row["conversation_id"], row["id"], event_actor=True),
+            state["approvalCheckpointId"],
+        )
+        marker = {"id": pending["actionId"], "value": pending}
+        if ("human", "__interrupt__", marker) not in edge["pendingWrites"]:
+            raise ValueError("Approval has no matching durable interruption")
+        self._verify_requests(edge, pending["payload"])
+        return edge
+
+    def abort_pending(self, owner: str, run_id: str, action_id: str) -> bool:
+        """Explicit owner abort also latches cancellation of this run's native work."""
+        return self._finish_pending(
+            owner, run_id, action_id, expired_only=False
+        )
+
+    def expire_pending(self, owner: str, run_id: str, action_id: str) -> bool:
+        """Interrupt only an unavailable review; no new authority or native effects."""
+        return self._finish_pending(owner, run_id, action_id, expired_only=True)
+
+    def _finish_pending(
+        self, owner: str, run_id: str, action_id: str, *, expired_only: bool
+    ) -> bool:
+        saver = SQLiteCheckpointSaver(self.database, owner)
+        with self.database.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._row(db, owner, run_id, "requires_action")
+            except KeyError:
+                return False
+            state = json.loads(row["state"])
+            pending = state.get("pendingAction")
+            if (
+                not isinstance(pending, dict)
+                or pending.get("actionId") != action_id
+            ):
+                return False
+            if expired_only:
+                if not self._expired(pending):
+                    try:
+                        self._pending_edge(db, saver, row, state, pending)
+                    except ValueError, KeyError:
+                        pass
+                    else:
+                        return False
+                status = "interrupted"
+                error = "Pending tool approval expired or its checkpoint is no longer available"
+            else:
+                DurableTaskRepository._cancel_run(db, owner, run_id)
+                status = "aborted"
+                error = None
+            for key in (
+                "pendingAction",
+                "approvalCheckpointId",
+                "approvedToolBatch",
+            ):
+                state.pop(key, None)
+            db.execute(
+                "UPDATE runs SET state=? WHERE id=?", (_json(state), run_id)
+            )
+            db.execute(
+                "DELETE FROM generation_actor_leases WHERE run_id=?", (run_id,)
+            )
+            return GenerationStore(self.database)._finish_locked(
+                db, row, status=status, error=error
+            )
+
     def claim(
         self, owner: str, run_id: str, action_id: str, resolutions: list[dict]
     ) -> ApprovalBatch:
@@ -187,27 +269,11 @@ class ApprovalClaimStore:
                 or pending.get("actionId") != action_id
             ):
                 raise ValueError("Stale tool approval action")
-            expires = pending.get("expiresAt")
-            if (
-                isinstance(expires, (int, float))
-                and not isinstance(expires, bool)
-                and expires <= time.time() * 1000
-            ):
+            if self._expired(pending):
                 raise ValueError("Human action expired")
             identity = state["approvalCheckpointId"]
-            edge = self._edge(
-                db,
-                saver,
-                saver.config(row["conversation_id"], run_id, event_actor=True),
-                identity,
-            )
-            marker = {"id": action_id, "value": pending}
-            if ("human", "__interrupt__", marker) not in edge["pendingWrites"]:
-                raise ValueError(
-                    "Approval has no matching durable interruption"
-                )
+            self._pending_edge(db, saver, row, state, pending)
             payload = pending["payload"]
-            self._verify_requests(edge, payload)
             batch = prepare_approval_batch(payload, resolutions)
             # Persist only source resolution fields; caller metadata is not replay evidence.
             clean = []

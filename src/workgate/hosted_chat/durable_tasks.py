@@ -1469,24 +1469,28 @@ class DurableTaskRepository:
         """Persist explicit abort before stopping a generation or its native work."""
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute(
-                "SELECT c.owner FROM runs r JOIN conversations c ON c.id=r.conversation_id "
-                "WHERE r.id=?",
-                (run_id,),
-            ).fetchone()
-            if row is None or row["owner"] != owner:
-                raise PermissionError("Generation owner mismatch")
-            now = _now()
-            db.execute(
-                "INSERT OR IGNORE INTO agent_run_cancellations(run_id,created_at) VALUES(?,?)",
-                (run_id, now),
-            )
-            db.execute(
-                "UPDATE agent_durable_tasks SET state=CASE WHEN state='reserved' "
-                "THEN 'stopped' ELSE 'cancel_pending' END,updated_at=?,next_attempt_at=NULL "
-                "WHERE owner=? AND run_id=? AND state IN ('reserved','active','unknown')",
-                (now, owner, run_id),
-            )
+            self._cancel_run(db, owner, run_id)
+
+    @staticmethod
+    def _cancel_run(db, owner: str, run_id: str) -> None:
+        row = db.execute(
+            "SELECT c.owner FROM runs r JOIN conversations c ON c.id=r.conversation_id "
+            "WHERE r.id=?",
+            (run_id,),
+        ).fetchone()
+        if row is None or row["owner"] != owner:
+            raise PermissionError("Generation owner mismatch")
+        now = _now()
+        db.execute(
+            "INSERT OR IGNORE INTO agent_run_cancellations(run_id,created_at) VALUES(?,?)",
+            (run_id, now),
+        )
+        db.execute(
+            "UPDATE agent_durable_tasks SET state=CASE WHEN state='reserved' "
+            "THEN 'stopped' ELSE 'cancel_pending' END,updated_at=?,next_attempt_at=NULL "
+            "WHERE owner=? AND run_id=? AND state IN ('reserved','active','unknown')",
+            (now, owner, run_id),
+        )
 
     def _revoked(self, db, row, registered: Collection[str]) -> bool:
         """Recheck original grant and current policy; interruption alone is not revocation."""
