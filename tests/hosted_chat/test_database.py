@@ -68,7 +68,7 @@ def test_chat_schema_is_private_and_separate_from_native_state(
             }
             & tables
         )
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
         assert conn.execute("PRAGMA application_id").fetchone()[0] == 0x57474348
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
@@ -145,7 +145,7 @@ def test_missing_fts_is_atomic_and_falls_back(
     db = SQLiteDatabase(tmp_path)
     assert not db.fts_enabled
     with db.connect() as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
         assert (
             conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
             == 0
@@ -189,7 +189,7 @@ def test_fts_message_projection_if_supported(tmp_path: Path) -> None:
         )
 
 
-@pytest.mark.parametrize("version", [0, 1, 2])
+@pytest.mark.parametrize("version", [0, 1, 2, 3])
 def test_unrecognized_database_is_not_adopted(
     tmp_path: Path, version: int
 ) -> None:
@@ -296,3 +296,32 @@ def test_optional_sqlite_sidecar_rechecks_ambiguous_link_count(
     else:
         SQLiteDatabase._verify_private_file(path, optional=True)
     assert calls >= 2
+
+
+def test_v1_migration_preserves_legacy_native_intents(tmp_path, monkeypatch):
+    with monkeypatch.context() as patch:
+        patch.setattr(database, "_SCHEMA_VERSION", 1)
+        patch.setattr(
+            database,
+            "_SCHEMA",
+            database._SCHEMA.replace(
+                "    member_agent_id TEXT,\n    member_namespace TEXT,\n", ""
+            ),
+        )
+        legacy = SQLiteDatabase(tmp_path)
+        with legacy.connect() as conn:
+            conn.execute(
+                "INSERT INTO agent_durable_tasks(id,owner,conversation_id,call_id,tool,kind,machine,"
+                "requirements,fingerprint,scopes,state,created_at,updated_at) "
+                "VALUES('intent','owner','chat','call','task','task','machine','{}','hash','[]','active',1,1)"
+            )
+    current = SQLiteDatabase(tmp_path)
+    with current.connect() as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        row = conn.execute("SELECT * FROM agent_durable_tasks").fetchone()
+        assert row["id"] == "intent"
+        assert row["call_id"] == "call"
+        assert row["state"] == "active"
+        assert row["member_agent_id"] is None
+        assert row["member_namespace"] is None
+    assert SQLiteDatabase(tmp_path).path == current.path

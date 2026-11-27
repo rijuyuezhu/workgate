@@ -2,7 +2,7 @@
 
 import copy
 import json
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import replace
 from typing import Any, Literal
 
@@ -91,13 +91,16 @@ def _envelope(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _selected_tools(
-    agent: dict | None, allowed: Collection[str]
+    agents: Sequence[dict | None], allowed: Collection[str]
 ) -> frozenset[str]:
     selected = NATIVE_TOOLS.intersection(allowed)
-    if agent is not None and agent_access_policy(agent) is None:
-        # Pinned legacy Agent selection, with the native equivalents of the
-        # always-present logical Session and plan management tools.
-        selected &= frozenset(agent.get("tools") or ()) | {"task", "task_plan"}
+    for agent in agents:
+        if agent is not None and agent_access_policy(agent) is None:
+            # Each inherited legacy selection is an independent ceiling.
+            selected &= frozenset(agent.get("tools") or ()) | {
+                "task",
+                "task_plan",
+            }
     return selected
 
 
@@ -138,12 +141,13 @@ class NativeToolDispatcher:
             )
         tools = await self._mcp.list_tools()
         scopes, expires = _grant(runtime, lease.owner, scopes, expires)
-        conversation_id, agent = repository.tool_context(lease)
-        selected = _selected_tools(agent, allowed_tools)
+        conversation_id, agents = repository.tool_context_chain(lease)
+        selected = _selected_tools(agents, allowed_tools)
         policy, _ = effective_machine_access(
             lease.owner,
             conversation_id,
-            agent=agent,
+            agent=agents[-1],
+            ancestors=agents[:-1],
             scopes=scopes,
             expires=expires,
             repo=WorkspaceRepository(repository.database),
@@ -244,8 +248,8 @@ class NativeToolDispatcher:
                 "Native intent belongs to another Control runtime"
             )
         calls = copy.deepcopy(complete_tool_batch(calls))
-        conversation_id, agent = repository.tool_context(lease)
-        selected = _selected_tools(agent, allowed_tools)
+        conversation_id, agents = repository.tool_context_chain(lease)
+        selected = _selected_tools(agents, allowed_tools)
         if any(call.name not in selected for call in calls):
             raise PermissionError("Native tool is not selected and adapted")
         prepared = []
@@ -340,8 +344,8 @@ class NativeToolDispatcher:
             )
         if call.name not in NATIVE_TOOLS or call.name not in allowed_tools:
             raise PermissionError("Native tool is not selected and adapted")
-        _, agent = repository.tool_context(lease)
-        if call.name not in _selected_tools(agent, allowed_tools):
+        _, agents = repository.tool_context_chain(lease)
+        if call.name not in _selected_tools(agents, allowed_tools):
             raise PermissionError(
                 "Native tool is not selected by the live Agent"
             )

@@ -58,7 +58,8 @@ class NativeLoopToolNode:
         self.task_machine = task_machine
         self._check_grant = check_grant
         if (
-            repository.database.path != checkpoint.lease.database.path
+            repository.scope != checkpoint.scope
+            or repository.database.path != checkpoint.lease.database.path
             or repository.database.root
             != runtime.config.state_dir / "hosted-chat"
         ):
@@ -69,7 +70,7 @@ class NativeLoopToolNode:
         self.native = NativeToolDispatcher(runtime)
 
     def current_grant(self) -> tuple[set[str], int | None]:
-        self.checkpoint.lease.assert_current()
+        self.checkpoint.assert_current()
         self._check_grant()
         scopes, expires = _grant(
             self.runtime,
@@ -86,8 +87,10 @@ class NativeLoopToolNode:
     def _question_enabled(self, agent: dict | None) -> bool:
         # For ephemeral turns the trusted caller supplies the opt-in through
         # allowed_tools. Saved Agents must also retain their explicit selection.
-        return ASK_USER_QUESTION_TOOL_NAME in self.allowed_tools and (
-            agent is None or ask_user_requested(agent, {})
+        return (
+            self.checkpoint.scope is None
+            and ASK_USER_QUESTION_TOOL_NAME in self.allowed_tools
+            and (agent is None or ask_user_requested(agent, {}))
         )
 
     @staticmethod
@@ -139,9 +142,14 @@ class NativeLoopToolNode:
 
     def _decision(self, call: ModelToolCall) -> dict:
         lease = self.checkpoint.lease
-        conversation, agent = self.repository.tool_context(lease)
+        conversation, agents = self.repository.tool_context_chain(lease)
         repo = WorkspaceRepository(self.repository.database)
-        mode = effective_mode(repo, lease.owner, conversation, agent)
+        mode = None
+        for agent in agents:
+            mode = effective_mode(
+                repo, lease.owner, conversation, agent, parent_mode=mode
+            )
+        assert mode is not None
         endpoints = repo.setting(lease.owner, "endpoints", {}) or {}
         legacy = (endpoints.get("agents") or {}).get("toolApproval")
         return call_decision(mode, legacy, call.name, call.arguments) or {}
@@ -165,9 +173,11 @@ class NativeLoopToolNode:
 
         def check() -> None:
             self.current_grant()
-            _, agent = self.repository.tool_context(self.checkpoint.lease)
-            enabled = _selected_tools(agent, self.allowed_tools)
-            if self._question_enabled(agent):
+            _, agents = self.repository.tool_context_chain(
+                self.checkpoint.lease
+            )
+            enabled = _selected_tools(agents, self.allowed_tools)
+            if self._question_enabled(agents[-1]):
                 enabled = enabled | {ASK_USER_QUESTION_TOOL_NAME}
             if any(call.name not in enabled for call in calls):
                 raise PermissionError("Native tool no longer selected")
@@ -226,7 +236,11 @@ class NativeLoopToolNode:
             )
 
         async def preflight_unsettled(unsettled: list[ModelToolCall]) -> None:
-            claim = claim_store.approved_batch(self.checkpoint)
+            claim = (
+                None
+                if self.checkpoint.scope is not None
+                else claim_store.approved_batch(self.checkpoint)
+            )
             entries = (
                 {entry.call_id: entry for entry in claim.entries}
                 if claim
@@ -277,6 +291,10 @@ class NativeLoopToolNode:
                 await authorize_effects(copy.deepcopy(candidates), state)
             check()
             if ask:
+                if self.checkpoint.scope is not None:
+                    raise PermissionError(
+                        "Graph member approval requires graph-aware recovery"
+                    )
                 claim_store.pause(self.checkpoint, ask)
                 raise AgentSuspended("Waiting for native tool approval")
             for call in effective.values():
