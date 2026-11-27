@@ -172,6 +172,11 @@ class WorkspaceRepository:
         now = _now()
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            if db.execute(
+                "SELECT 1 FROM active_subagent_threads WHERE thread_id=?",
+                (conversation_id,),
+            ).fetchone():
+                raise PermissionError("Child conversation is read-only")
             self._validate_references(db, owner, payload)
             existing = db.execute(
                 "SELECT 1 FROM conversations WHERE id=?", (conversation_id,)
@@ -290,6 +295,11 @@ class WorkspaceRepository:
         }
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            if db.execute(
+                "SELECT 1 FROM active_subagent_threads WHERE thread_id=?",
+                (conversation_id,),
+            ).fetchone():
+                raise PermissionError("Child conversation is read-only")
             row = db.execute(
                 "SELECT * FROM conversations WHERE id=? AND owner=?",
                 (conversation_id, owner),
@@ -328,6 +338,19 @@ class WorkspaceRepository:
 
     def delete_conversation(self, owner: str, conversation_id: str) -> bool:
         with self.database.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute(
+                "SELECT 1 FROM active_subagent_threads WHERE thread_id=? AND owner=? AND active=1",
+                (conversation_id, owner),
+            ).fetchone():
+                raise PermissionError("Child conversation is read-only")
+            if db.execute(
+                "SELECT 1 FROM subagent_tasks WHERE owner=? AND parent_conversation_id=? AND status='running'",
+                (owner, conversation_id),
+            ).fetchone():
+                raise PermissionError(
+                    "Conversation has running detached children"
+                )
             result = db.execute(
                 "DELETE FROM conversations WHERE owner=? AND id=?",
                 (owner, conversation_id),
@@ -354,6 +377,11 @@ class WorkspaceRepository:
         now = _now()
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            if db.execute(
+                "SELECT 1 FROM active_subagent_threads WHERE thread_id=?",
+                (conversation_id,),
+            ).fetchone():
+                raise PermissionError("Child conversation is read-only")
             if not db.execute(
                 "SELECT 1 FROM conversations WHERE id=? AND owner=?",
                 (conversation_id, owner),

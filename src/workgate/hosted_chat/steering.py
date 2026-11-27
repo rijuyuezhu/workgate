@@ -133,6 +133,11 @@ class SteeringStore:
         return json.loads(row["state"])
 
     def _latest(self, db, owner: str, conversation_id: str):
+        if db.execute(
+            "SELECT 1 FROM active_subagent_threads WHERE owner=? AND thread_id=?",
+            (owner, conversation_id),
+        ).fetchone():
+            raise SteerRejection(403, "CHILD_CONVERSATION_READ_ONLY")
         return db.execute(
             "SELECT r.* FROM runs r JOIN conversations c ON r.conversation_id=c.id "
             "WHERE c.owner=? AND c.id=? ORDER BY r.created_at DESC,r.id DESC LIMIT 1",

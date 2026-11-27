@@ -562,3 +562,11 @@ call identity. Only the designated result member is projected to the parent.
 No parent steering or human interrupt is applied inside a private child team;
 team advertisement requires the optional graph runtime. Detached child
 leases and public routing remain separate work.
+
+Detached reservations now materialize one private generation under the
+reserved conversation identity, using the task token rather than a second
+foreground actor lease. Terminal generation, result, thread history and
+child registration settle in one SQLite transaction. Ordinary admission and
+message mutation cannot reopen or overwrite a registered child transcript;
+active children must settle before conversation deletion. Native execution
+and background tool advertisement remain gated on inherited effect authority.

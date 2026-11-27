@@ -8,11 +8,16 @@ import json
 import secrets
 import sqlite3
 import time
+import uuid
 from dataclasses import dataclass
 
 from .database import SQLiteDatabase
 from .detached_subagents import _MAX_THREAD_HISTORY
-from .generation_actor_lease import ActorLeaseLost
+from .generation_actor_lease import ActorLease, ActorLeaseLost
+from .generations import Generation, GenerationStore
+from .provider_profiles import ProviderRepository
+from .providers import selected_provider
+from .storage import _now as _generation_now
 from .subagent_scope import SubagentScope
 from .subagents import filter_subagent_result
 
@@ -69,7 +74,91 @@ def _authorize(
     scope.effective_grant(scopes, expires)
 
 
+def _child_run(db, task):
+    row = db.execute(
+        "SELECT r.* FROM runs r JOIN conversations c ON c.id=r.conversation_id "
+        "WHERE r.id=? AND c.id=? AND c.owner=?",
+        (task["child_run_id"], task["child_conversation_id"], task["owner"]),
+    ).fetchone()
+    if (
+        row is None
+        or json.loads(row["state"]).get("detachedTaskId") != task["id"]
+    ):
+        raise PermissionError("Detached child generation identity changed")
+    return row
+
+
+def _materialize(db, task):
+    """Create only the reserved child; task binding and conversation are atomic."""
+    if task["child_run_id"] is not None:
+        return _child_run(db, task)
+    agent = json.loads(task["agent_config"])
+    options = json.loads(task["execution_options"])
+    parent = db.execute(
+        "SELECT state FROM runs WHERE id=?", (task["parent_run_id"],)
+    ).fetchone()
+    parent_state = json.loads(parent["state"])
+    if options.get("ordinary_chat"):
+        provider, model = parent_state["provider"], parent_state["model"]
+        sampling = parent_state.get("sampling", {})
+    else:
+        provider = selected_provider({}, agent)
+        profile = ProviderRepository._profile_record(db, provider)
+        model = agent.get("model") or next(iter(profile["models"]), None)
+        sampling = {}
+    if not isinstance(model, str) or not model.strip():
+        raise ValueError("Detached child requires a configured model")
+    run_id = "run_" + secrets.token_hex(16)
+    user_id, response_id = str(uuid.uuid4()), str(uuid.uuid4())
+    conversation = task["child_conversation_id"]
+    now = _generation_now()
+    state = {
+        "detachedTaskId": task["id"],
+        "userMessageId": user_id,
+        "responseMessageId": response_id,
+        "generationCreatedAt": now // 1000,
+        "generationProtocolVersion": 2,
+        "provider": provider,
+        "model": model,
+        "sampling": sampling,
+    }
+    db.execute(
+        "INSERT INTO conversations(id,owner,title,agent_id,model,endpoint,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+        (
+            conversation,
+            task["owner"],
+            task["input"][:80],
+            agent.get("id"),
+            model,
+            provider,
+            now,
+            now,
+        ),
+    )
+    db.execute(
+        "INSERT INTO messages(id,conversation_id,role,text,created_at,updated_at) VALUES(?,?,'user',?,?,?)",
+        (user_id, conversation, task["input"], now, now),
+    )
+    db.execute(
+        "INSERT INTO runs(id,conversation_id,agent_id,status,state,created_at,updated_at) VALUES(?,?,?,'running',?,?,?)",
+        (
+            run_id,
+            conversation,
+            agent.get("id"),
+            json.dumps(state, allow_nan=False),
+            now,
+            now,
+        ),
+    )
+    db.execute(
+        "UPDATE subagent_tasks SET child_run_id=? WHERE id=?",
+        (run_id, task["id"]),
+    )
+    return db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+
+
 def _settle(
+    database: SQLiteDatabase,
     db,
     row,
     status: str,
@@ -78,11 +167,20 @@ def _settle(
     history: str | None = None,
     error: str | None = None,
 ):
-    # Child generation creation and atomic terminal projection are a separate
-    # integration unit. Do not settle an existing execution without them.
     if row["child_run_id"] is not None:
-        raise PermissionError(
-            "Detached child generation requires runtime settlement"
+        child = _child_run(db, row)
+        if child["status"] != "running":
+            raise ActorLeaseLost("Detached child generation is already settled")
+        GenerationStore(database)._finish_locked(
+            db,
+            child,
+            status={
+                "completed": "complete",
+                "cancelled": "aborted",
+                "error": "error",
+            }[status],
+            text=result or "",
+            error=error,
         )
     now = _now()
     if history is not None:
@@ -171,6 +269,34 @@ class DetachedTaskLease:
             raise ActorLeaseLost("Detached task cancellation requested")
         _authorize(db, row, scopes, expires, disclosure_access)
 
+    def materialize(
+        self,
+        *,
+        scopes: set[str],
+        expires: int | None,
+        disclosure_access: dict | None = None,
+    ) -> tuple[Generation, ActorLease]:
+        """Bind the task's current token to its one private generation actor."""
+        with self.database.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self.assert_current(
+                scopes=scopes,
+                expires=expires,
+                disclosure_access=disclosure_access,
+                db=db,
+            )
+            task = self._current(db)
+            generation = GenerationStore._run(_materialize(db, task))
+            actor = ActorLease(
+                self.database,
+                self.owner,
+                generation.run_id,
+                self.token,
+                self.task_id,
+            )
+            actor.assert_current(db)
+            return generation, actor
+
     def renew(
         self,
         *,
@@ -231,7 +357,14 @@ class DetachedTaskLease:
                     result[: _MAX_RESULT - len("\n[truncated]")]
                     + "\n[truncated]"
                 )
-            _settle(db, row, "completed", result=result, history=encoded)
+            _settle(
+                self.database,
+                db,
+                row,
+                "completed",
+                result=result,
+                history=encoded,
+            )
 
     def fail(self) -> None:
         """Settle a failed worker without persisting provider error details."""
@@ -239,9 +372,15 @@ class DetachedTaskLease:
             db.execute("BEGIN IMMEDIATE")
             row = self._current(db)
             if row["cancel_requested"]:
-                _settle(db, row, "cancelled")
+                _settle(self.database, db, row, "cancelled")
             else:
-                _settle(db, row, "error", error="Detached subagent task failed")
+                _settle(
+                    self.database,
+                    db,
+                    row,
+                    "error",
+                    error="Detached subagent task failed",
+                )
 
     def acknowledge_cancel(self) -> None:
         with self.database.connect() as db:
@@ -251,7 +390,7 @@ class DetachedTaskLease:
                 raise PermissionError(
                     "Detached task cancellation was not requested"
                 )
-            _settle(db, row, "cancelled")
+            _settle(self.database, db, row, "cancelled")
 
 
 def request_cancel(
@@ -268,7 +407,7 @@ def request_cancel(
             (_now(), task_id),
         )
         if row["lease_until"] is None or row["lease_until"] <= _now():
-            _settle(db, row, "cancelled")
+            _settle(database, db, row, "cancelled")
 
 
 def reconcile_reservations(
@@ -280,13 +419,19 @@ def reconcile_reservations(
         rows = db.execute(
             "SELECT t.* FROM subagent_tasks t JOIN conversations c ON c.id=t.parent_conversation_id "
             "WHERE t.owner=? AND t.parent_conversation_id=? AND c.owner=t.owner AND t.status='running' "
-            "AND t.child_run_id IS NULL AND (t.lease_until IS NULL OR t.lease_until<=?) "
+            "AND (t.lease_until IS NULL OR t.lease_until<=?) "
             "AND (t.cancel_requested=1 OR t.grant_expires<=?) ORDER BY t.rowid LIMIT 100",
             (owner, conversation, _now(), time.time()),
         ).fetchall()
         for row in rows:
             if row["cancel_requested"]:
-                _settle(db, row, "cancelled")
+                _settle(database, db, row, "cancelled")
             else:
-                _settle(db, row, "error", error="Authentication grant expired")
+                _settle(
+                    database,
+                    db,
+                    row,
+                    "error",
+                    error="Authentication grant expired",
+                )
         return len(rows)
