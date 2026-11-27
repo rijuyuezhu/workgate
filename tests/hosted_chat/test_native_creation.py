@@ -2916,3 +2916,81 @@ async def test_bounded_command_mode_and_replay(bound):
         "task",
         "session",
     }
+
+
+@pytest.mark.asyncio
+async def test_owned_task_metadata_and_plan(bound):
+    from workgate.control.hosted_chat_task_tools import NativeTaskDispatcher
+    from workgate.protocol.ids import new_task_id
+
+    harness, repo, lease, _ = bound
+    task_id, session_id = await native_session(harness, repo, lease)
+    dispatcher = NativeTaskDispatcher(harness.control)
+
+    async def dispatch(call_id, name, arguments, *, scopes=SCOPES):
+        return await dispatcher.dispatch(
+            repo,
+            lease,
+            ModelToolCall(call_id, name, arguments),
+            scopes=scopes,
+            expires=None,
+        )
+
+    async def task(call_id, action, **fields):
+        return (
+            await dispatch(
+                call_id,
+                "task",
+                {"action": action, "task_id": task_id, **fields},
+            )
+        )["structuredContent"]
+
+    foreign = await harness.control.session_coordinator.start_session(
+        executor_id=harness.executor_id, task_id=task_id
+    )
+    assert foreign["session_id"] != session_id
+    assert (await task("get-owned", "get"))["session_ids"] == [session_id]
+    with pytest.raises(PermissionError, match="does not belong"):
+        await dispatch(
+            "other", "task", {"action": "get", "task_id": new_task_id()}
+        )
+    with pytest.raises(PermissionError, match="shell:write"):
+        await dispatch(
+            "write-scope",
+            "task",
+            {"action": "get", "task_id": task_id},
+            scopes={"shell:read"},
+        )
+    with pytest.raises(ValueError):
+        await task("forbidden-action", "delete")
+    first = await task("report-once", "report", summary="first")
+    await task("report-later", "report", summary="second")
+    assert await task("report-once", "report", summary="first") == first
+    assert (await task("latest", "get"))["progress"]["summary"] == "second"
+    with pytest.raises(PermissionError, match="cannot change"):
+        await task("report-once", "report", summary="changed")
+
+    steps = [
+        {
+            "id": "step-1",
+            "content": "Check plan",
+            "status": "pending",
+            "priority": "medium",
+        }
+    ]
+    plan = await dispatch(
+        "plan", "task_plan", {"task_id": task_id, "steps": steps}
+    )
+    assert plan["structuredContent"]["plan"]["steps"] == steps
+    todos = await dispatch(
+        "todos", "read_todos", {"task_id": task_id}, scopes={"shell:read"}
+    )
+    assert todos["structuredContent"]["todos"] == steps
+    updated = [steps[0] | {"status": "completed"}]
+    assert (
+        await dispatch(
+            "todo-write", "write_todos", {"task_id": task_id, "todos": updated}
+        )
+    )["structuredContent"]["todos"] == updated
+    assert (await task("blocked", "block"))["status"] == "blocked"
+    assert (await task("resume", "resume"))["status"] == "active"
