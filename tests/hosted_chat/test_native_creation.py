@@ -6627,7 +6627,8 @@ def test_foreground_team_definition_requires_optional_graph_support(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "interruption", ["shutdown", "cancel", "revoke", "timeout", "none"]
+    "interruption",
+    ["shutdown", "cancel", "revoke", "timeout", "interrupt", "none"],
 )
 async def test_detached_native_worker_recovery_and_cancellation(
     bound, monkeypatch, interruption
@@ -6638,6 +6639,7 @@ async def test_detached_native_worker_recovery_and_cancellation(
     from workgate.hosted_chat.agent_runtime import AgentContext, AgentLoopState
     from workgate.hosted_chat.agents import AgentRepository
     from workgate.hosted_chat.detached_subagents import reserve_detached_child
+    from workgate.hosted_chat.detached_task_controls import check_detached_task
     from workgate.hosted_chat.detached_task_lease import request_cancel
     from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
     from workgate.hosted_chat.provider_common import ProviderConfig
@@ -6720,16 +6722,19 @@ async def test_detached_native_worker_recovery_and_cancellation(
         parent_agent_id=root["id"],
     )
     assert task_id == reservations[0].task_id
-    assert GenerationStore(db).finish(
-        lease.owner,
-        actor.run_id,
-        status="complete",
-        text="accepted",
-        actor_lease=actor,
-    )
-    actor.release()
+    if interruption != "interrupt":
+        assert GenerationStore(db).finish(
+            lease.owner,
+            actor.run_id,
+            status="complete",
+            text="accepted",
+            actor_lease=actor,
+        )
+        actor.release()
     blocked = asyncio.Event()
+    resume = asyncio.Event()
     turns = []
+    control_counts = []
     authorized = []
     pause = interruption != "none"
     revoked = False
@@ -6756,12 +6761,28 @@ async def test_detached_native_worker_recovery_and_cancellation(
         assert "parent private" not in str(messages)
         assert {tool["function"]["name"] for tool in tools} == {"task"}
         turns.append(len(messages))
+        control_counts.append(
+            sum(m.get("content") == "change direction" for m in messages)
+        )
         if not any(m["role"] == "tool" for m in messages):
             yield ModelToolCall("native-task", "task", {"action": "create"})
         else:
             if pause:
                 blocked.set()
-                await asyncio.Event().wait()
+                await resume.wait()
+            if (
+                interruption == "interrupt"
+                and not pause
+                and any(
+                    m.get("content") == "change direction" for m in messages
+                )
+            ):
+                assert (
+                    sum(
+                        m.get("content") == "change direction" for m in messages
+                    )
+                    == 1
+                )
             yield "detached final"
 
     async def authorize(calls, _state):
@@ -6799,6 +6820,43 @@ async def test_detached_native_worker_recovery_and_cancellation(
                 await running
             pause = False
             assert await execute()
+        elif interruption == "interrupt":
+            interrupt = ModelToolCall(
+                "interrupt",
+                "check_background_task",
+                {
+                    "background_task_id": task_id,
+                    "action": "interrupt",
+                    "message": "change direction",
+                },
+            )
+            parent_state = AgentLoopState(
+                parent_context,
+                [],
+                step=1,
+                pending_calls=[interrupt],
+                tool_step_started=True,
+            )
+            await checkpoint.save(parent_state, [interrupt])
+            receipt = check_detached_task(
+                checkpoint,
+                interrupt,
+                scopes=set(SCOPES),
+                expires=None,
+                disclosure_access=access,
+            )
+            assert receipt["status"] == "accepted"
+            pause = False
+            resume.set()
+            assert await asyncio.wait_for(running, timeout=5)
+            with db.read_snapshot() as conn:
+                row = conn.execute(
+                    "SELECT status,boundary FROM subagent_task_controls WHERE id=?",
+                    (receipt["control_id"],),
+                ).fetchone()
+                assert tuple(row) == ("applied", "preempt")
+            assert control_counts[-1] == 1
+            actor.release()
         else:
             if interruption == "cancel":
                 request_cancel(

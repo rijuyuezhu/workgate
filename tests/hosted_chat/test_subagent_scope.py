@@ -1472,3 +1472,98 @@ async def test_detached_controls_cancel_fences_live_worker(setup):
     assert (
         check_detached_task(root, another, **grant)["status"] == "not_running"
     )
+
+
+@pytest.mark.asyncio
+async def test_detached_steering_claim_withdraw_recover_and_acknowledge(setup):
+    from workgate.hosted_chat.detached_task_controls import check_detached_task
+    from workgate.hosted_chat.detached_task_lease import DetachedTaskLease
+    from workgate.hosted_chat.subagent_scope import DetachedExecutionScope
+
+    lease, parent, child, _ = setup
+    root = OwnedLoopCheckpoint(lease)
+    call = await edge(root, parent, child["id"], background=True)
+    value = await invocation(root, parent, call)
+    reservation = reserve_detached_child(root, call, value)
+    grant = {"scopes": set(value.scopes), "expires": value.grant_expires}
+    db = lease.database
+
+    async def control(call_id, **arguments):
+        call = ModelToolCall(
+            call_id,
+            "check_background_task",
+            {"background_task_id": reservation.task_id, **arguments},
+        )
+        state = AgentLoopState(
+            context(parent),
+            [],
+            step=1,
+            pending_calls=[call],
+            tool_step_started=True,
+        )
+        await root.save(state, [call])
+        return call
+
+    steer = await control("steer", action="steer", message="work carefully")
+    first = check_detached_task(root, steer, **grant)
+    assert first["status"] == "accepted"
+    assert check_detached_task(root, steer, **grant) == first
+    queue = await control("queue", action="queue", message="withdraw me")
+    queued = check_detached_task(root, queue, **grant)
+    withdraw = await control(
+        "withdraw", action="cancel_message", control_id=queued["control_id"]
+    )
+    assert check_detached_task(root, withdraw, **grant)["status"] == "accepted"
+    interrupt = await control(
+        "interrupt", action="interrupt", message="change direction"
+    )
+    interrupted = check_detached_task(root, interrupt, **grant)
+    args = (db, lease.owner, "chat", reservation.task_id)
+    worker = DetachedTaskLease.claim(*args, **grant)
+    assert worker is not None
+    generation, actor = worker.materialize(**grant)
+    assert worker.has_interrupt(**grant)
+    messages = worker.claim_controls("preempt", **grant)
+    assert [item["id"] for item in messages] == [interrupted["control_id"]]
+    withdraw = await control(
+        "late-withdraw",
+        action="cancel_message",
+        control_id=interrupted["control_id"],
+    )
+    assert (
+        check_detached_task(root, withdraw, **grant)["status"]
+        == "control_not_found"
+    )
+    worker.acknowledge_controls(**grant)
+    worker.release()
+    replacement = DetachedTaskLease.claim(*args, **grant)
+    assert replacement is not None
+    _, actor = replacement.materialize(**grant)
+    assert replacement.claim_controls("preempt", **grant) == messages
+    scope = DetachedExecutionScope.from_actor(actor)
+    checkpoint = OwnedLoopCheckpoint(actor, scope=scope)
+    state = AgentLoopState(context(child), value.messages + messages, step=1)
+    await checkpoint.save(state, [])
+    replacement.acknowledge_controls(**grant)
+    assert not replacement.has_interrupt(**grant)
+    remaining = replacement.claim_controls("tool", **grant)
+    assert [item["id"] for item in remaining] == [first["control_id"]]
+    state.messages.extend(remaining)
+    await checkpoint.save(state, [])
+    replacement.acknowledge_controls(**grant)
+    assert replacement.claim_controls("turn", **grant) == []
+    replacement.complete(
+        state.messages + [{"role": "assistant", "content": "done"}], **grant
+    )
+    with db.read_snapshot() as conn:
+        statuses = dict(
+            conn.execute(
+                "SELECT id,status FROM subagent_task_controls WHERE task_id=?",
+                (reservation.task_id,),
+            ).fetchall()
+        )
+    assert statuses == {
+        first["control_id"]: "applied",
+        queued["control_id"]: "rejected",
+        interrupted["control_id"]: "applied",
+    }

@@ -145,13 +145,30 @@ async def run_detached_subagent(
 
         async def stream_boundary() -> bool:
             node.current_grant()
-            return False
+            return lease.has_interrupt(**grant())
 
         async def save(
             loop: AgentLoopState, calls: list[ModelToolCall]
         ) -> None:
             node.current_grant()
             await checkpoint.save(loop, calls)
+            lease.acknowledge_controls(**grant())
+
+        async def inject_controls(loop: AgentLoopState, boundary: str) -> bool:
+            node.current_grant()
+            messages = lease.claim_controls(boundary, **grant())
+            existing = {
+                item.get("id")
+                for item in loop.messages
+                if isinstance(item.get("id"), str)
+            }
+            pending = [item for item in messages if item["id"] not in existing]
+            if not pending:
+                return False
+            loop.messages.extend(pending)
+            loop.completed = False
+            await save(loop, loop.pending_calls)
+            return True
 
         async def dispatch(calls: list[ModelToolCall], loop: AgentLoopState):
             return await node.dispatch(
@@ -159,6 +176,9 @@ async def run_detached_subagent(
             )
 
         node.current_grant()
+        lease.acknowledge_controls(**grant())
+        if state.completed:
+            await inject_controls(state, "turn")
         await run_agent_loop(
             state,
             stream_tools=stream_tools,
@@ -170,6 +190,7 @@ async def run_detached_subagent(
             before_model=node.refresh_tools,
             preflight_calls=node.preflight,
             on_stream_chunk=stream_boundary,
+            inject_controls=inject_controls,
         )
         node.current_grant()
         if not state.completed:

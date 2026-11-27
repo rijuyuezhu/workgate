@@ -591,3 +591,12 @@ Agent scope fence each invocation; terminal result claims and replay receipts
 commit atomically, retiring a pending wakeup in the same transaction. Result
 replay rechecks the original grant and disclosure ceiling. Worker scheduling,
 steering controls and nested control authority remain separate units.
+
+Detached root-parent controls now accept steer, queue, interrupt and message
+withdrawal. Selection reserves a boundary before checkpointing; withdrawal
+cannot race a reserved delivery. Applied receipts are acknowledged only from
+the durable child head, allowing a replacement lease to retry safely. The
+private native worker injects messages at tool/turn/preemption boundaries;
+unconsumed controls are marked failed at terminal settlement. A provider
+stream interrupt is cooperative at stream boundaries, not an independent
+provider cancellation mechanism.
