@@ -49,6 +49,7 @@ SESSION_FILE_EFFECT_TOOLS = frozenset(
 
 
 SESSION_COMMAND_EFFECT_TOOLS = frozenset({"bash", "run_python_code"})
+SESSION_METADATA_EFFECT_TOOLS = frozenset({"session_change_workdir"})
 TASK_METADATA_EFFECT_TOOLS = frozenset({"task", "task_plan", "write_todos"})
 
 
@@ -600,6 +601,7 @@ class DurableTaskRepository:
         """
         complete_tool_batch([call])
         task_metadata = _task_metadata_effect(call)
+        session_metadata = call.name in SESSION_METADATA_EFFECT_TOOLS
         shell = call.name in SESSION_SHELL_EFFECT_TOOLS
         command = call.name in SESSION_COMMAND_EFFECT_TOOLS
         if command and any(
@@ -610,7 +612,7 @@ class DurableTaskRepository:
                 "Tracked or PTY execution requires native reservation"
             )
         if (
-            not (shell or command or task_metadata)
+            not (shell or command or task_metadata or session_metadata)
             and call.name not in SESSION_FILE_EFFECT_TOOLS
         ):
             raise ValueError("Expected a finite native Session effect")
@@ -699,7 +701,11 @@ class DurableTaskRepository:
                     db,
                     run,
                     machine,
-                    "shell" if shell or command else "session_write",
+                    "shell"
+                    if shell or command
+                    else (
+                        "session_read" if session_metadata else "session_write"
+                    ),
                     scopes,
                     expires,
                     registered,
@@ -749,7 +755,21 @@ class DurableTaskRepository:
         complete_tool_batch([call])
         arguments = call.arguments
         shell = call.name == "kill_persistent_shell"
-        if shell:
+        session = call.name == "session_end"
+        if session:
+            if (
+                arguments.keys() - {"session_id", "force"}
+                or arguments.get("force", False) is not False
+            ):
+                raise ValueError(
+                    "Durable Session close requires confirmed native absence; force is unsupported"
+                )
+            targets = [
+                TypeAdapter(SessionId).validate_python(
+                    arguments.get("session_id"), strict=True
+                )
+            ]
+        elif shell:
             if arguments.keys() != {"session_id", "shell_id"}:
                 raise ValueError(
                     "Durable Shell cancellation requires one exact Shell"
@@ -778,7 +798,12 @@ class DurableTaskRepository:
         session_id = TypeAdapter(SessionId).validate_python(
             arguments.get("session_id"), strict=True
         )
-        kinds = ("shell",) if shell else ("job", "retry", "copy")
+        kinds = (
+            ("session",)
+            if session
+            else (("shell",) if shell else ("job", "retry", "copy"))
+        )
+        parent_session = None if session else session_id
         fingerprint = _fingerprint(call.name, arguments)
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -819,14 +844,14 @@ class DurableTaskRepository:
                 rows = [
                     db.execute(
                         "SELECT * FROM agent_durable_tasks WHERE owner=? AND conversation_id=? "
-                        "AND machine=? AND native_session_id=? AND native_id=? "
+                        "AND machine=? AND native_session_id IS ? AND native_id=? "
                         f"AND kind IN ({','.join('?' for _ in kinds)}) AND state IN ('active','stopped','cancel_pending') "
                         "ORDER BY native_attempt DESC LIMIT 1",
                         (
                             run["owner"],
                             run["conversation_id"],
                             machine,
-                            session_id,
+                            parent_session,
                             target,
                             *kinds,
                         ),
@@ -839,25 +864,28 @@ class DurableTaskRepository:
                     or row["owner"] != lease.owner
                     or row["conversation_id"] != run["conversation_id"]
                     or row["machine"] != machine
-                    or row["native_session_id"] != session_id
+                    or row["native_session_id"] != parent_session
                     or row["native_id"] != target
                     or row["kind"] not in kinds
-                    or (not shell and row["native_attempt"] is None)
+                    or (
+                        not (shell or session) and row["native_attempt"] is None
+                    )
                     or row["state"]
                     not in {"active", "stopped", "cancel_pending"}
                 ):
                     raise PermissionError(
-                        f"Native {'Shell' if shell else 'Job'} does not belong to this conversation"
+                        f"Native {'Session' if session else ('Shell' if shell else 'Job')} does not belong to this conversation"
                     )
-                self._require_parent(
-                    db,
-                    run,
-                    "shell" if shell else "retry",
-                    machine,
-                    {"session_id": session_id},
-                    row["destination_machine"],
-                    row["destination_session_id"],
-                )
+                if not session:
+                    self._require_parent(
+                        db,
+                        run,
+                        "shell" if shell else "retry",
+                        machine,
+                        {"session_id": session_id},
+                        row["destination_machine"],
+                        row["destination_session_id"],
+                    )
                 self._authorize(
                     db,
                     run,
@@ -887,6 +915,22 @@ class DurableTaskRepository:
                     "WHERE id=? AND state='active'",
                     (_now(), row["id"]),
                 )
+                if session:
+                    db.execute(
+                        "UPDATE agent_durable_tasks SET state=CASE WHEN state='reserved' THEN 'stopped' ELSE 'cancel_pending' END,"
+                        "updated_at=?,next_attempt_at=NULL WHERE owner=? AND conversation_id=? "
+                        "AND kind IN ('job','shell','retry','copy') AND state IN ('reserved','active','unknown') "
+                        "AND ((native_session_id=? AND machine=?) OR (destination_session_id=? AND destination_machine=?))",
+                        (
+                            _now(),
+                            lease.owner,
+                            run["conversation_id"],
+                            session_id,
+                            machine,
+                            session_id,
+                            machine,
+                        ),
+                    )
             return [dict(row) for row in rows]
 
     def reserve(

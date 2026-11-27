@@ -34,6 +34,7 @@ from ..schemas.result_models.jobs import (
     JobStopOutput,
     ReservedJobCancelReceipt,
 )
+from ..schemas.result_models.session import SessionEndOutput
 from ..schemas.result_models.shell import KillPersistentShellOutput
 from .execution_context import control_execution_context
 from .hosted_chat_native_creation import (
@@ -218,6 +219,8 @@ async def _stop(
         stopped = await runtime.session_coordinator.end_reserved_session(
             key, executor_id=row["machine"]
         )
+        if stopped:
+            runtime.agent_bridge.invalidate_discovery(key)
         return "stopped" if stopped else "pending"
     if row["kind"] != "task":
         return "pending"
@@ -331,6 +334,28 @@ async def _cancel_native(
     rows = authorize()
 
     async def stop_all():
+        if call.name == "session_end":
+            row = rows[0]
+            if row["state"] == "stopped":
+                outcome = "stopped"
+            else:
+                outcome = await _stop(runtime, repository, row)
+                repository.finish_cancellation(
+                    row["id"],
+                    stopped=outcome == "stopped",
+                )
+            if outcome != "stopped":
+                raise NativeCreationUncertain(
+                    "Native Session close is unconfirmed"
+                )
+            # A positive absence receipt confirms the Session ended, not
+            # which individual children were killed by that invocation.
+            return SessionEndOutput(
+                session_id=row["native_id"],
+                executor_id=machine,
+                ended=True,
+                force_released=False,
+            ).model_dump(mode="json", exclude_unset=True)
         if call.name == "kill_persistent_shell":
             row = rows[0]
             key = row["native_id"]
@@ -472,6 +497,29 @@ async def cancel_native_shell(
 ) -> dict[str, Any]:
     if call.name != "kill_persistent_shell":
         raise ValueError("Expected native Shell cancellation")
+    return await _cancel_native(
+        runtime,
+        repository,
+        lease,
+        call,
+        machine=machine,
+        scopes=scopes,
+        expires=expires,
+    )
+
+
+async def close_native_session(
+    runtime: ControlRuntime,
+    repository: DurableTaskRepository,
+    lease: ActorLease,
+    call: ModelToolCall,
+    *,
+    machine: str,
+    scopes: set[str],
+    expires: int | None,
+) -> dict[str, Any]:
+    if call.name != "session_end":
+        raise ValueError("Expected native Session close")
     return await _cancel_native(
         runtime,
         repository,

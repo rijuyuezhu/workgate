@@ -2994,3 +2994,160 @@ async def test_owned_task_metadata_and_plan(bound):
     )["structuredContent"]["todos"] == updated
     assert (await task("blocked", "block"))["status"] == "blocked"
     assert (await task("resume", "resume"))["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_owned_native_session_lifecycle_recovers_close(
+    bound, tmp_path, monkeypatch, tracked_shells
+):
+    from workgate.control.hosted_chat_cancellation import close_native_session
+    from workgate.control.hosted_chat_session_tools import (
+        NativeSessionDispatcher,
+    )
+    from workgate.protocol.executor import SESSION_TERMINATE_OP
+
+    harness, repo, lease, _ = bound
+    task_id, sid = await native_session(harness, repo, lease)
+    foreign = await harness.control.session_coordinator.start_session(
+        executor_id=harness.executor_id
+    )
+    dispatcher = NativeSessionDispatcher(harness.control)
+    project = tmp_path / "project"
+    change = ModelToolCall(
+        "workdir-1",
+        "session_change_workdir",
+        {"session_id": sid, "workdir": str(project)},
+    )
+
+    async def change_dir(call):
+        return await dispatcher.dispatch(
+            repo,
+            lease,
+            call,
+            machine=harness.executor_id,
+            scopes={"shell:read"},
+            expires=None,
+        )
+
+    first = await change_dir(change)
+    assert first["structuredContent"]["session_id"] == sid
+    assert first["structuredContent"]["workdir"] == str(project)
+    await change_dir(
+        ModelToolCall(
+            "workdir-2",
+            change.name,
+            {"session_id": sid, "workdir": str(tmp_path)},
+        )
+    )
+    assert await change_dir(change) == first
+    assert harness.control.control_state.snapshot_sessions()[
+        sid
+    ].workdir == str(tmp_path)
+    with pytest.raises(PermissionError, match="does not belong"):
+        await change_dir(
+            ModelToolCall(
+                "other-dir",
+                change.name,
+                change.arguments | {"session_id": foreign["session_id"]},
+            )
+        )
+
+    child = await invoke(
+        harness,
+        repo,
+        lease,
+        ModelToolCall(
+            "session-child",
+            "bash",
+            {"session_id": sid, "command": "tracked child", "async_": True},
+        ),
+    )
+    assert child["mode"] == "job"
+    close = ModelToolCall("end-owned", "session_end", {"session_id": sid})
+
+    async def end(call, scopes=SCOPES):
+        return await close_native_session(
+            harness.control,
+            repo,
+            lease,
+            call,
+            machine=harness.executor_id,
+            scopes=scopes,
+            expires=None,
+        )
+
+    with pytest.raises(PermissionError, match="shell:execute"):
+        await end(close, {"shell:read", "shell:write"})
+    with pytest.raises(ValueError, match="force is unsupported"):
+        await end(
+            ModelToolCall(
+                "force-end", close.name, close.arguments | {"force": True}
+            )
+        )
+    with pytest.raises(PermissionError, match="does not belong"):
+        await end(
+            ModelToolCall(
+                "foreign-end", close.name, {"session_id": foreign["session_id"]}
+            )
+        )
+    assert intent_rows(repo)["native-session"]["state"] == "active"
+    native = harness.control.executor_transport.call
+    terminate_calls = []
+
+    async def lost_response(
+        executor_id, op, args=None, *, session_id=None, timeout_s=None
+    ):
+        if op == SESSION_TERMINATE_OP:
+            assert session_id == sid
+            assert (
+                intent_rows(repo)["native-session"]["state"] == "cancel_pending"
+            )
+            assert (
+                intent_rows(repo)["session-child"]["state"] == "cancel_pending"
+            )
+            terminate_calls.append(session_id)
+        response = await native(
+            executor_id, op, args, session_id=session_id, timeout_s=timeout_s
+        )
+        if op == SESSION_TERMINATE_OP:
+            raise ExecutorTransportError(
+                ProtocolErrorCode.EXECUTOR_OFFLINE,
+                "lost termination response",
+                delivery_state="offered",
+            )
+        return response
+
+    monkeypatch.setattr(
+        harness.control.executor_transport, "call", lost_response
+    )
+    with pytest.raises(ExecutorTransportError):
+        await end(close)
+    assert intent_rows(repo)["native-session"]["state"] == "cancel_pending"
+    assert harness.executor.sessions.lookup(sid) is None
+    with pytest.raises(PermissionError, match="does not belong"):
+        await change_dir(
+            ModelToolCall("after-close", change.name, change.arguments)
+        )
+    monkeypatch.setattr(harness.control.executor_transport, "call", native)
+    result = await end(close)
+    assert result == {
+        "session_id": sid,
+        "executor_id": harness.executor_id,
+        "ended": True,
+        "force_released": False,
+    }
+    assert await end(close) == result
+    assert terminate_calls == [sid]
+    assert await sweep_native_cancellations(harness.control, repo) >= 1
+    assert intent_rows(repo)["session-child"]["state"] == "stopped"
+    assert intent_rows(repo)["native-session"]["state"] == "stopped"
+    assert harness.executor.sessions.lookup(foreign["session_id"]) is not None
+    assert (
+        await harness.control.task_service.read_task(task_id)
+    ).status == "active"
+    with pytest.raises(PermissionError, match="cannot change"):
+        await end(
+            ModelToolCall(
+                close.call_id, close.name, {"session_id": foreign["session_id"]}
+            )
+        )
