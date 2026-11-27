@@ -538,3 +538,12 @@ projection rechecks the current ACL. Child tools requiring human approval
 are conservatively blocked until child-scoped human request integration;
 no parent approval claim is borrowed. The private child model-loop host and
 public delegation advertisement remain separate units.
+
+Foreground delegation now has a private single-Agent host over the native
+model loop. An explicit trusted caller supplies provider resolution and
+content authorization. Ordinary self and saved children use private
+checkpoints and final-text-only results; nested children inherit the same
+native authorization ceilings. Recovery validates the original disclosure
+ceiling and all admitted descendant revisions before returning a result.
+The native node depends on a narrow delegation interface, not the runner.
+Team graphs, detached children, and public route integration remain gated.

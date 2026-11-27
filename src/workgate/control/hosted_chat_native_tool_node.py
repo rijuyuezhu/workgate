@@ -1,11 +1,15 @@
 """Private native tool node for the checkpointed Hosted Chat Agent loop."""
 
+from __future__ import annotations
+
 import copy
 import json
 import time
 from collections.abc import Awaitable, Callable, Collection
+from typing import Protocol
 
 from ..hosted_chat.agent_runtime import (
+    AgentContext,
     AgentLoopState,
     AgentSuspended,
     ToolBatchOutput,
@@ -41,8 +45,25 @@ from ..hosted_chat.subagent_scope import SubagentScope
 from ..hosted_chat.subagents import SUBAGENT_TOOL_NAME
 from .hosted_chat_native_creation import _grant, _registered
 from .hosted_chat_native_dispatch import NativeToolDispatcher, _selected_tools
-from .hosted_chat_subagent_loop import ForegroundDelegation
 from .runtime import ControlRuntime
+
+
+class Delegation(Protocol):
+    def definitions(self) -> list[dict]: ...
+    def validate(self, call: ModelToolCall) -> None: ...
+    def authorize_receipt(
+        self, node: NativeLoopToolNode, call: ModelToolCall, record: dict
+    ) -> None: ...
+    async def invoke(
+        self,
+        node: NativeLoopToolNode,
+        call: ModelToolCall,
+        context: AgentContext,
+        authorize_effects: Callable[
+            [list[ModelToolCall], AgentLoopState], Awaitable[None]
+        ]
+        | None,
+    ) -> tuple[dict, dict]: ...
 
 
 class NativeLoopToolNode:
@@ -65,7 +86,7 @@ class NativeLoopToolNode:
         task_machine: str | None,
         check_grant: Callable[[], None],
         activation: GraphActivation | None = None,
-        delegation: ForegroundDelegation | None = None,
+        delegation: Delegation | None = None,
     ) -> None:
         self.runtime = runtime
         self.repository = repository

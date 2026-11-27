@@ -4,7 +4,6 @@ import copy
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
-from typing import TYPE_CHECKING
 
 from ..hosted_chat.agent_runtime import (
     AgentContext,
@@ -25,9 +24,7 @@ from ..hosted_chat.subagents import (
     invoke_subagent,
     subagent_tools,
 )
-
-if TYPE_CHECKING:
-    from .hosted_chat_native_tool_node import NativeLoopToolNode
+from .hosted_chat_native_tool_node import NativeLoopToolNode
 
 
 class ForegroundDelegation:
@@ -124,8 +121,6 @@ class ForegroundDelegation:
         ]
         | None,
     ) -> tuple[dict, dict]:
-        from .hosted_chat_native_tool_node import NativeLoopToolNode
-
         self.validate(call)
         lease = node.checkpoint.lease
         admitted: SubagentScope | None = None
