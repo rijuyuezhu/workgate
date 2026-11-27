@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .provider_common import (
+    ModelFinish,
     ModelThought,
     ModelToolCall,
     ModelUsage,
@@ -144,9 +145,14 @@ async def run_agent_loop(
     state: AgentLoopState,
     *,
     stream_tools: Callable[
-        ..., AsyncIterator[str | ModelToolCall | ModelThought | ModelUsage]
+        ...,
+        AsyncIterator[
+            str | ModelToolCall | ModelThought | ModelUsage | ModelFinish
+        ],
     ],
-    stream_text: Callable[..., AsyncIterator[str | ModelThought | ModelUsage]],
+    stream_text: Callable[
+        ..., AsyncIterator[str | ModelThought | ModelUsage | ModelFinish]
+    ],
     dispatch: Callable[
         [list[ModelToolCall], AgentLoopState], Awaitable[ToolBatchOutput]
     ],
@@ -313,6 +319,8 @@ async def run_agent_loop(
                     elif isinstance(item, ModelUsage):
                         if on_model_usage is not None:
                             await on_model_usage(item, state)
+                    elif isinstance(item, ModelFinish):
+                        pass  # Provider completion metadata is not visible answer text.
                     elif isinstance(item, ModelThought):
                         if item.kind == "thinking":
                             if (

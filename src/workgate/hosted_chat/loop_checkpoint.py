@@ -4,6 +4,7 @@ Only durable loop state is serialized. Provider credentials, tool definitions
 and grants are supplied afresh by the authenticated caller on recovery.
 """
 
+import json
 import time
 from dataclasses import asdict, dataclass
 
@@ -26,6 +27,7 @@ class _Snapshot(BaseModel):
     tool_step_started: bool
     completed: bool
     partial_text: str
+    public_delta_cursor: int = Field(default=0, ge=0)
     graph_commands: list[dict]
     repeated_tool_batches: int = Field(ge=0)
     last_tool_batch: str | None
@@ -49,6 +51,7 @@ class _Snapshot(BaseModel):
 class LoopRecovery:
     state: AgentLoopState
     partial_text: str
+    public_delta_cursor: int
 
 
 class OwnedLoopCheckpoint:
@@ -59,11 +62,15 @@ class OwnedLoopCheckpoint:
         with lease.database.read_snapshot() as db:
             lease.assert_current(db)
             row = db.execute(
-                "SELECT conversation_id FROM runs WHERE id=?", (lease.run_id,)
+                "SELECT conversation_id,state FROM runs WHERE id=?",
+                (lease.run_id,),
             ).fetchone()
             if row is None:
                 raise ActorLeaseLost("Generation no longer exists")
             conversation = row["conversation_id"]
+            started = (
+                json.loads(row["state"]).get("ownedLoopCheckpoint") is True
+            )
         self.saver = SQLiteCheckpointSaver(
             lease.database, lease.owner, actor_lease=lease
         )
@@ -71,14 +78,17 @@ class OwnedLoopCheckpoint:
             conversation, lease.run_id, event_actor=True
         )
         self.active = self.base
-        self._recovery_required = self.saver.get_tuple(self.base) is not None
+        self._recovery_required = (
+            started or self.saver.get_tuple(self.base) is not None
+        )
+        self._started = started
 
     def restore(self, context: AgentContext) -> LoopRecovery | None:
         self.lease.assert_current()
         row = self.saver.get_tuple(self.base)
         self.lease.assert_current()
         if row is None:
-            if self._recovery_required:
+            if self._recovery_required or self._started:
                 raise RuntimeSafetyError(
                     "Agent loop checkpoint is no longer available"
                 )
@@ -103,7 +113,9 @@ class OwnedLoopCheckpoint:
         )
         self.active = row["config"]
         self._recovery_required = False
-        return LoopRecovery(state, snapshot.partial_text)
+        return LoopRecovery(
+            state, snapshot.partial_text, snapshot.public_delta_cursor
+        )
 
     async def save(
         self,
@@ -111,6 +123,7 @@ class OwnedLoopCheckpoint:
         calls: list[ModelToolCall],
         *,
         partial_text: str = "",
+        public_delta_cursor: int = 0,
     ) -> None:
         self.lease.assert_current()
         if self._recovery_required:
@@ -130,11 +143,24 @@ class OwnedLoopCheckpoint:
             tool_step_started=state.tool_step_started,
             completed=state.completed,
             partial_text=partial_text,
+            public_delta_cursor=public_delta_cursor,
             graph_commands=state.graph_commands,
             repeated_tool_batches=state.repeated_tool_batches,
             last_tool_batch=state.last_tool_batch,
         )
         snapshot.calls()
+        if not self._started:
+            # Record the recovery obligation before storing the first edge.
+            # Expiry/pruning must not turn a previously started run into a
+            # fresh model turn with potentially new native effect identities.
+            with self.lease.database.connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                self.lease.assert_current(db)
+                db.execute(
+                    "UPDATE runs SET state=json_set(state,'$.ownedLoopCheckpoint',json('true')) WHERE id=?",
+                    (self.lease.run_id,),
+                )
+            self._started = True
         parent = self.active["configurable"].get("checkpoint_id")
         identity = (
             f"{max(time.time_ns(), int(parent) + 1 if parent else 0):020d}"

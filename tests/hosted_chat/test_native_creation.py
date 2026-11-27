@@ -3893,3 +3893,208 @@ async def test_native_tool_node_checks_current_selection_and_principal_on_replay
     agents.update(lease.owner, agent["id"], {"tools": []})
     with pytest.raises(PermissionError, match="no longer selected"):
         await node.dispatch(calls, state)
+
+
+@pytest.mark.asyncio
+async def test_foreground_loop_suspends_then_resumes_exact_native_tool_edge(
+    bound,
+):
+    from workgate.control.hosted_chat_foreground_loop import (
+        run_foreground_native_loop,
+    )
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.hosted_chat.agent_runtime import AgentContext, AgentSuspended
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import (
+        ModelFinish,
+        ModelThought,
+        ProviderConfig,
+    )
+
+    harness, repo, lease, generation = bound
+    store = GenerationStore(repo.database)
+
+    def node(actor):
+        return NativeLoopToolNode(
+            harness.control,
+            repo,
+            OwnedLoopCheckpoint(actor),
+            allowed_tools={"task"},
+            scopes=SCOPES,
+            expires=None,
+            task_machine=harness.executor_id,
+            check_grant=lambda: None,
+        )
+
+    def context():
+        return AgentContext(
+            ProviderConfig(
+                "openai", "model", "https://example.invalid", "fake"
+            ),
+            [],
+        )
+
+    history = [{"role": "user", "content": "do work"}]
+
+    async def first_stream(*args, **kwargs):
+        yield ModelThought("thinking", text="summary")
+        yield "prefix "
+        yield ModelToolCall("create-task", "task", {"action": "create"})
+        yield ModelFinish("openai", "tool_calls")
+
+    async def pause(calls, state):
+        assert calls[0].call_id == "create-task"
+        raise AgentSuspended("await approval")
+
+    async def no_text(*args, **kwargs):
+        raise AssertionError("Task should be available")
+        yield ""
+
+    with pytest.raises(AgentSuspended):
+        await run_foreground_native_loop(
+            node(lease),
+            context(),
+            history,
+            authorize_batch=pause,
+            stream_tools=first_stream,
+            stream_text=no_text,
+        )
+    current = store.get(lease.owner, lease.run_id)
+    assert current is not None and current.status == "running"
+    assert not intent_rows(repo)
+    lease.release()
+    fresh = ActorLease.claim(repo.database, lease.owner, lease.run_id)
+    assert fresh is not None
+    approved = []
+
+    async def approve(calls, state):
+        approved.extend(call.call_id for call in calls)
+
+    async def resumed_stream(model, messages, **kwargs):
+        assert messages[-1]["role"] == "tool"
+        assert "task_id" in messages[-1]["content"]
+        yield "done"
+        yield ModelFinish("openai", "stop")
+
+    result = await run_foreground_native_loop(
+        node(fresh),
+        context(),
+        history,
+        authorize_batch=approve,
+        stream_tools=resumed_stream,
+        stream_text=no_text,
+    )
+    assert result.completed and approved == ["create-task"]
+    assert len(intent_rows(repo)) == 1
+    current = store.get(lease.owner, lease.run_id)
+    assert current is not None and current.status == "complete"
+    events = [event for _, event in store.events(lease.owner, lease.run_id)]
+    assert [
+        event["data"]["delta"]["content"]["text"]
+        for event in events
+        if event.get("event") == "on_message_delta"
+    ] == ["prefix ", "done"]
+    assert [
+        event["data"]["delta"]["content"]["think"]
+        for event in events
+        if event.get("event") == "on_reasoning_delta"
+    ] == ["summary"]
+    assert events[-1]["responseMessage"]["text"] == "prefix done"
+
+
+@pytest.mark.asyncio
+async def test_foreground_loop_does_not_replay_uncheckpointed_public_stream(
+    bound,
+):
+    from workgate.control.hosted_chat_foreground_loop import (
+        ObservableStreamInterrupted,
+        run_foreground_native_loop,
+    )
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.hosted_chat.agent_runtime import AgentContext
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+
+    harness, repo, lease, _ = bound
+    store = GenerationStore(repo.database)
+
+    def node(actor):
+        return NativeLoopToolNode(
+            harness.control,
+            repo,
+            OwnedLoopCheckpoint(actor),
+            allowed_tools=set(),
+            scopes=SCOPES,
+            expires=None,
+            task_machine=None,
+            check_grant=lambda: None,
+        )
+
+    def context():
+        return AgentContext(
+            ProviderConfig(
+                "openai", "model", "https://example.invalid", "fake"
+            ),
+            [],
+        )
+
+    async def interrupted(*args, **kwargs):
+        yield "already visible"
+        raise asyncio.CancelledError
+
+    async def forbidden(*args):
+        raise AssertionError("no tool should be offered")
+
+    async def forbidden_stream(*args, **kwargs):
+        raise AssertionError("visible stream must not be replayed")
+        yield ""
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_foreground_native_loop(
+            node(lease),
+            context(),
+            [],
+            authorize_batch=forbidden,
+            stream_text=interrupted,
+            stream_tools=forbidden_stream,
+        )
+    current = store.get(lease.owner, lease.run_id)
+    assert current is not None and current.status == "running"
+    lease.release()
+    fresh = ActorLease.claim(repo.database, lease.owner, lease.run_id)
+    assert fresh is not None
+    with pytest.raises(ObservableStreamInterrupted):
+        await run_foreground_native_loop(
+            node(fresh),
+            context(),
+            [],
+            authorize_batch=forbidden,
+            stream_text=forbidden_stream,
+            stream_tools=forbidden_stream,
+        )
+    current = store.get(lease.owner, lease.run_id)
+    assert current is not None and current.status == "interrupted"
+    events = [event for _, event in store.events(lease.owner, lease.run_id)]
+    assert events[-1]["responseMessage"]["text"] == "already visible"
+    assert "cannot replay" in events[-1]["error"]
+    assert not intent_rows(repo)
+
+
+def test_foreground_safe_generation_error_does_not_leak_provider_details():
+    import httpx
+
+    from workgate.control.hosted_chat_foreground_loop import (
+        safe_generation_error,
+    )
+
+    request = httpx.Request("POST", "https://private.invalid/chat?token=secret")
+    response = httpx.Response(503, request=request)
+    error = safe_generation_error(
+        httpx.HTTPStatusError("secret", request=request, response=response)
+    )
+    assert "HTTP 503" in error and "HTTPStatusError" in error
+    assert "secret" not in error and "private" not in error
+    assert "stream disconnected" in safe_generation_error(
+        httpx.RemoteProtocolError("secret")
+    )
+    assert "secret" not in safe_generation_error(ValueError("secret"))
