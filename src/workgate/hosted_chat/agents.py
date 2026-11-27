@@ -11,9 +11,11 @@ from typing import Any
 
 from .agent_validation import (
     clean_agent_config,
+    replace_graph_self,
     sanitize_model_parameters,
 )
 from .database import SQLiteDatabase
+from .graph_topology import build_graph_topology, graph_members
 from .storage import _cursor_decode, _cursor_encode, _like_pattern, _now
 
 
@@ -48,10 +50,38 @@ class AgentRepository:
         value.pop("_version", None)
         return value
 
+    @staticmethod
+    def _validate_graph(db, owner: str, agent_id: str, config: dict) -> None:
+        graph = {**config, "id": agent_id}
+        members = graph_members(graph)
+        for ident in members:
+            if ident == agent_id:
+                continue
+            row = db.execute(
+                "SELECT owner FROM agents WHERE id=?", (ident,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("Referenced Agent does not exist")
+            if row["owner"] != owner:
+                raise PermissionError("Referenced Agent is not accessible")
+        if (
+            config.get("edges")
+            or config.get("entryAgentId") is not None
+            or config.get("resultAgentId") is not None
+        ):
+            build_graph_topology(graph, members)
+
     def create(self, owner: str, body: dict) -> dict:
-        values = clean_agent_config(body, create=True)
+        return self._create(owner, clean_agent_config(body, create=True))
+
+    def _create(
+        self, owner: str, values: dict, *, clone_from: str | None = None
+    ) -> dict:
         agent_id = "agent_" + secrets.token_hex(12)
         now = _now()
+        values = replace_graph_self(values, "", agent_id)
+        if clone_from is not None:
+            values = replace_graph_self(values, clone_from, agent_id)
         values.setdefault("model_parameters", {})
         values.setdefault("conversation_starters", [])
         values.setdefault("category", "general")
@@ -62,6 +92,7 @@ class AgentRepository:
         values["_version"] = 1
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            self._validate_graph(db, owner, agent_id, values)
             db.execute(
                 "INSERT INTO agents(id,owner,name,description,config,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
                 (
@@ -164,6 +195,7 @@ class AgentRepository:
         ).fetchone()
         if row is None:
             return None
+        values = replace_graph_self(values, "", agent_id)
         if "model_parameters" in values:
             values["model_parameters"] = sanitize_model_parameters(
                 values["model_parameters"]
@@ -176,6 +208,14 @@ class AgentRepository:
             config = {**values, "_version": previous_version}
         else:
             config.update(values)
+        if restore or set(values) & {
+            "edges",
+            "graphAgentIds",
+            "entryAgentId",
+            "resultAgentId",
+            "maxHandoffs",
+        }:
+            self._validate_graph(db, owner, agent_id, config)
         version = int(config.get("_version", 1)) + 1
         config["_version"] = version
         now = _now()
@@ -260,7 +300,7 @@ class AgentRepository:
         current = self.get(owner, agent_id)
         if current is None:
             return None
-        values = clean_agent_config(current)
+        values = clean_agent_config(current, create=True)
         values["name"] = (values.get("name") or "Agent") + " (copy)"
-        duplicate = self.create(owner, values)
+        duplicate = self._create(owner, values, clone_from=agent_id)
         return {"agent": duplicate, "actions": []}
