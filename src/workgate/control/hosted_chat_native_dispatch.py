@@ -12,8 +12,10 @@ from pydantic import BaseModel, ConfigDict, TypeAdapter
 from ..hosted_chat.durable_tasks import (
     SESSION_COMMAND_EFFECT_TOOLS,
     SESSION_FILE_EFFECT_TOOLS,
+    SESSION_FILE_READ_TOOLS,
     SESSION_METADATA_EFFECT_TOOLS,
     SESSION_SHELL_EFFECT_TOOLS,
+    SESSION_SHELL_READ_TOOLS,
     DurableTaskRepository,
     ReservedCopyRequest,
 )
@@ -34,11 +36,7 @@ from ..schemas.input_models.task import TaskLabelArg, TaskObjectiveArg
 from .hosted_chat_cancellation import cancel_native_shell, close_native_session
 from .hosted_chat_job_dispatch import dispatch_native_job
 from .hosted_chat_native_creation import _grant, _registered, create_native
-from .hosted_chat_session_tools import (
-    SESSION_FILE_READ_TOOLS,
-    SESSION_SHELL_READ_TOOLS,
-    NativeSessionDispatcher,
-)
+from .hosted_chat_session_tools import NativeSessionDispatcher
 from .hosted_chat_task_tools import NativeTaskDispatcher
 from .mcp.app import build_mcp
 from .runtime import ControlRuntime

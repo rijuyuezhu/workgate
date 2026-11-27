@@ -37,6 +37,13 @@ from .storage import WorkspaceRepository, _now
 SESSION_SHELL_EFFECT_TOOLS = frozenset(
     {"send_persistent_shell_input", "resize_persistent_shell"}
 )
+SESSION_FILE_READ_TOOLS = frozenset(
+    {"read", "list_files", "tree_view", "glob_search", "search"}
+)
+SESSION_SHELL_READ_TOOLS = frozenset(
+    {"read_persistent_shell_output", "list_persistent_shells"}
+)
+
 SESSION_FILE_EFFECT_TOOLS = frozenset(
     {
         "write_file",

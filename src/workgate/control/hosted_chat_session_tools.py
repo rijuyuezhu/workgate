@@ -18,8 +18,10 @@ from pydantic import BaseModel, ConfigDict, TypeAdapter, model_validator
 from ..hosted_chat.durable_tasks import (
     SESSION_COMMAND_EFFECT_TOOLS,
     SESSION_FILE_EFFECT_TOOLS,
+    SESSION_FILE_READ_TOOLS,
     SESSION_METADATA_EFFECT_TOOLS,
     SESSION_SHELL_EFFECT_TOOLS,
+    SESSION_SHELL_READ_TOOLS,
     DurableTaskRepository,
 )
 from ..hosted_chat.generation_actor_lease import ActorLease
@@ -74,12 +76,6 @@ from .mcp.app import build_mcp
 from .runtime import ControlRuntime
 
 # Explicit source-derived classifications, not MCP annotation heuristics.
-SESSION_FILE_READ_TOOLS = frozenset(
-    {"read", "list_files", "tree_view", "glob_search", "search"}
-)
-SESSION_SHELL_READ_TOOLS = frozenset(
-    {"read_persistent_shell_output", "list_persistent_shells"}
-)
 _AUTHORIZATION_RECHECK_SECONDS = 0.5
 
 

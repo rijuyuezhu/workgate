@@ -327,3 +327,13 @@ run recovery marker prevents an expired/pruned checkpoint from becoming a
 fresh generation. Provider failures expose safe category/status messages.
 The driver requires a caller-supplied authorization callback; no HTTP route,
 human-review admission, steering queue, or UI step lifecycle is activated.
+
+Approval mode preferences and risk classification follow the final pinned
+`webui/approval_settings.py` (blob `0630dbfa0bdb6c807ae0824737ee2a6fc9df39d6`)
+and its source tests (`9eb2f2d8895bbe95617ad8205130ca19f55edb96`). Native
+read and semantic Task/plan operations preserve the corresponding source
+classification. Exact bounded `ls`/`pwd` are the only shell exceptions, and
+native asynchronous/PTY execution, environment overrides, Session termination
+and Job mutation require review in dangerous mode. Approval never changes
+native authorization. Owner-scoped settings and versioned Agent configuration
+are private pending human-action route integration.
