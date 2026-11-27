@@ -16,15 +16,17 @@ from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel, ConfigDict, TypeAdapter, model_validator
 
 from ..hosted_chat.durable_tasks import (
+    DurableTaskRepository,
+)
+from ..hosted_chat.generation_actor_lease import ActorLease
+from ..hosted_chat.native_tool_kinds import (
     SESSION_COMMAND_EFFECT_TOOLS,
     SESSION_FILE_EFFECT_TOOLS,
     SESSION_FILE_READ_TOOLS,
     SESSION_METADATA_EFFECT_TOOLS,
     SESSION_SHELL_EFFECT_TOOLS,
     SESSION_SHELL_READ_TOOLS,
-    DurableTaskRepository,
 )
-from ..hosted_chat.generation_actor_lease import ActorLease
 from ..hosted_chat.provider_common import ModelToolCall, complete_tool_batch
 from ..protocol.ids import ReservedShellId, SessionId
 from ..schemas.input_models.files import (

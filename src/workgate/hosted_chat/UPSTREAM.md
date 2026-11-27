@@ -526,3 +526,15 @@ cannot extend the original admitted grant. The existing saver and loop
 checkpoint implement the recovery obligation; no second scheduler is
 introduced. Native effect authorization and team runtime execution remain
 gated until their dependent units.
+
+The native child authority unit extends the existing intent ledger and tool
+node. Admission and each live effect require the current parent edge; the
+ledger uses the child scope's deterministic call identity and capped grant.
+Every ancestor contributes a permission/tool-selection ceiling. Historical
+cleanup resolves the original admitted revision chain without requiring the
+parent edge to stay current: advancing a completed edge is not revocation.
+Missing provenance or changed authority fails closed. Cached result
+projection rechecks the current ACL. Child tools requiring human approval
+are conservatively blocked until child-scoped human request integration;
+no parent approval claim is borrowed. The private child model-loop host and
+public delegation advertisement remain separate units.

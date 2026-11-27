@@ -37,6 +37,7 @@ from ..hosted_chat.machine_permissions import effective_machine_access
 from ..hosted_chat.mcp_projection import native_tool_history_message
 from ..hosted_chat.provider_common import ModelToolCall, complete_tool_batch
 from ..hosted_chat.storage import WorkspaceRepository
+from ..hosted_chat.subagent_scope import SubagentScope
 from .hosted_chat_native_creation import _grant, _registered
 from .hosted_chat_native_dispatch import NativeToolDispatcher, _selected_tools
 from .runtime import ControlRuntime
@@ -98,7 +99,7 @@ class NativeLoopToolNode:
             raise PermissionError("Native tool grant expired")
         if not self.scopes.issubset(scopes):
             raise PermissionError("Native tool principal grant was reduced")
-        return scopes, expires
+        return self.repository.cap_grant(scopes, expires)
 
     def _question_enabled(self, agent: dict | None) -> bool:
         # For ephemeral turns the trusted caller supplies the opt-in through
@@ -429,7 +430,10 @@ class NativeLoopToolNode:
             return {"result": result, "access": access}
 
         async def preflight_unsettled(unsettled: list[ModelToolCall]) -> None:
-            claim = claim_store.approved_batch(self.checkpoint)
+            child = isinstance(self.checkpoint.scope, SubagentScope)
+            claim = (
+                None if child else claim_store.approved_batch(self.checkpoint)
+            )
             entries = (
                 {entry.call_id: entry for entry in claim.entries}
                 if claim
@@ -456,7 +460,12 @@ class NativeLoopToolNode:
                     reviewed.add(call.call_id)
                     effective[call.call_id] = entry.tool_call()
                 elif decision.get("decision") == "ask":
-                    ask.append(call)
+                    if child:
+                        blocked[call.call_id] = (
+                            "Blocked: child tool requires human approval"
+                        )
+                    else:
+                        ask.append(call)
                 else:
                     effective[call.call_id] = call
             if ask and claim is not None:
