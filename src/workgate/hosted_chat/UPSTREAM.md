@@ -346,3 +346,13 @@ its original started-edge identity through actor replacement. Expired or
 missing checkpoints cannot authorize a continuation. Review remains private
 until the execution and authenticated route units; a pending action with lost
 checkpoint evidence needs terminal cancellation/recovery before exposure.
+
+The foreground native tool node now composes the pinned approval-mode policy
+and exact-edge review claims with durable sibling execution. An approved edit
+uses the edited arguments for fresh native target/permission validation while
+its receipt remains bound to the original model proposal. Rejected and denied
+calls settle without native invocation. All unresolved effective targets and
+caller-supplied content checks precede effects; changed policy is checked again
+at dispatch. A newly required review on an already claimed edge fails closed
+rather than silently expanding the claim. Public human-action routes and
+content-filter admission before checkpointing remain separate integration work.

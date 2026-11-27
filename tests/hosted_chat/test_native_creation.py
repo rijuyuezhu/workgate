@@ -4098,3 +4098,380 @@ def test_foreground_safe_generation_error_does_not_leak_provider_details():
         httpx.RemoteProtocolError("secret")
     )
     assert "secret" not in safe_generation_error(ValueError("secret"))
+
+
+@pytest.mark.asyncio
+async def test_native_approval_mixed_batch_edit_reject_and_replay(
+    bound, tmp_path
+):
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.hosted_chat.agent_runtime import (
+        AgentContext,
+        AgentLoopState,
+        AgentSuspended,
+    )
+    from workgate.hosted_chat.approval_claims import ApprovalClaimStore
+    from workgate.hosted_chat.approval_settings import save_mode
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+
+    harness, repo, lease, generation = bound
+    _, sid = await native_session(harness, repo, lease)
+    prefs = WorkspaceRepository(repo.database)
+    save_mode(
+        prefs,
+        lease.owner,
+        "dangerous",
+        conversation_id=generation.conversation_id,
+    )
+    claim_store = ApprovalClaimStore(repo.database)
+    context = AgentContext(
+        ProviderConfig("openai", "model", "https://example.invalid", "fake"), []
+    )
+
+    def node(actor):
+        return NativeLoopToolNode(
+            harness.control,
+            repo,
+            OwnedLoopCheckpoint(actor),
+            allowed_tools={"read", "write_file"},
+            scopes=SCOPES,
+            expires=None,
+            task_machine=harness.executor_id,
+            check_grant=lambda: None,
+        )
+
+    current = node(lease)
+    state = AgentLoopState(context, [])
+    await current.refresh_tools(state)
+    source = tmp_path / "read.txt"
+    source.write_text("original")
+    target = tmp_path / "edited.txt"
+    refused = tmp_path / "rejected.txt"
+    calls = current.preflight(
+        [
+            ModelToolCall(
+                "read", "read", {"session_id": sid, "path": str(source)}
+            ),
+            ModelToolCall(
+                "write",
+                "write_file",
+                {
+                    "session_id": sid,
+                    "path": str(target),
+                    "content": "original proposal",
+                },
+            ),
+            ModelToolCall(
+                "reject",
+                "write_file",
+                {"session_id": sid, "path": str(refused), "content": "no"},
+            ),
+        ],
+        state,
+    )
+    state.pending_calls = calls
+    state.tool_step_started = True
+    await current.checkpoint.save(state, calls)
+    with pytest.raises(AgentSuspended, match="approval"):
+        await current.dispatch(calls, state)
+    pending = claim_store.pending(lease.owner, lease.run_id)
+    assert pending is not None
+    assert [
+        request["tool_call_id"]
+        for request in pending["payload"]["action_requests"]
+    ] == ["write", "reject"]
+    assert not target.exists() and not refused.exists()
+    edited = {**calls[1].arguments, "content": "approved edit"}
+    claim_store.claim(
+        lease.owner,
+        lease.run_id,
+        pending["actionId"],
+        [
+            {
+                "tool_call_id": "write",
+                "decision": "edit",
+                "editedArguments": edited,
+            },
+            {
+                "tool_call_id": "reject",
+                "decision": "reject",
+                "reason": "not requested",
+            },
+        ],
+    )
+    replacement = ActorLease.claim(repo.database, lease.owner, lease.run_id)
+    assert replacement is not None
+    current = node(replacement)
+    restored = current.checkpoint.restore(context)
+    assert restored is not None
+    inspected = []
+
+    async def authorize(effects, state):
+        inspected.extend(effects)
+
+    result = await current.dispatch(
+        calls, restored.state, authorize_effects=authorize
+    )
+    assert [message["tool_call_id"] for message in result.messages] == [
+        "read",
+        "write",
+        "reject",
+    ]
+    assert "original" in result.messages[0]["content"]
+    assert (
+        result.messages[2]["is_error"]
+        and "not requested" in result.messages[2]["content"]
+    )
+    assert target.read_text() == "approved edit" and not refused.exists()
+    assert [call.call_id for call in inspected] == ["read", "write"]
+    assert inspected[1].arguments == edited
+    # Historical results are keyed to the original model proposal, not the edit.
+    target.write_text("externally changed")
+    source.write_text("different")
+    replacement.release()
+    again = ActorLease.claim(repo.database, lease.owner, lease.run_id)
+    assert again is not None
+    current = node(again)
+    restored = current.checkpoint.restore(context)
+    assert restored is not None
+    inspected.clear()
+    assert (
+        await current.dispatch(
+            calls, restored.state, authorize_effects=authorize
+        )
+    ).messages == result.messages
+    assert target.read_text() == "externally changed" and not inspected
+
+
+@pytest.mark.asyncio
+async def test_native_approval_edit_foreign_target_blocks_siblings(
+    bound, tmp_path
+):
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.hosted_chat.agent_runtime import (
+        AgentContext,
+        AgentLoopState,
+        AgentSuspended,
+    )
+    from workgate.hosted_chat.approval_claims import ApprovalClaimStore
+    from workgate.hosted_chat.approval_settings import save_mode
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+
+    harness, repo, lease, generation = bound
+    _, sid = await native_session(harness, repo, lease)
+    foreign_run, _ = GenerationStore(repo.database).begin(
+        lease.owner, {"text": "another conversation"}
+    )
+    foreign = ActorLease.claim(repo.database, lease.owner, foreign_run.run_id)
+    assert foreign is not None
+    _, foreign_sid = await native_session(harness, repo, foreign)
+    save_mode(
+        WorkspaceRepository(repo.database),
+        lease.owner,
+        "all",
+        conversation_id=generation.conversation_id,
+    )
+    store = ApprovalClaimStore(repo.database)
+    context = AgentContext(
+        ProviderConfig("openai", "model", "https://example.invalid", "fake"), []
+    )
+
+    def node(actor):
+        return NativeLoopToolNode(
+            harness.control,
+            repo,
+            OwnedLoopCheckpoint(actor),
+            allowed_tools={"write_file"},
+            scopes=SCOPES,
+            expires=None,
+            task_machine=harness.executor_id,
+            check_grant=lambda: None,
+        )
+
+    current = node(lease)
+    state = AgentLoopState(context, [])
+    await current.refresh_tools(state)
+    paths = [tmp_path / "first.txt", tmp_path / "second.txt"]
+    calls = current.preflight(
+        [
+            ModelToolCall(
+                str(i),
+                "write_file",
+                {"session_id": sid, "path": str(path), "content": "x"},
+            )
+            for i, path in enumerate(paths)
+        ],
+        state,
+    )
+    state.pending_calls = calls
+    state.tool_step_started = True
+    await current.checkpoint.save(state, calls)
+    with pytest.raises(AgentSuspended):
+        await current.dispatch(calls, state)
+    pending = store.pending(lease.owner, lease.run_id)
+    assert pending is not None
+    store.claim(
+        lease.owner,
+        lease.run_id,
+        pending["actionId"],
+        [
+            {"tool_call_id": "0", "decision": "approve"},
+            {
+                "tool_call_id": "1",
+                "decision": "edit",
+                "editedArguments": {
+                    **calls[1].arguments,
+                    "session_id": foreign_sid,
+                },
+            },
+        ],
+    )
+    fresh = ActorLease.claim(repo.database, lease.owner, lease.run_id)
+    assert fresh is not None
+    current = node(fresh)
+    restored = current.checkpoint.restore(context)
+    assert restored is not None
+    with pytest.raises(PermissionError, match="does not belong"):
+        await current.dispatch(calls, restored.state)
+    assert not any(path.exists() for path in paths)
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["initial_deny", "late_deny", "late_ask", "claimed_deny", "claimed_ask"],
+)
+@pytest.mark.asyncio
+async def test_native_approval_live_policy_changes(bound, tmp_path, change):
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.hosted_chat.agent_runtime import (
+        AgentContext,
+        AgentLoopState,
+        AgentSuspended,
+    )
+    from workgate.hosted_chat.approval_claims import ApprovalClaimStore
+    from workgate.hosted_chat.approval_settings import save_mode
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+
+    harness, repo, lease, generation = bound
+    _, sid = await native_session(harness, repo, lease)
+    prefs = WorkspaceRepository(repo.database)
+    store = ApprovalClaimStore(repo.database)
+    context = AgentContext(
+        ProviderConfig("openai", "model", "https://example.invalid", "fake"), []
+    )
+
+    def node(actor):
+        return NativeLoopToolNode(
+            harness.control,
+            repo,
+            OwnedLoopCheckpoint(actor),
+            allowed_tools={"write_file", "read"},
+            scopes=SCOPES,
+            expires=None,
+            task_machine=harness.executor_id,
+            check_grant=lambda: None,
+        )
+
+    def deny():
+        prefs.save_setting(
+            lease.owner,
+            "endpoints",
+            {
+                "agents": {
+                    "toolApproval": {
+                        "enabled": True,
+                        "mode": "bypass",
+                        "deny": ["write_file"],
+                        "reason": "Policy blocks {tool}",
+                    }
+                }
+            },
+        )
+
+    def all_mode():
+        save_mode(
+            prefs,
+            lease.owner,
+            "all",
+            conversation_id=generation.conversation_id,
+        )
+
+    current = node(lease)
+    state = AgentLoopState(context, [])
+    await current.refresh_tools(state)
+    source = tmp_path / "read.txt"
+    source.write_text("read")
+    target = tmp_path / "write.txt"
+    calls = current.preflight(
+        [
+            ModelToolCall(
+                "write",
+                "write_file",
+                {"session_id": sid, "path": str(target), "content": "x"},
+            ),
+            ModelToolCall(
+                "read", "read", {"session_id": sid, "path": str(source)}
+            ),
+        ],
+        state,
+    )
+    state.pending_calls = calls
+    state.tool_step_started = True
+    await current.checkpoint.save(state, calls)
+
+    if change.startswith("claimed"):
+        save_mode(
+            prefs,
+            lease.owner,
+            "dangerous",
+            conversation_id=generation.conversation_id,
+        )
+        with pytest.raises(AgentSuspended):
+            await current.dispatch(calls, state)
+        pending = store.pending(lease.owner, lease.run_id)
+        assert pending is not None
+        store.claim(
+            lease.owner,
+            lease.run_id,
+            pending["actionId"],
+            [{"tool_call_id": "write", "decision": "approve"}],
+        )
+        fresh = ActorLease.claim(repo.database, lease.owner, lease.run_id)
+        assert fresh is not None
+        current = node(fresh)
+        restored = current.checkpoint.restore(context)
+        assert restored is not None
+        state = restored.state
+        if change == "claimed_deny":
+            deny()
+        else:
+            all_mode()
+    elif change == "initial_deny":
+        deny()
+
+    async def authorize(effects, state):
+        if change == "late_deny":
+            deny()
+        elif change == "late_ask":
+            all_mode()
+
+    if change.endswith("ask"):
+        with pytest.raises(PermissionError, match="policy changed"):
+            await current.dispatch(calls, state, authorize_effects=authorize)
+        saved = current.checkpoint.saver.get_tuple(current.checkpoint.active)
+        assert saved is not None
+        assert not any(
+            channel == "tool_receipt"
+            for _, channel, _ in saved["pendingWrites"]
+        )
+    else:
+        result = await current.dispatch(
+            calls, state, authorize_effects=authorize
+        )
+        assert result.messages[0]["is_error"]
+        assert "Policy blocks write_file" in result.messages[0]["content"]
+        assert not result.messages[1]["is_error"]
+    assert not target.exists()

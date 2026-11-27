@@ -2,14 +2,21 @@
 
 import copy
 import time
-from collections.abc import Callable, Collection
+from collections.abc import Awaitable, Callable, Collection
 
-from ..hosted_chat.agent_runtime import AgentLoopState, ToolBatchOutput
+from ..hosted_chat.agent_runtime import (
+    AgentLoopState,
+    AgentSuspended,
+    ToolBatchOutput,
+)
+from ..hosted_chat.approval_claims import ApprovalClaimStore
+from ..hosted_chat.approval_settings import call_decision, effective_mode
 from ..hosted_chat.durable_tasks import DurableTaskRepository
 from ..hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
 from ..hosted_chat.loop_receipts import execute_checkpointed_batch
 from ..hosted_chat.mcp_projection import native_tool_history_message
 from ..hosted_chat.provider_common import ModelToolCall, complete_tool_batch
+from ..hosted_chat.storage import WorkspaceRepository
 from .hosted_chat_native_creation import _grant
 from .hosted_chat_native_dispatch import NativeToolDispatcher, _selected_tools
 from .runtime import ControlRuntime
@@ -19,7 +26,8 @@ class NativeLoopToolNode:
     """Compose native dispatch and durable replay without a generic MCP fallback.
 
     The foreground caller must supply the live principal/grant check and run
-    the approval/content-policy hooks before dispatching the tool node.
+    the content-policy hook before executing native effects. Approval claims
+    are evaluated against the live owner settings inside the receipt edge.
     """
 
     def __init__(
@@ -97,10 +105,30 @@ class NativeLoopToolNode:
         )
         return [call for call, _ in prepared]
 
+    def _decision(self, call: ModelToolCall) -> dict:
+        lease = self.checkpoint.lease
+        conversation, agent = self.repository.tool_context(lease)
+        repo = WorkspaceRepository(self.repository.database)
+        mode = effective_mode(repo, lease.owner, conversation, agent)
+        endpoints = repo.setting(lease.owner, "endpoints", {}) or {}
+        legacy = (endpoints.get("agents") or {}).get("toolApproval")
+        return call_decision(mode, legacy, call.name, call.arguments) or {}
+
     async def dispatch(
-        self, calls: list[ModelToolCall], state: AgentLoopState
+        self,
+        calls: list[ModelToolCall],
+        state: AgentLoopState,
+        *,
+        authorize_effects: Callable[
+            [list[ModelToolCall], AgentLoopState], Awaitable[None]
+        ]
+        | None = None,
     ) -> ToolBatchOutput:
         calls = copy.deepcopy(complete_tool_batch(calls))
+        claim_store = ApprovalClaimStore(self.repository.database)
+        effective: dict[str, ModelToolCall] = {}
+        blocked: dict[str, str] = {}
+        reviewed: set[str] = set()
 
         def check() -> None:
             self.current_grant()
@@ -109,26 +137,94 @@ class NativeLoopToolNode:
             if any(call.name not in enabled for call in calls):
                 raise PermissionError("Native tool no longer selected")
 
+        def rejected(reason: str) -> dict:
+            return {
+                "content": [{"type": "text", "text": reason}],
+                "isError": True,
+            }
+
+        def refresh_decision(call: ModelToolCall) -> None:
+            decision = self._decision(call)
+            if decision.get("decision") == "deny":
+                blocked[call.call_id] = "Blocked: " + decision.get(
+                    "reason", "Rejected by policy"
+                )
+            elif (
+                decision.get("decision") == "ask"
+                and call.call_id not in reviewed
+            ):
+                raise PermissionError(
+                    "Native approval policy changed before execution"
+                )
+
         async def execute(call: ModelToolCall) -> dict:
+            if call.call_id not in blocked:
+                refresh_decision(effective[call.call_id])
+            if call.call_id in blocked:
+                return rejected(blocked[call.call_id])
+            prepared = effective[call.call_id]
             scopes, expires = self.current_grant()
             return await self.native.dispatch_model_call(
                 self.repository,
                 self.checkpoint.lease,
-                call,
+                prepared,
                 allowed_tools=self.allowed_tools,
                 scopes=scopes,
                 expires=expires,
                 task_machine=self.task_machine,
             )
 
-        def preflight_unsettled(unsettled: list[ModelToolCall]) -> None:
+        async def preflight_unsettled(unsettled: list[ModelToolCall]) -> None:
+            claim = claim_store.approved_batch(self.checkpoint)
+            entries = (
+                {entry.call_id: entry for entry in claim.entries}
+                if claim
+                else {}
+            )
+            ask = []
+            for call in unsettled:
+                entry = entries.get(call.call_id)
+                decision = self._decision(call)
+                if decision.get("decision") == "deny":
+                    blocked[call.call_id] = "Blocked: " + decision.get(
+                        "reason", "Rejected by policy"
+                    )
+                    continue
+                if entry is not None:
+                    resolution = entry.decision
+                    if resolution["type"] == "reject":
+                        blocked[call.call_id] = "Blocked: " + resolution.get(
+                            "reason", "Rejected by user"
+                        )
+                        continue
+                    if resolution["type"] not in {"approve", "edit"}:
+                        raise ValueError("Unsupported native approval decision")
+                    reviewed.add(call.call_id)
+                    effective[call.call_id] = entry.tool_call()
+                elif decision.get("decision") == "ask":
+                    ask.append(call)
+                else:
+                    effective[call.call_id] = call
+            if ask and claim is not None:
+                raise PermissionError(
+                    "Native approval policy changed after review"
+                )
+            candidates = [*effective.values(), *ask]
             self.native.prepare_model_batch(
                 self.repository,
                 self.checkpoint.lease,
-                unsettled,
+                candidates,
                 allowed_tools=self.allowed_tools,
                 task_machine=self.task_machine,
             )
+            if authorize_effects is not None and candidates:
+                await authorize_effects(copy.deepcopy(candidates), state)
+            check()
+            if ask:
+                claim_store.pause(self.checkpoint, ask)
+                raise AgentSuspended("Waiting for native tool approval")
+            for call in effective.values():
+                refresh_decision(call)
 
         outputs = await execute_checkpointed_batch(
             self.checkpoint,

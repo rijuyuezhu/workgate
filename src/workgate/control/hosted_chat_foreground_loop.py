@@ -62,7 +62,8 @@ async def run_foreground_native_loop(
 ) -> AgentLoopState:
     """Run a caller-authorized native turn; no public route or grant admission.
 
-    Approval and content-policy orchestration must be supplied by the caller.
+    Content-policy authorization must be supplied by the caller. Native
+    approval mode and immutable review claims are applied in the tool node.
     A caller owns lease admission/release; the running coroutine renews it.
     """
     checkpoint = node.checkpoint
@@ -119,8 +120,9 @@ async def run_foreground_native_loop(
         calls: list[ModelToolCall], state: AgentLoopState
     ) -> ToolBatchOutput:
         node.current_grant()
-        await authorize_batch(copy.deepcopy(calls), state)
-        return await node.dispatch(calls, state)
+        return await node.dispatch(
+            calls, state, authorize_effects=authorize_batch
+        )
 
     async def check_stream() -> bool:
         node.current_grant()
