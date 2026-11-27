@@ -24,6 +24,7 @@ from langgraph.types import Interrupt
 from .checkpoints import EVENT_ACTOR_KEY, NAMESPACE_KEY, SQLiteCheckpointSaver
 from .database import SQLiteDatabase
 from .generation_actor_lease import ActorLease, ActorLeaseLost
+from .subagent_scope import SubagentGraphScope
 
 
 def verify_graph_interrupt(
@@ -61,11 +62,19 @@ def verify_graph_interrupt(
 
 class OwnedGraphCheckpointer(BaseCheckpointSaver):
     def __init__(
-        self, database: SQLiteDatabase, owner: str, *, actor_lease: ActorLease
+        self,
+        database: SQLiteDatabase,
+        owner: str,
+        *,
+        actor_lease: ActorLease,
+        scope: SubagentGraphScope | None = None,
     ):
         super().__init__()
+        if scope is not None and scope.member_id is not None:
+            raise PermissionError("Team member cannot own graph scheduler")
+        self.scope = scope
         self.storage = SQLiteCheckpointSaver(
-            database, owner, actor_lease=actor_lease
+            database, owner, actor_lease=actor_lease, member_scope=scope
         )
         self.lease = actor_lease
         with database.read_snapshot() as db:
@@ -84,7 +93,11 @@ class OwnedGraphCheckpointer(BaseCheckpointSaver):
         generation = values[NAMESPACE_KEY]
         if (
             thread != self.thread_id
-            or not generation.startswith(self.lease.run_id + ":graph:")
+            or (
+                generation != self.scope.graph_namespace
+                if self.scope is not None
+                else not generation.startswith(self.lease.run_id + ":graph:")
+            )
             or values.get(EVENT_ACTOR_KEY) != generation
         ):
             raise ActorLeaseLost(

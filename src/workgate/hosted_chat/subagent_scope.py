@@ -31,7 +31,9 @@ class _ParentCheckpoint(Protocol):
     def active(self) -> dict: ...
 
     @property
-    def scope(self) -> GraphMemberScope | SubagentScope | None: ...
+    def scope(
+        self,
+    ) -> GraphMemberScope | SubagentScope | SubagentGraphScope | None: ...
 
 
 def _json(value: object) -> str:
@@ -314,6 +316,8 @@ class SubagentScope:
                 "Subagent input does not match the delegated task"
             )
         parent = checkpoint.scope
+        if isinstance(parent, SubagentGraphScope):
+            raise PermissionError("Team graph member delegation is not enabled")
         expires = invocation.grant_expires
         if isinstance(parent, SubagentScope):
             if (
@@ -410,3 +414,83 @@ class SubagentScope:
                     (_json(state), lease.run_id),
                 )
             return scope
+
+
+@dataclass(frozen=True)
+class SubagentGraphScope:
+    """Private SDK graph or member activation beneath a child admission.
+
+    The graph scheduler and each member have disjoint storage namespaces.
+    Team members are pinned by the admitted child's entire revision list.
+    """
+
+    team: SubagentScope
+    member_id: str | None = None
+    activation_id: str | None = None
+
+    @property
+    def graph_namespace(self) -> str:
+        return self.team.checkpoint_namespace + ":graph:team"
+
+    @property
+    def checkpoint_namespace(self) -> str:
+        if self.activation_id is None:
+            return self.graph_namespace
+        return self.graph_namespace + ":member:" + self.activation_id
+
+    @property
+    def marker(self) -> list:
+        return [self.team.marker, self.member_id]
+
+    def native_call_id(self, call_id: str) -> str:
+        return "child:" + _digest([self.checkpoint_namespace, call_id])
+
+    def effective_grant(
+        self, scopes: set[str] | frozenset[str], expires: int | None
+    ) -> tuple[set[str], int | None]:
+        return self.team.effective_grant(scopes, expires)
+
+    def resolve_owned(
+        self,
+        db: sqlite3.Connection,
+        owner: str,
+        run_id: str,
+        *,
+        current_edges: bool = False,
+    ) -> tuple[dict | None, ...]:
+        from uuid import UUID
+
+        chain = self.team.resolve_owned(
+            db, owner, run_id, current_edges=current_edges
+        )
+        if not self.team.target_revisions:
+            raise PermissionError("Team graph requires an admitted saved Agent")
+        if self.member_id is None and self.activation_id is None:
+            return chain
+        if (
+            not isinstance(self.activation_id, str)
+            or str(UUID(self.activation_id)) != self.activation_id
+            or self.member_id not in dict(self.team.target_revisions)
+        ):
+            raise PermissionError(
+                "Team graph member is outside the admitted scope"
+            )
+        row = self.team._run(db, owner, run_id)
+        state = json.loads(row["state"])
+        if self.graph_namespace not in state.get("ownedGraphCheckpoints", {}):
+            raise PermissionError("Team graph has no admitted checkpoint")
+        marker = state.get("ownedSubagentLoopCheckpoints", {}).get(
+            self.checkpoint_namespace
+        )
+        if marker is not None and marker != self.marker:
+            raise PermissionError("Team graph activation identity changed")
+        assert self.member_id is not None
+        return (*chain, _agent(db, owner, self.member_id))
+
+    def resolve(
+        self, db: sqlite3.Connection, lease: ActorLease
+    ) -> tuple[dict | None, ...]:
+        lease.assert_current(db)
+        return self.resolve_owned(
+            db, lease.owner, lease.run_id, current_edges=True
+        )

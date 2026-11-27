@@ -20,7 +20,7 @@ from .checkpoint_types import NAMESPACE_KEY as NAMESPACE_KEY
 from .database import SQLiteDatabase
 from .generation_actor_lease import ActorLease, ActorLeaseLost
 from .graph_member_scope import GraphMemberScope
-from .subagent_scope import SubagentScope
+from .subagent_scope import SubagentGraphScope, SubagentScope
 
 OWNER_KEY = "__librechat_checkpoint_owner"
 EVENT_ACTOR_KEY = "__librechat_event_actor_invocation_id"
@@ -107,7 +107,10 @@ class SQLiteCheckpointSaver:
         hard_limit_bytes: int = CHECKPOINT_HARD_LIMIT_BYTES,
         warn_bytes: int = CHECKPOINT_WARN_BYTES,
         actor_lease: ActorLease | None = None,
-        member_scope: GraphMemberScope | SubagentScope | None = None,
+        member_scope: GraphMemberScope
+        | SubagentScope
+        | SubagentGraphScope
+        | None = None,
     ):
         if not isinstance(owner, str) or not owner:
             raise ValueError("Checkpoint owner is required")
@@ -234,7 +237,9 @@ class SQLiteCheckpointSaver:
                 "Checkpoint identity does not match generation actor lease"
             )
         lease.assert_current(db)
-        if child_namespace and not isinstance(self.member_scope, SubagentScope):
+        if child_namespace and not isinstance(
+            self.member_scope, (SubagentScope, SubagentGraphScope)
+        ):
             raise ActorLeaseLost(
                 "Child checkpoint requires its admitted delegation scope"
             )
@@ -242,7 +247,9 @@ class SQLiteCheckpointSaver:
             if namespace != self.member_scope.checkpoint_namespace:
                 raise ActorLeaseLost(
                     "Checkpoint namespace does not match scoped activation"
-                    if isinstance(self.member_scope, SubagentScope)
+                    if isinstance(
+                        self.member_scope, (SubagentScope, SubagentGraphScope)
+                    )
                     else "Checkpoint namespace does not match graph member activation"
                 )
             self.member_scope.resolve(db, lease)
@@ -425,7 +432,7 @@ class SQLiteCheckpointSaver:
     ) -> dict | None:
         thread, namespace, checkpoint_id = self._identity(config)
         if (
-            isinstance(self.member_scope, SubagentScope)
+            isinstance(self.member_scope, (SubagentScope, SubagentGraphScope))
             or ":child:" in namespace.split("|", 1)[0]
         ):
             self._assert_write(db, thread, namespace)
@@ -468,7 +475,9 @@ class SQLiteCheckpointSaver:
             return
         with self.database.read_snapshot() as db:
             if (
-                isinstance(self.member_scope, SubagentScope)
+                isinstance(
+                    self.member_scope, (SubagentScope, SubagentGraphScope)
+                )
                 or ":child:" in namespace.split("|", 1)[0]
             ):
                 self._assert_write(db, thread, namespace)
