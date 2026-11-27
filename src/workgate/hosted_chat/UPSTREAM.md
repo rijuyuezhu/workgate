@@ -288,3 +288,14 @@ no-progress signature ignores provider tool-call correlation IDs so identical
 outcomes cannot evade it by changing IDs. Semantic-index typing and the
 route-level safe provider error test follow with their corresponding modules.
 This private loop does not itself launch workers or expose routes.
+
+The private owned loop-checkpoint bridge adapts the pinned AgentRunner's
+`_snapshot`, `_save`, and state reconstruction from
+`src/local_shell_mcp/webui/agent_runner.py` (blob
+`ba059c4de763236ed1e6d4b7aaeb74ff1eff6b01`). It binds the event-actor saver to
+an authenticated generation lease and its persisted conversation, preserves
+pending proposals, started-tool boundaries, partial text, graph commands and
+no-progress counters, and reconstructs the loop with a fresh caller-provided
+AgentContext. It does not persist ProviderConfig or tool catalog grants.
+Completed sibling receipt recovery and graph handoff restoration follow in
+separate integration units.
