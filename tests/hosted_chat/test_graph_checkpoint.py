@@ -3,10 +3,6 @@
 from typing import cast
 
 import pytest
-from langchain_core.runnables import RunnableConfig
-from langgraph.checkpoint.base import empty_checkpoint
-from langgraph.graph import END, START, StateGraph
-from langgraph.types import Send
 from typing_extensions import TypedDict
 
 from workgate.hosted_chat.checkpoints import EVENT_ACTOR_KEY
@@ -15,7 +11,6 @@ from workgate.hosted_chat.generation_actor_lease import (
     ActorLease,
     ActorLeaseLost,
 )
-from workgate.hosted_chat.graph_checkpoint import OwnedGraphCheckpointer
 from workgate.hosted_chat.message_reducers import (
     REMOVE_ALL_MESSAGES,
     agent_messages_reducer,
@@ -74,6 +69,11 @@ def test_message_remove_restore_clear_and_generated_ids():
 
 @pytest.fixture
 def owned(tmp_path):
+    pytest.importorskip("langgraph")
+    from langchain_core.runnables import RunnableConfig
+
+    from workgate.hosted_chat.graph_checkpoint import OwnedGraphCheckpointer
+
     db = SQLiteDatabase(tmp_path)
     with db.connect() as conn:
         conn.execute(
@@ -99,6 +99,12 @@ def present(value):
 
 @pytest.mark.asyncio
 async def test_typed_tuples_async_writes_filters_and_owner_fence(owned):
+    from langchain_core.runnables import RunnableConfig
+    from langgraph.checkpoint.base import empty_checkpoint
+    from langgraph.types import Send
+
+    from workgate.hosted_chat.graph_checkpoint import OwnedGraphCheckpointer
+
     db, lease, saver, config = owned
     assert saver.get_tuple(config) is None
     with pytest.raises(ValueError, match="thread config"):
@@ -158,6 +164,10 @@ class GraphState(TypedDict):
 
 @pytest.mark.asyncio
 async def test_real_langgraph_resume_does_not_repeat_completed_node(owned):
+    from langgraph.graph import END, START, StateGraph
+
+    from workgate.hosted_chat.graph_checkpoint import OwnedGraphCheckpointer
+
     db, lease, saver, config = owned
     calls = []
 
