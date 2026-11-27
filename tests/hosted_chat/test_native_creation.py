@@ -6809,11 +6809,14 @@ async def test_detached_native_worker_recovery_and_cancellation(
         assert await execute()
     else:
         monkeypatch.setattr(worker, "_RENEW_SECONDS", 0.01)
+        deadline = asyncio.timeout(None)
         if interruption == "timeout":
-            monkeypatch.setattr(worker, "_TIMEOUT_SECONDS", 2)
+            monkeypatch.setattr(worker, "timeout", lambda _seconds: deadline)
         running = asyncio.create_task(execute())
-        await asyncio.wait_for(blocked.wait(), timeout=5)
+        await asyncio.wait_for(blocked.wait(), timeout=30)
         assert len(await harness.control.task_service.list_tasks()) == 1
+        if interruption == "timeout":
+            deadline.reschedule(asyncio.get_running_loop().time())
         if interruption == "shutdown":
             running.cancel()
             with pytest.raises(asyncio.CancelledError):

@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+from asyncio import timeout
 from collections.abc import Awaitable, Callable, Collection
 from contextlib import suppress
 from dataclasses import replace
@@ -203,7 +204,7 @@ async def run_detached_subagent(
         worker = asyncio.create_task(execute())
         renewal = asyncio.create_task(heartbeat())
         try:
-            async with asyncio.timeout(_TIMEOUT_SECONDS):
+            async with timeout(_TIMEOUT_SECONDS):
                 done, _ = await asyncio.wait(
                     {worker, renewal}, return_when=asyncio.FIRST_COMPLETED
                 )
