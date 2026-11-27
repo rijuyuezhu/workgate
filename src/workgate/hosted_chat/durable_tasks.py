@@ -21,6 +21,7 @@ from ..protocol.ids import (
     ReservedJobId,
     ReservedShellId,
     SessionId,
+    TaskId,
     new_command_id,
     new_reserved_job_id,
     new_reserved_shell_id,
@@ -48,6 +49,14 @@ SESSION_FILE_EFFECT_TOOLS = frozenset(
 
 
 SESSION_COMMAND_EFFECT_TOOLS = frozenset({"bash", "run_python_code"})
+TASK_METADATA_EFFECT_TOOLS = frozenset({"task", "task_plan", "write_todos"})
+
+
+def _task_metadata_effect(call: ModelToolCall) -> bool:
+    return call.name in TASK_METADATA_EFFECT_TOOLS and (
+        call.name != "task"
+        or call.arguments.get("action") in {"report", "block", "resume"}
+    )
 
 
 def _fingerprint(name: str, arguments: dict) -> str:
@@ -529,6 +538,49 @@ class DurableTaskRepository:
                 result.append(self._intent(row))
             return result
 
+    def _authorize_task_metadata(
+        self,
+        db,
+        run,
+        task_id: str,
+        scopes: set[str],
+        expires: int | None,
+        *,
+        write: bool,
+    ) -> frozenset[str]:
+        if not self._owned(
+            db, run["owner"], run["conversation_id"], "task", task_id
+        ):
+            raise PermissionError(
+                "Native Task does not belong to this conversation"
+            )
+        require_machine_scope(
+            scopes, "write" if write else "read", expires=expires
+        )
+        return frozenset(
+            row[0]
+            for row in db.execute(
+                "SELECT native_id FROM agent_durable_tasks WHERE owner=? AND conversation_id=? "
+                "AND kind='session' AND state='active' AND native_id IS NOT NULL",
+                (run["owner"], run["conversation_id"]),
+            )
+        )
+
+    def authorize_task_metadata(
+        self,
+        lease: ActorLease,
+        task_id: str,
+        *,
+        scopes: set[str],
+        expires: int | None,
+        write: bool,
+    ) -> frozenset[str]:
+        with self.database.read_snapshot() as db:
+            run = self._run(db, lease)
+            return self._authorize_task_metadata(
+                db, run, task_id, scopes, expires, write=write
+            )
+
     def native_effect(
         self,
         lease: ActorLease,
@@ -547,6 +599,7 @@ class DurableTaskRepository:
         Unlike durable resource starts, these effects have no lookup receipt.
         """
         complete_tool_batch([call])
+        task_metadata = _task_metadata_effect(call)
         shell = call.name in SESSION_SHELL_EFFECT_TOOLS
         command = call.name in SESSION_COMMAND_EFFECT_TOOLS
         if command and any(
@@ -557,13 +610,25 @@ class DurableTaskRepository:
                 "Tracked or PTY execution requires native reservation"
             )
         if (
-            not (shell or command)
+            not (shell or command or task_metadata)
             and call.name not in SESSION_FILE_EFFECT_TOOLS
         ):
             raise ValueError("Expected a finite native Session effect")
-        session_id = TypeAdapter(SessionId).validate_python(
-            call.arguments.get("session_id"),
-            strict=True,
+        task_id = (
+            TypeAdapter(TaskId).validate_python(
+                call.arguments.get("task_id"), strict=True
+            )
+            if task_metadata
+            else None
+        )
+        if task_metadata and machine != "control":
+            raise ValueError("Task metadata is Control-owned")
+        session_id = (
+            None
+            if task_metadata
+            else TypeAdapter(SessionId).validate_python(
+                call.arguments.get("session_id"), strict=True
+            )
         )
         shell_id = (
             TypeAdapter(ReservedShellId).validate_python(
@@ -610,31 +675,36 @@ class DurableTaskRepository:
                 raise PermissionError(
                     "A replayed tool call cannot change a durable request"
                 )
-            self._require_parent(
-                db, run, "shell", machine, {"session_id": session_id}
-            )
-            if shell_id is not None and not self._owned(
-                db,
-                lease.owner,
-                run["conversation_id"],
-                "shell",
-                shell_id,
-                machine,
-                session_id,
-            ):
-                raise PermissionError(
-                    "Native Shell does not belong to this conversation"
+            if task_id is not None:
+                self._authorize_task_metadata(
+                    db, run, task_id, scopes, expires, write=True
                 )
-            self._authorize(
-                db,
-                run,
-                machine,
-                "shell" if shell or command else "session_write",
-                scopes,
-                expires,
-                registered,
-                run["conversation_id"],
-            )
+            else:
+                self._require_parent(
+                    db, run, "shell", machine, {"session_id": session_id}
+                )
+                if shell_id is not None and not self._owned(
+                    db,
+                    lease.owner,
+                    run["conversation_id"],
+                    "shell",
+                    shell_id,
+                    machine,
+                    session_id,
+                ):
+                    raise PermissionError(
+                        "Native Shell does not belong to this conversation"
+                    )
+                self._authorize(
+                    db,
+                    run,
+                    machine,
+                    "shell" if shell or command else "session_write",
+                    scopes,
+                    expires,
+                    registered,
+                    run["conversation_id"],
+                )
             if prior is None:
                 db.execute(
                     "INSERT INTO agent_native_effect_calls(run_id,call_id,fingerprint,machine,scopes,grant_expires) "
