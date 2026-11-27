@@ -156,6 +156,14 @@ class GenerationStore:
         run_id = "run_" + secrets.token_hex(16)
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            if (
+                not new_conversation
+                and db.execute(
+                    "SELECT 1 FROM active_subagent_threads WHERE thread_id=?",
+                    (conversation_id,),
+                ).fetchone()
+            ):
+                raise PermissionError("Child conversation is read-only")
             if client_request_id:
                 prior = db.execute(
                     "SELECT r.* FROM generation_requests gr JOIN runs r ON r.id=gr.run_id "
@@ -392,6 +400,10 @@ class GenerationStore:
     def append(
         self, owner: str, run_id: str, event: dict, *, actor_lease: ActorLease
     ) -> int:
+        if actor_lease.detached_task_id is not None:
+            raise PermissionError(
+                "Detached generation cannot publish model deltas"
+            )
         encoded = _json(event)
         if len(encoded.encode("utf-8")) > MAX_EVENT_BYTES:
             raise ValueError("Generation event exceeds 256 KiB")
@@ -474,6 +486,8 @@ class GenerationStore:
         actor_lease: ActorLease,
     ) -> bool:
         """Persist the final message, unread revision and terminal event atomically."""
+        if actor_lease.detached_task_id is not None:
+            raise PermissionError("Detached generation must settle its task")
         if status not in _TERMINAL:
             raise ValueError("Only terminal statuses can finish a generation")
         with self.database.connect() as db:

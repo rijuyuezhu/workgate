@@ -1,4 +1,4 @@
-"""SQLite CAS ownership for every foreground HTTP generation actor.
+"""SQLite CAS ownership for ordinary and private detached generation actors.
 
 Only one Controller may generate or invoke tools for an owned run at a time.
 All lease identity comes from the server's persistent run, never client input.
@@ -32,6 +32,7 @@ class ActorLease:
     owner: str
     run_id: str
     token: str
+    detached_task_id: str | None = None
 
     @classmethod
     def claim(
@@ -43,7 +44,8 @@ class ActorLease:
             now = _now()
             match = db.execute(
                 "SELECT 1 FROM runs r JOIN conversations c ON c.id=r.conversation_id "
-                "WHERE r.id=? AND c.owner=? AND r.status='running'",
+                "WHERE r.id=? AND c.owner=? AND r.status='running' "
+                "AND NOT EXISTS(SELECT 1 FROM active_subagent_threads a WHERE a.owner=c.owner AND a.thread_id=c.id)",
                 (run_id, owner),
             ).fetchone()
             if match is None:
@@ -69,11 +71,35 @@ class ActorLease:
         if db is None:
             with self.database.connect() as connection:
                 return self.is_current(connection)
+        if self.detached_task_id is not None:
+            return (
+                db.execute(
+                    "SELECT 1 FROM subagent_tasks t JOIN runs r ON r.id=t.child_run_id "
+                    "JOIN conversations c ON c.id=r.conversation_id JOIN active_subagent_threads a "
+                    "ON a.owner=t.owner AND a.thread_id=c.id AND a.parent_run_id=t.parent_run_id "
+                    "WHERE t.id=? AND t.owner=? AND r.id=? AND c.owner=t.owner "
+                    "AND c.id=t.child_conversation_id AND a.active=1 AND t.child_registered=1 "
+                    "AND t.status='running' AND r.status='running' AND t.cancel_requested=0 "
+                    "AND json_extract(r.state,'$.detachedTaskId')=t.id "
+                    "AND t.lease_owner=? AND t.lease_until>? "
+                    "AND (t.grant_expires IS NULL OR t.grant_expires>?)",
+                    (
+                        self.detached_task_id,
+                        self.owner,
+                        self.run_id,
+                        self.token,
+                        _now(),
+                        time.time(),
+                    ),
+                ).fetchone()
+                is not None
+            )
         return (
             db.execute(
                 "SELECT 1 FROM generation_actor_leases l JOIN runs r ON r.id=l.run_id "
                 "JOIN conversations c ON c.id=r.conversation_id WHERE l.run_id=? AND l.owner=? "
-                "AND l.token=? AND l.expires_at>? AND r.status='running' AND c.owner=l.owner",
+                "AND l.token=? AND l.expires_at>? AND r.status='running' AND c.owner=l.owner "
+                "AND NOT EXISTS(SELECT 1 FROM active_subagent_threads a WHERE a.owner=c.owner AND a.thread_id=c.id)",
                 (self.run_id, self.owner, self.token, _now()),
             ).fetchone()
             is not None
@@ -87,6 +113,8 @@ class ActorLease:
             )
 
     def renew(self) -> bool:
+        if self.detached_task_id is not None:
+            raise ActorLeaseLost("Detached actor must renew its task lease")
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             now = _now()
@@ -101,6 +129,8 @@ class ActorLease:
             return cursor.rowcount == 1
 
     def release(self) -> None:
+        if self.detached_task_id is not None:
+            raise ActorLeaseLost("Detached actor must release its task lease")
         with self.database.connect() as db:
             db.execute(
                 "DELETE FROM generation_actor_leases WHERE run_id=? AND owner=? AND token=?",
@@ -115,6 +145,7 @@ class ActorLease:
 
 
 def active_run_ids(database: SQLiteDatabase) -> set[str]:
+    """Foreground actors; detached execution is owned by its task lease."""
     with database.connect() as db:
         return {
             row["run_id"]

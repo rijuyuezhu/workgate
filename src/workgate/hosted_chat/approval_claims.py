@@ -183,6 +183,8 @@ class ApprovalClaimStore:
                 "Graph member human actions require graph-aware recovery"
             )
         lease = checkpoint.lease
+        if lease.detached_task_id is not None:
+            raise PermissionError("Detached child cannot request human actions")
         if lease.database.path != self.database.path:
             raise ActorLeaseLost(
                 "Approval checkpoint belongs to another database"

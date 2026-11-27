@@ -1045,3 +1045,146 @@ async def test_detached_reconcile_only_idle_reservations(setup):
             (reservation.task_id,),
         ).fetchone()
         assert tuple(row) == ("error", "Authentication grant expired")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "outcome", ["complete", "cancel", "failure", "expired"]
+)
+async def test_detached_generation_is_private_and_settles_atomically(
+    setup, outcome
+):
+    from workgate.hosted_chat.detached_task_lease import (
+        DetachedTaskLease,
+        reconcile_reservations,
+        request_cancel,
+    )
+    from workgate.hosted_chat.generations import GenerationStore
+    from workgate.hosted_chat.steering import SteeringStore, SteerRejection
+    from workgate.hosted_chat.storage import WorkspaceRepository
+
+    parent_lease, parent, child, _ = setup
+    checkpoint = OwnedLoopCheckpoint(parent_lease)
+    call = await edge(checkpoint, parent, child["id"], background=True)
+    value = await invocation(checkpoint, parent, call)
+    reservation = reserve_detached_child(checkpoint, call, value)
+    db = parent_lease.database
+    store = GenerationStore(db)
+    workspace = WorkspaceRepository(db)
+    cid = reservation.child_conversation_id
+    args = (db, "alice", "chat", reservation.task_id)
+    grant = {"scopes": set(value.scopes), "expires": value.grant_expires}
+    with pytest.raises(PermissionError, match="read-only"):
+        workspace.create_conversation("bob", {"conversationId": cid})
+    task = DetachedTaskLease.claim(*args, **grant)
+    assert task is not None
+    generation, actor = task.materialize(**grant)
+    assert generation.conversation_id == cid
+    assert generation.agent_id == child["id"]
+    assert task.materialize(**grant) == (generation, actor)
+    with pytest.raises(ActorLeaseLost, match="task lease"):
+        actor.renew()
+    with pytest.raises(ActorLeaseLost, match="task lease"):
+        actor.release()
+    assert ActorLease.claim(db, "alice", generation.run_id) is None
+    with pytest.raises(PermissionError, match="read-only"):
+        store.begin("alice", {"conversationId": cid, "text": "foreign turn"})
+    with pytest.raises(PermissionError, match="read-only"):
+        workspace.update_conversation("alice", cid, {"title": "changed"})
+    with pytest.raises(PermissionError, match="read-only"):
+        workspace.add_message("alice", cid, {"text": "injected"})
+    with pytest.raises(PermissionError, match="read-only"):
+        workspace.delete_conversation("alice", cid)
+    with pytest.raises(PermissionError, match="running detached children"):
+        workspace.delete_conversation("alice", "chat")
+    with pytest.raises(SteerRejection, match="CHILD_CONVERSATION_READ_ONLY"):
+        SteeringStore(db).enqueue(
+            "alice",
+            {"conversationId": cid, "text": "injected"},
+            preempt_capable=False,
+            validate_submission=lambda _: None,
+        )
+    with pytest.raises(PermissionError, match="settle its task"):
+        store.finish(
+            "alice", generation.run_id, status="complete", actor_lease=actor
+        )
+    with pytest.raises(PermissionError, match="model deltas"):
+        store.append("alice", generation.run_id, {}, actor_lease=actor)
+    with pytest.raises(PermissionError, match="native effect authority"):
+        DurableTaskRepository(db).tool_context_chain(actor)
+    private = OwnedLoopCheckpoint(actor)
+    assert private.restore(context(child)) is None
+    state = AgentLoopState(
+        context(child),
+        value.messages + [{"role": "assistant", "content": "final text"}],
+        completed=True,
+    )
+    await private.save(state, [])
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE subagent_tasks SET lease_until=0 WHERE id=?",
+            (task.task_id,),
+        )
+    replacement = DetachedTaskLease.claim(*args, **grant)
+    assert replacement is not None
+    assert not actor.is_current()
+    same, new_actor = replacement.materialize(**grant)
+    assert same == generation
+    assert new_actor.token != actor.token
+    task.release()
+    new_actor.assert_current()
+    recovered = OwnedLoopCheckpoint(new_actor).restore(context(child))
+    assert recovered is not None and recovered.state.messages == state.messages
+    if outcome == "complete":
+        replacement.complete(state.messages, **grant)
+        expected = ("completed", "complete", "final text")
+    elif outcome == "cancel":
+        request_cancel(*args)
+        assert not new_actor.is_current()
+        replacement.acknowledge_cancel()
+        expected = ("cancelled", "aborted", None)
+    elif outcome == "failure":
+        replacement.fail()
+        expected = ("error", "error", None)
+    else:
+        replacement.release()
+        with db.connect() as conn:
+            conn.execute(
+                "UPDATE subagent_tasks SET grant_expires=1 WHERE id=?",
+                (task.task_id,),
+            )
+        assert reconcile_reservations(db, "alice", "chat") == 1
+        expected = ("error", "error", None)
+    with db.read_snapshot() as conn:
+        row = conn.execute(
+            "SELECT t.status,r.status,t.result FROM subagent_tasks t JOIN runs r ON r.id=t.child_run_id WHERE t.id=?",
+            (task.task_id,),
+        ).fetchone()
+        assert tuple(row) == expected
+        assert (
+            conn.execute(
+                "SELECT active FROM active_subagent_threads WHERE thread_id=?",
+                (cid,),
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            conn.execute(
+                "SELECT count(*) FROM runs WHERE conversation_id=?", (cid,)
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            conn.execute(
+                "SELECT count(*) FROM generation_events WHERE run_id=?",
+                (generation.run_id,),
+            ).fetchone()[0]
+            == 1
+        )
+    assert not new_actor.is_current()
+    assert ActorLease.claim(db, "alice", generation.run_id) is None
+    with pytest.raises(PermissionError, match="read-only"):
+        workspace.add_message("alice", cid, {"text": "after completion"})
+    assert workspace.delete_conversation("alice", cid)
+    with pytest.raises(PermissionError, match="read-only"):
+        workspace.create_conversation("alice", {"conversationId": cid})

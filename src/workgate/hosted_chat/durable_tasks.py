@@ -251,6 +251,10 @@ class DurableTaskRepository:
         )
 
     def _run(self, db, lease: ActorLease):
+        if lease.detached_task_id is not None:
+            raise PermissionError(
+                "Detached native effect authority is not enabled"
+            )
         if lease.database.path != self.database.path:
             raise ActorLeaseLost("Generation actor database mismatch")
         lease.assert_current(db)
