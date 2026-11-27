@@ -33,6 +33,7 @@ class ActorLease:
     run_id: str
     token: str
     detached_task_id: str | None = None
+    wakeup_task_id: str | None = None
 
     @classmethod
     def claim(
@@ -45,7 +46,8 @@ class ActorLease:
             match = db.execute(
                 "SELECT 1 FROM runs r JOIN conversations c ON c.id=r.conversation_id "
                 "WHERE r.id=? AND c.owner=? AND r.status='running' "
-                "AND NOT EXISTS(SELECT 1 FROM active_subagent_threads a WHERE a.owner=c.owner AND a.thread_id=c.id)",
+                "AND NOT EXISTS(SELECT 1 FROM active_subagent_threads a WHERE a.owner=c.owner AND a.thread_id=c.id) "
+                "AND json_extract(r.state,'$.completionWakeupTaskId') IS NULL",
                 (run_id, owner),
             ).fetchone()
             if match is None:
@@ -94,12 +96,35 @@ class ActorLease:
                 ).fetchone()
                 is not None
             )
+        if self.wakeup_task_id is not None:
+            return (
+                db.execute(
+                    "SELECT 1 FROM subagent_wakeups w JOIN subagent_tasks t ON t.id=w.task_id "
+                    "JOIN runs r ON r.id=w.run_id JOIN conversations c ON c.id=r.conversation_id "
+                    "WHERE w.task_id=? AND w.owner=? AND w.run_id=? AND c.owner=w.owner "
+                    "AND c.id=w.parent_conversation_id AND t.owner=w.owner "
+                    "AND t.result_claim_key='wakeup:'||w.task_id AND t.result_claimed=1 "
+                    "AND json_extract(r.state,'$.completionWakeupTaskId')=w.task_id "
+                    "AND w.status='dispatched' AND r.status='running' AND w.lease_owner=? "
+                    "AND w.lease_until>? AND (t.grant_expires IS NULL OR t.grant_expires>?)",
+                    (
+                        self.wakeup_task_id,
+                        self.owner,
+                        self.run_id,
+                        self.token,
+                        _now(),
+                        time.time(),
+                    ),
+                ).fetchone()
+                is not None
+            )
         return (
             db.execute(
                 "SELECT 1 FROM generation_actor_leases l JOIN runs r ON r.id=l.run_id "
                 "JOIN conversations c ON c.id=r.conversation_id WHERE l.run_id=? AND l.owner=? "
                 "AND l.token=? AND l.expires_at>? AND r.status='running' AND c.owner=l.owner "
-                "AND NOT EXISTS(SELECT 1 FROM active_subagent_threads a WHERE a.owner=c.owner AND a.thread_id=c.id)",
+                "AND NOT EXISTS(SELECT 1 FROM active_subagent_threads a WHERE a.owner=c.owner AND a.thread_id=c.id) "
+                "AND json_extract(r.state,'$.completionWakeupTaskId') IS NULL",
                 (self.run_id, self.owner, self.token, _now()),
             ).fetchone()
             is not None
@@ -113,6 +138,8 @@ class ActorLease:
             )
 
     def renew(self) -> bool:
+        if self.wakeup_task_id is not None:
+            raise ActorLeaseLost("Wakeup actor must renew its dispatch lease")
         if self.detached_task_id is not None:
             raise ActorLeaseLost("Detached actor must renew its task lease")
         with self.database.connect() as db:
@@ -129,6 +156,8 @@ class ActorLease:
             return cursor.rowcount == 1
 
     def release(self) -> None:
+        if self.wakeup_task_id is not None:
+            raise ActorLeaseLost("Wakeup actor must release its dispatch lease")
         if self.detached_task_id is not None:
             raise ActorLeaseLost("Detached actor must release its task lease")
         with self.database.connect() as db:

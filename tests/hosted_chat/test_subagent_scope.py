@@ -1822,3 +1822,174 @@ async def test_completion_wakeup_rejects_unadmitted_and_nested_edges(setup):
             ).fetchone()[0]
             == 0
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "ready",
+        "cancel",
+        "delete",
+        "disabled",
+        "expired",
+        "abort",
+        "missing-anchor",
+    ],
+)
+async def test_wakeup_atomic_admission_and_recovery(setup, outcome):
+    from workgate.hosted_chat.detached_task_lease import (
+        DetachedTaskLease,
+        request_cancel,
+    )
+    from workgate.hosted_chat.generations import GenerationStore
+    from workgate.hosted_chat.storage import WorkspaceRepository
+    from workgate.hosted_chat.subagent_wakeup import WakeupLease
+
+    old, parent, child, _ = setup
+    db = old.database
+    old.release()
+    with db.connect() as conn:
+        conn.execute("DELETE FROM runs WHERE id='run'")
+    store = GenerationStore(db)
+    parent_run, _ = store.begin(
+        "alice",
+        {
+            "conversationId": "chat",
+            "agent_id": parent["id"],
+            "text": "original",
+            "provider": "openai",
+            "model": "model",
+        },
+    )
+    actor = ActorLease.claim(db, "alice", parent_run.run_id)
+    assert actor is not None
+    root = OwnedLoopCheckpoint(actor)
+    call = await edge(root, parent, child["id"], background=True)
+    value = await invocation(root, parent, call)
+    reservation = reserve_detached_child(root, call, value)
+    args = (db, "alice", reservation.task_id)
+    grant = {"scopes": set(value.scopes), "expires": value.grant_expires}
+    assert WakeupLease.claim(*args, **grant) is None
+    assert WakeupLease.claim(db, "bob", reservation.task_id, **grant) is None
+    child_lease = DetachedTaskLease.claim(
+        db, "alice", "chat", reservation.task_id, **grant
+    )
+    assert child_lease is not None
+    child_generation, _ = child_lease.materialize(**grant)
+    if outcome == "cancel":
+        request_cancel(db, "alice", "chat", reservation.task_id)
+        child_lease.acknowledge_cancel()
+    else:
+        child_lease.complete(
+            value.messages + [{"role": "assistant", "content": "child final"}],
+            **grant,
+        )
+    if outcome == "ready":
+        assert WakeupLease.claim(*args, **grant) is None
+    store.finish(
+        "alice",
+        parent_run.run_id,
+        status="aborted" if outcome == "abort" else "complete",
+        text="" if outcome == "missing-anchor" else "parent reply",
+        actor_lease=actor,
+    )
+    actor.release()
+    workspace = WorkspaceRepository(db)
+    if outcome == "delete":
+        assert workspace.delete_conversation(
+            "alice", child_generation.conversation_id
+        )
+    if outcome == "disabled":
+        workspace.save_setting(
+            "alice", "backgroundTasks.completionWakeups", False
+        )
+    if outcome == "expired":
+        with db.connect() as conn:
+            conn.execute(
+                "UPDATE subagent_tasks SET grant_expires=1 WHERE id=?",
+                (reservation.task_id,),
+            )
+    if outcome != "ready":
+        assert WakeupLease.claim(*args, **grant) is None
+        with db.read_snapshot() as conn:
+            assert (
+                conn.execute(
+                    "SELECT status FROM subagent_wakeups WHERE task_id=?",
+                    (reservation.task_id,),
+                ).fetchone()[0]
+                == "retired"
+            )
+        return
+    other, _ = store.begin(
+        "alice",
+        {
+            "conversationId": "chat",
+            "text": "next",
+            "agent_id": parent["id"],
+            "parentMessageId": parent_run.response_message_id,
+        },
+    )
+    other_actor = ActorLease.claim(db, "alice", other.run_id)
+    assert other_actor is not None
+    assert WakeupLease.claim(*args, **grant) is None
+    store.finish(
+        "alice",
+        other.run_id,
+        status="complete",
+        text="later reply",
+        actor_lease=other_actor,
+    )
+    other_actor.release()
+    with pytest.raises(PermissionError, match="reduced"):
+        WakeupLease.claim(*args, scopes=set(), expires=None)
+    claimed = WakeupLease.claim(*args, **grant)
+    assert claimed is not None
+    generation, first = claimed
+    assert ActorLease.claim(db, "alice", generation.run_id) is None
+    assert first.actor.is_current()
+    with pytest.raises(ActorLeaseLost, match="dispatch lease"):
+        first.actor.renew()
+    with pytest.raises(ActorLeaseLost, match="dispatch lease"):
+        first.actor.release()
+    assert WakeupLease.claim(*args, **grant) is None
+    with db.read_snapshot() as conn:
+        user = conn.execute(
+            "SELECT text,parent_id FROM messages WHERE id=?",
+            (generation.user_message_id,),
+        ).fetchone()
+        assert user["parent_id"] == other.response_message_id
+        assert (
+            "child final" in user["text"]
+            and "parent private" not in user["text"]
+        )
+        assert (
+            conn.execute(
+                "SELECT result_claim_key FROM subagent_tasks WHERE id=?",
+                (reservation.task_id,),
+            ).fetchone()[0]
+            == "wakeup:" + reservation.task_id
+        )
+    first.renew(**grant)
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE subagent_wakeups SET lease_until=0 WHERE task_id=?",
+            (reservation.task_id,),
+        )
+    recovered = WakeupLease.claim(*args, **grant)
+    assert recovered is not None
+    same, second = recovered
+    assert same == generation and second.token != first.token
+    assert not first.actor.is_current()
+    first.release()
+    second.assert_current(**grant)
+    assert store.finish(
+        "alice",
+        generation.run_id,
+        status="complete",
+        text="continued",
+        actor_lease=second.actor,
+    )
+    second.release()
+    assert not second.actor.is_current()
+    assert WakeupLease.claim(*args, **grant) is None

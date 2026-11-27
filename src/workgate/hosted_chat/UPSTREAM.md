@@ -607,3 +607,12 @@ private nested/member edges have no independent root continuation. Manual
 result collection retires the pending intent atomically. The envelope contains
 routing metadata only, not a persisted execution credential. Wakeup dispatch
 and authenticated continuation remain separate units.
+
+Completion continuation admission now uses the ordinary generation store
+inside the same SQLite transaction as its one-shot result claim and dispatch
+lease. An authenticated caller supplies a live grant and original disclosure
+ceiling. The continuation follows the latest persisted assistant descendant
+of the original reply; cancelled, deleted, expired and disabled sources do
+not dispatch. The wakeup token is its generation actor, and ordinary actor
+claim cannot adopt that generation. Terminal reconciliation, backoff and
+native host scheduling remain separate units.

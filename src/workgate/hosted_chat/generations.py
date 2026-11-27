@@ -6,6 +6,7 @@ Owner-bound runs, messages and event logs share one private SQLite transaction.
 
 import json
 import secrets
+import sqlite3
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -97,7 +98,23 @@ class GenerationStore:
     def begin(
         self, owner: str, payload: dict, *, protocol_version: int = 2
     ) -> tuple[Generation, bool]:
-        """Admit a single ordinary turn; later lifecycle units add other turn types."""
+        """Admit a single ordinary turn in its own transaction."""
+        with self.database.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            return self._begin_locked(
+                db, owner, payload, protocol_version=protocol_version
+            )
+
+    def _begin_locked(
+        self,
+        db: sqlite3.Connection,
+        owner: str,
+        payload: dict,
+        *,
+        protocol_version: int = 2,
+        wakeup_task_id: str | None = None,
+    ) -> tuple[Generation, bool]:
+        """Internal admission seam for the atomic completion transaction."""
         if type(protocol_version) is not int or protocol_version not in (1, 2):
             raise ValueError("Invalid generation protocol")
         client_request_id = payload.get("clientRequestId")
@@ -109,6 +126,11 @@ class GenerationStore:
                 raise ValueError("Invalid client request id")
             if client_request_id.startswith(
                 ("subagent:", "subagent-wakeup:", "trigger_")
+            ) and not (
+                wakeup_task_id is not None
+                and client_request_id.startswith(
+                    "subagent-wakeup:" + wakeup_task_id + ":"
+                )
             ):
                 raise ValueError(
                     "Internal generation request id cannot be submitted"
@@ -154,235 +176,231 @@ class GenerationStore:
             raise ValueError("Invalid message id")
         response_message_id = str(uuid.uuid4())
         run_id = "run_" + secrets.token_hex(16)
-        with self.database.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            if (
-                not new_conversation
-                and db.execute(
-                    "SELECT 1 FROM active_subagent_threads WHERE thread_id=?",
-                    (conversation_id,),
-                ).fetchone()
-            ):
-                raise PermissionError("Child conversation is read-only")
-            if client_request_id:
-                prior = db.execute(
-                    "SELECT r.* FROM generation_requests gr JOIN runs r ON r.id=gr.run_id "
-                    "JOIN conversations c ON c.id=r.conversation_id "
-                    "WHERE gr.owner=? AND gr.client_request_id=? AND c.owner=?",
-                    (owner, client_request_id, owner),
-                ).fetchone()
-                if prior:
-                    if (
-                        not new_conversation
-                        and prior["conversation_id"] != conversation_id
-                    ):
-                        raise ValueError(
-                            "Request id belongs to another conversation"
-                        )
-                    return self._run(prior), False
-            now = _now()
-            convo = None
-            if not new_conversation:
-                convo = db.execute(
-                    "SELECT * FROM conversations WHERE id=? AND owner=?",
-                    (conversation_id, owner),
-                ).fetchone()
-                if convo is None:
-                    raise KeyError("Conversation not found")
-                active = db.execute(
-                    "SELECT * FROM runs WHERE conversation_id=? AND status IN ('running','requires_action') ORDER BY created_at DESC LIMIT 1",
-                    (conversation_id,),
-                ).fetchone()
-                if active:
-                    raise GenerationConflict(self._run(active))
-            project_id = (
-                payload.get("projectId", payload.get("chatProjectId"))
-                if convo is None
-                else convo["project_id"]
-            )
-            if project_id is not None and (
-                not isinstance(project_id, str) or not project_id
-            ):
-                raise ValueError("Invalid project id")
-            agent_id = payload.get(
-                "agent_id", convo["agent_id"] if convo else None
-            )
-            WorkspaceRepository._validate_references(
-                db, owner, {"projectId": project_id, "agent_id": agent_id}
-            )
-            agent = None
-            if agent_id is not None:
-                agent = json.loads(
-                    db.execute(
-                        "SELECT config FROM agents WHERE id=? AND owner=?",
-                        (agent_id, owner),
-                    ).fetchone()[0]
-                )
-            selection = dict(payload)
-            if convo:
-                selection.setdefault("endpoint", convo["endpoint"])
-            for key in ("provider", "endpoint", "model"):
-                value = selection.get(key)
-                if value is not None and (
-                    not isinstance(value, str)
-                    or len(value) > 200
-                    or any(ord(c) < 32 for c in value)
+        if (
+            not new_conversation
+            and db.execute(
+                "SELECT 1 FROM active_subagent_threads WHERE thread_id=?",
+                (conversation_id,),
+            ).fetchone()
+        ):
+            raise PermissionError("Child conversation is read-only")
+        if client_request_id:
+            prior = db.execute(
+                "SELECT r.* FROM generation_requests gr JOIN runs r ON r.id=gr.run_id "
+                "JOIN conversations c ON c.id=r.conversation_id "
+                "WHERE gr.owner=? AND gr.client_request_id=? AND c.owner=?",
+                (owner, client_request_id, owner),
+            ).fetchone()
+            if prior:
+                if (
+                    not new_conversation
+                    and prior["conversation_id"] != conversation_id
                 ):
-                    raise ValueError("Invalid model selection")
-            provider = selected_provider(selection, agent)
-            profile = ProviderRepository._profile_record(db, provider)
-            if convo and provider == convo["endpoint"]:
-                selection.setdefault("model", convo["model"])
-            model = (
-                (agent or {}).get("model")
-                or selection.get("model")
-                or next(iter(profile["models"]), None)
+                    raise ValueError(
+                        "Request id belongs to another conversation"
+                    )
+                return self._run(prior), False
+        now = _now()
+        convo = None
+        if not new_conversation:
+            convo = db.execute(
+                "SELECT * FROM conversations WHERE id=? AND owner=?",
+                (conversation_id, owner),
+            ).fetchone()
+            if convo is None:
+                raise KeyError("Conversation not found")
+            active = db.execute(
+                "SELECT * FROM runs WHERE conversation_id=? AND status IN ('running','requires_action') ORDER BY created_at DESC LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+            if active:
+                raise GenerationConflict(self._run(active))
+        project_id = (
+            payload.get("projectId", payload.get("chatProjectId"))
+            if convo is None
+            else convo["project_id"]
+        )
+        if project_id is not None and (
+            not isinstance(project_id, str) or not project_id
+        ):
+            raise ValueError("Invalid project id")
+        agent_id = payload.get("agent_id", convo["agent_id"] if convo else None)
+        WorkspaceRepository._validate_references(
+            db, owner, {"projectId": project_id, "agent_id": agent_id}
+        )
+        agent = None
+        if agent_id is not None:
+            agent = json.loads(
+                db.execute(
+                    "SELECT config FROM agents WHERE id=? AND owner=?",
+                    (agent_id, owner),
+                ).fetchone()[0]
             )
-            if (
-                not isinstance(model, str)
-                or not model.strip()
-                or len(model) > 200
-                or any(ord(c) < 32 for c in model)
+        selection = dict(payload)
+        if convo:
+            selection.setdefault("endpoint", convo["endpoint"])
+        for key in ("provider", "endpoint", "model"):
+            value = selection.get(key)
+            if value is not None and (
+                not isinstance(value, str)
+                or len(value) > 200
+                or any(ord(c) < 32 for c in value)
             ):
-                raise ValueError("Invalid model identifier")
-            metadata = json.loads(convo["metadata"]) if convo else {}
-            sampling = (
-                {}
-                if agent is not None
-                else validate_sampling(
-                    payload.get("lsmSampling", metadata.get("lsmSampling", {})),
-                    provider=profile["provider"],
-                )
+                raise ValueError("Invalid model selection")
+        provider = selected_provider(selection, agent)
+        profile = ProviderRepository._profile_record(db, provider)
+        if convo and provider == convo["endpoint"]:
+            selection.setdefault("model", convo["model"])
+        model = (
+            (agent or {}).get("model")
+            or selection.get("model")
+            or next(iter(profile["models"]), None)
+        )
+        if (
+            not isinstance(model, str)
+            or not model.strip()
+            or len(model) > 200
+            or any(ord(c) < 32 for c in model)
+        ):
+            raise ValueError("Invalid model identifier")
+        metadata = json.loads(convo["metadata"]) if convo else {}
+        sampling = (
+            {}
+            if agent is not None
+            else validate_sampling(
+                payload.get("lsmSampling", metadata.get("lsmSampling", {})),
+                provider=profile["provider"],
             )
-            if agent is None and "lsmSampling" in payload:
-                metadata["lsmSampling"] = sampling
-            state = {
-                "userMessageId": user_message_id,
-                "responseMessageId": response_message_id,
-                "generationCreatedAt": now // 1000,
-                "clientRequestId": client_request_id,
-                "generationProtocolVersion": protocol_version,
-                "provider": provider,
-                "model": model,
-                "sampling": sampling,
-            }
-            parent_id = payload.get("parentMessageId")
-            if parent_id in (None, _ROOT_MESSAGE):
-                parent_id = None
-            if "parentMessageId" not in payload and convo:
-                parent = db.execute(
-                    "SELECT id FROM messages WHERE conversation_id=? ORDER BY created_at DESC,id DESC LIMIT 1",
-                    (conversation_id,),
-                ).fetchone()
-                parent_id = parent["id"] if parent else None
-            if parent_id is not None and (
-                not isinstance(parent_id, str)
-                or not db.execute(
-                    "SELECT 1 FROM messages WHERE id=? AND conversation_id=?",
-                    (parent_id, conversation_id),
-                ).fetchone()
-            ):
-                raise KeyError("Parent message not found")
-            if (
-                db.execute(
-                    "SELECT 1 FROM messages WHERE id=?", (user_message_id,)
-                ).fetchone()
-                or db.execute(
-                    "SELECT 1 FROM runs WHERE json_extract(state,'$.responseMessageId')=?",
-                    (user_message_id,),
-                ).fetchone()
-            ):
-                raise ValueError("Message identifier is already in use")
-            title = prompt.strip()[:80] if convo is None else convo["title"]
-            if new_conversation:
-                db.execute(
-                    "INSERT INTO conversations(id,owner,title,model,endpoint,project_id,agent_id,metadata,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                    (
-                        conversation_id,
-                        owner,
-                        title,
-                        model,
-                        provider,
-                        project_id,
-                        agent_id,
-                        _json(metadata),
-                        now,
-                        now,
-                    ),
-                )
-            else:
-                db.execute(
-                    "UPDATE conversations SET model=?,endpoint=?,agent_id=?,metadata=?,updated_at=? WHERE id=? AND owner=?",
-                    (
-                        model,
-                        provider,
-                        agent_id,
-                        _json(metadata),
-                        now,
-                        conversation_id,
-                        owner,
-                    ),
-                )
-            user_metadata = {
-                "sender": "User",
-                "isCreatedByUser": True,
-                "endpoint": provider,
-                "files": [],
-            }
+        )
+        if agent is None and "lsmSampling" in payload:
+            metadata["lsmSampling"] = sampling
+        state = {
+            "userMessageId": user_message_id,
+            "responseMessageId": response_message_id,
+            "generationCreatedAt": now // 1000,
+            "clientRequestId": client_request_id,
+            "generationProtocolVersion": protocol_version,
+            "provider": provider,
+            "model": model,
+            "sampling": sampling,
+        }
+        if wakeup_task_id is not None:
+            state["completionWakeupTaskId"] = wakeup_task_id
+        parent_id = payload.get("parentMessageId")
+        if parent_id in (None, _ROOT_MESSAGE):
+            parent_id = None
+        if "parentMessageId" not in payload and convo:
+            parent = db.execute(
+                "SELECT id FROM messages WHERE conversation_id=? ORDER BY created_at DESC,id DESC LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+            parent_id = parent["id"] if parent else None
+        if parent_id is not None and (
+            not isinstance(parent_id, str)
+            or not db.execute(
+                "SELECT 1 FROM messages WHERE id=? AND conversation_id=?",
+                (parent_id, conversation_id),
+            ).fetchone()
+        ):
+            raise KeyError("Parent message not found")
+        if (
             db.execute(
-                "INSERT INTO messages(id,conversation_id,parent_id,role,text,content,metadata,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                (
-                    user_message_id,
-                    conversation_id,
-                    parent_id,
-                    "user",
-                    prompt,
-                    "{}",
-                    _json(user_metadata),
-                    now,
-                    now,
-                ),
-            )
+                "SELECT 1 FROM messages WHERE id=?", (user_message_id,)
+            ).fetchone()
+            or db.execute(
+                "SELECT 1 FROM runs WHERE json_extract(state,'$.responseMessageId')=?",
+                (user_message_id,),
+            ).fetchone()
+        ):
+            raise ValueError("Message identifier is already in use")
+        title = prompt.strip()[:80] if convo is None else convo["title"]
+        if new_conversation:
             db.execute(
-                "INSERT INTO runs(id,conversation_id,agent_id,status,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                "INSERT INTO conversations(id,owner,title,model,endpoint,project_id,agent_id,metadata,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
                 (
-                    run_id,
                     conversation_id,
+                    owner,
+                    title,
+                    model,
+                    provider,
+                    project_id,
                     agent_id,
-                    "running",
-                    _json(state),
+                    _json(metadata),
                     now,
                     now,
                 ),
             )
-            if client_request_id:
-                db.execute(
-                    "INSERT INTO generation_requests(owner,client_request_id,run_id) VALUES(?,?,?)",
-                    (owner, client_request_id, run_id),
-                )
-            created = {
-                "created": True,
-                "conversation": {
-                    "conversationId": conversation_id,
-                    "title": title,
-                },
-                "message": {
-                    "messageId": user_message_id,
-                    "conversationId": conversation_id,
-                    "parentMessageId": parent_id,
-                    "text": prompt,
-                    **user_metadata,
-                },
-            }
+        else:
             db.execute(
-                "INSERT INTO generation_events(run_id,data) VALUES(?,?)",
-                (run_id, _json(created)),
+                "UPDATE conversations SET model=?,endpoint=?,agent_id=?,metadata=?,updated_at=? WHERE id=? AND owner=?",
+                (
+                    model,
+                    provider,
+                    agent_id,
+                    _json(metadata),
+                    now,
+                    conversation_id,
+                    owner,
+                ),
             )
-            return self._run(
-                db.execute(
-                    "SELECT * FROM runs WHERE id=?", (run_id,)
-                ).fetchone()
-            ), True
+        user_metadata = {
+            "sender": "User",
+            "isCreatedByUser": True,
+            "endpoint": provider,
+            "files": [],
+        }
+        db.execute(
+            "INSERT INTO messages(id,conversation_id,parent_id,role,text,content,metadata,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+            (
+                user_message_id,
+                conversation_id,
+                parent_id,
+                "user",
+                prompt,
+                "{}",
+                _json(user_metadata),
+                now,
+                now,
+            ),
+        )
+        db.execute(
+            "INSERT INTO runs(id,conversation_id,agent_id,status,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+            (
+                run_id,
+                conversation_id,
+                agent_id,
+                "running",
+                _json(state),
+                now,
+                now,
+            ),
+        )
+        if client_request_id:
+            db.execute(
+                "INSERT INTO generation_requests(owner,client_request_id,run_id) VALUES(?,?,?)",
+                (owner, client_request_id, run_id),
+            )
+        created = {
+            "created": True,
+            "conversation": {
+                "conversationId": conversation_id,
+                "title": title,
+            },
+            "message": {
+                "messageId": user_message_id,
+                "conversationId": conversation_id,
+                "parentMessageId": parent_id,
+                "text": prompt,
+                **user_metadata,
+            },
+        }
+        db.execute(
+            "INSERT INTO generation_events(run_id,data) VALUES(?,?)",
+            (run_id, _json(created)),
+        )
+        return self._run(
+            db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+        ), True
 
     def _assert_actor(
         self, db, owner: str, run_id: str, actor_lease: ActorLease
