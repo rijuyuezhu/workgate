@@ -1,4 +1,4 @@
-"""Foreground approval interruptions, adapted from pinned generations.py.
+"""Foreground human-action interruptions, adapted from pinned generations.py.
 
 The approval claim and its exact started-edge checkpoint share the same
 SQLite transaction. A resolution is review evidence, never a native grant.
@@ -13,6 +13,11 @@ from .approval_runtime import (
     ApprovalBatch,
     build_approval_payload,
     prepare_approval_batch,
+)
+from .ask_user_tools import (
+    ASK_USER_QUESTION_TOOL_NAME,
+    build_ask_user_payload,
+    resolve_ask_user_question_resume,
 )
 from .checkpoints import SQLiteCheckpointSaver
 from .database import SQLiteDatabase
@@ -89,8 +94,64 @@ class ApprovalClaimStore:
                     "Approval proposal is not an unsettled saved tool call"
                 )
 
+    def _question_payload(
+        self,
+        edge: dict,
+        state: dict,
+        identity: str,
+        call_id: str,
+        *,
+        allow_settled: bool = False,
+    ) -> dict:
+        calls = _Snapshot.model_validate(
+            edge["checkpoint"]["channel_values"]
+        ).calls()
+        if (
+            len(calls) != 1
+            or calls[0].name != ASK_USER_QUESTION_TOOL_NAME
+            or calls[0].call_id != call_id
+        ):
+            raise ValueError("Ask User requires one exact saved question call")
+        original = calls[0]
+        self._verify_requests(
+            edge,
+            build_approval_payload([original]),
+            allow_settled=allow_settled,
+        )
+        effective = original
+        claim = state.get("approvedToolBatch")
+        if claim is not None and claim["checkpointId"] == identity:
+            self._verify_requests(
+                edge, claim["payload"], allow_settled=allow_settled
+            )
+            batch = prepare_approval_batch(
+                claim["payload"], claim["resolutions"]
+            )
+            [entry] = batch.entries
+            if entry.call_id != call_id or entry.decision["type"] not in {
+                "approve",
+                "edit",
+            }:
+                raise ValueError("Ask User review did not authorize a question")
+            effective = entry.tool_call()
+        return build_ask_user_payload(effective.arguments, call_id)
+
     def pause(
         self, checkpoint: OwnedLoopCheckpoint, calls: list[ModelToolCall]
+    ) -> dict:
+        return self._pause(checkpoint, calls, question=False)
+
+    def pause_question(
+        self, checkpoint: OwnedLoopCheckpoint, call: ModelToolCall
+    ) -> dict:
+        return self._pause(checkpoint, [call], question=True)
+
+    def _pause(
+        self,
+        checkpoint: OwnedLoopCheckpoint,
+        calls: list[ModelToolCall],
+        *,
+        question: bool,
     ) -> dict:
         lease = checkpoint.lease
         if lease.database.path != self.database.path:
@@ -109,6 +170,17 @@ class ApprovalClaimStore:
             edge = self._edge(db, checkpoint.saver, checkpoint.base, identity)
             self._verify_requests(edge, payload)
             if (
+                state.get("answeredQuestion", {}).get("checkpointId")
+                == identity
+            ):
+                raise ValueError(
+                    "Question for this edge has already been answered"
+                )
+            if question:
+                payload = self._question_payload(
+                    edge, state, identity, calls[0].call_id
+                )
+            elif (
                 state.get("approvedToolBatch", {}).get("checkpointId")
                 == identity
             ):
@@ -151,7 +223,13 @@ class ApprovalClaimStore:
             )
             state["pendingAction"] = pending
             state["approvalCheckpointId"] = identity
-            state.pop("approvedToolBatch", None)
+            if (
+                not question
+                or state.get("approvedToolBatch", {}).get("checkpointId")
+                != identity
+            ):
+                state.pop("approvedToolBatch", None)
+            state.pop("answeredQuestion", None)
             db.execute(
                 "UPDATE runs SET state=?,status='requires_action',updated_at=? WHERE id=?",
                 (_json(state), _now(), lease.run_id),
@@ -195,7 +273,20 @@ class ApprovalClaimStore:
         marker = {"id": pending["actionId"], "value": pending}
         if ("human", "__interrupt__", marker) not in edge["pendingWrites"]:
             raise ValueError("Approval has no matching durable interruption")
-        self._verify_requests(edge, pending["payload"])
+        payload = pending["payload"]
+        if payload.get("type") == "tool_approval":
+            self._verify_requests(edge, payload)
+        elif payload.get("type") == ASK_USER_QUESTION_TOOL_NAME:
+            expected = self._question_payload(
+                edge,
+                state,
+                state["approvalCheckpointId"],
+                payload["tool_call_id"],
+            )
+            if _json(expected) != _json(payload):
+                raise ValueError("Question differs from saved proposal")
+        else:
+            raise ValueError("Unknown pending human action")
         return edge
 
     def abort_pending(self, owner: str, run_id: str, action_id: str) -> bool:
@@ -234,7 +325,7 @@ class ApprovalClaimStore:
                     else:
                         return False
                 status = "interrupted"
-                error = "Pending tool approval expired or its checkpoint is no longer available"
+                error = "Pending human action expired or its checkpoint is no longer available"
             else:
                 DurableTaskRepository._cancel_run(db, owner, run_id)
                 status = "aborted"
@@ -243,6 +334,7 @@ class ApprovalClaimStore:
                 "pendingAction",
                 "approvalCheckpointId",
                 "approvedToolBatch",
+                "answeredQuestion",
             ):
                 state.pop(key, None)
             db.execute(
@@ -274,6 +366,8 @@ class ApprovalClaimStore:
             identity = state["approvalCheckpointId"]
             self._pending_edge(db, saver, row, state, pending)
             payload = pending["payload"]
+            if payload.get("type") != "tool_approval":
+                raise ValueError("Expected tool approval")
             batch = prepare_approval_batch(payload, resolutions)
             # Persist only source resolution fields; caller metadata is not replay evidence.
             clean = []
@@ -328,3 +422,86 @@ class ApprovalClaimStore:
             return prepare_approval_batch(
                 claim["payload"], claim["resolutions"]
             )
+
+    def claim_question(
+        self,
+        owner: str,
+        run_id: str,
+        action_id: str,
+        body: dict,
+    ) -> dict:
+        if not isinstance(body, dict):
+            raise ValueError("An answer is required")
+        saver = SQLiteCheckpointSaver(self.database, owner)
+        with self.database.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = self._row(db, owner, run_id, "requires_action")
+            state = json.loads(row["state"])
+            pending = state.get("pendingAction")
+            if (
+                not isinstance(pending, dict)
+                or pending.get("actionId") != action_id
+            ):
+                raise ValueError("Stale Ask User action")
+            if self._expired(pending):
+                raise ValueError("Human action expired")
+            self._pending_edge(db, saver, row, state, pending)
+            payload = pending["payload"]
+            if payload.get("type") != ASK_USER_QUESTION_TOOL_NAME:
+                raise ValueError("Expected Ask User question")
+            resolution = resolve_ask_user_question_resume(payload, body)
+            if "error" in resolution:
+                raise ValueError(resolution["error"])
+            answer = resolution["resumeValue"]
+            state["answeredQuestion"] = {
+                "actionId": action_id,
+                "checkpointId": state["approvalCheckpointId"],
+                "payload": payload,
+                "answer": answer,
+            }
+            state.pop("pendingAction")
+            state.pop("approvalCheckpointId")
+            db.execute(
+                "UPDATE runs SET state=?,status='running',updated_at=? WHERE id=?",
+                (_json(state), _now(), run_id),
+            )
+            return answer
+
+    def answered_question(self, checkpoint: OwnedLoopCheckpoint) -> dict | None:
+        lease = checkpoint.lease
+        if lease.database.path != self.database.path:
+            raise ActorLeaseLost(
+                "Question checkpoint belongs to another database"
+            )
+        with self.database.read_snapshot() as db:
+            lease.assert_current(db)
+            row = self._row(db, lease.owner, lease.run_id, "running")
+            state = json.loads(row["state"])
+            claim = state.get("answeredQuestion")
+            if claim is None:
+                return None
+            identity = checkpoint.active["configurable"].get("checkpoint_id")
+            if not isinstance(identity, str):
+                raise ValueError(
+                    "Restore the answered question checkpoint before replay"
+                )
+            edge = self._edge(db, checkpoint.saver, checkpoint.base, identity)
+            if claim["checkpointId"] != identity:
+                return None
+            payload = self._question_payload(
+                edge,
+                state,
+                identity,
+                claim["payload"]["tool_call_id"],
+                allow_settled=True,
+            )
+            if _json(payload) != _json(claim["payload"]):
+                raise ValueError(
+                    "Answered question differs from saved proposal"
+                )
+            resolution = resolve_ask_user_question_resume(
+                payload, claim["answer"]
+            )
+            if "error" in resolution:
+                raise ValueError(resolution["error"])
+            return resolution["resumeValue"]
