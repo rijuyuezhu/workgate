@@ -195,7 +195,10 @@ periodic live authorization recheck follow the final pinned lsm_tool_registry.py
 Only confirmed owned Sessions are eligible. PTY inspection further intersects
 confirmed conversation-owned Shell identities with native Session inventory;
 read receipts must match the exact reserved Shell and lists rebuild their
-model-visible text from filtered metadata. General native tool dispatch and
+model-visible text from filtered metadata. Explicit PTY cancellation uses
+the same durable call ledger and native cleanup path as Jobs. A lost stop
+response is reconciled by exact native absence; it does not invent a successful
+kill receipt or authorize another Shell. General native tool dispatch and
 runtime wiring follow.
 
 

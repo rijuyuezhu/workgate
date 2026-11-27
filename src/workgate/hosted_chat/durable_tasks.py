@@ -19,6 +19,7 @@ from ..protocol.executor import (
 )
 from ..protocol.ids import (
     ReservedJobId,
+    ReservedShellId,
     SessionId,
     new_command_id,
     new_reserved_job_id,
@@ -523,23 +524,37 @@ class DurableTaskRepository:
         """Atomically authorize and latch a whole immutable cancellation batch."""
         complete_tool_batch([call])
         arguments = call.arguments
-        targets = arguments.get("cancel")
-        if (
-            call.name != "job"
-            or arguments.keys() - {"session_id", "cancel"}
-            or not isinstance(targets, list)
-            or not 1 <= len(targets) <= 64
-        ):
-            raise ValueError("Durable Job cancel requires 1 to 64 Jobs")
+        shell = call.name == "kill_persistent_shell"
+        if shell:
+            if arguments.keys() != {"session_id", "shell_id"}:
+                raise ValueError(
+                    "Durable Shell cancellation requires one exact Shell"
+                )
+            targets = [
+                TypeAdapter(ReservedShellId).validate_python(
+                    arguments["shell_id"],
+                    strict=True,
+                )
+            ]
+        else:
+            targets = arguments.get("cancel")
+            if (
+                call.name != "job"
+                or arguments.keys() - {"session_id", "cancel"}
+                or not isinstance(targets, list)
+                or not 1 <= len(targets) <= 64
+            ):
+                raise ValueError("Durable Job cancel requires 1 to 64 Jobs")
+            targets = [
+                TypeAdapter(ReservedJobId).validate_python(target, strict=True)
+                for target in targets
+            ]
+            if len(set(targets)) != len(targets):
+                raise ValueError("Duplicate durable Job cancel target")
         session_id = TypeAdapter(SessionId).validate_python(
             arguments.get("session_id"), strict=True
         )
-        targets = [
-            TypeAdapter(ReservedJobId).validate_python(target, strict=True)
-            for target in targets
-        ]
-        if len(set(targets)) != len(targets):
-            raise ValueError("Duplicate durable Job cancel target")
+        kinds = ("shell",) if shell else ("job", "retry", "copy")
         fingerprint = _fingerprint(call.name, arguments)
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -574,7 +589,7 @@ class DurableTaskRepository:
                     db.execute(
                         "SELECT * FROM agent_durable_tasks WHERE owner=? AND conversation_id=? "
                         "AND machine=? AND native_session_id=? AND native_id=? "
-                        "AND kind IN ('job','retry','copy') AND state IN ('active','stopped','cancel_pending') "
+                        f"AND kind IN ({','.join('?' for _ in kinds)}) AND state IN ('active','stopped','cancel_pending') "
                         "ORDER BY native_attempt DESC LIMIT 1",
                         (
                             run["owner"],
@@ -582,6 +597,7 @@ class DurableTaskRepository:
                             machine,
                             session_id,
                             target,
+                            *kinds,
                         ),
                     ).fetchone()
                     for target in targets
@@ -594,17 +610,18 @@ class DurableTaskRepository:
                     or row["machine"] != machine
                     or row["native_session_id"] != session_id
                     or row["native_id"] != target
-                    or row["native_attempt"] is None
+                    or row["kind"] not in kinds
+                    or (not shell and row["native_attempt"] is None)
                     or row["state"]
                     not in {"active", "stopped", "cancel_pending"}
                 ):
                     raise PermissionError(
-                        "Native Job does not belong to this conversation"
+                        f"Native {'Shell' if shell else 'Job'} does not belong to this conversation"
                     )
                 self._require_parent(
                     db,
                     run,
-                    "retry",
+                    "shell" if shell else "retry",
                     machine,
                     {"session_id": session_id},
                     row["destination_machine"],

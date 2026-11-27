@@ -98,22 +98,24 @@ async def _stop_job(
     return outcome
 
 
-async def _stop_shell(
+async def _stop_shell_result(
     runtime: ControlRuntime,
     repository: DurableTaskRepository,
     row: dict,
     key: str,
-) -> CleanupOutcome:
+) -> tuple[CleanupOutcome, KillPersistentShellOutput | None]:
     session_id = row["native_session_id"]
     if not session_id:
-        return "pending"
+        return "pending", None
     record = runtime.control_state.snapshot_sessions().get(session_id)
     if record is None or record.executor_id != row["machine"]:
-        return "pending"
+        return "pending", None
     if record.status == "ended":
-        return "absent" if record.executor_absence_confirmed else "pending"
+        return (
+            "absent" if record.executor_absence_confirmed else "pending"
+        ), None
     if record.status != "active":
-        return "pending"
+        return "pending", None
     receipt = ReservedShellLookupResult.model_validate(
         await runtime.session_coordinator.call_session_tool(
             SHELL_LOOKUP_RESERVED_OP,
@@ -121,24 +123,32 @@ async def _stop_shell(
         )
     )
     if receipt.session_id != session_id or receipt.shell_id != key:
-        return "pending"
+        return "pending", None
     if not receipt.present:
         # A previously observed Shell is gone; an unobserved start might still
         # be in flight. Absence alone must not manufacture its receipt.
-        return "absent" if row["native_id"] == key else "pending"
+        return ("absent" if row["native_id"] == key else "pending"), None
     if not repository.record_cleanup_receipt(row["id"], key):
-        return "pending"
+        return "pending", None
     row["native_id"] = key
     result = KillPersistentShellOutput.model_validate(
         await runtime.session_coordinator.call_session_tool(
             "kill_persistent_shell", {"session_id": session_id, "shell_id": key}
         )
     )
-    return (
-        "stopped"
-        if result.shell_id == key and result.killed is True
-        else "pending"
-    )
+    if result.shell_id == key and result.killed is True:
+        return "stopped", result
+    return "pending", None
+
+
+async def _stop_shell(
+    runtime: ControlRuntime,
+    repository: DurableTaskRepository,
+    row: dict,
+    key: str,
+) -> CleanupOutcome:
+    outcome, _ = await _stop_shell_result(runtime, repository, row, key)
+    return outcome
 
 
 async def _stop_copy_result(
@@ -290,7 +300,7 @@ async def sweep_native_cancellations(
     return sum(await asyncio.gather(*(reconcile(row) for row in rows)))
 
 
-async def cancel_native_jobs(
+async def _cancel_native(
     runtime: ControlRuntime,
     repository: DurableTaskRepository,
     lease: ActorLease,
@@ -321,6 +331,28 @@ async def cancel_native_jobs(
     rows = authorize()
 
     async def stop_all():
+        if call.name == "kill_persistent_shell":
+            row = rows[0]
+            key = row["native_id"]
+            outcome, result = await _stop_shell_result(
+                runtime, repository, row, key
+            )
+            repository.finish_cancellation(
+                row["id"],
+                stopped=outcome != "pending",
+                native_confirmed=outcome == "stopped",
+            )
+            if outcome == "absent":
+                return KillPersistentShellOutput(
+                    shell_id=key,
+                    killed=False,
+                    stderr="Native Shell is confirmed absent; no process was killed.",
+                ).model_dump(mode="json")
+            if outcome != "stopped" or result is None:
+                raise NativeCreationUncertain(
+                    "Native Shell cancellation is unconfirmed"
+                )
+            return result.model_dump(mode="json")
         results = []
         uncertain = False
         for row in rows:
@@ -403,3 +435,49 @@ async def cancel_native_jobs(
             task_ids=tasks,
         )
         return result
+
+
+async def cancel_native_jobs(
+    runtime: ControlRuntime,
+    repository: DurableTaskRepository,
+    lease: ActorLease,
+    call: ModelToolCall,
+    *,
+    machine: str,
+    scopes: set[str],
+    expires: int | None,
+) -> dict[str, Any]:
+    if call.name != "job":
+        raise ValueError("Expected native Job cancellation")
+    return await _cancel_native(
+        runtime,
+        repository,
+        lease,
+        call,
+        machine=machine,
+        scopes=scopes,
+        expires=expires,
+    )
+
+
+async def cancel_native_shell(
+    runtime: ControlRuntime,
+    repository: DurableTaskRepository,
+    lease: ActorLease,
+    call: ModelToolCall,
+    *,
+    machine: str,
+    scopes: set[str],
+    expires: int | None,
+) -> dict[str, Any]:
+    if call.name != "kill_persistent_shell":
+        raise ValueError("Expected native Shell cancellation")
+    return await _cancel_native(
+        runtime,
+        repository,
+        lease,
+        call,
+        machine=machine,
+        scopes=scopes,
+        expires=expires,
+    )

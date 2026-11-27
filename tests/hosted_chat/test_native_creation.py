@@ -2454,3 +2454,87 @@ async def test_owned_shell_read_and_list_hide_unowned_native_handles(
     )
     with pytest.raises(PermissionError):
         await dispatch("list_persistent_shells", {})
+
+
+@pytest.mark.asyncio
+async def test_owned_shell_cancel_is_durable_and_replay_does_not_kill_other_shells(
+    bound, reserved_shell_backend, monkeypatch
+):
+    from workgate.control.hosted_chat_cancellation import cancel_native_shell
+    from workgate.protocol.ids import new_reserved_shell_id
+
+    harness, repo, lease, _ = bound
+    started, killed = reserved_shell_backend
+    _, sid = await native_session(harness, repo, lease)
+    result = await invoke(
+        harness,
+        repo,
+        lease,
+        ModelToolCall(
+            "pty-stop",
+            "bash",
+            {"session_id": sid, "pty": True, "command": "shell"},
+        ),
+    )
+    owned = result["result"]["shell_id"]
+    foreign = new_reserved_shell_id()
+    started[foreign] = sid
+    call = ModelToolCall(
+        "explicit-shell-stop",
+        "kill_persistent_shell",
+        {"session_id": sid, "shell_id": owned},
+    )
+
+    async def dispatch(proposal, scopes=SCOPES):
+        return await cancel_native_shell(
+            harness.control,
+            repo,
+            lease,
+            proposal,
+            machine=harness.executor_id,
+            scopes=scopes,
+            expires=None,
+        )
+
+    with pytest.raises(PermissionError):
+        await dispatch(call, {"shell:read"})
+    with pytest.raises(PermissionError, match="Shell does not belong"):
+        await dispatch(
+            ModelToolCall(
+                "foreign-stop",
+                "kill_persistent_shell",
+                {"session_id": sid, "shell_id": foreign},
+            )
+        )
+    assert not killed
+    native = harness.control.executor_transport.call
+
+    async def lose_reply(
+        executor_id, op, args=None, *, session_id=None, timeout_s=None
+    ):
+        response = await native(
+            executor_id, op, args, session_id=session_id, timeout_s=timeout_s
+        )
+        if op == "kill_persistent_shell":
+            assert intent_rows(repo)["pty-stop"]["state"] == "cancel_pending"
+            raise TimeoutError("lost stop response")
+        return response
+
+    monkeypatch.setattr(harness.control.executor_transport, "call", lose_reply)
+    with pytest.raises(TimeoutError):
+        await dispatch(call)
+    assert killed == [owned]
+    assert intent_rows(repo)["pty-stop"]["state"] == "cancel_pending"
+    monkeypatch.setattr(harness.control.executor_transport, "call", native)
+    result = await dispatch(call)
+    assert result["shell_id"] == owned and result["killed"] is False
+    assert intent_rows(repo)["pty-stop"]["state"] == "stopped"
+    with pytest.raises(PermissionError, match="cannot change"):
+        await dispatch(
+            ModelToolCall(
+                call.call_id,
+                call.name,
+                {"session_id": sid, "shell_id": foreign},
+            )
+        )
+    assert killed == [owned] and started == {foreign: sid}
