@@ -356,3 +356,9 @@ caller-supplied content checks precede effects; changed policy is checked again
 at dispatch. A newly required review on an already claimed edge fails closed
 rather than silently expanding the claim. Public human-action routes and
 content-filter admission before checkpointing remain separate integration work.
+
+Pending approval finalization shares the normal generation final-message and
+unread-event transaction. Explicit owner abort uses the native run
+cancellation latch, whereas expiry or unavailable checkpoint evidence only
+interrupts the generation. An exact action ID fences abort/expiry against
+concurrent resume claims; neither transition invokes a native tool.

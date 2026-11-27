@@ -194,3 +194,139 @@ async def test_pause_rollback_and_expired_edge(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="missing or stale"):
         store.claim("alice", job.run_id, pending["actionId"], decisions)
     assert store.pending("alice", job.run_id) == pending
+
+
+@pytest.mark.asyncio
+async def test_abort_pending_reuses_terminal_event_and_preserves_streamed_text(
+    tmp_path,
+):
+    import json
+
+    from workgate.hosted_chat.durable_tasks import DurableTaskRepository
+
+    database, generations, job, checkpoint, _, state, calls = await started(
+        tmp_path
+    )
+    store = ApprovalClaimStore(database)
+    lease = checkpoint.lease
+    cursor = generations.append(
+        lease.owner,
+        job.run_id,
+        {
+            "event": "on_message_delta",
+            "data": {
+                "delta": {
+                    "content": {"type": "text", "text": "visible before review"}
+                }
+            },
+        },
+        actor_lease=lease,
+    )
+    await checkpoint.save(
+        state,
+        calls,
+        partial_text="visible before review",
+        public_delta_cursor=cursor,
+    )
+    pending = store.pause(checkpoint, calls)
+    action = pending["actionId"]
+    assert not store.abort_pending("bob", job.run_id, action)
+    assert not store.abort_pending(lease.owner, job.run_id, "stale")
+    assert not store.expire_pending(lease.owner, job.run_id, action)
+    assert store.abort_pending(lease.owner, job.run_id, action)
+    assert not store.abort_pending(lease.owner, job.run_id, action)
+    assert not store.expire_pending(lease.owner, job.run_id, action)
+    assert DurableTaskRepository(database).is_run_cancelled(job.run_id)
+    assert store.pending(lease.owner, job.run_id) is None
+    assert ActorLease.claim(database, lease.owner, job.run_id) is None
+    with pytest.raises(KeyError):
+        store.claim(lease.owner, job.run_id, action, [])
+    finished = generations.get(lease.owner, job.run_id)
+    assert finished is not None and finished.status == "aborted"
+    final = generations.events(lease.owner, job.run_id)[-1][1]
+    assert final["final"] and final["aborted"]
+    assert final["responseMessage"]["text"] == "visible before review"
+    with database.connect() as db:
+        saved = json.loads(
+            db.execute(
+                "SELECT state FROM runs WHERE id=?", (job.run_id,)
+            ).fetchone()[0]
+        )
+    assert "pendingAction" not in saved and "approvalCheckpointId" not in saved
+    followup, created = generations.begin(
+        lease.owner, {"conversationId": job.conversation_id, "text": "next"}
+    )
+    assert created and followup.run_id != job.run_id
+
+
+@pytest.mark.parametrize(
+    "damage", ["expiry", "marker", "checkpoint", "deadline"]
+)
+@pytest.mark.asyncio
+async def test_expire_pending_only_unavailable_review(tmp_path, damage):
+    from workgate.hosted_chat.durable_tasks import DurableTaskRepository
+
+    database, generations, job, checkpoint, _, _, calls = await started(
+        tmp_path
+    )
+    store = ApprovalClaimStore(database)
+    pending = store.pause(checkpoint, calls)
+    action = pending["actionId"]
+    assert not store.expire_pending("bob", job.run_id, action)
+    assert not store.expire_pending("alice", job.run_id, "wrong")
+    assert not store.expire_pending("alice", job.run_id, action)
+    with database.connect() as db:
+        if damage == "expiry":
+            db.execute("UPDATE agent_checkpoints SET expires_at=0")
+        elif damage == "marker":
+            db.execute(
+                "DELETE FROM agent_checkpoint_writes WHERE channel='__interrupt__'"
+            )
+        elif damage == "checkpoint":
+            db.execute("DELETE FROM agent_checkpoints")
+        else:
+            db.execute(
+                "UPDATE runs SET state=json_set(state,'$.pendingAction.expiresAt',1) WHERE id=?",
+                (job.run_id,),
+            )
+    if damage == "deadline":
+        with pytest.raises(ValueError, match="expired"):
+            store.claim("alice", job.run_id, action, [])
+    assert store.expire_pending("alice", job.run_id, action)
+    current = generations.get("alice", job.run_id)
+    assert current is not None and current.status == "interrupted"
+    final = generations.events("alice", job.run_id)[-1][1]
+    assert final["final"] and "checkpoint" in final["error"]
+    assert not DurableTaskRepository(database).is_run_cancelled(job.run_id)
+    assert store.pending("alice", job.run_id) is None
+    assert not store.expire_pending("alice", job.run_id, action)
+
+
+@pytest.mark.asyncio
+async def test_abort_pending_and_claim_compete_on_same_transition(tmp_path):
+    database, generations, job, checkpoint, _, _, calls = await started(
+        tmp_path
+    )
+    store = ApprovalClaimStore(database)
+    pending = store.pause(checkpoint, calls)
+    action = pending["actionId"]
+    decisions = [
+        {"tool_call_id": call.call_id, "decision": "approve"} for call in calls
+    ]
+
+    def claim():
+        try:
+            store.claim("alice", job.run_id, action, decisions)
+            return True
+        except KeyError:
+            return False
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        abort = pool.submit(store.abort_pending, "alice", job.run_id, action)
+        review = pool.submit(claim)
+        assert abort.result() != review.result()
+        won_abort = abort.result()
+    current = generations.get("alice", job.run_id)
+    assert current is not None
+    assert current.status == ("aborted" if won_abort else "running")
+    assert not store.abort_pending("alice", job.run_id, action)

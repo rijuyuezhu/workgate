@@ -482,112 +482,127 @@ class GenerationStore:
             if not row or row["status"] in _TERMINAL:
                 return False
             self._assert_actor(db, owner, run_id, actor_lease)
-            generation = self._run(row)
-            now = _now()
-            content = []
-            # Replay the final source's ordered public text/reasoning parts.
-            # Keep a list of chunks per part instead of repeatedly copying
-            # a growing string for each token.
-            for event in db.execute(
-                "SELECT data FROM generation_events WHERE run_id=? ORDER BY seq",
-                (run_id,),
+            return self._finish_locked(
+                db, row, status=status, text=text, error=error
+            )
+
+    def _finish_locked(
+        self,
+        db,
+        row,
+        *,
+        status: str,
+        text: str = "",
+        error: str | None = None,
+    ) -> bool:
+        """Finalize after the caller has checked the exact transition authority."""
+        if status not in _TERMINAL:
+            raise ValueError("Only terminal statuses can finish a generation")
+        run_id = row["id"]
+        generation = self._run(row)
+        now = _now()
+        content = []
+        # Replay the final source's ordered public text/reasoning parts.
+        # Keep a list of chunks per part instead of repeatedly copying
+        # a growing string for each token.
+        for event in db.execute(
+            "SELECT data FROM generation_events WHERE run_id=? ORDER BY seq",
+            (run_id,),
+        ):
+            value = json.loads(event["data"])
+            kind = value.get("event")
+            if kind not in {"on_message_delta", "on_reasoning_delta"}:
+                continue
+            delta = value["data"].get("delta", {})
+            part = delta.get("content", {}) if isinstance(delta, dict) else {}
+            if not isinstance(part, dict):
+                continue
+            field_name = "text" if kind == "on_message_delta" else "think"
+            chunk = part.get(field_name)
+            if (
+                part.get("type") != field_name
+                or not isinstance(chunk, str)
+                or not chunk
             ):
-                value = json.loads(event["data"])
-                kind = value.get("event")
-                if kind not in {"on_message_delta", "on_reasoning_delta"}:
-                    continue
-                delta = value["data"].get("delta", {})
-                part = (
-                    delta.get("content", {}) if isinstance(delta, dict) else {}
-                )
-                if not isinstance(part, dict):
-                    continue
-                field_name = "text" if kind == "on_message_delta" else "think"
-                chunk = part.get(field_name)
-                if (
-                    part.get("type") != field_name
-                    or not isinstance(chunk, str)
-                    or not chunk
-                ):
-                    continue
-                if content and content[-1]["type"] == field_name:
-                    content[-1][field_name].append(chunk)
-                else:
-                    content.append({"type": field_name, field_name: [chunk]})
-            for part in content:
-                key = part["type"]
-                part[key] = "".join(part[key])
-                if key == "text":
-                    part["phase"] = "final_answer"
-            streamed = "".join(
-                part["text"] for part in content if part["type"] == "text"
+                continue
+            if content and content[-1]["type"] == field_name:
+                content[-1][field_name].append(chunk)
+            else:
+                content.append({"type": field_name, field_name: [chunk]})
+        for part in content:
+            key = part["type"]
+            part[key] = "".join(part[key])
+            if key == "text":
+                part["phase"] = "final_answer"
+        streamed = "".join(
+            part["text"] for part in content if part["type"] == "text"
+        )
+        if streamed:
+            text = streamed
+        elif text:
+            content.append(
+                {"type": "text", "text": text, "phase": "final_answer"}
             )
-            if streamed:
-                text = streamed
-            elif text:
-                content.append(
-                    {"type": "text", "text": text, "phase": "final_answer"}
-                )
-            if status in {"error", "interrupted"}:
-                content.append(
-                    {"type": "error", "error": error or "Generation failed"}
-                )
-            metadata = {
-                "sender": "Assistant",
-                "isCreatedByUser": False,
-                "unfinished": status != "complete",
-            }
-            response_message = {
-                "messageId": generation.response_message_id,
-                "conversationId": generation.conversation_id,
-                "parentMessageId": generation.user_message_id,
-                "text": text,
-                "content": content,
-                **metadata,
-            }
-            if content:
-                db.execute(
-                    "INSERT INTO messages(id,conversation_id,parent_id,role,text,content,metadata,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                    (
-                        generation.response_message_id,
-                        generation.conversation_id,
-                        generation.user_message_id,
-                        "assistant",
-                        text,
-                        _json(content),
-                        _json(metadata),
-                        now,
-                        now,
-                    ),
-                )
+        if status in {"error", "interrupted"}:
+            content.append(
+                {"type": "error", "error": error or "Generation failed"}
+            )
+        metadata = {
+            "sender": "Assistant",
+            "isCreatedByUser": False,
+            "unfinished": status != "complete",
+        }
+        response_message = {
+            "messageId": generation.response_message_id,
+            "conversationId": generation.conversation_id,
+            "parentMessageId": generation.user_message_id,
+            "text": text,
+            "content": content,
+            **metadata,
+        }
+        if content:
             db.execute(
-                "UPDATE runs SET status=?,updated_at=? WHERE id=?",
-                (status, now, run_id),
-            )
-            unread = db.execute(
-                "UPDATE conversations SET updated_at=?,unread_marker=CASE WHEN unread_marker LIKE 'manual:%' THEN ? ELSE ? END WHERE id=? RETURNING unread_marker",
+                "INSERT INTO messages(id,conversation_id,parent_id,role,text,content,metadata,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
                 (
-                    now,
-                    "manual:" + run_id,
-                    "run:" + run_id,
+                    generation.response_message_id,
                     generation.conversation_id,
+                    generation.user_message_id,
+                    "assistant",
+                    text,
+                    _json(content),
+                    _json(metadata),
+                    now,
+                    now,
                 ),
-            ).fetchone()["unread_marker"]
-            final = {
-                "final": True,
-                "unreadMarker": unread,
-                "generationProtocolVersion": generation.protocol_version,
-                "conversation": {"conversationId": generation.conversation_id},
-                "responseMessage": response_message,
-                **({"aborted": True} if status == "aborted" else {}),
-                **(
-                    {"error": error or "Generation failed"}
-                    if status in {"error", "interrupted"}
-                    else {}
-                ),
-            }
-            db.execute(
-                "INSERT INTO generation_events(run_id,data) VALUES(?,?)",
-                (run_id, _json(final)),
             )
-            return True
+        db.execute(
+            "UPDATE runs SET status=?,updated_at=? WHERE id=?",
+            (status, now, run_id),
+        )
+        unread = db.execute(
+            "UPDATE conversations SET updated_at=?,unread_marker=CASE WHEN unread_marker LIKE 'manual:%' THEN ? ELSE ? END WHERE id=? RETURNING unread_marker",
+            (
+                now,
+                "manual:" + run_id,
+                "run:" + run_id,
+                generation.conversation_id,
+            ),
+        ).fetchone()["unread_marker"]
+        final = {
+            "final": True,
+            "unreadMarker": unread,
+            "generationProtocolVersion": generation.protocol_version,
+            "conversation": {"conversationId": generation.conversation_id},
+            "responseMessage": response_message,
+            **({"aborted": True} if status == "aborted" else {}),
+            **(
+                {"error": error or "Generation failed"}
+                if status in {"error", "interrupted"}
+                else {}
+            ),
+        }
+        db.execute(
+            "INSERT INTO generation_events(run_id,data) VALUES(?,?)",
+            (run_id, _json(final)),
+        )
+        return True
