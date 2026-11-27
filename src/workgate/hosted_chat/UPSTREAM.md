@@ -177,7 +177,11 @@ retry call is preflighted and reserved atomically (at most 64 distinct targets);
 each intent has its own key and the full immutable call fingerprint. Dispatch
 settles siblings independently and preserves request order on success. A
 definitive refusal or uncertain reply does not replay other native attempts.
-Public Job poll/cancel routing and runtime lifecycle wiring remain follow-ups.
+Native Job polling uses the latest confirmed conversation-owned attempt and
+read access to all bound endpoints. The private lookup supports the native
+bounded log-tail length; a superseding public retry is never projected as
+owned work. Authorization and ownership are rechecked before publishing the
+result. Owned Job list, explicit cancellation and runtime wiring follow.
 
 
 Agent authoring starts with the final upstream repository and validators.

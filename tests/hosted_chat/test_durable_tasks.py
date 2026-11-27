@@ -387,7 +387,32 @@ def test_copy_intent_authorizes_both_executors_and_revokes_on_destination_loss(
     )
     repo.bind(lease, retry, intent.key)
     workspace.save_setting(
+        "alice", policy_key, {MACHINE: "read", OTHER: "none"}
+    )
+    with pytest.raises(PermissionError):
+        repo.poll_attempts(
+            lease,
+            sessions[0],
+            [intent.key],
+            machine=MACHINE,
+            scopes={"shell:read"},
+            expires=None,
+            registered=(MACHINE, OTHER),
+        )
+    workspace.save_setting(
         "alice", policy_key, {MACHINE: "read", OTHER: "read"}
+    )
+    assert (
+        repo.poll_attempts(
+            lease,
+            sessions[0],
+            [intent.key],
+            machine=MACHINE,
+            scopes={"shell:read"},
+            expires=None,
+            registered=(MACHINE, OTHER),
+        )[0].id
+        == retry.id
     )
     with pytest.raises(PermissionError, match="read-only"):
         reserve(repo, lease, retry_call, scopes={"shell:read", "shell:write"})

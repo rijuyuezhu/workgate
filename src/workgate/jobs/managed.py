@@ -1107,6 +1107,7 @@ async def managed_job_tail_execute(
     job_id: str,
     lines: int = 200,
     *,
+    reservation: ReservedJobAttemptRequest | None = None,
     expected_kind: str | None = None,
     expected_payload: Mapping[str, Any] | None = None,
 ) -> JobTailOutput:
@@ -1115,6 +1116,16 @@ async def managed_job_tail_execute(
         job = _find_session_job(store, session_id, job_id)
         _require_managed_binding(job, expected_kind, expected_payload)
         job = _refresh_job_status(job, set())
+        if reservation is not None and (
+            reservation.job_id != job_id
+            or job_attempt_state(
+                job, reservation.attempt, reservation.retry_key
+            )
+            != "matching"
+        ):
+            raise RuntimeError(
+                "Native managed Job attempt is unconfirmed or superseded"
+            )
         public = _public_job(job)
         log_path = str(job.get("log_path") or "")
     output = job_status._read_log_tail(log_path, lines)

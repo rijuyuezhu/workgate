@@ -12,6 +12,7 @@ from ...platform.host import HostOS, host_os
 from ...protocol.executor import (
     JobInventorySummary,
     ReservedJobAttemptRequest,
+    ReservedJobLookupRequest,
 )
 from ...schemas.result_models.jobs import (
     JobListOutput,
@@ -141,7 +142,15 @@ class ExecutorJobService:
         self, session_id: str, args: dict[str, Any], *, operation: str
     ) -> ReservedJobAttemptReceipt:
         """Private retry/lookup/cleanup using the existing native lifecycle lock."""
-        request = ReservedJobAttemptRequest.model_validate(args)
+        lines = 200
+        if operation == "lookup":
+            lookup = ReservedJobLookupRequest.model_validate(args)
+            lines = lookup.lines
+            request = ReservedJobAttemptRequest.model_validate(
+                lookup.model_dump(exclude={"lines"})
+            )
+        else:
+            request = ReservedJobAttemptRequest.model_validate(args)
         async with session_lifecycle_lock(session_id):
             if operation == "retry":
                 if request.retry_key is None:
@@ -179,7 +188,7 @@ class ExecutorJobService:
                     )
                     return receipt.model_copy(update={"job": result.job})
                 tail = await shell_jobs.tail_shell_job_unlocked(
-                    self.config, self.store, session_id, request.job_id, 200
+                    self.config, self.store, session_id, request.job_id, lines
                 )
                 return receipt.model_copy(
                     update={"job": tail.job, "output": tail.output}
