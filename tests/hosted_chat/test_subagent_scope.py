@@ -15,6 +15,8 @@ from workgate.hosted_chat.agent_runtime import (
 from workgate.hosted_chat.agents import AgentRepository
 from workgate.hosted_chat.checkpoints import SQLiteCheckpointSaver
 from workgate.hosted_chat.database import SQLiteDatabase
+from workgate.hosted_chat.detached_subagents import reserve_detached_child
+from workgate.hosted_chat.durable_tasks import DurableTaskRepository
 from workgate.hosted_chat.generation_actor_lease import (
     ActorLease,
     ActorLeaseLost,
@@ -63,13 +65,24 @@ def setup(tmp_path):
 
 
 async def edge(
-    checkpoint, source, target, *, call_id="same", description="child task"
+    checkpoint,
+    source,
+    target,
+    *,
+    call_id="same",
+    description="child task",
+    background=False,
+    thread_id=None,
 ):
     call = ModelToolCall(
         call_id,
         "subagent",
         {"subagent_type": target, "description": description},
     )
+    if background:
+        call.arguments["run_in_background"] = True
+    if thread_id is not None:
+        call.arguments["subagent_thread_id"] = thread_id
     state = AgentLoopState(
         context(source),
         [{"role": "user", "content": "parent private"}],
@@ -101,6 +114,7 @@ async def invocation(
         call,
         configs,
         execute_child=execute,
+        execute_background=execute,
         current_grant=lambda: (
             scopes if scopes is not None else {"shell:read"},
             int(time.time()) + 600,
@@ -686,3 +700,173 @@ async def test_team_graph_saver_and_member_activation_are_isolated(setup):
     repo.update("alice", child["id"], {"instructions": "changed"})
     with pytest.raises(PermissionError, match="target revision changed"):
         fresh.get_tuple(saved)
+
+
+@pytest.mark.asyncio
+async def test_detached_reservation_replay_and_no_foreground_authority(setup):
+    lease, parent, child, _ = setup
+    root = OwnedLoopCheckpoint(lease)
+    call = await edge(root, parent, child["id"], background=True)
+    value = await invocation(root, parent, call)
+    with pytest.raises(PermissionError, match="identity"):
+        SubagentScope.admit(root, call, value)
+    reservation = reserve_detached_child(root, call, value)
+    with lease.database.read_snapshot() as db:
+        row = db.execute("SELECT * FROM subagent_tasks").fetchone()
+        scope = SubagentScope.from_record(
+            json.loads(row["execution_options"])["scope"]
+        )
+        assert row["child_run_id"] is None and row["child_registered"] == 1
+        assert json.loads(row["initial_messages"]) == value.messages
+        assert (
+            db.execute(
+                "SELECT active FROM active_subagent_threads WHERE owner=? AND thread_id=?",
+                (lease.owner, reservation.child_conversation_id),
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            db.execute("SELECT count(*) FROM conversations").fetchone()[0] == 1
+        )
+    assert scope.detached
+    with pytest.raises(PermissionError, match="execution lease"):
+        OwnedLoopCheckpoint(lease, scope=scope)
+    with pytest.raises(PermissionError, match="execution lease"):
+        DurableTaskRepository(lease.database, scope=scope)
+    with pytest.raises(PermissionError, match="execution lease"):
+        scope.native_call_id("tool")
+    lease.release()
+    fresh = ActorLease.claim(lease.database, lease.owner, lease.run_id)
+    assert fresh is not None
+    root = OwnedLoopCheckpoint(fresh)
+    assert root.restore(context(parent)) is not None
+    assert reserve_detached_child(root, call, value) == reservation
+    with pytest.raises(PermissionError, match="reduced"):
+        reserve_detached_child(root, call, replace(value, scopes=frozenset()))
+    with pytest.raises(PermissionError, match="identity"):
+        reserve_detached_child(root, call, replace(value, owner="bob"))
+    another = await edge(root, parent, child["id"], background=True)
+    with pytest.raises(PermissionError, match="edge"):
+        SubagentScope.admit(
+            root,
+            replace(
+                call, arguments={**call.arguments, "description": "different"}
+            ),
+            replace(value, messages=[{"role": "user", "content": "different"}]),
+            detached=True,
+        )
+    assert (
+        reserve_detached_child(
+            root, another, await invocation(root, parent, another)
+        ).task_id
+        != reservation.task_id
+    )
+
+
+@pytest.mark.asyncio
+async def test_detached_thread_continuation_fences_busy_scope_and_history(
+    setup,
+):
+    lease, parent, child, _ = setup
+    root = OwnedLoopCheckpoint(lease)
+    call = await edge(root, parent, child["id"], background=True)
+    reservation = reserve_detached_child(
+        root,
+        call,
+        await invocation(root, parent, call),
+        disclosure_access={"machines": ["one"]},
+    )
+    call = await edge(
+        root,
+        parent,
+        child["id"],
+        background=True,
+        thread_id=reservation.thread_id,
+    )
+    value = await invocation(root, parent, call)
+    with pytest.raises(ValueError, match="already running"):
+        reserve_detached_child(
+            root, call, value, disclosure_access={"machines": ["one"]}
+        )
+    history = [{"role": "assistant", "content": "prior result"}]
+    with lease.database.connect() as db:
+        db.execute(
+            "UPDATE subagent_tasks SET status='completed' WHERE id=?",
+            (reservation.task_id,),
+        )
+        db.execute(
+            "UPDATE subagent_threads SET messages=? WHERE id=?",
+            (json.dumps(history), reservation.thread_id),
+        )
+    reduced_call = await edge(
+        root,
+        parent,
+        child["id"],
+        background=True,
+        thread_id=reservation.thread_id,
+        description="reduced",
+    )
+    with pytest.raises(PermissionError, match="authority changed"):
+        reserve_detached_child(
+            root,
+            reduced_call,
+            await invocation(root, parent, reduced_call, scopes=set()),
+            disclosure_access={"machines": ["one"]},
+        )
+    call = await edge(
+        root,
+        parent,
+        child["id"],
+        background=True,
+        thread_id=reservation.thread_id,
+        description="continue",
+    )
+    value = await invocation(root, parent, call)
+    continued = reserve_detached_child(
+        root, call, value, disclosure_access={"machines": ["one"]}
+    )
+    assert (
+        continued.thread_id == reservation.thread_id
+        and continued.child_conversation_id != reservation.child_conversation_id
+    )
+    with lease.database.read_snapshot() as db:
+        row = db.execute(
+            "SELECT initial_messages FROM subagent_tasks WHERE id=?",
+            (continued.task_id,),
+        ).fetchone()
+        assert json.loads(row[0]) == history + value.messages
+    missing = await edge(
+        root, parent, child["id"], background=True, thread_id="not-owned"
+    )
+    with pytest.raises(PermissionError, match="unavailable"):
+        reserve_detached_child(
+            root, missing, await invocation(root, parent, missing)
+        )
+
+
+@pytest.mark.asyncio
+async def test_detached_reservation_limit_and_expiry(setup, monkeypatch):
+    from workgate.hosted_chat import detached_subagents
+
+    monkeypatch.setattr(detached_subagents, "_RUNNING_PER_SCOPE", 1)
+    lease, parent, child, _ = setup
+    root = OwnedLoopCheckpoint(lease)
+    call = await edge(root, parent, child["id"], background=True)
+    value = await invocation(root, parent, call)
+    with pytest.raises(PermissionError, match="expired"):
+        reserve_detached_child(root, call, replace(value, grant_expires=1))
+    reservation = reserve_detached_child(root, call, value)
+    assert reserve_detached_child(root, call, value) == reservation
+    call = await edge(root, parent, child["id"], background=True)
+    with pytest.raises(ValueError, match="Too many"):
+        reserve_detached_child(root, call, await invocation(root, parent, call))
+    with lease.database.read_snapshot() as db:
+        assert (
+            db.execute("SELECT count(*) FROM subagent_tasks").fetchone()[0] == 1
+        )
+        assert (
+            db.execute(
+                "SELECT count(*) FROM active_subagent_threads"
+            ).fetchone()[0]
+            == 1
+        )

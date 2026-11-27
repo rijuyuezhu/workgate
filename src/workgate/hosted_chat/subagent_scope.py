@@ -79,6 +79,7 @@ class SubagentScope:
     scopes: tuple[str, ...]
     grant_expires: int | None
     team_definition_hash: str | None = None
+    detached: bool = False
 
     def assert_team_root(self, root: dict) -> None:
         if (
@@ -120,6 +121,10 @@ class SubagentScope:
         return json.loads(_json(asdict(self)))
 
     def native_call_id(self, call_id: str) -> str:
+        if self.detached:
+            raise PermissionError(
+                "Detached child requires its own execution lease"
+            )
         return "child:" + _digest([self.checkpoint_namespace, call_id])
 
     def effective_grant(
@@ -286,6 +291,7 @@ class SubagentScope:
         invocation: SubagentInvocation,
         *,
         disclosure_access: dict | None = None,
+        detached: bool = False,
     ) -> SubagentScope:
         lease = checkpoint.lease
         active = checkpoint.active["configurable"]
@@ -299,7 +305,7 @@ class SubagentScope:
             or invocation.parent_tool_call_id != call.call_id
             or call.name != SUBAGENT_TOOL_NAME
             or not isinstance(call.arguments, dict)
-            or call.arguments.get("run_in_background") is True
+            or (call.arguments.get("run_in_background") is True) != detached
             or invocation.subagent_type != call.arguments.get("subagent_type")
             or invocation.parent_agent_id
             != (
@@ -401,6 +407,7 @@ class SubagentScope:
                 if invocation.agent.get("graphAgentIds")
                 or invocation.agent.get("edges")
                 else None,
+                detached,
             )
             if active.get(NAMESPACE_KEY) != scope.parent_namespace:
                 raise PermissionError(
@@ -474,6 +481,10 @@ class SubagentGraphScope:
     ) -> tuple[dict | None, ...]:
         from uuid import UUID
 
+        if self.team.detached:
+            raise PermissionError(
+                "Detached team requires its own execution lease"
+            )
         chain = self.team.resolve_owned(
             db, owner, run_id, current_edges=current_edges
         )
