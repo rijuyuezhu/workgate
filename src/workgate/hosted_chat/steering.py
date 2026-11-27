@@ -16,7 +16,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from .database import SQLiteDatabase
-from .generation_protocol import EVENT_LIMIT, MAX_EVENT_BYTES
+from .generation_actor_lease import ActorLease, ActorLeaseLost
+from .generation_protocol import EVENT_LIMIT, MAX_EVENT_BYTES, public_content
 from .storage import _json, _now
 
 QUEUE_LIMIT = 10
@@ -416,6 +417,92 @@ class SteeringStore:
                     )
                 )
             )
+
+    def drain(self, lease: ActorLease, *, boundary: str) -> list[dict]:
+        """Consume FIFO and publish the exact public parts in one owned transaction."""
+        if lease.database.path != self.database.path:
+            raise ActorLeaseLost("Steering actor database mismatch")
+        if boundary not in {"stream", "post_tools", "terminal"}:
+            raise ValueError("Invalid steering boundary")
+        with self.database.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            lease.assert_current(db)
+            row = db.execute(
+                "SELECT * FROM runs WHERE id=?", (lease.run_id,)
+            ).fetchone()
+            state = self._state(row)
+            steer = self._active_steers(state)
+            queue = steer["queue"]
+            if not queue or (
+                boundary == "stream"
+                and not any(item["preempt"] for item in queue)
+            ):
+                return []
+            index = len(
+                public_content(
+                    json.loads(event["data"])
+                    for event in db.execute(
+                        "SELECT data FROM generation_events WHERE run_id=? ORDER BY seq",
+                        (lease.run_id,),
+                    )
+                )
+            )
+            applied = []
+            for item in queue:
+                receipt = steer["receipts"].get(item.get("clientSteerId"))
+                if receipt is not None:
+                    receipt["state"] = "applied"
+                part = {
+                    "type": "steer",
+                    "steer": item["text"],
+                    "steerId": item["steerId"],
+                    **(
+                        {"clientSteerId": item["clientSteerId"]}
+                        if "clientSteerId" in item
+                        else {}
+                    ),
+                    "createdAt": item["createdAt"],
+                    "files": item["files"],
+                    "quotes": item["quotes"],
+                }
+                applied.append(part)
+                self._append_event(
+                    db,
+                    lease.run_id,
+                    {
+                        "event": "on_steer_applied",
+                        "data": {
+                            "steerId": item["steerId"],
+                            **(
+                                {"clientSteerId": item["clientSteerId"]}
+                                if "clientSteerId" in item
+                                else {}
+                            ),
+                            "index": index,
+                            "part": part,
+                            "responseMessageId": state["responseMessageId"],
+                            "conversationId": row["conversation_id"],
+                        },
+                    },
+                )
+                index += 1
+            state.setdefault("steerParts", []).extend(applied)
+            steer["queue"] = []
+            db.execute(
+                "UPDATE runs SET state=?,updated_at=? WHERE id=?",
+                (_json(state), _now(), lease.run_id),
+            )
+            return applied
+
+    def applied_parts(self, lease: ActorLease) -> list[dict]:
+        if lease.database.path != self.database.path:
+            raise ActorLeaseLost("Steering actor database mismatch")
+        with self.database.read_snapshot() as db:
+            lease.assert_current(db)
+            row = db.execute(
+                "SELECT state FROM runs WHERE id=?", (lease.run_id,)
+            ).fetchone()
+            return self._state(row).get("steerParts", [])
 
     def pending(self, owner, run_id):
         with self.database.connect() as db:

@@ -24,6 +24,7 @@ from ..hosted_chat.provider_common import (
     ModelUsage,
 )
 from ..hosted_chat.providers import stream_model, stream_model_with_tools
+from ..hosted_chat.steering import SteeringStore, merged_text
 from .hosted_chat_native_tool_node import NativeLoopToolNode
 
 
@@ -69,6 +70,7 @@ async def run_foreground_native_loop(
     checkpoint = node.checkpoint
     lease = checkpoint.lease
     store = GenerationStore(lease.database)
+    steering = SteeringStore(lease.database)
     node.current_grant()
     generation = store.get(lease.owner, lease.run_id)
     if generation is None:
@@ -124,9 +126,46 @@ async def run_foreground_native_loop(
             calls, state, authorize_effects=authorize_batch
         )
 
+    def reconcile_steers(state: AgentLoopState) -> bool:
+        seen = {
+            message.get("steerId")
+            for message in state.messages
+            if message.get("source") == "steer"
+        }
+        added = False
+        for part in steering.applied_parts(lease):
+            if part["steerId"] not in seen:
+                state.messages.append(
+                    {
+                        "role": "user",
+                        "content": merged_text(part),
+                        "source": "steer",
+                        "steerId": part["steerId"],
+                        "id": "steer:" + part["steerId"],
+                        "files": [],
+                    }
+                )
+                seen.add(part["steerId"])
+                added = True
+        if added:
+            state.completed = False
+        return added
+
+    async def boundary(state: AgentLoopState, kind: str) -> bool:
+        node.current_grant()
+        # Seal observable model output before publishing steer parts. At the
+        # post-tool edge the original pending batch and its receipts already
+        # provide recovery evidence; never save an inconsistent pending batch.
+        if kind in {"stream", "terminal"}:
+            if not steering.pending(lease.owner, lease.run_id):
+                return reconcile_steers(state)
+            await save(state, [])
+        steering.drain(lease, boundary=kind)
+        return reconcile_steers(state)
+
     async def check_stream() -> bool:
         node.current_grant()
-        return False
+        return steering.has_preempt(lease.owner, lease.run_id)
 
     try:
         restored = checkpoint.restore(context)
@@ -140,6 +179,8 @@ async def run_foreground_native_loop(
             raise ObservableStreamInterrupted(
                 "Uncheckpointed public provider delta"
             )
+        if not state.pending_calls and reconcile_steers(state):
+            await save(state, [])
         await run_agent_loop(
             state,
             stream_tools=stream_tools,
@@ -151,6 +192,7 @@ async def run_foreground_native_loop(
             before_model=node.refresh_tools,
             preflight_calls=node.preflight,
             on_stream_chunk=check_stream,
+            on_boundary=boundary,
         )
         node.current_grant()
         store.finish(
