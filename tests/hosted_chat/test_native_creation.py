@@ -5985,3 +5985,124 @@ async def test_native_graph_handoff_keeps_post_tool_steer_with_recipient(
     assert result[-1]["content"] == (
         "root redirected" if preempt else "member redirected"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("approval", ["automatic", "all"])
+async def test_child_native_node_replays_private_receipt_without_parent_approval(
+    bound, approval
+):
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.hosted_chat.agent_runtime import AgentContext, AgentLoopState
+    from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+    from workgate.hosted_chat.subagent_scope import SubagentScope
+    from workgate.hosted_chat.subagents import (
+        build_subagent_configs,
+        invoke_subagent,
+    )
+
+    harness, original, lease, _ = bound
+    agents = AgentRepository(original.database)
+    child = agents.create(lease.owner, {"provider": "openai", "model": "child"})
+    root = agents.create(
+        lease.owner,
+        {
+            "provider": "openai",
+            "model": "parent",
+            "approval_mode": approval,
+            "subagents": {"enabled": True, "agent_ids": [child["id"]]},
+        },
+    )
+    generation, _ = GenerationStore(original.database).begin(
+        lease.owner, {"text": "parent private", "agent_id": root["id"]}
+    )
+    actor = ActorLease.claim(original.database, lease.owner, generation.run_id)
+    assert actor is not None
+    parent = OwnedLoopCheckpoint(actor)
+    provider = ProviderConfig(
+        "openai", "model", "https://example.invalid", "fake"
+    )
+    delegate = ModelToolCall(
+        "delegate",
+        "subagent",
+        {"subagent_type": child["id"], "description": "child task"},
+    )
+    parent_state = AgentLoopState(
+        AgentContext(provider, [], agent=root),
+        [],
+        pending_calls=[delegate],
+        tool_step_started=True,
+    )
+    await parent.save(parent_state, [delegate])
+    configs = build_subagent_configs(lease.owner, root, original.database)
+    captured = []
+    live = set(SCOPES)
+
+    async def execute(value):
+        scope = SubagentScope.admit(parent, delegate, value)
+        captured.append(scope)
+        repo = DurableTaskRepository(original.database, scope=scope)
+        checkpoint = OwnedLoopCheckpoint(actor, scope=scope)
+        node = NativeLoopToolNode(
+            harness.control,
+            repo,
+            checkpoint,
+            allowed_tools={"task"},
+            scopes=set(SCOPES),
+            expires=None,
+            task_machine=harness.executor_id,
+            check_grant=lambda: None,
+        )
+        state = AgentLoopState(
+            AgentContext(provider, [], agent=child), value.messages
+        )
+        await node.refresh_tools(state)
+        calls = node.preflight(
+            [ModelToolCall("same", "task", {"action": "create"})], state
+        )
+        state.pending_calls = calls
+        state.tool_step_started = True
+        await checkpoint.save(state, calls)
+        result = await node.dispatch(calls, state)
+        assert (await node.dispatch(calls, state)).messages == result.messages
+        if approval == "all":
+            assert "requires human approval" in str(result.messages)
+            assert not await harness.control.task_service.list_tasks()
+        else:
+            assert len(await harness.control.task_service.list_tasks()) == 1
+            # Conversation ACL changes do not alter the child revision; receipt
+            # disclosure still has to check the live machine ceiling.
+            WorkspaceRepository(original.database).save_setting(
+                lease.owner,
+                "agent.machine_policy.conversation."
+                + generation.conversation_id,
+                {harness.executor_id: "none"},
+            )
+            with pytest.raises(
+                PermissionError, match="disclosure grant was reduced"
+            ):
+                await node.dispatch(calls, state)
+        return "done"
+
+    assert (
+        await invoke_subagent(
+            delegate,
+            configs,
+            execute_child=execute,
+            current_grant=lambda: (live, None),
+            owner=lease.owner,
+            conversation_id=generation.conversation_id,
+            parent_run_id=actor.run_id,
+            database=original.database,
+            parent_agent_id=root["id"],
+        )
+        == "done"
+    )
+    assert captured
+    with original.database.read_snapshot() as db:
+        row = db.execute(
+            "SELECT state FROM runs WHERE id=?", (actor.run_id,)
+        ).fetchone()
+        assert "pendingApproval" not in json.loads(row["state"])

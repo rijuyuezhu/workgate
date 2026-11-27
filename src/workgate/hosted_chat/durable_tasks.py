@@ -35,6 +35,7 @@ from .graph_topology import graph_members
 from .machine_permissions import authorize_machine_action, require_machine_scope
 from .provider_common import ModelToolCall, complete_tool_batch
 from .storage import WorkspaceRepository, _now
+from .subagent_scope import SubagentScope
 
 SESSION_SHELL_EFFECT_TOOLS = frozenset(
     {"send_persistent_shell_input", "resize_persistent_shell"}
@@ -220,10 +221,22 @@ class DurableTaskRepository:
     """
 
     def __init__(
-        self, database: SQLiteDatabase, *, scope: GraphMemberScope | None = None
+        self,
+        database: SQLiteDatabase,
+        *,
+        scope: GraphMemberScope | SubagentScope | None = None,
     ):
         self.database = database
         self.scope = scope
+
+    def cap_grant(
+        self, scopes: set[str], expires: int | None
+    ) -> tuple[set[str], int | None]:
+        return (
+            self.scope.effective_grant(scopes, expires)
+            if isinstance(self.scope, SubagentScope)
+            else (scopes, expires)
+        )
 
     def _ledger_call(self, call: ModelToolCall) -> ModelToolCall:
         return (
@@ -290,8 +303,39 @@ class DurableTaskRepository:
             agent = json.loads(row[0])
         return agent
 
+    @staticmethod
+    def _child_scope_for_run(db, run) -> SubagentScope | None:
+        namespace = run["member_namespace"]
+        if namespace is None or ":child:" not in namespace:
+            return None
+        fields = dict(run)
+        run_id = fields.get("run_id", fields["id"])
+        row = db.execute(
+            "SELECT r.state FROM runs r JOIN conversations c ON c.id=r.conversation_id WHERE r.id=? AND c.owner=?",
+            (run_id, run["owner"]),
+        ).fetchone()
+        if row is None:
+            raise PermissionError("Native child generation no longer exists")
+        try:
+            record = json.loads(row["state"])["ownedSubagentScopes"][namespace]
+            scope = SubagentScope.from_record(record)
+            if (
+                scope.run_id != run_id
+                or scope.checkpoint_namespace != namespace
+                or scope.member_id != run["member_agent_id"]
+            ):
+                raise PermissionError("Native child scope identity changed")
+            return scope
+        except (KeyError, TypeError, ValueError) as error:
+            raise PermissionError(
+                "Native child scope admission is unavailable"
+            ) from error
+
     @classmethod
     def _agents_for_run(cls, db, run) -> tuple[dict | None, ...]:
+        scope = cls._child_scope_for_run(db, run)
+        if scope is not None:
+            return scope.resolve_owned(db, run["owner"], scope.run_id)
         root = cls._agent_for_run(db, run)
         member_id = run["member_agent_id"]
         if member_id is None or member_id == run["agent_id"]:
@@ -334,6 +378,9 @@ class DurableTaskRepository:
         authorization_id: str,
         destination_machine: str | None = None,
     ) -> None:
+        child_scope = self._child_scope_for_run(db, run)
+        if child_scope is not None:
+            scopes, expires = child_scope.effective_grant(scopes, expires)
         chain = self._agents_for_run(db, run)
         # Task is Control-owned metadata, but reserve it only for a selected
         # authorized Executor; no implicit Controller machine target.
@@ -500,6 +547,7 @@ class DurableTaskRepository:
         """Require a live generation and its confirmed native Session."""
         with self.database.read_snapshot() as db:
             run = self._run(db, lease)
+            scopes, expires = self.cap_grant(scopes, expires)
             if not self._owned(
                 db,
                 lease.owner,
@@ -546,6 +594,7 @@ class DurableTaskRepository:
         """Resolve exact owned attempts and read grants before any native lookup."""
         with self.database.read_snapshot() as db:
             run = self._run(db, lease)
+            scopes, expires = self.cap_grant(scopes, expires)
             result = []
             for target in targets:
                 row = self._last_owned_job(db, run, machine, session_id, target)
@@ -585,6 +634,7 @@ class DurableTaskRepository:
         """List confirmed owned attempts, excluding unauthorized destinations."""
         with self.database.read_snapshot() as db:
             run = self._run(db, lease)
+            scopes, expires = self.cap_grant(scopes, expires)
             self._require_parent(
                 db, run, "job", machine, {"session_id": session_id}
             )
@@ -674,6 +724,7 @@ class DurableTaskRepository:
     ) -> frozenset[str]:
         with self.database.read_snapshot() as db:
             run = self._run(db, lease)
+            scopes, expires = self.cap_grant(scopes, expires)
             return self._authorize_task_metadata(
                 db, run, task_id, scopes, expires, write=write
             )
@@ -750,6 +801,7 @@ class DurableTaskRepository:
             if claim or receipt is not None:
                 db.execute("BEGIN IMMEDIATE")
             run = self._run(db, lease)
+            scopes, expires = self.cap_grant(scopes, expires)
             prior = db.execute(
                 "SELECT * FROM agent_native_effect_calls WHERE run_id=? AND call_id=?",
                 (lease.run_id, call.call_id),
@@ -926,6 +978,7 @@ class DurableTaskRepository:
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             run = self._run(db, lease)
+            scopes, expires = self.cap_grant(scopes, expires)
             if db.execute(
                 "SELECT 1 FROM agent_native_effect_calls WHERE run_id=? AND call_id=?",
                 (lease.run_id, call.call_id),
@@ -1098,6 +1151,7 @@ class DurableTaskRepository:
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             run = self._run(db, lease)
+            scopes, expires = self.cap_grant(scopes, expires)
             if db.execute(
                 "SELECT 1 FROM agent_native_effect_calls WHERE run_id=? AND call_id=?",
                 (lease.run_id, call.call_id),
@@ -1403,6 +1457,7 @@ class DurableTaskRepository:
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             run = self._run(db, lease)
+            scopes, expires = self.cap_grant(scopes, expires)
             row = self._row(db, lease, intent)
             if row["call_id"] != call.call_id or row[
                 "fingerprint"

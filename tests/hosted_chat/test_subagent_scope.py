@@ -79,7 +79,9 @@ async def edge(
     return call
 
 
-async def invocation(checkpoint, source, call, *, configs=None, max_depth=5):
+async def invocation(
+    checkpoint, source, call, *, configs=None, max_depth=5, scopes=None
+):
     captured = []
 
     async def execute(value):
@@ -97,7 +99,10 @@ async def invocation(checkpoint, source, call, *, configs=None, max_depth=5):
         call,
         configs,
         execute_child=execute,
-        current_grant=lambda: ({"shell:read"}, int(time.time()) + 600),
+        current_grant=lambda: (
+            scopes if scopes is not None else {"shell:read"},
+            int(time.time()) + 600,
+        ),
         owner=lease.owner,
         conversation_id="chat",
         parent_run_id=lease.run_id,
@@ -360,3 +365,186 @@ async def test_team_scope_pins_all_member_revisions(setup):
     repo.update("alice", leaf["id"], {"instructions": "changed"})
     with pytest.raises(PermissionError, match="target revision changed"):
         OwnedLoopCheckpoint(lease, scope=scope)
+
+
+@pytest.mark.asyncio
+async def test_native_child_scope_caps_grant_and_fences_historical_cleanup(
+    setup,
+):
+    from workgate.hosted_chat.durable_tasks import DurableTaskRepository
+    from workgate.protocol.ids import new_executor_id
+
+    lease, parent, child, _ = setup
+    root = OwnedLoopCheckpoint(lease)
+    machine = new_executor_id()
+    registered = (machine,)
+    read = {"shell:read"}
+    write = read | {"shell:write", "shell:execute"}
+    task = ModelToolCall("same", "task", {"action": "create"})
+    call = await edge(root, parent, child["id"])
+    value = await invocation(root, parent, call)
+    read_scope = SubagentScope.admit(root, call, value)
+    child_repo = DurableTaskRepository(lease.database, scope=read_scope)
+    assert child_repo.cap_grant(write, None) == (read, value.grant_expires)
+    with pytest.raises(PermissionError):
+        child_repo.reserve(
+            lease,
+            task,
+            machine=machine,
+            scopes=write,
+            expires=None,
+            registered=registered,
+        )
+    with pytest.raises(PermissionError, match="reduced"):
+        child_repo.cap_grant(set(), None)
+    call = await edge(root, parent, child["id"])
+    value = await invocation(root, parent, call, scopes=write)
+    scope = SubagentScope.admit(root, call, value)
+    repo = DurableTaskRepository(lease.database, scope=scope)
+    assert SubagentScope.from_record(scope.record()) == scope
+    assert [a["id"] for a in repo.tool_context_chain(lease)[1] if a] == [
+        parent["id"],
+        child["id"],
+    ]
+    root_repo = DurableTaskRepository(lease.database)
+    direct = root_repo.reserve(
+        lease,
+        task,
+        machine=machine,
+        scopes=write,
+        expires=None,
+        registered=registered,
+    )
+    intent = repo.reserve(
+        lease,
+        task,
+        machine=machine,
+        scopes=write,
+        expires=None,
+        registered=registered,
+    )
+    assert intent.id != direct.id
+    with pytest.raises(PermissionError):
+        root_repo.claim(
+            lease,
+            intent,
+            task,
+            scopes=write,
+            expires=None,
+            registered=registered,
+        )
+    assert repo.claim(
+        lease, intent, task, scopes=write, expires=None, registered=registered
+    )
+    active = repo.bind(lease, intent, intent.key)
+    assert active.state == "active"
+    with lease.database.read_snapshot() as db:
+        row = db.execute(
+            "SELECT call_id,member_namespace,grant_expires FROM agent_durable_tasks WHERE id=?",
+            (intent.id,),
+        ).fetchone()
+        assert row["call_id"] == scope.native_call_id(task.call_id)
+        assert row["member_namespace"] == scope.checkpoint_namespace
+        assert row["grant_expires"] == scope.grant_expires
+    # A completed parent edge is not itself authorization revocation.
+    await edge(root, parent, child["id"])
+    with pytest.raises(PermissionError, match="no longer current"):
+        repo.tool_context_chain(lease)
+    assert root_repo.cancellation_batch(registered) == []
+    AgentRepository(lease.database).update(
+        "alice", child["id"], {"machine_default_permission": "none"}
+    )
+    with lease.database.connect() as db:
+        db.execute("UPDATE agent_durable_tasks SET next_attempt_at=NULL")
+    batch = root_repo.cancellation_batch(registered)
+    assert [item["id"] for item in batch] == [intent.id]
+
+
+@pytest.mark.asyncio
+async def test_native_nested_scope_intersects_all_ancestor_acl(setup):
+    from workgate.hosted_chat.durable_tasks import DurableTaskRepository
+    from workgate.protocol.ids import new_executor_id
+
+    lease, parent, child, leaf = setup
+    repo = AgentRepository(lease.database)
+    machine = new_executor_id()
+    parent = repo.update(
+        "alice", parent["id"], {"machine_permissions": {machine: "read"}}
+    )
+    assert parent is not None
+    root = OwnedLoopCheckpoint(lease)
+    call = await edge(root, parent, child["id"])
+    scopes = {"shell:read", "shell:write", "shell:execute"}
+    value = await invocation(root, parent, call, scopes=scopes)
+    scope = SubagentScope.admit(root, call, value)
+    child_checkpoint = OwnedLoopCheckpoint(lease, scope=scope)
+    nested_call = await edge(child_checkpoint, child, leaf["id"])
+    nested = await invocation(
+        child_checkpoint,
+        child,
+        nested_call,
+        configs=list(value.child_configs),
+        max_depth=scope.remaining_depth,
+        scopes=scopes,
+    )
+    nested_scope = SubagentScope.admit(child_checkpoint, nested_call, nested)
+    ledger = DurableTaskRepository(lease.database, scope=nested_scope)
+    assert SubagentScope.from_record(nested_scope.record()) == nested_scope
+    assert [a["id"] for a in ledger.tool_context_chain(lease)[1] if a] == [
+        parent["id"],
+        child["id"],
+        leaf["id"],
+    ]
+    task = ModelToolCall("call", "task", {"action": "create"})
+    task_intent = ledger.reserve(
+        lease,
+        task,
+        machine=machine,
+        scopes=scopes,
+        expires=None,
+        registered=(machine,),
+    )
+    assert ledger.claim(
+        lease,
+        task_intent,
+        task,
+        scopes=scopes,
+        expires=None,
+        registered=(machine,),
+    )
+    task_id = ledger.bind(lease, task_intent, task_intent.key).key
+    session = ModelToolCall(
+        "session", "session_start", {"executor_id": machine, "task_id": task_id}
+    )
+    session_intent = ledger.reserve(
+        lease,
+        session,
+        machine=machine,
+        scopes=scopes,
+        expires=None,
+        registered=(machine,),
+    )
+    assert ledger.claim(
+        lease,
+        session_intent,
+        session,
+        scopes=scopes,
+        expires=None,
+        registered=(machine,),
+    )
+    session_id = ledger.bind(lease, session_intent, session_intent.key).key
+    write = ModelToolCall(
+        "write",
+        "write_file",
+        {"session_id": session_id, "path": "out", "content": "hello"},
+    )
+    with pytest.raises(PermissionError, match="read-only"):
+        ledger.native_effect(
+            lease,
+            write,
+            machine=machine,
+            scopes=scopes,
+            expires=None,
+            registered=(machine,),
+            claim=True,
+        )

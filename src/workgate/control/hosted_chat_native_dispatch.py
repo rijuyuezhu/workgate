@@ -141,6 +141,7 @@ class NativeToolDispatcher:
             )
         tools = await self._mcp.list_tools()
         scopes, expires = _grant(runtime, lease.owner, scopes, expires)
+        scopes, expires = repository.cap_grant(scopes, expires)
         conversation_id, agents = repository.tool_context_chain(lease)
         selected = _selected_tools(agents, allowed_tools)
         policy, _ = effective_machine_access(
@@ -344,6 +345,7 @@ class NativeToolDispatcher:
             )
         if call.name not in NATIVE_TOOLS or call.name not in allowed_tools:
             raise PermissionError("Native tool is not selected and adapted")
+        scopes, expires = repository.cap_grant(scopes, expires)
         _, agents = repository.tool_context_chain(lease)
         if call.name not in _selected_tools(agents, allowed_tools):
             raise PermissionError(

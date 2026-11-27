@@ -127,24 +127,43 @@ class SubagentScope:
             raise PermissionError("Subagent authentication grant expired")
         return set(self.scopes), expires
 
-    def _run(self, db: sqlite3.Connection, lease: ActorLease):
-        lease.assert_current(db)
-        if lease.run_id != self.run_id:
+    @classmethod
+    def from_record(cls, value: dict) -> SubagentScope:
+        """Recover only the durable scope descriptor; resolve it before use."""
+        fields = dict(value)
+        parent = fields["parent_scope"]
+        if parent is not None:
+            fields["parent_scope"] = (
+                cls.from_record(parent)
+                if "run_id" in parent
+                else GraphMemberScope(**parent)
+            )
+        if fields["parent_revision"] is not None:
+            fields["parent_revision"] = tuple(fields["parent_revision"])
+        fields["target_revisions"] = tuple(
+            tuple(item) for item in fields["target_revisions"]
+        )
+        fields["scopes"] = tuple(fields["scopes"])
+        scope = cls(**fields)
+        if scope.record() != value:
+            raise PermissionError("Invalid subagent scope record")
+        return scope
+
+    def _run(self, db: sqlite3.Connection, owner: str, run_id: str):
+        if run_id != self.run_id:
             raise PermissionError(
                 "Subagent scope belongs to a different generation"
             )
         row = db.execute(
             "SELECT r.conversation_id,r.agent_id,r.state FROM runs r "
             "JOIN conversations c ON c.id=r.conversation_id WHERE r.id=? AND c.owner=?",
-            (self.run_id, lease.owner),
+            (run_id, owner),
         ).fetchone()
         if row is None:
             raise PermissionError("Subagent generation is no longer owned")
         return row
 
-    def _assert_edge(
-        self, db: sqlite3.Connection, lease: ActorLease, run
-    ) -> None:
+    def _assert_edge(self, db: sqlite3.Connection, owner: str, run) -> None:
         # Read the exact current parent edge inside the same transaction as
         # admission/effect fencing. Expired, missing or advanced heads cannot
         # be used to start a new child.
@@ -153,7 +172,7 @@ class SubagentScope:
             "WHERE owner=? AND thread_id=? AND checkpoint_ns=? AND expires_at>? "
             "AND checkpoint IS NOT NULL ORDER BY checkpoint_id DESC LIMIT 1",
             (
-                lease.owner,
+                owner,
                 run["conversation_id"],
                 self.parent_namespace,
                 time.time(),
@@ -188,41 +207,64 @@ class SubagentScope:
             )
 
     def _validate(
-        self, db: sqlite3.Connection, lease: ActorLease, run
+        self, db: sqlite3.Connection, owner: str, run, *, current_edges: bool
     ) -> tuple[dict | None, ...]:
         self.effective_grant(set(self.scopes), self.grant_expires)
         if self.parent_scope is None:
             parent = (
-                _agent(db, lease.owner, run["agent_id"])
+                _agent(db, owner, run["agent_id"])
                 if run["agent_id"] is not None
                 else None
             )
             chain = (parent,)
+        elif isinstance(self.parent_scope, SubagentScope):
+            chain = self.parent_scope.resolve_owned(
+                db, owner, self.run_id, current_edges=current_edges
+            )
         else:
-            chain = self.parent_scope.resolve(db, lease)
+            chain = self.parent_scope.resolve_owned(db, owner, self.run_id)
         if _revision(chain[-1]) != self.parent_revision:
             raise PermissionError("Subagent parent revision changed")
-        self._assert_edge(db, lease, run)
+        if current_edges:
+            self._assert_edge(db, owner, run)
         child = None
         for identity, version in self.target_revisions:
-            member = _agent(db, lease.owner, identity)
+            member = _agent(db, owner, identity)
             if _revision(member) != (identity, version):
                 raise PermissionError("Subagent target revision changed")
             if identity == self.member_id:
                 child = member
         return (*chain, child)
 
-    def resolve(
-        self, db: sqlite3.Connection, lease: ActorLease
+    def resolve_owned(
+        self,
+        db: sqlite3.Connection,
+        owner: str,
+        run_id: str,
+        *,
+        current_edges: bool = False,
     ) -> tuple[dict | None, ...]:
-        run = self._run(db, lease)
+        """Recheck original ownership and ACL provenance for historical cleanup.
+
+        Cleanup can inspect the admitted chain after the parent advances. It
+        cannot authorize an effect; foreground execution requires resolve().
+        """
+        run = self._run(db, owner, run_id)
         state = json.loads(run["state"])
         if (
             state.get("ownedSubagentScopes", {}).get(self.checkpoint_namespace)
             != self.record()
         ):
             raise PermissionError("Subagent scope has no matching admission")
-        return self._validate(db, lease, run)
+        return self._validate(db, owner, run, current_edges=current_edges)
+
+    def resolve(
+        self, db: sqlite3.Connection, lease: ActorLease
+    ) -> tuple[dict | None, ...]:
+        lease.assert_current(db)
+        return self.resolve_owned(
+            db, lease.owner, lease.run_id, current_edges=True
+        )
 
     @classmethod
     def admit(
@@ -354,7 +396,7 @@ class SubagentScope:
                         "Subagent invocation changed after admission"
                     )
                 scope.effective_grant(invocation.scopes, expires)
-            scope._validate(db, lease, row)
+            scope._validate(db, lease.owner, row, current_edges=True)
             if existing is None:
                 markers[scope.checkpoint_namespace] = scope.record()
                 db.execute(
