@@ -43,6 +43,22 @@ def _same_args(left: Any, right: Any) -> bool:
     )
 
 
+def validate_settled_proposal(call: ModelToolCall, record: dict) -> None:
+    """Require the exact original proposal and a complete settled output."""
+    if not isinstance(record, dict) or set(record) != {"proposal", "output"}:
+        raise ValueError("Invalid settled tool receipt")
+    proposal = record["proposal"]
+    if (
+        not isinstance(proposal, dict)
+        or set(proposal) != {"name", "args"}
+        or proposal["name"] != call.name
+        or not _same_args(proposal["args"], call.arguments)
+    ):
+        raise ValueError(
+            "Cannot change an already completed tool call during approval replay"
+        )
+
+
 async def execute_tool_batch(
     calls: Sequence[ModelToolCall],
     execute: Callable[[ModelToolCall], Awaitable[Any]],
@@ -65,13 +81,7 @@ async def execute_tool_batch(
     for key, call in zip(keys, calls, strict=True):
         cached = cache.get(key)
         if cached is not None:
-            proposal = cached["proposal"]
-            if proposal["name"] != call.name or not _same_args(
-                proposal["args"], call.arguments
-            ):
-                raise ValueError(
-                    "Cannot change an already completed tool call during approval replay"
-                )
+            validate_settled_proposal(call, cached)
 
     async def run_one(position: int) -> Any:
         call = calls[position]

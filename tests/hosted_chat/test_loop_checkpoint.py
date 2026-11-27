@@ -147,3 +147,241 @@ async def test_invalid_checkpoint_proposals_never_advance_the_head(lease):
     with pytest.raises(ValueError, match="progress"):
         await checkpoint.save(state, [])
     assert checkpoint.saver.get_tuple(checkpoint.base) is None
+
+
+@pytest.mark.asyncio
+async def test_settled_sibling_is_replayed_after_actor_replacement(lease):
+    from workgate.hosted_chat.loop_receipts import execute_checkpointed_batch
+
+    checkpoint = OwnedLoopCheckpoint(lease)
+    calls = [
+        ModelToolCall("one", "read", {"path": "first"}),
+        ModelToolCall("two", "read", {"path": "second"}),
+    ]
+    state = AgentLoopState(
+        context(),
+        [],
+        step=2,
+        model_turn=1,
+        pending_calls=calls,
+        tool_step_started=True,
+    )
+    await checkpoint.save(state, calls)
+    checkpoint.saver.put_writes(
+        checkpoint.active, [("__resume__", "acknowledged")], "human"
+    )
+    effects = []
+
+    async def interrupted(call):
+        effects.append(call.call_id)
+        if call.call_id == "two":
+            raise RuntimeError("transport interrupted")
+        return {"structuredContent": {"value": [1, 2]}, "content": []}
+
+    with pytest.raises(RuntimeError, match="transport interrupted"):
+        await execute_checkpointed_batch(
+            checkpoint,
+            calls,
+            interrupted,
+            check_grant=lambda: None,
+        )
+    assert sorted(effects) == ["one", "two"]
+    lease.release()
+    replacement = ActorLease.claim(lease.database, lease.owner, lease.run_id)
+    assert replacement is not None
+    recovered = OwnedLoopCheckpoint(replacement)
+    assert recovered.restore(context()) is not None
+
+    async def finish(call):
+        effects.append(call.call_id)
+        assert call.call_id == "two"
+        return {"structuredContent": {"value": 3}}
+
+    result = await execute_checkpointed_batch(
+        recovered,
+        calls,
+        finish,
+        check_grant=lambda: None,
+    )
+    assert result == [
+        {"structuredContent": {"value": [1, 2]}, "content": []},
+        {"structuredContent": {"value": 3}},
+    ]
+    assert effects.count("one") == 1 and effects.count("two") == 2
+    result[0]["structuredContent"]["value"].append(99)
+    assert (
+        await execute_checkpointed_batch(
+            recovered,
+            calls,
+            finish,
+            check_grant=lambda: None,
+        )
+    )[0]["structuredContent"]["value"] == [1, 2]
+
+    def revoked():
+        raise PermissionError("grant revoked")
+
+    with pytest.raises(PermissionError, match="revoked"):
+        await execute_checkpointed_batch(
+            recovered, calls, finish, check_grant=revoked
+        )
+    with pytest.raises(ActorLeaseLost):
+        await execute_checkpointed_batch(
+            checkpoint, calls, finish, check_grant=lambda: None
+        )
+
+
+@pytest.mark.asyncio
+async def test_invalid_saved_receipts_reject_entire_batch_before_effect(lease):
+    from workgate.hosted_chat.loop_receipts import execute_checkpointed_batch
+
+    checkpoint = OwnedLoopCheckpoint(lease)
+    calls = [
+        ModelToolCall("one", "read", {"value": True}),
+        ModelToolCall("two", "read", {}),
+    ]
+    state = AgentLoopState(
+        context(),
+        [],
+        step=2,
+        model_turn=1,
+        pending_calls=calls,
+        tool_step_started=True,
+    )
+
+    async def forbidden(call):
+        raise AssertionError("no side effects before validating all receipts")
+
+    await checkpoint.save(state, calls)
+    with pytest.raises(ValueError, match="saved started edge"):
+        await execute_checkpointed_batch(
+            checkpoint,
+            [ModelToolCall("one", "read", {"value": 1}), calls[1]],
+            forbidden,
+            check_grant=lambda: None,
+        )
+    checkpoint.saver.put_writes(
+        checkpoint.active,
+        [
+            (
+                "tool_receipt",
+                {
+                    "proposal": {"name": "read", "args": {"value": 1}},
+                    "output": "bad",
+                },
+            ),
+        ],
+        "receipt:one",
+    )
+    with pytest.raises(ValueError, match="already completed"):
+        await execute_checkpointed_batch(
+            checkpoint, calls, forbidden, check_grant=lambda: None
+        )
+
+    await checkpoint.save(state, calls)
+    checkpoint.saver.put_writes(
+        checkpoint.active,
+        [
+            (
+                "tool_receipt",
+                {"proposal": {"name": "read", "args": {}}, "output": "bad"},
+            ),
+        ],
+        "receipt:unknown",
+    )
+    with pytest.raises(ValueError, match="Unknown settled"):
+        await execute_checkpointed_batch(
+            checkpoint, calls, forbidden, check_grant=lambda: None
+        )
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_receipt_boundary_and_interrupt_order(lease):
+    from workgate.hosted_chat.agent_runtime import AgentSuspended
+    from workgate.hosted_chat.loop_receipts import execute_checkpointed_batch
+
+    checkpoint = OwnedLoopCheckpoint(lease)
+    calls = [
+        ModelToolCall("ordinary", "read", {}),
+        ModelToolCall("interrupt", "ask", {}),
+    ]
+    state = AgentLoopState(
+        context(), [], step=1, model_turn=1, pending_calls=calls
+    )
+    seen = []
+
+    async def execute(call):
+        seen.append(call.call_id)
+        if call.name == "ask":
+            raise AgentSuspended("waiting")
+        return "done"
+
+    async def batch():
+        return await execute_checkpointed_batch(
+            checkpoint,
+            calls,
+            execute,
+            check_grant=lambda: None,
+            interrupting_names=frozenset({"ask"}),
+            is_interrupt=lambda error: isinstance(error, AgentSuspended),
+        )
+
+    with pytest.raises(ValueError, match="Missing owned"):
+        await batch()
+    await checkpoint.save(state, calls)
+    with pytest.raises(ValueError, match="saved started edge"):
+        await batch()
+    state.tool_step_started = True
+    await checkpoint.save(state, calls)
+    with pytest.raises(AgentSuspended):
+        await batch()
+    assert seen == ["interrupt"]
+    checkpoint.saver.put_writes(
+        checkpoint.active, [("other", "bad")], "receipt:ordinary"
+    )
+    with pytest.raises(ValueError, match="reserved receipt slot"):
+        await batch()
+    assert seen == ["interrupt"]
+
+
+@pytest.mark.parametrize(
+    "records,error",
+    [
+        ([{"proposal": {"name": "read", "args": {}}}], "Invalid settled"),
+        (
+            [
+                {"proposal": {"name": "read", "args": {}}, "output": "one"},
+                {"proposal": {"name": "read", "args": {}}, "output": "two"},
+            ],
+            "Duplicate settled",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_corrupt_receipt_slots_fail_closed(lease, records, error):
+    from workgate.hosted_chat.loop_receipts import execute_checkpointed_batch
+
+    checkpoint = OwnedLoopCheckpoint(lease)
+    calls = [ModelToolCall("one", "read", {})]
+    state = AgentLoopState(
+        context(),
+        [],
+        step=2,
+        model_turn=1,
+        pending_calls=calls,
+        tool_step_started=True,
+    )
+    await checkpoint.save(state, calls)
+    checkpoint.saver.put_writes(
+        checkpoint.active,
+        [("tool_receipt", record) for record in records],
+        "receipt:one",
+    )
+
+    async def forbidden(call):
+        raise AssertionError("corrupt receipt must not dispatch")
+
+    with pytest.raises(ValueError, match=error):
+        await execute_checkpointed_batch(
+            checkpoint, calls, forbidden, check_grant=lambda: None
+        )
