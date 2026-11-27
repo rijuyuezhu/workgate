@@ -299,3 +299,10 @@ no-progress counters, and reconstructs the loop with a fresh caller-provided
 AgentContext. It does not persist ProviderConfig or tool catalog grants.
 Completed sibling receipt recovery and graph handoff restoration follow in
 separate integration units.
+
+The owned loop's tool receipts adapt the pinned AgentRunner completion and
+recovery paths. Each started tool edge stores the original proposal and
+structured result in immutable sibling-write slots. Recovery validates the
+entire batch before dispatching only unsettled siblings, with fresh actor and
+grant checks even for cached results. Native durable intent recovery remains
+responsible for uncertain effects before a completion receipt was committed.
