@@ -152,6 +152,7 @@ async def _job_attempt_receipt(
     request: ReservedJobAttemptRequest,
     *,
     dispatch: bool,
+    lines: int | None = None,
 ) -> ReservedJobAttemptReceipt:
     session_id = intent.session_id
     if session_id is None:
@@ -164,7 +165,9 @@ async def _job_attempt_receipt(
         receipt = ReservedJobAttemptReceipt.model_validate(
             await coordinator.call_session_tool(
                 JOB_RETRY_RESERVED_OP if dispatch else JOB_LOOKUP_ATTEMPT_OP,
-                request.model_dump(mode="json") | {"session_id": session_id},
+                request.model_dump(mode="json")
+                | {"session_id": session_id}
+                | ({"lines": lines} if lines is not None else {}),
             )
         )
     except PublicToolError, RuntimeError, ValueError, KeyError, TimeoutError:

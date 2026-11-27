@@ -97,6 +97,12 @@ class ReservedJobAttemptRequest(BaseModel):
         return self
 
 
+class ReservedJobLookupRequest(ReservedJobAttemptRequest):
+    """Exact attempt lookup with a bounded native log tail."""
+
+    lines: int = Field(default=200, ge=1, le=5000)
+
+
 class ReservedShellStartRequest(ReservedExecutionRequest):
     """Internal PTY request with the exact private native Shell handle."""
 

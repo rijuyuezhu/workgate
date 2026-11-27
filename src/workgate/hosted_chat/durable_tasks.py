@@ -139,6 +139,12 @@ class ReservedCopyRequest(BaseModel):
 def _requirements(
     machine: str, kind: str, destination_machine: str | None
 ) -> dict[str, str]:
+    if kind == "poll":
+        return (
+            {machine: "read"}
+            if destination_machine is None
+            else {machine: "read", destination_machine: "read"}
+        )
     if kind == "copy" or (kind == "retry" and destination_machine is not None):
         if destination_machine is None:
             raise PermissionError("Missing destination Executor binding")
@@ -337,17 +343,57 @@ class DurableTaskRepository:
     @staticmethod
     def _last_owned_job(db, run, machine: str, session_id: str, job_id: str):
         row = db.execute(
-            "SELECT native_attempt,destination_session_id,destination_machine FROM agent_durable_tasks "
+            "SELECT * FROM agent_durable_tasks "
             "WHERE owner=? AND conversation_id=? AND machine=? AND native_session_id=? "
             "AND native_id=? AND kind IN ('job','retry','copy') AND state IN ('active','stopped') "
             "ORDER BY native_attempt DESC LIMIT 1",
             (run["owner"], run["conversation_id"], machine, session_id, job_id),
         ).fetchone()
-        if row is None or row[0] is None:
+        if row is None or row["native_attempt"] is None:
             raise PermissionError(
                 "Native Job does not belong to this conversation"
             )
         return row
+
+    def poll_attempts(
+        self,
+        lease: ActorLease,
+        session_id: str,
+        targets: list[str],
+        *,
+        machine: str,
+        scopes: set[str],
+        expires: int | None,
+        registered: Collection[str],
+    ) -> list[Intent]:
+        """Resolve exact owned attempts and read grants before any native lookup."""
+        with self.database.read_snapshot() as db:
+            run = self._run(db, lease)
+            result = []
+            for target in targets:
+                row = self._last_owned_job(db, run, machine, session_id, target)
+                self._require_parent(
+                    db,
+                    run,
+                    "retry",
+                    machine,
+                    {"session_id": session_id},
+                    row["destination_machine"],
+                    row["destination_session_id"],
+                )
+                self._authorize(
+                    db,
+                    run,
+                    machine,
+                    "poll",
+                    scopes,
+                    expires,
+                    registered,
+                    run["conversation_id"],
+                    row["destination_machine"],
+                )
+                result.append(self._intent(row))
+            return result
 
     def reserve(
         self,

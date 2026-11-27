@@ -11,6 +11,7 @@ from workgate.config.settings import clear_settings_cache, get_settings
 from workgate.control.execution_context import control_execution_context
 from workgate.control.executor_transport import ExecutorTransportError
 from workgate.control.hosted_chat_cancellation import sweep_native_cancellations
+from workgate.control.hosted_chat_job_inspection import inspect_native_jobs
 from workgate.control.hosted_chat_native_creation import (
     NativeCreationUncertain,
     NativeRetryRejected,
@@ -1771,3 +1772,180 @@ async def test_mixed_retry_batch_preflights_each_native_grant(
         assert len(copy_attempts) == len(started) == 2
     finally:
         await runtime.managed_jobs_runtime.aclose()
+
+
+async def poll_native(harness, repo, lease, args, *, scopes=None):
+    if scopes is None:
+        scopes = {"shell:read"}
+    return await inspect_native_jobs(
+        harness.control,
+        repo,
+        lease,
+        ModelToolCall("poll", "job", args),
+        machine=harness.executor_id,
+        scopes=scopes,
+        expires=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_poll_only_exact_owned_attempt_with_read_scope(
+    bound, tracked_shells, monkeypatch
+):
+    from workgate.protocol.ids import new_reserved_job_id
+
+    harness, repo, lease, generation = bound
+    _, sid = await native_session(harness, repo, lease)
+    _, jid = await create_tracked_job(harness, repo, lease, sid)
+    original = harness.control.executor_transport.call
+    lookups = []
+
+    async def trace(
+        executor_id, op, args=None, *, session_id=None, timeout_s=None
+    ):
+        if op == JOB_LOOKUP_ATTEMPT_OP:
+            lookups.append(dict(args or {}))
+        return await original(
+            executor_id, op, args, session_id=session_id, timeout_s=timeout_s
+        )
+
+    monkeypatch.setattr(harness.control.executor_transport, "call", trace)
+    args = {"session_id": sid, "poll": [jid], "lines": 7}
+    with pytest.raises(PermissionError, match="does not belong"):
+        await poll_native(
+            harness, repo, lease, args | {"poll": [jid, new_reserved_job_id()]}
+        )
+    with pytest.raises(PermissionError, match="shell:read"):
+        await poll_native(harness, repo, lease, args, scopes=set())
+    for changed in (
+        {"lines": 0},
+        {"lines": 5001},
+        {"poll": [jid, jid]},
+        {"cancel": [jid]},
+    ):
+        with pytest.raises(ValueError):
+            await poll_native(harness, repo, lease, args | changed)
+    assert lookups == []
+    result = await poll_native(harness, repo, lease, args)
+    assert result["operation"] == "poll"
+    assert result["outputs"][0]["job"]["job_id"] == jid
+    assert result["outputs"][0]["output"] == "native output"
+    assert lookups == [
+        {"job_id": jid, "attempt": 1, "retry_key": None, "lines": 7}
+    ]
+    assert (
+        await harness.call(
+            harness.executor_id, "job", {"cancel": [jid]}, session_id=sid
+        )
+    ).ok
+    assert (
+        await harness.call(
+            harness.executor_id, "job", {"retry": [jid]}, session_id=sid
+        )
+    ).ok
+    with pytest.raises(NativeCreationUncertain, match="superseded"):
+        await poll_native(harness, repo, lease, args)
+    assert len(lookups) == 2
+
+
+@pytest.mark.asyncio
+async def test_managed_poll_uses_read_grants_and_exact_native_attempt(
+    bound, monkeypatch
+):
+    from workgate.control.session_copy import SESSION_COPY_MANAGED_KIND
+
+    harness, repo, lease, generation = bound
+    runtime = harness.control
+    source, destination = await copy_sessions(harness, repo, lease)
+    entered = asyncio.Event()
+
+    async def wait(context, _payload):
+        await context.log("owned managed attempt")
+        entered.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setitem(
+        runtime.managed_jobs_runtime.handlers, SESSION_COPY_MANAGED_KIND, wait
+    )
+    await runtime.managed_jobs_runtime.start()
+    try:
+        result = await invoke(
+            harness,
+            repo,
+            lease,
+            ModelToolCall(
+                "copy",
+                "session_copy",
+                {
+                    "src_session_id": source,
+                    "src_path": "a",
+                    "dst_session_id": destination,
+                    "dst_path": "b",
+                },
+            ),
+        )
+        jid = result["job_id"]
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        policy = (
+            "agent.machine_policy.conversation." + generation.conversation_id
+        )
+        workspace = WorkspaceRepository(repo.database)
+        workspace.save_setting(
+            lease.owner, policy, {harness.executor_id: "read"}
+        )
+        args = {"session_id": source, "poll": [jid], "lines": 1}
+        poll = await poll_native(harness, repo, lease, args)
+        assert poll["outputs"][0]["job"]["kind"] == "managed"
+        assert "owned managed attempt" in poll["outputs"][0]["output"]
+        workspace.save_setting(
+            lease.owner, policy, {harness.executor_id: "none"}
+        )
+        with pytest.raises(PermissionError):
+            await poll_native(harness, repo, lease, args)
+        workspace.save_setting(
+            lease.owner, policy, {harness.executor_id: "write"}
+        )
+        with control_execution_context(
+            config=runtime.config,
+            state_store=runtime.state_store,
+            oauth_state=runtime.oauth_state,
+            managed_jobs_runtime=runtime.managed_jobs_runtime,
+        ):
+            await runtime.job_service.execute(session_id=source, cancel=[jid])
+            await runtime.job_service.execute(session_id=source, retry=[jid])
+        with pytest.raises(NativeCreationUncertain, match="superseded"):
+            await poll_native(harness, repo, lease, args)
+    finally:
+        await runtime.managed_jobs_runtime.aclose()
+
+
+@pytest.mark.asyncio
+async def test_poll_rechecks_revocation_after_native_reply(
+    bound, tracked_shells, monkeypatch
+):
+    harness, repo, lease, generation = bound
+    _, sid = await native_session(harness, repo, lease)
+    _, jid = await create_tracked_job(harness, repo, lease, sid)
+    transport = harness.control.executor_transport
+    original = transport.call
+
+    async def revoked(
+        executor_id, op, args=None, *, session_id=None, timeout_s=None
+    ):
+        result = await original(
+            executor_id, op, args, session_id=session_id, timeout_s=timeout_s
+        )
+        if op == JOB_LOOKUP_ATTEMPT_OP:
+            WorkspaceRepository(repo.database).save_setting(
+                lease.owner,
+                "agent.machine_policy.conversation."
+                + generation.conversation_id,
+                {harness.executor_id: "none"},
+            )
+        return result
+
+    monkeypatch.setattr(transport, "call", revoked)
+    with pytest.raises(PermissionError):
+        await poll_native(
+            harness, repo, lease, {"session_id": sid, "poll": [jid]}
+        )
