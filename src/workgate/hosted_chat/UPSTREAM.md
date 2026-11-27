@@ -362,3 +362,11 @@ unread-event transaction. Explicit owner abort uses the native run
 cancellation latch, whereas expiry or unavailable checkpoint evidence only
 interrupts the generation. An exact action ID fences abort/expiry against
 concurrent resume claims; neither transition invokes a native tool.
+
+Ask User contract follows `webui/ask_user_tools.py` at the pinned source
+(blob `0eaec2c6f3acf8c009733872e720f055b8dc3498`) and source tests
+(`bcace1ed888be37cad6448bc842e44e379a567ac`). The exported definition,
+manifest, legacy single and batched question formats, UTF-16 limits and
+resume validation match the original HITL oracle. The optional tool is
+independent of machine grants; its durable question and execution lifecycle
+are integrated separately.
