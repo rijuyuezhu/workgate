@@ -1423,3 +1423,115 @@ async def test_copy_cleanup_does_not_cancel_newer_native_retry(
         assert stopped == [1, 2]
     finally:
         await runtime.managed_jobs_runtime.aclose()
+
+
+@pytest.mark.asyncio
+async def test_managed_retry_rejects_active_attempt_then_recovers_lost_response(
+    bound, monkeypatch
+):
+    from workgate.control.session_copy import SESSION_COPY_MANAGED_KIND
+
+    harness, repo, lease, generation = bound
+    runtime = harness.control
+    source, destination = await copy_sessions(harness, repo, lease)
+    creation_run, creator = await next_generation(
+        repo, lease, generation, "copy"
+    )
+    scopes = {"shell:read", "shell:write"}
+    launches, stops = [], []
+    entered = asyncio.Event()
+
+    async def wait(_context, _payload):
+        attempt = len(launches) + 1
+        launches.append(attempt)
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stops.append(attempt)
+
+    monkeypatch.setitem(
+        runtime.managed_jobs_runtime.handlers, SESSION_COPY_MANAGED_KIND, wait
+    )
+    await runtime.managed_jobs_runtime.start()
+    try:
+        created = await invoke(
+            harness,
+            repo,
+            creator,
+            ModelToolCall(
+                "copy",
+                "session_copy",
+                {
+                    "src_session_id": source,
+                    "src_path": "a",
+                    "dst_session_id": destination,
+                    "dst_path": "b",
+                },
+            ),
+            scopes=scopes,
+        )
+        jid = created["job_id"]
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        args = {"session_id": source, "retry": [jid]}
+        native_lease = runtime.managed_jobs_runtime.leases[jid]
+        with pytest.raises(NativeRetryRejected):
+            await invoke(
+                harness,
+                repo,
+                creator,
+                ModelToolCall("active", "job", args),
+                scopes=scopes,
+            )
+        assert intent_rows(repo)["active"]["native_id"] is None
+        assert intent_rows(repo)["active"]["state"] == "stopped"
+        with control_execution_context(
+            config=runtime.config,
+            state_store=runtime.state_store,
+            oauth_state=runtime.oauth_state,
+            managed_jobs_runtime=runtime.managed_jobs_runtime,
+        ):
+            with pytest.raises(RuntimeError, match="still active"):
+                await runtime.job_service.execute(**args)
+            assert runtime.managed_jobs_runtime.leases[jid] is native_lease
+            assert launches == [1] and stops == []
+            await runtime.job_service.execute(session_id=source, cancel=[jid])
+        assert stops == [1]
+        run, actor = await next_generation(repo, creator, creation_run, "retry")
+        original = runtime.session_copy_service.retry_reserved
+        offered = []
+
+        async def lost(*args, **kwargs):
+            result = await original(*args, **kwargs)
+            offered.append(result.attempts)
+            raise TimeoutError("response lost")
+
+        monkeypatch.setattr(
+            runtime.session_copy_service, "retry_reserved", lost
+        )
+        call = ModelToolCall("retry-copy", "job", args)
+        entered.clear()
+        with pytest.raises(TimeoutError):
+            await invoke(harness, repo, actor, call, scopes=scopes)
+        row = intent_rows(repo)["retry-copy"]
+        assert (
+            row["state"] == "unknown"
+            and row["destination_session_id"] == destination
+        )
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        recovered = await invoke(harness, repo, actor, call, scopes=scopes)
+        assert recovered["recovered"] is True
+        assert recovered["retried"][0]["attempts"] == 2 and offered == [2]
+        assert launches == [1, 2] and stops == [1]
+        repo.cancel_run(creator.owner, creator.run_id)
+        assert await sweep_native_cancellations(runtime, repo) >= 1
+        assert stops == [1]
+        assert intent_rows(repo)["copy"]["state"] == "stopped"
+        repo.cancel_run(actor.owner, run.run_id)
+        assert await sweep_native_cancellations(runtime, repo) == 1
+        assert stops == [1, 2]
+        assert intent_rows(repo)["retry-copy"]["state"] == "stopped"
+        assert harness.executor.sessions.lookup(source) is not None
+        assert harness.executor.sessions.lookup(destination) is not None
+    finally:
+        await runtime.managed_jobs_runtime.aclose()

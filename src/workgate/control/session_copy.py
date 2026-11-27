@@ -15,12 +15,14 @@ from pydantic import JsonValue
 from ..jobs.managed import (
     ManagedJobContext,
     ManagedJobHandler,
+    retry_managed_job_without_session_admission,
     start_managed_job_without_session_admission,
 )
 from ..persistence import StateStore
 from ..platform.path import remote_path_name
+from ..protocol.executor import ReservedJobAttemptRequest
 from ..protocol.transfer import normalize_chunk_size
-from ..schemas.result_models.jobs import JobStartOutput
+from ..schemas.result_models.jobs import JobRetryOutput, JobStartOutput
 from ..schemas.result_models.session import (
     SessionCopyEndpoint,
     SessionCopyOutput,
@@ -353,6 +355,36 @@ class ControlSessionCopyService:
                 ),
                 cwd=".",
                 reserved_job_id=reserved_job_id,
+            )
+
+    async def retry_reserved(
+        self,
+        request: ReservedJobAttemptRequest,
+        *,
+        source: str,
+        destination: str,
+        expected_executors: Mapping[str, str],
+    ) -> JobRetryOutput:
+        """Retry exactly one admitted managed-copy attempt using native locks."""
+        session_ids = tuple(dict.fromkeys((source, destination)))
+        required = self.retry_require_available(request.job_id, session_ids)
+        async with self._sessions.session_admission(
+            session_ids, require_available=required
+        ) as records:
+            if dict(expected_executors) != {
+                str(record.session_id): str(record.executor_id)
+                for record in records
+            }:
+                raise PermissionError("Managed copy Session bindings changed")
+            return await retry_managed_job_without_session_admission(
+                source,
+                request.job_id,
+                reservation=request,
+                expected_kind=SESSION_COPY_MANAGED_KIND,
+                expected_payload={
+                    "src_session_id": source,
+                    "dst_session_id": destination,
+                },
             )
 
     def managed_job_registration(self) -> tuple[str, ManagedJobHandler]:

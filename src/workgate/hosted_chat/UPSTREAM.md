@@ -169,8 +169,11 @@ of unrelated work. The private adapter takes one retry target per durable
 intent. Background managed copy reserves a Control-owned Job with the original
 source and destination Sessions and Executor bindings. Admission checks source
 read and destination write authority separately; cancellation is fenced to
-the original copy attempt. Managed-copy retry, public Job batch dispatch and
-runtime lifecycle wiring remain follow-ups.
+the original copy attempt. Managed-copy retry derives both endpoints from the
+owned native Job intent, rechecks both grants and uses checkpoint-aware native
+retry admission. It shares exact-attempt classification with shell Jobs;
+rejected retries never release another attempt's lease. Public Job batch
+dispatch and runtime lifecycle wiring remain follow-ups.
 
 
 Agent authoring starts with the final upstream repository and validators.

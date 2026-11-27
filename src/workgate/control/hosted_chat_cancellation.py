@@ -7,7 +7,10 @@ from typing import Literal
 from ..audit import audit
 from ..errors import PublicToolValueError
 from ..hosted_chat.durable_tasks import DurableTaskRepository
-from ..jobs.managed import stop_managed_job_without_session_admission
+from ..jobs.managed import (
+    lookup_managed_job_attempt,
+    stop_managed_job_without_session_admission,
+)
 from ..jobs.state import CONFIRMED_TERMINAL_STATUSES
 from ..oauth.core.context import bind_oauth_claims, reset_oauth_claims
 from ..protocol.executor import (
@@ -115,24 +118,31 @@ async def _stop_copy(row: dict, key: str) -> CleanupOutcome:
     if not source or not destination:
         return "pending"
     # Managed work is owned by Control, even if either Executor is offline.
-    result = await stop_managed_job_without_session_admission(
+    request = ReservedJobAttemptRequest(
+        job_id=key,
+        attempt=row["native_attempt"],
+        retry_key=row["idempotency_key"] if row["kind"] == "retry" else None,
+    )
+    binding = {"src_session_id": source, "dst_session_id": destination}
+    await stop_managed_job_without_session_admission(
         source,
         key,
-        expected_attempt=1,
+        expected_attempt=request.attempt,
+        expected_retry_key=request.retry_key,
         expected_kind=SESSION_COPY_MANAGED_KIND,
-        expected_payload={
-            "src_session_id": source,
-            "dst_session_id": destination,
-        },
+        expected_payload=binding,
     )
-    job = result.job
-    if job.job_id != key or job.session_id != source or job.kind != "managed":
-        return "pending"
-    if job.attempts > 1:
+    state, job = lookup_managed_job_attempt(
+        source,
+        request,
+        expected_kind=SESSION_COPY_MANAGED_KIND,
+        expected_payload=binding,
+    )
+    if state == "superseded":
         return "absent"
     return (
         "stopped"
-        if job.attempts == 1 and job.status in CONFIRMED_TERMINAL_STATUSES
+        if job is not None and job.status in CONFIRMED_TERMINAL_STATUSES
         else "pending"
     )
 
@@ -145,7 +155,9 @@ async def _stop(
     key = row["target_job_id"] or row["idempotency_key"]
     if not key or row["native_id"] not in (None, key):
         return "pending"
-    if row["kind"] == "copy":
+    if row["kind"] == "copy" or (
+        row["kind"] == "retry" and row["destination_session_id"] is not None
+    ):
         return await _stop_copy(row, key)
     if row["kind"] in {"job", "retry"}:
         return await _stop_job(runtime, row, key)

@@ -8,7 +8,7 @@ from workgate.jobs.reconciliation import (
     JobTransition,
     reconcile_job,
 )
-from workgate.jobs.state import JobStatusPayload
+from workgate.jobs.state import JobStatusPayload, job_attempt_state
 
 
 def _status_payload(
@@ -422,3 +422,54 @@ def test_refresh_active_managed_operation_skips_live_state_probes(
     )
 
     assert refreshed == row
+
+
+def test_interrupted_managed_retry_adopts_published_attempt_when_lease_is_dead() -> (
+    None
+):
+    row = {
+        "kind": "managed",
+        "status": "retrying",
+        "attempts": 1,
+        "pending_attempt": 2,
+        "pending_log_path": "new.log",
+        "retry_key": "reserved",
+    }
+    assert (
+        reconcile_job(row, JobObservation(now=20.0, managed_liveness="live"))
+        == JobTransition()
+    )
+    result = reconcile_job(
+        row, JobObservation(now=20.0, managed_liveness="dead")
+    )
+    assert result.updates["status"] == "lost"
+    assert (
+        result.updates["attempts"] == 2
+        and result.updates["log_path"] == "new.log"
+    )
+    assert (
+        "pending_attempt" in result.remove_keys
+        and "retry_key" not in result.remove_keys
+    )
+    assert result.clear_operation
+
+
+@pytest.mark.parametrize(
+    ("row", "attempt", "key", "expected"),
+    [
+        ({"attempts": 1}, 1, None, "matching"),
+        ({"attempts": 1}, 2, "reserved", "unknown"),
+        (
+            {"attempts": 1, "pending_attempt": 2, "retry_key": "reserved"},
+            2,
+            "reserved",
+            "unknown",
+        ),
+        ({"attempts": 2, "retry_key": "reserved"}, 2, "reserved", "matching"),
+        ({"attempts": 2}, 2, "reserved", "superseded"),
+        ({"attempts": 2, "retry_key": "other"}, 2, "reserved", "superseded"),
+        ({"attempts": 2, "retry_key": "reserved"}, 1, None, "superseded"),
+    ],
+)
+def test_exact_attempt_classification(row, attempt, key, expected):
+    assert job_attempt_state(row, attempt, key) == expected

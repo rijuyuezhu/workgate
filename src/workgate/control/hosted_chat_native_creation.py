@@ -21,7 +21,11 @@ from ..hosted_chat.durable_tasks import (
 )
 from ..hosted_chat.generation_actor_lease import ActorLease
 from ..hosted_chat.provider_common import ModelToolCall, complete_tool_batch
-from ..jobs.managed import managed_job_tail_execute
+from ..jobs.managed import (
+    ReservedManagedJobRetryRejected,
+    lookup_managed_job_attempt,
+    managed_job_tail_execute,
+)
 from ..oauth.core.context import current_oauth_claims
 from ..oauth.core.scopes import scope_set
 from ..protocol.executor import (
@@ -188,6 +192,74 @@ async def _job_attempt_receipt(
     return receipt
 
 
+async def _managed_retry_job(
+    runtime: ControlRuntime,
+    intent: Intent,
+    request: ReservedJobAttemptRequest,
+    *,
+    dispatch: bool,
+) -> JobRetryOutput:
+    source, destination = intent.session_id, intent.destination_session_id
+    if (
+        source is None
+        or destination is None
+        or intent.destination_machine is None
+    ):
+        raise PermissionError("Missing managed copy retry binding")
+    expected_executors = {
+        source: intent.machine,
+        destination: intent.destination_machine,
+    }
+    if dispatch:
+        try:
+            result = await runtime.session_copy_service.retry_reserved(
+                request,
+                source=source,
+                destination=destination,
+                expected_executors=expected_executors,
+            )
+        except ReservedManagedJobRetryRejected as exc:
+            raise NativeRetryRejected(
+                "Native managed Job retry was not admitted"
+            ) from exc
+        if (
+            result.job_id != request.job_id
+            or result.session_id != source
+            or result.kind != "managed"
+            or result.attempts != request.attempt
+        ):
+            raise NativeCreationUncertain("Managed Job retry receipt mismatch")
+        return result
+    async with runtime.session_coordinator.session_admission(
+        tuple(expected_executors),
+        require_available=(),
+    ) as records:
+        if expected_executors != {
+            str(record.session_id): str(record.executor_id)
+            for record in records
+        }:
+            raise PermissionError("Managed copy Session bindings changed")
+        try:
+            state, job = lookup_managed_job_attempt(
+                source,
+                request,
+                expected_kind=SESSION_COPY_MANAGED_KIND,
+                expected_payload={
+                    "src_session_id": source,
+                    "dst_session_id": destination,
+                },
+            )
+        except RuntimeError, ValueError, KeyError, TimeoutError:
+            raise NativeCreationUncertain(
+                "Native managed Job attempt is unconfirmed"
+            ) from None
+    if state != "matching" or job is None:
+        raise NativeCreationUncertain(
+            "Native managed Job attempt is unconfirmed or superseded"
+        )
+    return JobRetryOutput(**job.model_dump())
+
+
 async def _native_retry_result(
     runtime: ControlRuntime,
     intent: Intent,
@@ -201,13 +273,17 @@ async def _native_retry_result(
         attempt=intent.attempt,
         retry_key=intent.key,
     )
-    receipt = await _job_attempt_receipt(
-        runtime, intent, request, dispatch=dispatch
-    )
-    assert receipt.job is not None
-    result = JobOutput(
-        operation="retry", retried=[JobRetryOutput(**receipt.job.model_dump())]
-    )
+    if intent.destination_session_id is not None:
+        job = await _managed_retry_job(
+            runtime, intent, request, dispatch=dispatch
+        )
+    else:
+        receipt = await _job_attempt_receipt(
+            runtime, intent, request, dispatch=dispatch
+        )
+        assert receipt.job is not None
+        job = JobRetryOutput(**receipt.job.model_dump())
+    result = JobOutput(operation="retry", retried=[job])
     return intent.target_job_id, result.model_dump(mode="json") | (
         {"recovered": True} if not dispatch else {}
     )

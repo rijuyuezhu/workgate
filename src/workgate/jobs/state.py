@@ -5,7 +5,7 @@ import time
 import uuid
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 
 from ..schemas.result_models.jobs import JobInfo
 from ..utils.serialization import to_jsonable
@@ -14,6 +14,28 @@ ACTIVE_STATUSES = {"starting", "running", "stopping", "retrying"}
 CONFIRMED_TERMINAL_STATUSES = {"succeeded", "failed", "exited", "stopped"}
 MANAGED_STATE_MAX_BYTES = 262_144
 _ACTIVE_JOB_OPERATIONS: set[str] = set()
+
+
+type JobAttemptState = Literal["matching", "superseded", "unknown"]
+
+
+def job_attempt_state(
+    job: Mapping[str, Any], attempt: int, retry_key: str | None
+) -> JobAttemptState:
+    """Classify an exact attempt and reservation key without adopting newer work."""
+    current = int(job.get("attempts") or 1)
+    pending = int(job.get("pending_attempt") or current)
+    if max(current, pending) > attempt or (
+        max(current, pending) == attempt and job.get("retry_key") != retry_key
+    ):
+        return "superseded"
+    if (
+        current != attempt
+        or pending != current
+        or job.get("retry_key") != retry_key
+    ):
+        return "unknown"
+    return "matching"
 
 
 class JobIdentityInUseError(ValueError):

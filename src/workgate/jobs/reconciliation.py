@@ -136,8 +136,10 @@ def reconcile_job(
         if observation.managed_liveness != "dead":
             return JobTransition()
         stopped = status == "stopping"
+        retrying = status == "retrying"
         return JobTransition(
             updates={
+                **(_pending_retry_updates(job) if retrying else {}),
                 "status": "stopped" if stopped else "lost",
                 "updated_at": observation.now,
                 "completed_at": observation.now,
@@ -148,6 +150,7 @@ def reconcile_job(
                     else "managed job is no longer running; retry it to resume the operation"
                 ),
             },
+            remove_keys=_PENDING_RETRY_KEYS if retrying else (),
             clear_operation=True,
         )
 
