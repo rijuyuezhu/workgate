@@ -14,10 +14,26 @@ from typing import Any
 from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
-from ..hosted_chat.durable_tasks import DurableTaskRepository
+from ..hosted_chat.durable_tasks import (
+    SESSION_FILE_EFFECT_TOOLS,
+    SESSION_SHELL_EFFECT_TOOLS,
+    DurableTaskRepository,
+)
 from ..hosted_chat.generation_actor_lease import ActorLease
 from ..hosted_chat.provider_common import ModelToolCall, complete_tool_batch
 from ..protocol.ids import ReservedShellId, SessionId
+from ..schemas.input_models.files import (
+    EditEndLineArg,
+    EditStartLineArg,
+    FileContentArg,
+    FilePathArg,
+    HashlineEditInputArg,
+    LineReplacementArg,
+    OverwriteArg,
+    RecursiveArg,
+    SnapshotIdArg,
+)
+from ..schemas.input_models.patch import PatchCwdArg, PatchTextArg
 from ..schemas.input_models.shell import (
     EnterArg,
     InputTextArg,
@@ -46,28 +62,64 @@ SESSION_FILE_READ_TOOLS = frozenset(
 SESSION_SHELL_READ_TOOLS = frozenset(
     {"read_persistent_shell_output", "list_persistent_shells"}
 )
-SESSION_SHELL_EFFECT_TOOLS = frozenset(
-    {"send_persistent_shell_input", "resize_persistent_shell"}
-)
 _AUTHORIZATION_RECHECK_SECONDS = 0.5
 
 
-class _ShellSend(BaseModel):
+class _SessionEffect(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     session_id: SessionId
+
+
+class _ShellSend(_SessionEffect):
     shell_id: ReservedShellId
     input_text: InputTextArg
     enter: EnterArg = True
 
 
-class _ShellResize(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-    session_id: SessionId
+class _ShellResize(_SessionEffect):
     shell_id: ReservedShellId
     cols: ShellColumnsArg
     rows: ShellRowsArg
+
+
+class _FileWrite(_SessionEffect):
+    path: FilePathArg
+    content: FileContentArg
+    overwrite: OverwriteArg = True
+
+
+class _FileEdit(_SessionEffect):
+    path: FilePathArg
+    start_line: EditStartLineArg
+    end_line: EditEndLineArg
+    replacement: LineReplacementArg
+    snapshot_id: SnapshotIdArg = None
+
+
+class _HashlineEdit(_SessionEffect):
+    input: HashlineEditInputArg
+
+
+class _FileDelete(_SessionEffect):
+    path: FilePathArg
+    recursive: RecursiveArg = False
+
+
+class _ApplyPatch(_SessionEffect):
+    patch: PatchTextArg
+    cwd: PatchCwdArg = "."
+
+
+_EFFECT_REQUESTS = {
+    "send_persistent_shell_input": _ShellSend,
+    "resize_persistent_shell": _ShellResize,
+    "write_file": _FileWrite,
+    "edit_lines": _FileEdit,
+    "hashline_edit": _HashlineEdit,
+    "delete_file_or_dir": _FileDelete,
+    "apply_patch": _ApplyPatch,
+}
 
 
 async def _await_authorized[T](
@@ -115,8 +167,8 @@ class NativeSessionDispatcher:
         scopes, expires = _grant(runtime, lease.owner, scopes, expires)
         call = copy.deepcopy(call)
         complete_tool_batch([call])
-        if call.name in SESSION_SHELL_EFFECT_TOOLS:
-            return await self._interact(
+        if call.name in SESSION_SHELL_EFFECT_TOOLS | SESSION_FILE_EFFECT_TOOLS:
+            return await self._effect(
                 repository,
                 lease,
                 call,
@@ -216,7 +268,7 @@ class NativeSessionDispatcher:
             )
         return result.model_dump(mode="json", by_alias=True, exclude_none=True)
 
-    async def _interact(
+    async def _effect(
         self,
         repository: DurableTaskRepository,
         lease: ActorLease,
@@ -227,11 +279,7 @@ class NativeSessionDispatcher:
         expires: int | None,
     ) -> dict[str, Any]:
         runtime = self._runtime
-        request = (
-            _ShellSend.model_validate(call.arguments)
-            if call.name == "send_persistent_shell_input"
-            else _ShellResize.model_validate(call.arguments)
-        )
+        request = _EFFECT_REQUESTS[call.name].model_validate(call.arguments)
         call = replace(call, arguments=request.model_dump(mode="json"))
 
         def check_native_session() -> None:
@@ -243,8 +291,7 @@ class NativeSessionDispatcher:
                 raise PermissionError("Native Session binding mismatch")
 
         def check_effect(*, claim: bool = False, receipt: dict | None = None):
-            check_native_session()
-            return repository.shell_effect(
+            effect = repository.native_effect(
                 lease,
                 call,
                 machine=machine,
@@ -254,12 +301,14 @@ class NativeSessionDispatcher:
                 claim=claim,
                 receipt=receipt,
             )
+            check_native_session()
+            return effect
 
         fresh, receipt = check_effect(claim=True)
         if not fresh:
             if receipt is None:
                 raise NativeCreationUncertain(
-                    "Native Shell effect is unconfirmed; do not resend"
+                    "Native Session effect is unconfirmed; do not resend"
                 )
             return receipt
 
@@ -276,7 +325,10 @@ class NativeSessionDispatcher:
             or result.is_error
             or result.structured_content is None
         ):
-            raise NativeCreationUncertain("Native Shell effect is unconfirmed")
+            raise NativeCreationUncertain(
+                "Native Session effect is unconfirmed"
+            )
+        output = None
         if isinstance(request, _ShellSend):
             output = SendPersistentShellInputOutput.model_validate(
                 result.structured_content
@@ -289,7 +341,7 @@ class NativeSessionDispatcher:
                 raise NativeCreationUncertain(
                     "Native Shell input receipt is mismatched"
                 )
-        else:
+        elif isinstance(request, _ShellResize):
             output = ResizePersistentShellOutput.model_validate(
                 result.structured_content
             )
@@ -301,14 +353,21 @@ class NativeSessionDispatcher:
                 raise NativeCreationUncertain(
                     "Native Shell resize receipt is mismatched"
                 )
-        projection = output.model_dump(mode="json")
-        envelope = CallToolResult(
-            structured_content=projection,
-            content=[
-                TextContent(
-                    type="text", text=json.dumps(projection, ensure_ascii=False)
-                )
-            ],
-        ).model_dump(mode="json", by_alias=True, exclude_none=True)
+        if output is not None:
+            projection = output.model_dump(mode="json")
+            result = CallToolResult(
+                structured_content=projection,
+                content=[
+                    TextContent(
+                        type="text",
+                        text=json.dumps(projection, ensure_ascii=False),
+                    )
+                ],
+            )
+        # Native filesystem responses already use the canonical validated,
+        # compacted MCP result, including grounded edit receipts.
+        envelope = result.model_dump(
+            mode="json", by_alias=True, exclude_none=True
+        )
         check_effect(receipt=envelope)
         return envelope

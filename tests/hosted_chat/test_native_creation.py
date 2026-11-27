@@ -2221,7 +2221,7 @@ async def test_owned_file_reads_use_native_catalog_and_live_acl(
         await dispatch("read", args | {"session_id": new_session_id()})
     with pytest.raises(PermissionError, match="shell:read"):
         await dispatch("read", args, set())
-    with pytest.raises(PermissionError, match="not an authorized"):
+    with pytest.raises(PermissionError, match="read-only"):
         await dispatch("write_file", args | {"content": "unapproved"})
     assert (tmp_path / "owned.txt").read_text() == "native file payload\n"
     rows = [
@@ -2725,3 +2725,141 @@ async def test_owned_shell_effects_are_claimed_once_and_fenced_on_replay(
     with pytest.raises(PermissionError, match="read-only"):
         await dispatch(send_call)
     assert started[owned] == sid and started[foreign] == sid
+
+
+@pytest.mark.asyncio
+async def test_owned_file_effects_preserve_native_grounding_and_replay(
+    bound, tmp_path, monkeypatch
+):
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from workgate.control.hosted_chat_session_tools import (
+        NativeSessionDispatcher,
+    )
+    from workgate.protocol.ids import new_session_id
+
+    harness, repo, lease, generation = bound
+    _, sid = await native_session(harness, repo, lease)
+    dispatcher = NativeSessionDispatcher(harness.control)
+    write_scopes = {"shell:read", "shell:write"}
+    path = tmp_path / "effect.txt"
+
+    async def dispatch(call, scopes=write_scopes):
+        return await dispatcher.dispatch(
+            repo,
+            lease,
+            call,
+            machine=harness.executor_id,
+            scopes=scopes,
+            expires=None,
+        )
+
+    def proposal(call_id, name, args):
+        return ModelToolCall(call_id, name, {"session_id": sid} | args)
+
+    write = proposal(
+        "write-effect",
+        "write_file",
+        {"path": str(path), "content": "alpha\nbeta\n"},
+    )
+    with pytest.raises(PermissionError, match="shell:write"):
+        await dispatch(write, {"shell:read"})
+    with pytest.raises(PermissionError, match="does not belong"):
+        await dispatch(
+            ModelToolCall(
+                "unowned-write",
+                "write_file",
+                write.arguments | {"session_id": new_session_id()},
+            )
+        )
+    assert not path.exists()
+    first = await dispatch(write)
+    assert first["structuredContent"]["created"] is True
+    assert path.read_text() == "alpha\nbeta\n"
+    read = await dispatch(
+        proposal("read-grounded", "read", {"path": str(path)})
+    )
+    snapshot = read["structuredContent"]["file"]["snapshot_id"]
+    edit = proposal(
+        "edit-effect",
+        "edit_lines",
+        {
+            "path": str(path),
+            "start_line": 1,
+            "end_line": 1,
+            "replacement": "ALPHA",
+            "snapshot_id": snapshot,
+        },
+    )
+    edited = await dispatch(edit)
+    assert path.read_text() == "ALPHA\nbeta\n"
+    assert await dispatch(edit) == edited
+    assert await dispatch(write) == first
+    assert path.read_text() == "ALPHA\nbeta\n"
+    read = await dispatch(
+        proposal("read-hashline", "read", {"path": str(path)})
+    )
+    snapshot = read["structuredContent"]["file"]["snapshot_id"]
+    hashline = proposal(
+        "hashline-effect",
+        "hashline_edit",
+        {
+            "input": f"[{read['structuredContent']['path']}#{snapshot}]\n2:beta\n+BETA"
+        },
+    )
+    changed = await dispatch(hashline)
+    assert changed["structuredContent"]["hunk_count"] == 1
+    assert path.read_text() == "ALPHA\nBETA\n"
+    assert await dispatch(hashline) == changed
+
+    if shutil.which("git"):
+        patch = proposal(
+            "patch-effect",
+            "apply_patch",
+            {
+                "cwd": str(tmp_path),
+                "patch": "diff --git a/effect.txt b/effect.txt\n--- a/effect.txt\n+++ b/effect.txt\n@@ -1,2 +1,2 @@\n ALPHA\n-BETA\n+GAMMA\n",
+            },
+        )
+        result = await dispatch(patch)
+        assert result["structuredContent"]["applied"] is True
+        assert await dispatch(patch) == result
+        assert path.read_text() == "ALPHA\nGAMMA\n"
+
+    native = harness.control.executor_transport.call
+
+    async def lose_reply(
+        executor_id, op, args=None, *, session_id=None, timeout_s=None
+    ):
+        response = await native(
+            executor_id, op, args, session_id=session_id, timeout_s=timeout_s
+        )
+        if op == "write_file":
+            raise TimeoutError("lost native write response")
+        return response
+
+    monkeypatch.setattr(harness.control.executor_transport, "call", lose_reply)
+    uncertain = proposal(
+        "lost-write", "write_file", {"path": str(path), "content": "once"}
+    )
+    with pytest.raises(ToolError, match="tool timeout"):
+        await dispatch(uncertain)
+    assert path.read_text() == "once"
+    monkeypatch.setattr(harness.control.executor_transport, "call", native)
+    path.write_text("later")
+    with pytest.raises(NativeCreationUncertain, match="do not resend"):
+        await dispatch(uncertain)
+    assert path.read_text() == "later"
+    delete = proposal(
+        "delete-effect", "delete_file_or_dir", {"path": str(path)}
+    )
+    deleted = await dispatch(delete)
+    assert not path.exists()
+    assert await dispatch(delete) == deleted
+    policy = "agent.machine_policy.conversation." + generation.conversation_id
+    WorkspaceRepository(repo.database).save_setting(
+        lease.owner, policy, {harness.executor_id: "read"}
+    )
+    with pytest.raises(PermissionError, match="read-only"):
+        await dispatch(write)
+    assert not path.exists()
