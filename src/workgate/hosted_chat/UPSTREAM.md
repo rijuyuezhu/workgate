@@ -192,7 +192,10 @@ the owned adapters. Mutation replay identities cannot cross retry and cancel
 ledgers. Session file inspection uses the canonical native MCP schema, router,
 watchdog and result projection; the explicit read-tool classification and
 periodic live authorization recheck follow the final pinned lsm_tool_registry.py.
-Only confirmed owned Sessions are eligible. General native tool dispatch and
+Only confirmed owned Sessions are eligible. PTY inspection further intersects
+confirmed conversation-owned Shell identities with native Session inventory;
+read receipts must match the exact reserved Shell and lists rebuild their
+model-visible text from filtered metadata. General native tool dispatch and
 runtime wiring follow.
 
 
