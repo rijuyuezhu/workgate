@@ -393,3 +393,48 @@ def test_copy_intent_authorizes_both_executors_and_revokes_on_destination_loss(
         reserve(repo, lease, retry_call, scopes={"shell:read", "shell:write"})
     pending = repo.cancellation_batch((MACHINE, OTHER))
     assert {row["id"] for row in pending} == {intent.id, retry.id}
+
+
+def test_retry_batch_shape_is_validated_before_reservation(bound):
+    from workgate.protocol.ids import new_reserved_job_id, new_session_id
+
+    database, _, lease = bound
+    repo = DurableTaskRepository(database)
+    sid = new_session_id()
+    jobs = [new_reserved_job_id(), new_reserved_job_id()]
+    for args in (
+        {"session_id": sid, "retry": []},
+        {"session_id": sid, "retry": jobs, "cancel": jobs},
+        {"session_id": sid, "retry": [jobs[0], jobs[0]]},
+        {
+            "session_id": sid,
+            "retry": [new_reserved_job_id() for _ in range(65)],
+        },
+    ):
+        with pytest.raises(ValueError):
+            repo.reserve_all(
+                lease,
+                ModelToolCall("invalid-batch", "job", args),
+                machine=MACHINE,
+                scopes=SCOPES,
+                expires=None,
+                registered=(MACHINE,),
+            )
+    with pytest.raises(ValueError, match="Use batch reservation"):
+        reserve(
+            repo,
+            lease,
+            ModelToolCall(
+                "single-only",
+                "job",
+                {
+                    "session_id": sid,
+                    "retry": jobs,
+                },
+            ),
+        )
+    with database.read_snapshot() as db:
+        assert (
+            db.execute("SELECT count(*) FROM agent_durable_tasks").fetchone()[0]
+            == 0
+        )

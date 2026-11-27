@@ -479,6 +479,91 @@ async def _native_result(
     }
 
 
+async def _dispatch_intent(
+    runtime: ControlRuntime,
+    repository: DurableTaskRepository,
+    lease: ActorLease,
+    intent: Intent,
+    call: ModelToolCall,
+    *,
+    scopes: set[str],
+    expires: int | None,
+) -> dict[str, Any]:
+    dispatch = repository.claim(
+        lease,
+        intent,
+        call,
+        scopes=scopes,
+        expires=expires,
+        registered=_registered(runtime),
+    )
+    # Only batch reservation can return a definitively refused stopped intent.
+    if intent.state == "stopped":
+        raise NativeRetryRejected("Native Job retry was not admitted")
+    try:
+        native_id, result = await asyncio.wait_for(
+            _native_result(runtime, intent, call, dispatch=dispatch),
+            timeout=tool_timeout_s(
+                call.name, config=runtime.config, args=call.arguments
+            ),
+        )
+    except NativeRetryRejected:
+        repository.reject_retry(lease, intent)
+        raise
+    confirmed = repository.bind(lease, intent, native_id)
+    if confirmed.state != "active":
+        raise PermissionError("Native creation was cancelled")
+    return result
+
+
+async def _dispatch_intents(
+    runtime: ControlRuntime,
+    repository: DurableTaskRepository,
+    lease: ActorLease,
+    intents: list[Intent],
+    call: ModelToolCall,
+    *,
+    scopes: set[str],
+    expires: int | None,
+) -> dict[str, Any]:
+    # The native Session lock serializes retries. Settle all admitted siblings
+    # independently, even when one response is lost; propagate the first error
+    # after persisting the remaining receipts, never replay a claimed attempt.
+    results = []
+    errors = []
+    for intent in intents:
+        try:
+            results.append(
+                await _dispatch_intent(
+                    runtime,
+                    repository,
+                    lease,
+                    intent,
+                    call,
+                    scopes=scopes,
+                    expires=expires,
+                )
+            )
+        except Exception as exc:
+            errors.append(exc)
+    if errors:
+        raise errors[0]
+    if len(results) == 1:
+        return results[0]
+    retried = [
+        job
+        for result in results
+        for job in JobOutput.model_validate(result).retried
+    ]
+    return JobOutput(operation="retry", retried=retried).model_dump(
+        mode="json"
+    ) | (
+        {"recovered": True}
+        if any(result.get("recovered") is True for result in results)
+        else {}
+    )
+
+
 async def create_native(
     runtime: ControlRuntime,
     repository: DurableTaskRepository,
@@ -515,7 +600,7 @@ async def create_native(
                 "Managed copy source Executor binding mismatch"
             )
         destination_machine = str(destination.executor_id)
-    intent = repository.reserve(
+    intents = repository.reserve_all(
         lease,
         call,
         machine=machine,
@@ -539,35 +624,19 @@ async def create_native(
             input=call.arguments,
         )
         try:
-            dispatch = repository.claim(
-                lease,
-                intent,
-                call,
-                scopes=scopes,
-                expires=expires,
-                registered=_registered(runtime),
-            )
-            try:
-                with audit_call_context(audit_id, sessions, tasks):
-                    native_id, result = await asyncio.wait_for(
-                        _native_result(
-                            runtime, intent, call, dispatch=dispatch
-                        ),
-                        timeout=tool_timeout_s(
-                            call.name,
-                            config=runtime.config,
-                            args=call.arguments,
-                        ),
-                    )
-            except NativeRetryRejected:
-                repository.reject_retry(lease, intent)
-                raise
-            confirmed = repository.bind(lease, intent, native_id)
-            if confirmed.state != "active":
-                raise PermissionError("Native creation was cancelled")
+            with audit_call_context(audit_id, sessions, tasks):
+                result = await _dispatch_intents(
+                    runtime,
+                    repository,
+                    lease,
+                    intents,
+                    call,
+                    scopes=scopes,
+                    expires=expires,
+                )
             # The receipt is durable even when access was revoked in flight.
             # Recheck the current authorization before returning it to the model.
-            repository.reserve(
+            repository.reserve_all(
                 lease,
                 call,
                 machine=machine,

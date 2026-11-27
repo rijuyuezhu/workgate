@@ -172,8 +172,12 @@ read and destination write authority separately; cancellation is fenced to
 the original copy attempt. Managed-copy retry derives both endpoints from the
 owned native Job intent, rechecks both grants and uses checkpoint-aware native
 retry admission. It shares exact-attempt classification with shell Jobs;
-rejected retries never release another attempt's lease. Public Job batch
-dispatch and runtime lifecycle wiring remain follow-ups.
+rejected retries never release another attempt's lease. A native multi-Job
+retry call is preflighted and reserved atomically (at most 64 distinct targets);
+each intent has its own key and the full immutable call fingerprint. Dispatch
+settles siblings independently and preserves request order on success. A
+definitive refusal or uncertain reply does not replay other native attempts.
+Public Job poll/cancel routing and runtime lifecycle wiring remain follow-ups.
 
 
 Agent authoring starts with the final upstream repository and validators.

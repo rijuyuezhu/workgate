@@ -1535,3 +1535,239 @@ async def test_managed_retry_rejects_active_attempt_then_recovers_lost_response(
         assert harness.executor.sessions.lookup(destination) is not None
     finally:
         await runtime.managed_jobs_runtime.aclose()
+
+
+def batch_intent_rows(repo, call_id):
+    with repo.database.read_snapshot() as db:
+        return {
+            row["target_job_id"]: dict(row)
+            for row in db.execute(
+                "SELECT * FROM agent_durable_tasks WHERE call_id=?", (call_id,)
+            )
+        }
+
+
+@pytest.mark.asyncio
+async def test_batch_retry_preflights_all_targets_and_recovers_in_order(
+    bound, tracked_shells, monkeypatch
+):
+    from workgate.protocol.ids import new_reserved_job_id
+
+    harness, repo, lease, generation = bound
+    started, killed = tracked_shells
+    _, sid = await native_session(harness, repo, lease)
+    ids = []
+    for index in range(2):
+        result = await invoke(
+            harness,
+            repo,
+            lease,
+            ModelToolCall(
+                f"job-{index}",
+                "bash",
+                {
+                    "session_id": sid,
+                    "command": f"tracked-{index}",
+                    "async_": True,
+                },
+            ),
+        )
+        ids.append(result["result"]["job_id"])
+    assert (
+        await harness.call(
+            harness.executor_id, "job", {"cancel": ids}, session_id=sid
+        )
+    ).ok
+    run, actor = await next_generation(repo, lease, generation, "retry batch")
+    transport = harness.control.executor_transport
+    original = transport.call
+    offered = []
+
+    async def lost(
+        executor_id, op, args=None, *, session_id=None, timeout_s=None
+    ):
+        result = await original(
+            executor_id, op, args, session_id=session_id, timeout_s=timeout_s
+        )
+        if op == JOB_RETRY_RESERVED_OP:
+            assert args is not None and result.ok
+            rows = batch_intent_rows(repo, "batch")
+            assert set(rows) == set(ids)
+            offered.append(args["job_id"])
+            if args["job_id"] == ids[0]:
+                raise TimeoutError("first response lost")
+        return result
+
+    monkeypatch.setattr(transport, "call", lost)
+    call = ModelToolCall("batch", "job", {"session_id": sid, "retry": ids})
+    with pytest.raises(PermissionError, match="does not belong"):
+        await invoke(
+            harness,
+            repo,
+            actor,
+            ModelToolCall(
+                "foreign-batch",
+                "job",
+                {"session_id": sid, "retry": [ids[0], new_reserved_job_id()]},
+            ),
+        )
+    assert batch_intent_rows(repo, "foreign-batch") == {}
+    assert offered == [] and len(started) == 2
+    with pytest.raises(TimeoutError):
+        await invoke(harness, repo, actor, call)
+    rows = batch_intent_rows(repo, "batch")
+    assert rows[ids[0]]["state"] == "unknown"
+    assert rows[ids[1]]["state"] == "active"
+    assert len({row["idempotency_key"] for row in rows.values()}) == 2
+    assert all(row["native_attempt"] == 2 for row in rows.values())
+    assert offered == ids and len(started) == 4
+    for changed in (
+        ModelToolCall("batch", "job", {"session_id": sid, "retry": ids[::-1]}),
+        ModelToolCall("batch", "job", {"session_id": sid, "retry": ids[:1]}),
+        ModelToolCall("batch", "task", {"action": "create"}),
+    ):
+        with pytest.raises(PermissionError, match="cannot change"):
+            await invoke(harness, repo, actor, changed)
+    recovered = await invoke(harness, repo, actor, call)
+    assert recovered["recovered"] is True
+    assert [job["job_id"] for job in recovered["retried"]] == ids
+    assert [job["attempts"] for job in recovered["retried"]] == [2, 2]
+    assert offered == ids and len(started) == 4
+    repo.cancel_run(actor.owner, run.run_id)
+    assert await sweep_native_cancellations(harness.control, repo) == 2
+    assert all(
+        row["state"] == "stopped"
+        for row in batch_intent_rows(repo, "batch").values()
+    )
+    assert killed == started
+
+
+@pytest.mark.asyncio
+async def test_batch_retry_replays_definitive_refusal_without_reoffering_siblings(
+    bound, tracked_shells, monkeypatch
+):
+    harness, repo, lease, _ = bound
+    started, _ = tracked_shells
+    _, sid = await native_session(harness, repo, lease)
+    ids = []
+    for index in range(2):
+        result = await invoke(
+            harness,
+            repo,
+            lease,
+            ModelToolCall(
+                f"job-{index}",
+                "bash",
+                {"session_id": sid, "command": "tracked", "async_": True},
+            ),
+        )
+        ids.append(result["result"]["job_id"])
+    # The first is still active; the second can be retried.
+    assert (
+        await harness.call(
+            harness.executor_id, "job", {"cancel": ids[1:]}, session_id=sid
+        )
+    ).ok
+    original = harness.control.executor_transport.call
+    offered = []
+
+    async def trace(
+        executor_id, op, args=None, *, session_id=None, timeout_s=None
+    ):
+        if op == JOB_RETRY_RESERVED_OP:
+            assert args is not None
+            offered.append(args["job_id"])
+        return await original(
+            executor_id, op, args, session_id=session_id, timeout_s=timeout_s
+        )
+
+    monkeypatch.setattr(harness.control.executor_transport, "call", trace)
+    call = ModelToolCall(
+        "batch-refusal", "job", {"session_id": sid, "retry": ids}
+    )
+    for _ in range(2):
+        with pytest.raises(NativeRetryRejected):
+            await invoke(harness, repo, lease, call)
+    rows = batch_intent_rows(repo, "batch-refusal")
+    assert (
+        rows[ids[0]]["state"] == "stopped" and rows[ids[0]]["native_id"] is None
+    )
+    assert rows[ids[1]]["state"] == "active"
+    assert offered == ids and len(started) == 3
+
+
+@pytest.mark.asyncio
+async def test_mixed_retry_batch_preflights_each_native_grant(
+    bound, tracked_shells, monkeypatch
+):
+    from workgate.control.session_copy import SESSION_COPY_MANAGED_KIND
+
+    harness, repo, lease, generation = bound
+    started, _ = tracked_shells
+    runtime = harness.control
+    source, destination = await copy_sessions(harness, repo, lease)
+    entered = asyncio.Event()
+    copy_attempts = []
+
+    async def wait(_context, _payload):
+        copy_attempts.append(1)
+        entered.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setitem(
+        runtime.managed_jobs_runtime.handlers, SESSION_COPY_MANAGED_KIND, wait
+    )
+    await runtime.managed_jobs_runtime.start()
+    try:
+        _, shell = await create_tracked_job(harness, repo, lease, source)
+        copy_result = await invoke(
+            harness,
+            repo,
+            lease,
+            ModelToolCall(
+                "copy",
+                "session_copy",
+                {
+                    "src_session_id": source,
+                    "src_path": "a",
+                    "dst_session_id": destination,
+                    "dst_path": "b",
+                },
+            ),
+        )
+        managed = copy_result["job_id"]
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        with control_execution_context(
+            config=runtime.config,
+            state_store=runtime.state_store,
+            oauth_state=runtime.oauth_state,
+            managed_jobs_runtime=runtime.managed_jobs_runtime,
+        ):
+            await runtime.job_service.execute(
+                session_id=source, cancel=[managed, shell]
+            )
+        _, actor = await next_generation(repo, lease, generation, "mixed retry")
+        call = ModelToolCall(
+            "mixed", "job", {"session_id": source, "retry": [managed, shell]}
+        )
+        with pytest.raises(PermissionError, match="shell:execute"):
+            await invoke(
+                harness, repo, actor, call, scopes={"shell:read", "shell:write"}
+            )
+        assert batch_intent_rows(repo, "mixed") == {}
+        assert len(copy_attempts) == len(started) == 1
+        entered.clear()
+        result = await invoke(harness, repo, actor, call)
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        assert [job["job_id"] for job in result["retried"]] == [managed, shell]
+        assert [job["kind"] for job in result["retried"]] == [
+            "managed",
+            "shell",
+        ]
+        assert [job["attempts"] for job in result["retried"]] == [2, 2]
+        rows = batch_intent_rows(repo, "mixed")
+        assert rows[managed]["destination_session_id"] == destination
+        assert rows[shell]["destination_session_id"] is None
+        assert len(copy_attempts) == len(started) == 2
+    finally:
+        await runtime.managed_jobs_runtime.aclose()

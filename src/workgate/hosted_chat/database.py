@@ -515,6 +515,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_durable_native
     ON agent_durable_tasks(machine,kind,native_id)
     WHERE native_id IS NOT NULL AND kind != 'retry';
 CREATE INDEX IF NOT EXISTS idx_agent_durable_recovery ON agent_durable_tasks(state,next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_agent_durable_call ON agent_durable_tasks(owner,run_id,call_id);
 CREATE TABLE IF NOT EXISTS agent_run_cancellations (
     run_id TEXT PRIMARY KEY,
     created_at INTEGER NOT NULL
