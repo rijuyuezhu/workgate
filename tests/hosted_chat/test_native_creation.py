@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import shutil
 import time
 
 import pytest
@@ -2207,7 +2208,14 @@ async def test_owned_file_reads_use_native_catalog_and_live_acl(
     ):
         result = await dispatch(name, {"session_id": sid} | values)
         assert not result.get("isError")
-        assert "owned.txt" in str(result["structuredContent"])
+        if name == "search" and shutil.which("rg") is None:
+            # Native search is optional on this platform. The canonical tool
+            # reports the missing executable rather than inventing matches.
+            assert result["structuredContent"]["ok"] is False
+            assert result["structuredContent"]["matches"] == []
+            assert "rg:" in result["structuredContent"]["stderr"]
+        else:
+            assert "owned.txt" in str(result["structuredContent"])
 
     with pytest.raises(PermissionError, match="does not belong"):
         await dispatch("read", args | {"session_id": new_session_id()})
