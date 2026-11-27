@@ -42,7 +42,7 @@ from .native_tool_kinds import (
 )
 from .provider_common import ModelToolCall, complete_tool_batch
 from .storage import WorkspaceRepository, _now
-from .subagent_scope import SubagentScope
+from .subagent_scope import SubagentGraphScope, SubagentScope
 
 
 def _task_metadata_effect(call: ModelToolCall) -> bool:
@@ -206,7 +206,10 @@ class DurableTaskRepository:
         self,
         database: SQLiteDatabase,
         *,
-        scope: GraphMemberScope | SubagentScope | None = None,
+        scope: GraphMemberScope
+        | SubagentScope
+        | SubagentGraphScope
+        | None = None,
     ):
         self.database = database
         self.scope = scope
@@ -216,7 +219,7 @@ class DurableTaskRepository:
     ) -> tuple[set[str], int | None]:
         return (
             self.scope.effective_grant(scopes, expires)
-            if isinstance(self.scope, SubagentScope)
+            if isinstance(self.scope, (SubagentScope, SubagentGraphScope))
             else (scopes, expires)
         )
 
@@ -286,7 +289,9 @@ class DurableTaskRepository:
         return agent
 
     @staticmethod
-    def _child_scope_for_run(db, run) -> SubagentScope | None:
+    def _child_scope_for_run(
+        db, run
+    ) -> SubagentScope | SubagentGraphScope | None:
         namespace = run["member_namespace"]
         if namespace is None or ":child:" not in namespace:
             return None
@@ -299,10 +304,20 @@ class DurableTaskRepository:
         if row is None:
             raise PermissionError("Native child generation no longer exists")
         try:
-            record = json.loads(row["state"])["ownedSubagentScopes"][namespace]
-            scope = SubagentScope.from_record(record)
+            child_namespace, separator, activation = namespace.partition(
+                ":graph:team:member:"
+            )
+            record = json.loads(row["state"])["ownedSubagentScopes"][
+                child_namespace
+            ]
+            child = SubagentScope.from_record(record)
+            scope = (
+                SubagentGraphScope(child, run["member_agent_id"], activation)
+                if separator
+                else child
+            )
             if (
-                scope.run_id != run_id
+                child.run_id != run_id
                 or scope.checkpoint_namespace != namespace
                 or scope.member_id != run["member_agent_id"]
             ):
@@ -317,7 +332,11 @@ class DurableTaskRepository:
     def _agents_for_run(cls, db, run) -> tuple[dict | None, ...]:
         scope = cls._child_scope_for_run(db, run)
         if scope is not None:
-            return scope.resolve_owned(db, run["owner"], scope.run_id)
+            return scope.resolve_owned(
+                db,
+                run["owner"],
+                run["run_id"] if "run_id" in dict(run) else run["id"],
+            )
         root = cls._agent_for_run(db, run)
         member_id = run["member_agent_id"]
         if member_id is None or member_id == run["agent_id"]:

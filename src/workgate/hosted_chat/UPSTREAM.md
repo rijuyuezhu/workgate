@@ -554,3 +554,11 @@ private to the admitted child, with all member revisions pinned. The member
 loop cannot use the scheduler namespace or another member's storage.
 Native team graph execution and historical native-effect provenance are
 separate integration units; the team schema is not advertised yet.
+
+Team delegation reuses the official StateGraph driver and native member
+loop. The synthetic root definition is pinned to the admitted child digest;
+all team members retain the parent authorization ceiling and isolated native
+call identity. Only the designated result member is projected to the parent.
+No parent steering or human interrupt is applied inside a private child team;
+team advertisement requires the optional graph runtime. Detached child
+leases and public routing remain separate work.

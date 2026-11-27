@@ -78,6 +78,16 @@ class SubagentScope:
     remaining_depth: int
     scopes: tuple[str, ...]
     grant_expires: int | None
+    team_definition_hash: str | None = None
+
+    def assert_team_root(self, root: dict) -> None:
+        if (
+            self.team_definition_hash is None
+            or _digest(root) != self.team_definition_hash
+        ):
+            raise PermissionError(
+                "Team graph definition does not match its admission"
+            )
 
     @property
     def parent_namespace(self) -> str:
@@ -387,6 +397,10 @@ class SubagentScope:
                 invocation.remaining_depth,
                 tuple(sorted(invocation.scopes)),
                 expires,
+                _digest(invocation.agent)
+                if invocation.agent.get("graphAgentIds")
+                or invocation.agent.get("edges")
+                else None,
             )
             if active.get(NAMESPACE_KEY) != scope.parent_namespace:
                 raise PermissionError(
@@ -463,7 +477,10 @@ class SubagentGraphScope:
         chain = self.team.resolve_owned(
             db, owner, run_id, current_edges=current_edges
         )
-        if not self.team.target_revisions:
+        if (
+            not self.team.target_revisions
+            or self.team.team_definition_hash is None
+        ):
             raise PermissionError("Team graph requires an admitted saved Agent")
         if self.member_id is None and self.activation_id is None:
             return chain
