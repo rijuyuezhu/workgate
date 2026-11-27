@@ -272,6 +272,8 @@ class SubagentScope:
         checkpoint: _ParentCheckpoint,
         call: ModelToolCall,
         invocation: SubagentInvocation,
+        *,
+        disclosure_access: dict | None = None,
     ) -> SubagentScope:
         lease = checkpoint.lease
         active = checkpoint.active["configurable"]
@@ -334,6 +336,10 @@ class SubagentScope:
         # change child input or enlarge the originally admitted grant.
         fingerprint.pop("scopes")
         fingerprint.pop("grant_expires")
+        # A completed private child may be recovered before the parent receipt
+        # is committed. Bind the original disclosure ceiling at admission.
+        if disclosure_access is not None:
+            fingerprint["disclosure_access"] = disclosure_access
         with lease.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             lease.assert_current(db)

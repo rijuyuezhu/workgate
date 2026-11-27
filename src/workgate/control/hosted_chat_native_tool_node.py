@@ -4,8 +4,10 @@ import copy
 import json
 import time
 from collections.abc import Awaitable, Callable, Collection
+from typing import Protocol
 
 from ..hosted_chat.agent_runtime import (
+    AgentContext,
     AgentLoopState,
     AgentSuspended,
     ToolBatchOutput,
@@ -38,9 +40,28 @@ from ..hosted_chat.mcp_projection import native_tool_history_message
 from ..hosted_chat.provider_common import ModelToolCall, complete_tool_batch
 from ..hosted_chat.storage import WorkspaceRepository
 from ..hosted_chat.subagent_scope import SubagentScope
+from ..hosted_chat.subagents import SUBAGENT_TOOL_NAME
 from .hosted_chat_native_creation import _grant, _registered
 from .hosted_chat_native_dispatch import NativeToolDispatcher, _selected_tools
 from .runtime import ControlRuntime
+
+
+class Delegation(Protocol):
+    def definitions(self) -> list[dict]: ...
+    def validate(self, call: ModelToolCall) -> None: ...
+    def authorize_receipt(
+        self, node: NativeLoopToolNode, call: ModelToolCall, record: dict
+    ) -> None: ...
+    async def invoke(
+        self,
+        node: NativeLoopToolNode,
+        call: ModelToolCall,
+        context: AgentContext,
+        authorize_effects: Callable[
+            [list[ModelToolCall], AgentLoopState], Awaitable[None]
+        ]
+        | None,
+    ) -> tuple[dict, dict]: ...
 
 
 class NativeLoopToolNode:
@@ -63,6 +84,7 @@ class NativeLoopToolNode:
         task_machine: str | None,
         check_grant: Callable[[], None],
         activation: GraphActivation | None = None,
+        delegation: Delegation | None = None,
     ) -> None:
         self.runtime = runtime
         self.repository = repository
@@ -73,6 +95,7 @@ class NativeLoopToolNode:
         self.task_machine = task_machine
         self._check_grant = check_grant
         self.activation = activation
+        self.delegation = delegation
         if (
             (activation is not None and activation.scope != checkpoint.scope)
             or repository.scope != checkpoint.scope
@@ -199,6 +222,10 @@ class NativeLoopToolNode:
         for call in calls:
             if is_transfer_tool(call.name):
                 self._transfer(call, [])
+            elif call.name == SUBAGENT_TOOL_NAME:
+                if self.delegation is None:
+                    raise PermissionError("Foreground delegation is disabled")
+                self.delegation.validate(call)
         self.native.prepare_model_batch(
             self.repository,
             self.checkpoint.lease,
@@ -206,7 +233,8 @@ class NativeLoopToolNode:
                 call
                 for call in calls
                 if not is_transfer_tool(call.name)
-                and call.name != ASK_USER_QUESTION_TOOL_NAME
+                and call.name
+                not in {ASK_USER_QUESTION_TOOL_NAME, SUBAGENT_TOOL_NAME}
             ],
             allowed_tools=self.allowed_tools,
             task_machine=self.task_machine,
@@ -228,6 +256,8 @@ class NativeLoopToolNode:
         if self._question_enabled(agent):
             state.context.tools.extend(copy.deepcopy(ASK_USER_TOOLS))
         state.context.tools.extend(copy.deepcopy(self._handoffs()[1]))
+        if self.delegation is not None:
+            state.context.tools.extend(self.delegation.definitions())
 
     def preflight(
         self, calls: list[ModelToolCall], state: AgentLoopState
@@ -289,14 +319,25 @@ class NativeLoopToolNode:
             "task_machine": self.task_machine,
         }
 
-    def _authorize_receipt(self, _call: ModelToolCall, receipt: dict) -> None:
-        if not isinstance(receipt, dict) or set(receipt) != {
-            "result",
-            "access",
-        }:
+    def _authorize_receipt(self, call: ModelToolCall, receipt: dict) -> None:
+        expected = {"result", "access"}
+        if call.name == SUBAGENT_TOOL_NAME:
+            expected.add("childScope")
+        if not isinstance(receipt, dict) or set(receipt) != expected:
             raise PermissionError(
                 "Native receipt lacks disclosure authorization evidence"
             )
+        if call.name == SUBAGENT_TOOL_NAME:
+            if self.delegation is None:
+                raise PermissionError("Foreground delegation is disabled")
+            self.delegation.validate(call)
+            if receipt["childScope"] is None:
+                if receipt["result"].get("isError") is not True:
+                    raise PermissionError("Subagent receipt lacks child scope")
+            else:
+                self.delegation.authorize_receipt(
+                    self, call, receipt["childScope"]
+                )
         access = receipt["access"]
         if not isinstance(access, dict) or set(access) != {
             "scopes",
@@ -348,6 +389,7 @@ class NativeLoopToolNode:
         effective: dict[str, ModelToolCall] = {}
         blocked: dict[str, str] = {}
         reviewed: set[str] = set()
+        child_scopes: dict[str, dict] = {}
 
         def check() -> None:
             self.current_grant()
@@ -360,6 +402,8 @@ class NativeLoopToolNode:
             enabled |= {
                 tool["function"]["name"] for tool in self._handoffs()[1]
             }
+            if self.delegation is not None and self.delegation.definitions():
+                enabled |= {SUBAGENT_TOOL_NAME}
             if any(call.name not in enabled for call in calls):
                 raise PermissionError("Native tool no longer selected")
 
@@ -409,6 +453,14 @@ class NativeLoopToolNode:
                 return {
                     "graphCommand": self._transfer(prepared, state.messages)
                 }
+            if prepared.name == SUBAGENT_TOOL_NAME:
+                if self.delegation is None:
+                    raise PermissionError("Foreground delegation is disabled")
+                result, scope = await self.delegation.invoke(
+                    self, prepared, state.context, authorize_effects
+                )
+                child_scopes[call.call_id] = scope
+                return result
             scopes, expires = self.current_grant()
             return await self.native.dispatch_model_call(
                 self.repository,
@@ -427,7 +479,10 @@ class NativeLoopToolNode:
                 raise PermissionError(
                     "Native receipt disclosure grant changed during execution"
                 )
-            return {"result": result, "access": access}
+            receipt: dict = {"result": result, "access": access}
+            if call.name == SUBAGENT_TOOL_NAME:
+                receipt["childScope"] = child_scopes.get(call.call_id)
+            return receipt
 
         async def preflight_unsettled(unsettled: list[ModelToolCall]) -> None:
             child = isinstance(self.checkpoint.scope, SubagentScope)
@@ -459,6 +514,13 @@ class NativeLoopToolNode:
                         raise ValueError("Unsupported native approval decision")
                     reviewed.add(call.call_id)
                     effective[call.call_id] = entry.tool_call()
+                    if (
+                        call.name == SUBAGENT_TOOL_NAME
+                        and effective[call.call_id] != call
+                    ):
+                        raise PermissionError(
+                            "Edited delegation requires a new child admission"
+                        )
                 elif decision.get("decision") == "ask":
                     if child:
                         blocked[call.call_id] = (
