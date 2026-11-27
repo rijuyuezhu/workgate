@@ -2162,8 +2162,8 @@ async def test_unified_owned_job_dispatch_uses_exact_operation_adapters(
 async def test_owned_file_reads_use_native_catalog_and_live_acl(
     bound, tmp_path
 ):
-    from workgate.control.hosted_chat_session_read import (
-        NativeSessionReadDispatcher,
+    from workgate.control.hosted_chat_session_tools import (
+        NativeSessionDispatcher,
     )
     from workgate.protocol.ids import new_session_id
 
@@ -2171,7 +2171,7 @@ async def test_owned_file_reads_use_native_catalog_and_live_acl(
     runtime = harness.control
     _, sid = await native_session(harness, repo, lease)
     (tmp_path / "owned.txt").write_text("native file payload\n")
-    dispatcher = NativeSessionReadDispatcher(runtime)
+    dispatcher = NativeSessionDispatcher(runtime)
 
     async def dispatch(name, args, scopes=None):
         return await dispatcher.dispatch(
@@ -2247,8 +2247,8 @@ async def test_owned_file_reads_use_native_catalog_and_live_acl(
 async def test_owned_file_read_discards_result_on_revocation(
     bound, tmp_path, monkeypatch
 ):
-    from workgate.control.hosted_chat_session_read import (
-        NativeSessionReadDispatcher,
+    from workgate.control.hosted_chat_session_tools import (
+        NativeSessionDispatcher,
     )
 
     harness, repo, lease, generation = bound
@@ -2274,7 +2274,7 @@ async def test_owned_file_read_discards_result_on_revocation(
         return result
 
     monkeypatch.setattr(transport, "call", revoked)
-    dispatcher = NativeSessionReadDispatcher(runtime)
+    dispatcher = NativeSessionDispatcher(runtime)
     with pytest.raises(PermissionError):
         await dispatcher.dispatch(
             repo,
@@ -2294,8 +2294,8 @@ async def test_owned_file_read_discards_result_on_revocation(
 async def test_owned_file_read_rechecks_while_native_call_is_pending(
     bound, tmp_path, monkeypatch
 ):
-    from workgate.control.hosted_chat_session_read import (
-        NativeSessionReadDispatcher,
+    from workgate.control.hosted_chat_session_tools import (
+        NativeSessionDispatcher,
     )
 
     harness, repo, lease, generation = bound
@@ -2324,7 +2324,7 @@ async def test_owned_file_read_rechecks_while_native_call_is_pending(
             released.set()
 
     monkeypatch.setattr(transport, "call", delayed)
-    dispatcher = NativeSessionReadDispatcher(runtime)
+    dispatcher = NativeSessionDispatcher(runtime)
     task = asyncio.create_task(
         dispatcher.dispatch(
             repo,
@@ -2364,8 +2364,8 @@ async def test_owned_shell_read_and_list_hide_unowned_native_handles(
     reserved_shell_backend,
     monkeypatch,
 ):
-    from workgate.control.hosted_chat_session_read import (
-        NativeSessionReadDispatcher,
+    from workgate.control.hosted_chat_session_tools import (
+        NativeSessionDispatcher,
     )
     from workgate.protocol.ids import new_reserved_shell_id
     from workgate.schemas.result_models.shell import (
@@ -2409,7 +2409,7 @@ async def test_owned_shell_read_and_list_hide_unowned_native_handles(
     monkeypatch.setattr(
         shell_service, "read_persistent_shell_output_execute", read
     )
-    dispatcher = NativeSessionReadDispatcher(harness.control)
+    dispatcher = NativeSessionDispatcher(harness.control)
 
     async def dispatch(name, args):
         return await dispatcher.dispatch(
@@ -2538,3 +2538,190 @@ async def test_owned_shell_cancel_is_durable_and_replay_does_not_kill_other_shel
             )
         )
     assert killed == [owned] and started == {foreign: sid}
+
+
+@pytest.mark.asyncio
+async def test_owned_shell_effects_are_claimed_once_and_fenced_on_replay(
+    bound,
+    reserved_shell_backend,
+    monkeypatch,
+):
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from workgate.control.hosted_chat_session_tools import (
+        NativeSessionDispatcher,
+    )
+    from workgate.protocol.ids import new_reserved_shell_id
+    from workgate.schemas.result_models.shell import (
+        ResizePersistentShellOutput,
+        SendPersistentShellInputOutput,
+    )
+
+    harness, repo, lease, generation = bound
+    started, _ = reserved_shell_backend
+    _, sid = await native_session(harness, repo, lease)
+    result = await invoke(
+        harness,
+        repo,
+        lease,
+        ModelToolCall(
+            "shell-effect-start",
+            "bash",
+            {"session_id": sid, "pty": True, "command": "shell"},
+        ),
+    )
+    owned = result["result"]["shell_id"]
+    foreign = new_reserved_shell_id()
+    started[foreign] = sid
+    sent = []
+    resized = []
+
+    async def send(_config, shell_id, input_text, enter=True):
+        sent.append((shell_id, input_text, enter))
+        return SendPersistentShellInputOutput(
+            shell_id=shell_id, sent_bytes=len(input_text.encode()), enter=enter
+        )
+
+    async def resize(_config, shell_id, cols, rows):
+        resized.append((shell_id, cols, rows))
+        return ResizePersistentShellOutput(
+            shell_id=shell_id,
+            cols=cols,
+            rows=rows,
+            resized=True,
+            backend="fake",
+        )
+
+    monkeypatch.setattr(
+        shell_service, "send_persistent_shell_input_execute", send
+    )
+    monkeypatch.setattr(
+        shell_service, "resize_persistent_shell_execute", resize
+    )
+    dispatcher = NativeSessionDispatcher(harness.control)
+    send_call = ModelToolCall(
+        "send-effect",
+        "send_persistent_shell_input",
+        {
+            "session_id": sid,
+            "shell_id": owned,
+            "input_text": "hello",
+        },
+    )
+    resize_call = ModelToolCall(
+        "resize-effect",
+        "resize_persistent_shell",
+        {
+            "session_id": sid,
+            "shell_id": owned,
+            "cols": 100,
+            "rows": 30,
+        },
+    )
+
+    async def dispatch(call, scopes=SCOPES):
+        return await dispatcher.dispatch(
+            repo,
+            lease,
+            call,
+            machine=harness.executor_id,
+            scopes=scopes,
+            expires=None,
+        )
+
+    with pytest.raises(PermissionError, match="shell:execute"):
+        await dispatch(send_call, {"shell:read", "shell:write"})
+    with pytest.raises(PermissionError, match="Shell does not belong"):
+        await dispatch(
+            ModelToolCall(
+                "foreign-effect",
+                send_call.name,
+                send_call.arguments | {"shell_id": foreign},
+            )
+        )
+    assert not sent
+    result = await dispatch(send_call)
+    assert result["structuredContent"]["sent_bytes"] == 5
+    assert await dispatch(send_call) == result
+    assert sent == [(owned, "hello", True)]
+    with pytest.raises(PermissionError, match="cannot change"):
+        await dispatch(
+            ModelToolCall(
+                send_call.call_id, resize_call.name, resize_call.arguments
+            )
+        )
+    with pytest.raises(PermissionError, match="cannot change"):
+        await invoke(
+            harness,
+            repo,
+            lease,
+            ModelToolCall(
+                send_call.call_id,
+                "bash",
+                {
+                    "session_id": sid,
+                    "async_": True,
+                    "command": "unused",
+                },
+            ),
+        )
+    result = await dispatch(resize_call)
+    assert result["structuredContent"]["resized"] is True
+    assert await dispatch(resize_call) == result
+    assert resized == [(owned, 100, 30)]
+
+    native = harness.control.executor_transport.call
+
+    async def lose_reply(
+        executor_id, op, args=None, *, session_id=None, timeout_s=None
+    ):
+        result = await native(
+            executor_id, op, args, session_id=session_id, timeout_s=timeout_s
+        )
+        if op == "send_persistent_shell_input":
+            with repo.database.connect() as db:
+                assert (
+                    db.execute(
+                        "SELECT receipt FROM agent_native_effect_calls WHERE call_id='lost-effect'"
+                    ).fetchone()[0]
+                    is None
+                )
+            raise TimeoutError("lost input response")
+        return result
+
+    monkeypatch.setattr(harness.control.executor_transport, "call", lose_reply)
+    lost = ModelToolCall(
+        "lost-effect",
+        send_call.name,
+        send_call.arguments | {"input_text": "once"},
+    )
+    with pytest.raises(ToolError, match="tool timeout"):
+        await dispatch(lost)
+    monkeypatch.setattr(harness.control.executor_transport, "call", native)
+    with pytest.raises(NativeCreationUncertain, match="do not resend"):
+        await dispatch(lost)
+    assert sent == [(owned, "hello", True), (owned, "once", True)]
+    from workgate.control.hosted_chat_cancellation import cancel_native_shell
+
+    with pytest.raises(PermissionError, match="cannot change"):
+        await cancel_native_shell(
+            harness.control,
+            repo,
+            lease,
+            ModelToolCall(
+                lost.call_id,
+                "kill_persistent_shell",
+                {"session_id": sid, "shell_id": owned},
+            ),
+            machine=harness.executor_id,
+            scopes=SCOPES,
+            expires=None,
+        )
+    WorkspaceRepository(repo.database).save_setting(
+        lease.owner,
+        "agent.machine_policy.conversation." + generation.conversation_id,
+        {harness.executor_id: "read"},
+    )
+    with pytest.raises(PermissionError, match="read-only"):
+        await dispatch(send_call)
+    assert started[owned] == sid and started[foreign] == sid
