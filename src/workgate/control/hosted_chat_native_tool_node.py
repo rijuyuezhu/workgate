@@ -1,6 +1,7 @@
 """Private native tool node for the checkpointed Hosted Chat Agent loop."""
 
 import copy
+import json
 import time
 from collections.abc import Awaitable, Callable, Collection
 
@@ -11,6 +12,12 @@ from ..hosted_chat.agent_runtime import (
 )
 from ..hosted_chat.approval_claims import ApprovalClaimStore
 from ..hosted_chat.approval_settings import call_decision, effective_mode
+from ..hosted_chat.ask_user_tools import (
+    ASK_USER_QUESTION_TOOL_NAME,
+    ASK_USER_TOOLS,
+    ask_user_requested,
+    build_ask_user_payload,
+)
 from ..hosted_chat.durable_tasks import DurableTaskRepository
 from ..hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
 from ..hosted_chat.loop_receipts import execute_checkpointed_batch
@@ -76,6 +83,22 @@ class NativeLoopToolNode:
             raise PermissionError("Native tool principal grant was reduced")
         return scopes, expires
 
+    def _question_enabled(self, agent: dict | None) -> bool:
+        # For ephemeral turns the trusted caller supplies the opt-in through
+        # allowed_tools. Saved Agents must also retain their explicit selection.
+        return ASK_USER_QUESTION_TOOL_NAME in self.allowed_tools and (
+            agent is None or ask_user_requested(agent, {})
+        )
+
+    @staticmethod
+    def _validate_question_batch(calls: list[ModelToolCall]) -> None:
+        if any(call.name == ASK_USER_QUESTION_TOOL_NAME for call in calls):
+            if len(calls) != 1:
+                raise ValueError(
+                    "Ask User cannot run in parallel with another tool"
+                )
+            build_ask_user_payload(calls[0].arguments, calls[0].call_id)
+
     async def refresh_tools(self, state: AgentLoopState) -> None:
         scopes, expires = self.current_grant()
         state.context.tools = await self.native.definitions(
@@ -87,6 +110,9 @@ class NativeLoopToolNode:
             task_machine=self.task_machine,
         )
         self.current_grant()
+        _, agent = self.repository.tool_context(self.checkpoint.lease)
+        if self._question_enabled(agent):
+            state.context.tools.extend(copy.deepcopy(ASK_USER_TOOLS))
 
     def preflight(
         self, calls: list[ModelToolCall], state: AgentLoopState
@@ -96,6 +122,12 @@ class NativeLoopToolNode:
         shown = {tool["function"]["name"] for tool in state.context.tools}
         if any(call.name not in shown for call in calls):
             raise PermissionError("Native tool was not advertised")
+        self._validate_question_batch(calls)
+        if calls and calls[0].name == ASK_USER_QUESTION_TOOL_NAME:
+            _, agent = self.repository.tool_context(self.checkpoint.lease)
+            if not self._question_enabled(agent):
+                raise PermissionError("Ask User is no longer selected")
+            return calls
         prepared = self.native.prepare_model_batch(
             self.repository,
             self.checkpoint.lease,
@@ -125,6 +157,7 @@ class NativeLoopToolNode:
         | None = None,
     ) -> ToolBatchOutput:
         calls = copy.deepcopy(complete_tool_batch(calls))
+        self._validate_question_batch(calls)
         claim_store = ApprovalClaimStore(self.repository.database)
         effective: dict[str, ModelToolCall] = {}
         blocked: dict[str, str] = {}
@@ -134,6 +167,8 @@ class NativeLoopToolNode:
             self.current_grant()
             _, agent = self.repository.tool_context(self.checkpoint.lease)
             enabled = _selected_tools(agent, self.allowed_tools)
+            if self._question_enabled(agent):
+                enabled = enabled | {ASK_USER_QUESTION_TOOL_NAME}
             if any(call.name not in enabled for call in calls):
                 raise PermissionError("Native tool no longer selected")
 
@@ -163,6 +198,22 @@ class NativeLoopToolNode:
             if call.call_id in blocked:
                 return rejected(blocked[call.call_id])
             prepared = effective[call.call_id]
+            if prepared.name == ASK_USER_QUESTION_TOOL_NAME:
+                answer = claim_store.answered_question(self.checkpoint)
+                if answer is None:
+                    raise RuntimeError("Missing durable Ask User answer")
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(
+                                answer,
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            ),
+                        }
+                    ]
+                }
             scopes, expires = self.current_grant()
             return await self.native.dispatch_model_call(
                 self.repository,
@@ -210,10 +261,15 @@ class NativeLoopToolNode:
                     "Native approval policy changed after review"
                 )
             candidates = [*effective.values(), *ask]
+            self._validate_question_batch(candidates)
             self.native.prepare_model_batch(
                 self.repository,
                 self.checkpoint.lease,
-                candidates,
+                [
+                    call
+                    for call in candidates
+                    if call.name != ASK_USER_QUESTION_TOOL_NAME
+                ],
                 allowed_tools=self.allowed_tools,
                 task_machine=self.task_machine,
             )
@@ -225,6 +281,14 @@ class NativeLoopToolNode:
                 raise AgentSuspended("Waiting for native tool approval")
             for call in effective.values():
                 refresh_decision(call)
+            if candidates and candidates[0].name == ASK_USER_QUESTION_TOOL_NAME:
+                original = unsettled[0]
+                if (
+                    original.call_id not in blocked
+                    and claim_store.answered_question(self.checkpoint) is None
+                ):
+                    claim_store.pause_question(self.checkpoint, original)
+                    raise AgentSuspended("Waiting for Ask User answer")
 
         outputs = await execute_checkpointed_batch(
             self.checkpoint,

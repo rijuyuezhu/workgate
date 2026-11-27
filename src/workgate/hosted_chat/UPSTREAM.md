@@ -377,3 +377,11 @@ saved tool call and, if explicitly reviewed, its exact claimed edited input.
 Validated single/batched answers are consumed once and remain recoverable
 across actor replacement at that checkpoint. The shared abort/expiry lifecycle
 also applies to questions. Catalog selection and execution integration follow.
+
+The private foreground tool node exposes the pinned optional Ask User schema
+only through explicit caller/saved-Agent selection. It requires a lone valid
+question, applies legacy review policy (including edited questions), and
+settles the exact validated answer through the ordinary durable receipt path.
+No Executor operation or machine grant is needed. Pending review and question
+interruptions retire the actor until an authenticated caller claims the next
+stage. Public route admission remains separate.
