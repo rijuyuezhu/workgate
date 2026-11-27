@@ -7,7 +7,7 @@ from dataclasses import replace
 from typing import Any, Literal
 
 from mcp.types import CallToolResult, TextContent
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from ..hosted_chat.durable_tasks import (
     SESSION_COMMAND_EFFECT_TOOLS,
@@ -15,6 +15,7 @@ from ..hosted_chat.durable_tasks import (
     SESSION_METADATA_EFFECT_TOOLS,
     SESSION_SHELL_EFFECT_TOOLS,
     DurableTaskRepository,
+    ReservedCopyRequest,
 )
 from ..hosted_chat.generation_actor_lease import ActorLease
 from ..hosted_chat.machine_permissions import (
@@ -224,6 +225,102 @@ class NativeToolDispatcher:
                 }
             )
         return definitions
+
+    def prepare_model_batch(
+        self,
+        repository: DurableTaskRepository,
+        lease: ActorLease,
+        calls: list[ModelToolCall],
+        *,
+        allowed_tools: Collection[str],
+        task_machine: str | None = None,
+    ) -> list[tuple[ModelToolCall, str | None]]:
+        """Resolve every target before any sibling is dispatched.
+
+        This is not an authorization grant: each adapter checks current
+        native permissions again immediately before its own effect.
+        """
+        runtime = self._runtime
+        if repository.database.root != runtime.config.state_dir / "hosted-chat":
+            raise PermissionError(
+                "Native intent belongs to another Control runtime"
+            )
+        calls = copy.deepcopy(complete_tool_batch(calls))
+        conversation_id, agent = repository.tool_context(lease)
+        selected = _selected_tools(agent, allowed_tools)
+        if any(call.name not in selected for call in calls):
+            raise PermissionError("Native tool is not selected and adapted")
+        prepared = []
+        for call in calls:
+            machine = None
+            if call.name in TASK_TOOLS:
+                if (
+                    call.name == "task"
+                    and call.arguments.get("action") == "create"
+                ):
+                    _CreateTask.model_validate(call.arguments)
+                    if task_machine is None:
+                        raise PermissionError(
+                            "Native Task creation requires an explicit Executor"
+                        )
+                    machine = TypeAdapter(ExecutorId).validate_python(
+                        task_machine, strict=True
+                    )
+            elif call.name == "session_start":
+                request = _StartSession.model_validate(call.arguments)
+                if not repository.owned(
+                    lease.owner, conversation_id, "task", request.task_id
+                ):
+                    raise PermissionError(
+                        "Native Task does not belong to this conversation"
+                    )
+                machine = request.executor_id
+            elif call.name == "session_copy":
+                copy_request = ReservedCopyRequest.model_validate(
+                    call.arguments
+                )
+                machine = repository.resolve_session_executor(
+                    lease, copy_request.src_session_id
+                )
+                repository.resolve_session_executor(
+                    lease, copy_request.dst_session_id
+                )
+            else:
+                machine = repository.resolve_session_executor(
+                    lease,
+                    call.arguments.get("session_id"),
+                    closing=call.name == "session_end",
+                )
+            prepared.append((call, machine))
+        return prepared
+
+    async def dispatch_model_call(
+        self,
+        repository: DurableTaskRepository,
+        lease: ActorLease,
+        call: ModelToolCall,
+        *,
+        allowed_tools: Collection[str],
+        scopes: set[str],
+        expires: int | None,
+        task_machine: str | None = None,
+    ) -> dict[str, Any]:
+        [(prepared, machine)] = self.prepare_model_batch(
+            repository,
+            lease,
+            [call],
+            allowed_tools=allowed_tools,
+            task_machine=task_machine,
+        )
+        return await self.dispatch(
+            repository,
+            lease,
+            prepared,
+            machine=machine,
+            allowed_tools=allowed_tools,
+            scopes=scopes,
+            expires=expires,
+        )
 
     async def dispatch(
         self,
