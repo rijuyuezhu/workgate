@@ -306,3 +306,14 @@ structured result in immutable sibling-write slots. Recovery validates the
 entire batch before dispatching only unsettled siblings, with fresh actor and
 grant checks even for cached results. Native durable intent recovery remains
 responsible for uncertain effects before a completion receipt was committed.
+
+The private native tool node connects the model-facing catalog, exact native
+bindings and owned sibling receipt execution to the pinned Agent loop. New
+proposals resolve all targets before checkpointing; recovery preflights only
+unsettled proposals, avoiding reexecution of completed sibling effects. The
+existing native adapters enforce current machine ACLs on each effect; replay
+returns historical owned results under a live principal and current Agent
+selection, not a new Executor operation. Native MCP result envelopes reuse the
+provider artifact formatter, with a bounded text projection and without
+repeating identical structured fallback text. Foreground human approval and
+live lifecycle orchestration are still required before route activation.

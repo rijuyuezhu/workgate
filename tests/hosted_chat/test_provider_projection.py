@@ -422,3 +422,35 @@ def test_duplicate_result_is_not_projected_as_complete_batch():
     )
     original = [_anchor("one"), result, result]
     assert project_artifact_messages(original, "openai") == original
+
+
+def test_native_envelope_projection_is_bounded_and_keeps_structured_content():
+    from workgate.hosted_chat.mcp_projection import native_tool_history_message
+
+    with pytest.raises(ValueError, match="Invalid native"):
+        native_tool_history_message("call", {"arbitrary": True}, "openai")
+    structured = {"value": 42}
+    identical = native_tool_history_message(
+        "call",
+        {
+            "content": [{"type": "text", "text": json.dumps(structured)}],
+            "structuredContent": structured,
+        },
+        "openai",
+    )
+    assert identical["content"] == 'Structured content: {"value":42}'
+    distinct = native_tool_history_message(
+        "call",
+        {
+            "content": [{"type": "text", "text": "context"}],
+            "structuredContent": structured,
+            "isError": True,
+        },
+        "openai",
+    )
+    assert distinct["content"] == 'context\n\nStructured content: {"value":42}'
+    assert distinct["is_error"]
+    large = native_tool_history_message(
+        "call", {"content": [{"type": "text", "text": "x" * 410000}]}, "openai"
+    )
+    assert len(large["content"]) <= 400000 and "truncated" in large["content"]

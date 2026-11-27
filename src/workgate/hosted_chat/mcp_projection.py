@@ -198,12 +198,38 @@ def mcp_tool_history_message(
         return message
     if envelope is None:
         return message
+    return _project_mcp_envelope(message, envelope, provider)
+
+
+def native_tool_history_message(
+    call_id: str, envelope: dict, provider: str
+) -> dict:
+    """Project a trusted native dispatcher envelope, not arbitrary tool JSON."""
+    if mcp_result_envelope(envelope) is None:
+        raise ValueError("Invalid native MCP result envelope")
+    message = {"role": "tool", "tool_call_id": call_id}
+    projected = _project_mcp_envelope(message, envelope, provider)
+    projected["content"] = truncate_approval_result(
+        projected["content"], HARD_MAX_TOOL_RESULT_CHARS
+    )
+    return projected
+
+
+def _project_mcp_envelope(message: dict, envelope: dict, provider: str) -> dict:
     text, artifact = format_tool_content(envelope, provider)
     # Structured-only MCP responses must not disappear.
     structured = envelope.get(
         "structured_content", envelope.get("structuredContent")
     )
     if structured is not None:
+        if "raw_result" not in message and text:
+            # Native creation adapters provide a JSON text fallback of the
+            # same structured receipt. Include it only once in model history.
+            try:
+                if json.loads(text) == structured:
+                    text = ""
+            except ValueError:
+                pass
         text = (
             (text + "\n\n" if text and text != "(No response)" else "")
             + "Structured content: "
