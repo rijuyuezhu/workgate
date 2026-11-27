@@ -23,7 +23,8 @@ async def execute_checkpointed_batch(
     execute: Callable[[ModelToolCall], Awaitable[Any]],
     *,
     check_grant: Callable[[], None],
-    preflight_unsettled: Callable[[list[ModelToolCall]], None] | None = None,
+    preflight_unsettled: Callable[[list[ModelToolCall]], Awaitable[None]]
+    | None = None,
     interrupting_names: frozenset[str] = frozenset(),
     is_interrupt: Callable[[BaseException], bool] = lambda error: False,
 ) -> list[Any]:
@@ -75,7 +76,7 @@ async def execute_checkpointed_batch(
         settled[key] = record
 
     if preflight_unsettled is not None:
-        preflight_unsettled(
+        await preflight_unsettled(
             [
                 copy.deepcopy(call)
                 for position, call in enumerate(calls)
