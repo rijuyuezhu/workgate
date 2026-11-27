@@ -385,3 +385,11 @@ settles the exact validated answer through the ordinary durable receipt path.
 No Executor operation or machine grant is needed. Pending review and question
 interruptions retire the actor until an authenticated caller claims the next
 stage. Public route admission remains separate.
+
+Foreground text steering admission adapts pinned `webui/steering.py` (blob
+`dd91e6ff644257ab64ee8dc0a1ff112f0161e2b3`): owner and generation epoch
+fencing, FIFO queue, idempotent retries, preemption arming, cancellation and
+terminal leftovers. A caller-supplied submission validator precedes admission;
+media and event-trigger ingress are not exposed by this unit. Event budgets
+share the generation protocol constants. Queue delivery and public admission
+remain separate integration work.

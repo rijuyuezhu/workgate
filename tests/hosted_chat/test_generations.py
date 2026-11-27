@@ -303,7 +303,7 @@ def test_admission_races_and_event_limits(database, monkeypatch):
             {"event": "on_run_step_completed", "data": {}},
             actor_lease=lease,
         )
-    monkeypatch.setattr(generations, "_EVENT_LIMIT", 1)
+    monkeypatch.setattr(generations, "EVENT_LIMIT", 1)
     with pytest.raises(ValueError, match="retention"):
         store.append("alice", job.run_id, delta("overflow"), actor_lease=lease)
     assert store.finish(

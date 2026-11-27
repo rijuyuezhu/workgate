@@ -8,6 +8,8 @@ from collections.abc import Mapping
 from typing import Any
 
 GENERATION_PROTOCOL_HEADER = "x-librechat-generation-protocol"
+EVENT_LIMIT = 30000
+MAX_EVENT_BYTES = 256 * 1024
 
 
 def parse_protocol_version(value: Any) -> int | None:
