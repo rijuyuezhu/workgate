@@ -1661,3 +1661,164 @@ async def test_detached_steering_validation_capacity_and_terminal_controls(
             ).fetchone()[0]
             == 32
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_completion_wakeup_registered_once_with_parent_anchor(
+    setup, enabled
+):
+    from workgate.hosted_chat.detached_task_controls import check_detached_task
+    from workgate.hosted_chat.detached_task_lease import DetachedTaskLease
+    from workgate.hosted_chat.storage import WorkspaceRepository
+
+    lease, parent, child, _ = setup
+    db = lease.database
+    WorkspaceRepository(db).save_setting(
+        "alice", "backgroundTasks.completionWakeups", enabled
+    )
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE runs SET state=json_set(state,'$.responseMessageId','original-reply') WHERE id='run'"
+        )
+    checkpoint = OwnedLoopCheckpoint(lease)
+    call = await edge(checkpoint, parent, child["id"], background=True)
+    value = await invocation(checkpoint, parent, call)
+    item = reserve_detached_child(checkpoint, call, value)
+    assert reserve_detached_child(checkpoint, call, value) == item
+    with db.read_snapshot() as conn:
+        rows = conn.execute(
+            "SELECT * FROM subagent_wakeups WHERE task_id=?", (item.task_id,)
+        ).fetchall()
+        if not enabled:
+            assert rows == []
+            return
+        assert len(rows) == 1 and rows[0]["status"] == "pending"
+        envelope = json.loads(rows[0]["envelope"])
+        assert envelope["target"] == {
+            "agentId": parent["id"],
+            "conversationId": "chat",
+            "parentMessageId": "original-reply",
+        }
+        assert envelope["principal"] == {"userId": "alice"}
+        assert envelope["event"]["payload"] == {
+            "taskId": item.task_id,
+            "threadId": item.thread_id,
+            "subagentType": child["id"],
+        }
+        assert envelope["deliveryId"] == item.task_id
+        assert "grant" not in envelope and "scopes" not in envelope
+    grant = {"scopes": set(value.scopes), "expires": value.grant_expires}
+    worker = DetachedTaskLease.claim(
+        db, lease.owner, "chat", item.task_id, **grant
+    )
+    assert worker is not None
+    worker.complete(
+        value.messages + [{"role": "assistant", "content": "completed"}],
+        **grant,
+    )
+    poll = ModelToolCall(
+        "poll-wakeup",
+        "check_background_task",
+        {"background_task_id": item.task_id},
+    )
+    await checkpoint.save(
+        AgentLoopState(
+            context(parent), [], pending_calls=[poll], tool_step_started=True
+        ),
+        [poll],
+    )
+    assert (
+        check_detached_task(checkpoint, poll, **grant)["result"] == "completed"
+    )
+    with db.read_snapshot() as conn:
+        assert (
+            conn.execute(
+                "SELECT status FROM subagent_wakeups WHERE task_id=?",
+                (item.task_id,),
+            ).fetchone()[0]
+            == "retired"
+        )
+
+
+@pytest.mark.asyncio
+async def test_completion_wakeup_registration_rolls_back_reservation(
+    setup, monkeypatch
+):
+    from workgate.hosted_chat import detached_subagents
+
+    lease, parent, child, _ = setup
+    db = lease.database
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE runs SET state=json_set(state,'$.responseMessageId','original-reply') WHERE id='run'"
+        )
+    checkpoint = OwnedLoopCheckpoint(lease)
+    call = await edge(checkpoint, parent, child["id"], background=True)
+    value = await invocation(checkpoint, parent, call)
+
+    def fail(*args):
+        raise RuntimeError("registration failed")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(detached_subagents, "register_wakeup", fail)
+        with pytest.raises(RuntimeError, match="registration failed"):
+            reserve_detached_child(checkpoint, call, value)
+    with db.read_snapshot() as conn:
+        for table in (
+            "subagent_tasks",
+            "subagent_threads",
+            "active_subagent_threads",
+            "subagent_wakeups",
+        ):
+            assert (
+                conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+            )
+    item = reserve_detached_child(checkpoint, call, value)
+    with db.read_snapshot() as conn:
+        assert (
+            conn.execute(
+                "SELECT count(*) FROM subagent_wakeups WHERE task_id=?",
+                (item.task_id,),
+            ).fetchone()[0]
+            == 1
+        )
+
+
+@pytest.mark.asyncio
+async def test_completion_wakeup_rejects_unadmitted_and_nested_edges(setup):
+    from workgate.hosted_chat.subagent_wakeup import register_wakeup
+
+    lease, parent, child, leaf = setup
+    db = lease.database
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE runs SET state=json_set(state,'$.responseMessageId','original-reply') WHERE id='run'"
+        )
+    root = OwnedLoopCheckpoint(lease)
+    call = await edge(root, parent, child["id"])
+    value = await invocation(root, parent, call)
+    scope = SubagentScope.admit(root, call, value)
+    with db.connect() as conn:
+        with pytest.raises(PermissionError, match="detached admission"):
+            register_wakeup(conn, "missing", scope)
+        with pytest.raises(PermissionError, match="parent lineage"):
+            register_wakeup(conn, "missing", replace(scope, detached=True))
+    child_checkpoint = OwnedLoopCheckpoint(lease, scope=scope)
+    nested = await edge(child_checkpoint, child, leaf["id"], background=True)
+    nested_value = await invocation(
+        child_checkpoint,
+        child,
+        nested,
+        configs=list(value.child_configs),
+        max_depth=scope.remaining_depth,
+    )
+    item = reserve_detached_child(child_checkpoint, nested, nested_value)
+    with db.read_snapshot() as conn:
+        assert (
+            conn.execute(
+                "SELECT count(*) FROM subagent_wakeups WHERE task_id=?",
+                (item.task_id,),
+            ).fetchone()[0]
+            == 0
+        )

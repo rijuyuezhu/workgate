@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass
 from .loop_checkpoint import OwnedLoopCheckpoint
 from .provider_common import ModelToolCall
 from .subagent_scope import SubagentScope
+from .subagent_wakeup import register_wakeup
 from .subagents import SubagentInvocation
 
 _RUNNING_PER_SCOPE = 10
@@ -185,4 +186,5 @@ def reserve_detached_child(
             "INSERT INTO active_subagent_threads(owner,thread_id,parent_run_id,active) VALUES(?,?,?,1)",
             (owner, child_id, lease.run_id),
         )
+        register_wakeup(db, task_id, scope)
         return DetachedReservation(task_id, thread_id, child_id, "running")
