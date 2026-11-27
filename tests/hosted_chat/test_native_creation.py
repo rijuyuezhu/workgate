@@ -3295,3 +3295,146 @@ async def test_owned_task_delete_lost_response_is_not_reoffered(
             ).fetchone()[0]
             is None
         )
+
+
+@pytest.mark.asyncio
+async def test_native_dispatch_composes_only_selected_owned_adapters(
+    bound, tmp_path, tracked_shells, reserved_shell_backend
+):
+    from workgate.control.hosted_chat_native_dispatch import (
+        NATIVE_TOOLS,
+        NativeToolDispatcher,
+    )
+
+    harness, repo, lease, _ = bound
+    dispatcher = NativeToolDispatcher(harness.control)
+
+    async def dispatch(
+        call_id,
+        name,
+        arguments,
+        *,
+        machine=None,
+        tools=NATIVE_TOOLS,
+        scopes=SCOPES,
+    ):
+        result = await dispatcher.dispatch(
+            repo,
+            lease,
+            ModelToolCall(call_id, name, arguments),
+            machine=machine,
+            allowed_tools=tools,
+            scopes=scopes,
+            expires=None,
+        )
+        assert result["content"]
+        return result["structuredContent"]
+
+    with pytest.raises(PermissionError, match="not selected"):
+        await dispatch(
+            "not-selected", "task", {"action": "create"}, tools=frozenset()
+        )
+    with pytest.raises(PermissionError, match="not selected"):
+        await dispatch(
+            "unadapted",
+            "session_retention_prune",
+            {},
+            tools=frozenset({"session_retention_prune"}),
+        )
+    assert intent_rows(repo) == {}
+    with pytest.raises(PermissionError, match="explicit Executor"):
+        await dispatch("implicit-task", "task", {"action": "create"})
+    task = await dispatch(
+        "dispatch-task",
+        "task",
+        {"action": "create", "label": "dispatch"},
+        machine=harness.executor_id,
+    )
+    tid = task["task_id"]
+    assert (
+        await dispatch(
+            "dispatch-task",
+            "task",
+            {"action": "create", "label": "dispatch", "objective": None},
+            machine=harness.executor_id,
+        )
+    )["task_id"] == tid
+    assert (
+        await dispatch(
+            "dispatch-get", "task", {"action": "get", "task_id": tid}
+        )
+    )["task_id"] == tid
+    with pytest.raises(ValueError, match="Control-owned"):
+        await dispatch(
+            "task-machine",
+            "task",
+            {"action": "get", "task_id": tid},
+            machine=harness.executor_id,
+        )
+
+    async def session(call_id, name, args, **kwargs):
+        return await dispatch(
+            call_id, name, args, machine=harness.executor_id, **kwargs
+        )
+
+    start = {"executor_id": harness.executor_id, "task_id": tid}
+    with pytest.raises(PermissionError, match="explicit Executor"):
+        await dispatch("implicit-executor", "session_start", start)
+    started = await session("dispatch-start", "session_start", start)
+    sid = started["session_id"]
+    assert (
+        await session(
+            "dispatch-start", "session_start", start | {"workdir": None}
+        )
+    )["session_id"] == sid
+
+    async def shell(call_id, name, args, **kwargs):
+        return await session(
+            call_id, name, {"session_id": sid, **args}, **kwargs
+        )
+
+    for flags in ({"async_": 1}, {"pty": True, "async_": True}):
+        with pytest.raises(ValueError, match="mode"):
+            await shell(
+                "invalid-mode", "bash", {"command": "echo ignored", **flags}
+            )
+    assert "invalid-mode" not in intent_rows(repo)
+    result = await shell("command", "bash", {"command": "echo dispatch"})
+    assert result["mode"] == "command"
+    assert "dispatch" in result["result"]["stdout"]
+    job = await shell(
+        "tracked-dispatch", "bash", {"command": "tracked", "async_": True}
+    )
+    assert job["mode"] == "job"
+    jid = job["result"]["job_id"]
+    listing = await shell("dispatch-jobs", "job", {"list_jobs": True})
+    assert [row["job_id"] for row in listing["jobs"]] == [jid]
+    pty = await shell("pty-dispatch", "bash", {"command": "shell", "pty": True})
+    assert pty["mode"] == "pty"
+    shid = pty["result"]["shell_id"]
+    result = await shell(
+        "dispatch-kill", "kill_persistent_shell", {"shell_id": shid}
+    )
+    assert result["shell_id"] == shid and result["killed"] is True
+    path = tmp_path / "dispatch.txt"
+    result = await shell(
+        "dispatch-file", "write_file", {"path": str(path), "content": "test"}
+    )
+    assert result["created"] is True
+    assert path.read_text() == "test"
+    with pytest.raises(PermissionError, match="shell:write"):
+        await shell(
+            "denied-file",
+            "write_file",
+            {"path": str(path), "content": "denied"},
+            scopes={"shell:read"},
+        )
+    assert path.read_text() == "test"
+    result = await shell("dispatch-close", "session_end", {})
+    assert result["ended"] and not result["force_released"]
+    assert intent_rows(repo)["dispatch-start"]["state"] == "stopped"
+    assert (
+        await dispatch(
+            "dispatch-get-after", "task", {"action": "get", "task_id": tid}
+        )
+    )["status"] == "active"
