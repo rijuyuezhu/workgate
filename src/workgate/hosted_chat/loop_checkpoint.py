@@ -14,7 +14,7 @@ from .checkpoints import SQLiteCheckpointSaver
 from .generation_actor_lease import ActorLease, ActorLeaseLost
 from .graph_member_scope import GraphMemberScope
 from .provider_common import ModelToolCall
-from .subagent_scope import SubagentScope
+from .subagent_scope import SubagentGraphScope, SubagentScope
 
 
 @dataclass(frozen=True)
@@ -31,13 +31,18 @@ class OwnedLoopCheckpoint:
         self,
         lease: ActorLease,
         *,
-        scope: GraphMemberScope | SubagentScope | None = None,
+        scope: GraphMemberScope
+        | SubagentScope
+        | SubagentGraphScope
+        | None = None,
     ):
         self.lease = lease
+        if isinstance(scope, SubagentGraphScope) and scope.member_id is None:
+            raise PermissionError("Team scheduler cannot own a member loop")
         self.scope = scope
         self._marker_key = (
             "ownedSubagentLoopCheckpoints"
-            if isinstance(scope, SubagentScope)
+            if isinstance(scope, (SubagentScope, SubagentGraphScope))
             else "ownedGraphMemberCheckpoints"
         )
         with lease.database.read_snapshot() as db:

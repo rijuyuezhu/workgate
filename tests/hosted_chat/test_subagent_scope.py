@@ -1,7 +1,9 @@
 """Foreground delegation recovery, isolation and live authority."""
 
+import json
 import time
 from dataclasses import replace
+from typing import cast
 
 import pytest
 
@@ -548,3 +550,136 @@ async def test_native_nested_scope_intersects_all_ancestor_acl(setup):
             registered=(machine,),
             claim=True,
         )
+
+
+@pytest.mark.asyncio
+async def test_team_graph_saver_and_member_activation_are_isolated(setup):
+    from uuid import uuid4
+
+    pytest.importorskip("langgraph")
+    from langchain_core.runnables import RunnableConfig
+    from langgraph.checkpoint.base import empty_checkpoint
+
+    from workgate.hosted_chat.checkpoints import SQLiteCheckpointSaver
+    from workgate.hosted_chat.graph_checkpoint import OwnedGraphCheckpointer
+    from workgate.hosted_chat.subagent_scope import SubagentGraphScope
+
+    lease, parent, child, leaf = setup
+    repo = AgentRepository(lease.database)
+    parent = repo.update(
+        "alice",
+        parent["id"],
+        {
+            "subagents": {
+                "enabled": True,
+                "allowSelf": False,
+                "graphs": [
+                    {
+                        "type": "team",
+                        "name": "Team",
+                        "description": "Review",
+                        "agent_ids": [child["id"], leaf["id"]],
+                        "entry_agent_id": child["id"],
+                        "result_agent_id": leaf["id"],
+                        "edges": [
+                            {
+                                "from": child["id"],
+                                "to": leaf["id"],
+                                "edgeType": "direct",
+                            }
+                        ],
+                    }
+                ],
+            },
+        },
+    )
+    assert parent is not None
+    root = OwnedLoopCheckpoint(lease)
+    call = await edge(root, parent, "team")
+    value = await invocation(root, parent, call)
+    scope = SubagentScope.admit(root, call, value)
+    graph_scope = SubagentGraphScope(scope)
+    member = SubagentGraphScope(scope, leaf["id"], str(uuid4()))
+    with pytest.raises(PermissionError, match="no admitted checkpoint"):
+        OwnedLoopCheckpoint(lease, scope=member)
+    saver = OwnedGraphCheckpointer(
+        lease.database, lease.owner, actor_lease=lease, scope=graph_scope
+    )
+    config = cast(
+        RunnableConfig,
+        saver.storage.config(
+            "chat", graph_scope.graph_namespace, event_actor=True
+        ),
+    )
+    assert saver.get_tuple(config) is None
+    with lease.database.connect() as db:
+        state = json.loads(
+            db.execute("SELECT state FROM runs WHERE id='run'").fetchone()[
+                "state"
+            ]
+        )
+        state.setdefault("ownedGraphCheckpoints", {})[
+            graph_scope.graph_namespace
+        ] = "team"
+        db.execute(
+            "UPDATE runs SET state=? WHERE id='run'", (json.dumps(state),)
+        )
+    graph_state = empty_checkpoint()
+    graph_state["id"] = "graph1"
+    saved = saver.put(config, graph_state, {"source": "input", "step": 0}, {})
+    assert saver.get_tuple(saved) is not None
+    owned = OwnedLoopCheckpoint(lease, scope=member)
+    assert owned.restore(context(leaf)) is None
+    await owned.save(
+        AgentLoopState(
+            context(leaf),
+            [{"role": "assistant", "content": "member only"}],
+            completed=True,
+        ),
+        [],
+    )
+    assert owned.restore(context(leaf)) is not None
+    other = SQLiteCheckpointSaver(
+        lease.database, lease.owner, actor_lease=lease
+    )
+    for private in (config, owned.base):
+        with pytest.raises(ActorLeaseLost):
+            other.get_tuple(private)
+        with pytest.raises(ActorLeaseLost):
+            list(other.list(private))
+    with pytest.raises(ActorLeaseLost):
+        saver.storage.get_tuple(owned.base)
+    with pytest.raises(ActorLeaseLost):
+        owned.saver.get_tuple(config)
+    with pytest.raises(PermissionError, match="outside the admitted"):
+        OwnedLoopCheckpoint(
+            lease, scope=SubagentGraphScope(scope, parent["id"], str(uuid4()))
+        )
+    with pytest.raises(PermissionError, match="scheduler"):
+        OwnedLoopCheckpoint(lease, scope=graph_scope)
+    with pytest.raises(PermissionError, match="scheduler"):
+        OwnedGraphCheckpointer(
+            lease.database, lease.owner, actor_lease=lease, scope=member
+        )
+    with lease.database.read_snapshot() as db:
+        assert [a["id"] for a in member.resolve(db, lease) if a] == [
+            parent["id"],
+            child["id"],
+            leaf["id"],
+        ]
+    lease.release()
+    replacement = ActorLease.claim(lease.database, lease.owner, lease.run_id)
+    assert replacement is not None
+    with pytest.raises(ActorLeaseLost):
+        saver.get_tuple(saved)
+    fresh = OwnedGraphCheckpointer(
+        lease.database, lease.owner, actor_lease=replacement, scope=graph_scope
+    )
+    assert fresh.get_tuple(saved) is not None
+    recovered = OwnedLoopCheckpoint(replacement, scope=member).restore(
+        context(leaf)
+    )
+    assert recovered is not None and recovered.state.completed
+    repo.update("alice", child["id"], {"instructions": "changed"})
+    with pytest.raises(PermissionError, match="target revision changed"):
+        fresh.get_tuple(saved)

@@ -547,3 +547,10 @@ native authorization ceilings. Recovery validates the original disclosure
 ceiling and all admitted descendant revisions before returning a result.
 The native node depends on a narrow delegation interface, not the runner.
 Team graphs, detached children, and public route integration remain gated.
+
+Delegated team checkpoint ownership reuses the same generation actor and
+SQLite/SDK saver. Its scheduler namespace and each member activation are
+private to the admitted child, with all member revisions pinned. The member
+loop cannot use the scheduler namespace or another member's storage.
+Native team graph execution and historical native-effect provenance are
+separate integration units; the team schema is not advertised yet.
