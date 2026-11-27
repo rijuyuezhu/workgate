@@ -33,6 +33,8 @@ from workgate.protocol.executor import (
     ExecutorRuntimeSummary,
     JobInventorySummary,
     OperationError,
+    ReservedExecutionRequest,
+    ReservedJobAttemptRequest,
     SessionInventorySummary,
     ShellInventorySummary,
 )
@@ -40,6 +42,7 @@ from workgate.protocol.ids import (
     new_command_id,
     new_device_code,
     new_executor_id,
+    new_reserved_job_id,
     new_session_id,
     new_user_code,
 )
@@ -51,6 +54,10 @@ from workgate.protocol.pairing import (
     PairPollSuccess,
     PairStartRequest,
     PairStartResponse,
+)
+from workgate.schemas.result_models.jobs import (
+    JobInfo,
+    ReservedJobAttemptReceipt,
 )
 
 
@@ -314,6 +321,95 @@ def test_operation_and_protocol_errors_remain_separate() -> None:
                 message="command failed",
             ),
         )
+
+    with pytest.raises(ValidationError, match="must not include result"):
+        ExecutorResult(
+            id=command_id,
+            ok=False,
+            result={"unexpected": True},
+            error=OperationError(code="command_failed", message="failed"),
+        )
+
+
+@pytest.mark.parametrize(
+    "kwargs", [{}, {"code": "print(1)", "command": "echo 1"}]
+)
+def test_reserved_python_execution_requires_only_code(
+    kwargs: dict[str, str],
+) -> None:
+    with pytest.raises(ValidationError, match="requires code only"):
+        ReservedExecutionRequest.model_validate(
+            {"tool": "run_python_code", **kwargs}
+        )
+
+
+@pytest.mark.parametrize("attempt,with_key", [(1, True), (2, False)])
+def test_reserved_job_attempt_requires_exact_retry_key(
+    attempt: int, with_key: bool
+) -> None:
+    with pytest.raises(ValidationError, match="Retry key is required"):
+        ReservedJobAttemptRequest(
+            job_id=new_reserved_job_id(),
+            attempt=attempt,
+            retry_key=new_command_id() if with_key else None,
+        )
+
+
+def test_reserved_job_attempt_receipt_validates_native_identity() -> None:
+    request = ReservedJobAttemptRequest(
+        job_id=new_reserved_job_id(), attempt=2, retry_key=new_command_id()
+    )
+    session_id = new_session_id()
+    job = JobInfo(
+        job_id=request.job_id,
+        name="test",
+        status="succeeded",
+        command="echo 1",
+        cwd=".",
+        session_id=session_id,
+        created_at=1,
+        updated_at=2,
+        attempts=2,
+    )
+    args = {
+        **request.model_dump(),
+        "session_id": session_id,
+        "state": "matching",
+    }
+    receipt = ReservedJobAttemptReceipt.model_validate({**args, "job": job})
+    assert receipt.matches(request, session_id)
+    for changes in (
+        {"job_id": "wrong"},
+        {"session_id": "wrong"},
+        {"kind": "managed"},
+        {"attempts": 1},
+    ):
+        with pytest.raises(
+            ValidationError, match="Mismatched native Job attempt receipt"
+        ):
+            ReservedJobAttemptReceipt.model_validate(
+                {
+                    **args,
+                    "job": JobInfo.model_validate(
+                        {**job.model_dump(), **changes}
+                    ),
+                }
+            )
+    with pytest.raises(
+        ValidationError, match="Mismatched native Job attempt receipt"
+    ):
+        ReservedJobAttemptReceipt.model_validate(args)
+    unknown = ReservedJobAttemptReceipt.model_validate(
+        {**args, "state": "unknown"}
+    )
+    assert unknown.job is None and unknown.output is None
+    for extra in ({"job": job}, {"output": "secret"}):
+        with pytest.raises(
+            ValidationError, match="must not expose native Job data"
+        ):
+            ReservedJobAttemptReceipt.model_validate(
+                {**args, "state": "unknown", **extra}
+            )
 
 
 def test_protocol_error_taxonomy_is_intentionally_small() -> None:
