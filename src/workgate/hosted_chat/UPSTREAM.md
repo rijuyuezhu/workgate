@@ -158,8 +158,16 @@ an exact owner-checked Shell lookup. The private `chat-shell-...` identity
 includes 128 bits of entropy and an optional bounded human-readable prefix;
 public starts cannot reuse that generated namespace. Cleanup records positive
 native evidence before killing a Shell, so a lost kill reply can be reconciled
-without terminating an unrelated Shell or its reused parent Session. Job retry,
-managed copy, and runtime lifecycle wiring remain separate integration units.
+without terminating an unrelated Shell or its reused parent Session.
+The final upstream retry contract is adapted to the native reusable Job ID:
+the private intent records the expected attempt and a distinct operation key.
+Native retry admission checks the attempt under the Session lifecycle lock and
+persists that key with the pending retry transition. Lookup and cleanup match
+the attempt and key rather than trusting the reusable Job ID alone. A newer
+or conflicting attempt settles cleanup without a fabricated receipt or a stop
+of unrelated work. The private adapter takes one retry target per durable
+intent; public Job batch dispatch and managed copy integration remain follow-ups,
+alongside runtime lifecycle wiring.
 
 
 Agent authoring starts with the final upstream repository and validators.

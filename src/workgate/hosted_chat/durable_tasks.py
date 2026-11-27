@@ -17,7 +17,9 @@ from ..protocol.executor import (
     ReservedShellStartRequest,
 )
 from ..protocol.ids import (
+    ReservedJobId,
     SessionId,
+    new_command_id,
     new_reserved_job_id,
     new_reserved_shell_id,
     new_session_id,
@@ -100,6 +102,8 @@ class Intent:
     state: str
     native_id: str | None
     session_id: str | None
+    target_job_id: str | None
+    attempt: int | None
 
 
 class DurableTaskRepository:
@@ -122,6 +126,8 @@ class DurableTaskRepository:
             row["state"],
             row["native_id"],
             row["native_session_id"],
+            row["target_job_id"],
+            row["native_attempt"],
         )
 
     def _run(self, db, lease: ActorLease):
@@ -169,7 +175,7 @@ class DurableTaskRepository:
             run["owner"],
             authorization_id,
             machine,
-            "execute" if kind in {"job", "shell"} else "read",
+            "execute" if kind in {"job", "shell", "retry"} else "read",
             agent=agent,
             scopes=scopes,
             expires=expires,
@@ -189,18 +195,19 @@ class DurableTaskRepository:
         machine: str | None = None,
         session_id: str | None = None,
     ) -> bool:
-        if kind in {"job", "shell"} and session_id is None:
+        if kind in {"job", "shell", "retry"} and session_id is None:
             return False
         if kind != "task" and machine is None:
             return False
         return (
             db.execute(
                 "SELECT 1 FROM agent_durable_tasks WHERE owner=? AND conversation_id=? "
-                "AND kind=? AND native_id=? AND state='active' "
+                "AND (kind=? OR (?='job' AND kind='retry')) AND native_id=? AND state='active' "
                 "AND (? IS NULL OR machine=?) AND (? IS NULL OR native_session_id=?) LIMIT 1",
                 (
                     owner,
                     conversation_id,
+                    kind,
                     kind,
                     native_id,
                     machine,
@@ -225,7 +232,7 @@ class DurableTaskRepository:
             raise PermissionError(
                 "Native Task does not belong to this conversation"
             )
-        if kind in {"job", "shell"} and not self._owned(
+        if kind in {"job", "shell", "retry"} and not self._owned(
             db,
             run["owner"],
             run["conversation_id"],
@@ -236,6 +243,22 @@ class DurableTaskRepository:
             raise PermissionError(
                 "Native Session does not belong to this conversation and Executor"
             )
+
+    @staticmethod
+    def _last_owned_attempt(
+        db, run, machine: str, session_id: str, job_id: str
+    ) -> int:
+        row = db.execute(
+            "SELECT MAX(native_attempt) FROM agent_durable_tasks "
+            "WHERE owner=? AND conversation_id=? AND machine=? AND native_session_id=? "
+            "AND native_id=? AND kind IN ('job','retry') AND state IN ('active','stopped')",
+            (run["owner"], run["conversation_id"], machine, session_id, job_id),
+        ).fetchone()
+        if row is None or row[0] is None:
+            raise PermissionError(
+                "Native Job does not belong to this conversation"
+            )
+        return int(row[0])
 
     def reserve(
         self,
@@ -252,6 +275,8 @@ class DurableTaskRepository:
         complete_tool_batch([call])
         arguments = call.arguments
         session_id = None
+        target_job_id = None
+        attempt = None
         if call.name == "task" and arguments.get("action") == "create":
             kind = "task"
             if arguments.keys() - {"action", "label", "objective"}:
@@ -271,6 +296,23 @@ class DurableTaskRepository:
         elif call.name in {"bash", "run_python_code"}:
             kind = "shell" if arguments.get("pty") is True else "job"
             session_id = arguments.get("session_id")
+            if kind == "job":
+                attempt = 1
+        elif call.name == "job":
+            kind = "retry"
+            session_id = TypeAdapter(SessionId).validate_python(
+                arguments.get("session_id"), strict=True
+            )
+            requested = arguments.get("retry")
+            if (
+                arguments.keys() - {"session_id", "retry"}
+                or not isinstance(requested, list)
+                or len(requested) != 1
+            ):
+                raise ValueError("Durable Job retry requires exactly one Job")
+            target_job_id = TypeAdapter(ReservedJobId).validate_python(
+                requested[0], strict=True
+            )
         else:
             raise ValueError("Not a supported native creation")
         if kind == "shell":
@@ -284,6 +326,7 @@ class DurableTaskRepository:
                 "task": new_task_id,
                 "session": new_session_id,
                 "job": new_reserved_job_id,
+                "retry": new_command_id,
             }[kind]()
             if kind == "job":
                 reserved_job_request(call, key)
@@ -313,6 +356,7 @@ class DurableTaskRepository:
                     prior["fingerprint"] != fingerprint
                     or prior["machine"] != machine
                     or prior["native_session_id"] != session_id
+                    or prior["target_job_id"] != target_job_id
                     or prior["agent_id"] != run["agent_id"]
                     or prior["authorization_conversation_id"]
                     != authorization_id
@@ -334,13 +378,28 @@ class DurableTaskRepository:
                 authorization_id,
             )
             self._require_parent(db, run, kind, machine, arguments)
+            if kind == "retry":
+                assert session_id is not None and target_job_id is not None
+                last_attempt = self._last_owned_attempt(
+                    db, run, machine, session_id, target_job_id
+                )
+                if prior is None:
+                    if db.execute(
+                        "SELECT 1 FROM agent_durable_tasks WHERE machine=? AND native_session_id=? "
+                        "AND target_job_id=? AND state IN ('reserved','unknown','cancel_pending') LIMIT 1",
+                        (machine, session_id, target_job_id),
+                    ).fetchone():
+                        raise PermissionError(
+                            "Previous native Job retry is unresolved"
+                        )
+                    attempt = last_attempt + 1
             if prior is not None:
                 return self._intent(prior)
             now = _now()
             db.execute(
                 "INSERT INTO agent_durable_tasks(id,owner,conversation_id,authorization_conversation_id,"
-                "run_id,call_id,agent_id,tool,kind,machine,native_session_id,requirements,fingerprint,idempotency_key,key_hash,"
-                "scopes,grant_expires,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "run_id,call_id,agent_id,tool,kind,machine,native_session_id,target_job_id,native_attempt,requirements,fingerprint,idempotency_key,key_hash,"
+                "scopes,grant_expires,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     identity,
                     lease.owner,
@@ -353,10 +412,12 @@ class DurableTaskRepository:
                     kind,
                     machine,
                     session_id,
+                    target_job_id,
+                    attempt,
                     json.dumps(
                         {
                             machine: "execute"
-                            if kind in {"job", "shell"}
+                            if kind in {"job", "shell", "retry"}
                             else "read"
                         }
                     ),
@@ -401,6 +462,8 @@ class DurableTaskRepository:
             or row["tool"] != intent.name
             or row["machine"] != intent.machine
             or row["native_session_id"] != intent.session_id
+            or row["target_job_id"] != intent.target_job_id
+            or row["native_attempt"] != intent.attempt
         ):
             raise PermissionError(
                 "Native intent does not belong to this generation"
@@ -445,11 +508,43 @@ class DurableTaskRepository:
             )
             if row["state"] != "reserved":
                 return False
+            if row["kind"] == "retry" and row[
+                "native_attempt"
+            ] != 1 + self._last_owned_attempt(
+                db,
+                run,
+                row["machine"],
+                row["native_session_id"],
+                row["target_job_id"],
+            ):
+                raise PermissionError("Native retry reservation is stale")
             db.execute(
                 "UPDATE agent_durable_tasks SET state='unknown',updated_at=? WHERE id=?",
                 (_now(), intent.id),
             )
             return True
+
+    def reject_retry(self, lease: ActorLease, intent: Intent) -> None:
+        """Settle only an explicit native pre-admission refusal, with no receipt."""
+        with self.database.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if lease.database.path != self.database.path:
+                raise ActorLeaseLost("Generation actor database mismatch")
+            lease.assert_current(db)
+            row = self._row(db, lease, intent)
+            if (
+                row["kind"] != "retry"
+                or row["state"] not in {"unknown", "cancel_pending"}
+                or row["native_id"] is not None
+            ):
+                raise PermissionError(
+                    "Native retry refusal does not match its reservation"
+                )
+            db.execute(
+                "UPDATE agent_durable_tasks SET state='stopped',updated_at=?,next_attempt_at=NULL,"
+                "last_error='Native retry admission refused' WHERE id=?",
+                (_now(), intent.id),
+            )
 
     def bind(self, lease: ActorLease, intent: Intent, native_id: str) -> Intent:
         """Record a trusted native response/lookup with the exact reserved ID."""
@@ -460,7 +555,7 @@ class DurableTaskRepository:
             lease.assert_current(db)
             row = self._row(db, lease, intent)
             if (
-                native_id != row["idempotency_key"]
+                native_id != (row["target_job_id"] or row["idempotency_key"])
                 or row["native_id"] not in (None, native_id)
                 or row["state"] not in {"unknown", "active", "cancel_pending"}
             ):
@@ -613,7 +708,7 @@ class DurableTaskRepository:
             return (
                 db.execute(
                     "UPDATE agent_durable_tasks SET native_id=?,updated_at=? "
-                    "WHERE id=? AND state='cancel_pending' AND idempotency_key=? "
+                    "WHERE id=? AND state='cancel_pending' AND COALESCE(target_job_id,idempotency_key)=? "
                     "AND (native_id IS NULL OR native_id=?)",
                     (native_id, _now(), identity, native_id, native_id),
                 ).rowcount
@@ -628,7 +723,7 @@ class DurableTaskRepository:
         with self.database.connect() as db:
             db.execute(
                 "UPDATE agent_durable_tasks SET state=?,updated_at=?,next_attempt_at=?,last_error=?,"
-                "native_id=CASE WHEN ? THEN idempotency_key ELSE native_id END "
+                "native_id=CASE WHEN ? THEN COALESCE(target_job_id,idempotency_key) ELSE native_id END "
                 "WHERE id=? AND state='cancel_pending'",
                 (
                     "stopped" if stopped else "cancel_pending",

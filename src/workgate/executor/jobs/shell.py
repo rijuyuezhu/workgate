@@ -58,7 +58,10 @@ from ...jobs.state import (
 from ...jobs.state import (
     utc as _utc,
 )
-from ...protocol.executor import JobInventorySummary
+from ...protocol.executor import (
+    JobInventorySummary,
+    ReservedJobAttemptRequest,
+)
 from ...protocol.ids import ReservedJobId
 from ...schemas.result_models.jobs import (
     JobListOutput,
@@ -66,6 +69,7 @@ from ...schemas.result_models.jobs import (
     JobStartOutput,
     JobStopOutput,
     JobTailOutput,
+    ReservedJobAttemptReceipt,
 )
 from ..shell import (
     authoritative_persistent_shell_ids_execute,
@@ -678,11 +682,17 @@ async def stop_shell_job_unlocked(
         _discard_job_operation(operation_id)
 
 
+class ReservedJobRetryRejected(RuntimeError):
+    """Private retry admission was refused before publishing a new attempt."""
+
+
 async def retry_shell_job_unlocked(
     config: ExecutorConfig,
     session_store: ToolSessionStore,
     session_id: str,
     job_id: str,
+    *,
+    reservation: ReservedJobAttemptRequest | None = None,
 ) -> JobRetryOutput:
     """Retry one terminal shell-backed job while lifecycle locks are held."""
     session = session_store.touch_session(session_id)
@@ -690,23 +700,34 @@ async def retry_shell_job_unlocked(
         config, session_store
     )
     operation_id = ""
+    admission_error = (
+        ReservedJobRetryRejected if reservation is not None else RuntimeError
+    )
     try:
         with _store_transaction() as store:
             job = _find_session_job(store, session_id, job_id)
             if str(job.get("kind") or "shell") == "managed":
-                raise RuntimeError(f"job is not shell-backed: {job_id}")
+                raise admission_error(f"job is not shell-backed: {job_id}")
             job = _refresh_job_status(job, active)
             if job.get("status") in ACTIVE_STATUSES:
-                raise RuntimeError(f"job is still active: {job_id}")
+                raise admission_error(f"job is still active: {job_id}")
+            if reservation is not None and (
+                reservation.job_id != job_id
+                or reservation.retry_key is None
+                or reservation.attempt != int(job.get("attempts") or 1) + 1
+            ):
+                raise ReservedJobRetryRejected(
+                    "Native Job attempt changed before retry"
+                )
             previous_shell_id = _job_shell_id(job)
             if previous_shell_id:
                 if active is None:
-                    raise RuntimeError(
+                    raise admission_error(
                         "cannot retry job while previous attempt shell liveness "
                         f"is unknown: {job_id}"
                     )
                 if previous_shell_id in active:
-                    raise RuntimeError(
+                    raise admission_error(
                         "cannot retry job while previous attempt shell is still "
                         f"active: {job_id}"
                     )
@@ -725,6 +746,11 @@ async def retry_shell_job_unlocked(
                     "pending_shell_id": shell_name,
                 }
             )
+            if reservation is None:
+                job.pop("retry_key", None)
+            else:
+                assert reservation.retry_key is not None
+                job["retry_key"] = reservation.retry_key
             operation_id = _begin_job_operation(job, "retry")
     except BaseException:
         _discard_job_operation(operation_id)
@@ -844,3 +870,41 @@ async def retry_shell_job_unlocked(
         return JobRetryOutput(**public.model_dump())
     finally:
         _discard_job_operation(operation_id)
+
+
+async def lookup_job_attempt_unlocked(
+    config: ExecutorConfig,
+    session_store: ToolSessionStore,
+    session_id: str,
+    request: ReservedJobAttemptRequest,
+) -> ReservedJobAttemptReceipt:
+    """Inspect only the exact attempt while the native Session lock is held."""
+    session_store.admit_active_session(session_id)
+    active = await authoritative_persistent_shell_ids_execute(
+        config, session_store
+    )
+    with _store_transaction() as store:
+        job = _find_session_job(store, session_id, request.job_id)
+        if str(job.get("kind") or "shell") != "shell":
+            raise ValueError("Reserved attempt requires a shell-backed Job")
+        job = _refresh_job_status(job, active)
+        current = int(job.get("attempts") or 1)
+        pending = int(job.get("pending_attempt") or current)
+        receipt: dict[str, Any] = request.model_dump() | {
+            "session_id": session_id
+        }
+        # A new retry is admitted only after the previous attempt is absent.
+        if max(current, pending) > request.attempt or (
+            max(current, pending) == request.attempt
+            and job.get("retry_key") != request.retry_key
+        ):
+            return ReservedJobAttemptReceipt(**receipt, state="superseded")
+        if (
+            current != request.attempt
+            or pending != current
+            or job.get("retry_key") != request.retry_key
+        ):
+            return ReservedJobAttemptReceipt(**receipt, state="unknown")
+        return ReservedJobAttemptReceipt(
+            **receipt, state="matching", job=_public_job(job)
+        )

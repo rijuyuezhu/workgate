@@ -34,6 +34,9 @@ SESSION_LOOKUP_OP = "session.lookup"
 SESSION_TERMINATE_OP = "session.terminate"
 SESSION_CHANGE_WORKDIR_OP = "session.change_workdir"
 JOB_START_RESERVED_OP = "job.start_reserved"
+JOB_RETRY_RESERVED_OP = "job.retry_reserved"
+JOB_LOOKUP_ATTEMPT_OP = "job.lookup_attempt"
+JOB_CANCEL_ATTEMPT_OP = "job.cancel_attempt"
 SHELL_START_RESERVED_OP = "shell.start_reserved"
 SHELL_LOOKUP_RESERVED_OP = "shell.lookup_reserved"
 
@@ -74,6 +77,23 @@ class ReservedJobStartRequest(ReservedExecutionRequest):
     def validate_mode(self) -> Self:
         if not (self.async_ or self.persist_on_timeout):
             raise ValueError("Reserved Job creation requires tracked execution")
+        return self
+
+
+class ReservedJobAttemptRequest(BaseModel):
+    """Exact native attempt, not merely the reusable public Job ID."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    job_id: ReservedJobId
+    attempt: int = Field(ge=1)
+    retry_key: CommandId | None = None
+
+    @model_validator(mode="after")
+    def validate_retry_key(self) -> Self:
+        if (self.attempt == 1) != (self.retry_key is None):
+            raise ValueError(
+                "Retry key is required for attempts after the first"
+            )
         return self
 
 

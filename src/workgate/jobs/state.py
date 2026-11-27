@@ -67,6 +67,8 @@ class JobRow(TypedDict, total=False):
     """Total output bytes observed for the current attempt."""
     attempts: int
     """Number of attempts started for this durable job."""
+    retry_key: str
+    """Private token for the latest admitted reserved retry attempt, if any."""
     managed_kind: str
     """Registered managed-job handler kind."""
     managed_payload: dict[str, Any]
