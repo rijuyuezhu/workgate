@@ -436,3 +436,15 @@ writes, checks the graph namespace and conversation, and filters decoded
 metadata before limiting results. The SDK's typed serialization preserves
 Send and pending-write values; real LangGraph restart/resume tests verify
 that a completed node is not rerun. Graph execution remains unexposed.
+
+The private graph runner adapts pinned `webui/graph_runtime.py` (blob
+`2f82f83339a77b41c3c6ae51b9344d2233aba577`). Official Python StateGraph
+owns the same direct-edge supersteps, grouped join barriers, prompted fan-in,
+dynamic Command/Send routing and designated result. A Control-supplied
+member callback owns native execution and durable receipts; no new scheduler.
+The graph marker binds the revision and finite recursion limit to the
+checkpoint namespace, refuses restart after checkpoint loss, and validates
+root membership, live grants and each transfer. Tests retain the original
+real JS message-class and graph traces; the live npm oracle is development-only.
+Native member dispatch, graph-aware public output and human/steer integration
+remain dependent work.
