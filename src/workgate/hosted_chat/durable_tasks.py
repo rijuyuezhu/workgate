@@ -511,6 +511,130 @@ class DurableTaskRepository:
                 result.append(self._intent(row))
             return result
 
+    def shell_effect(
+        self,
+        lease: ActorLease,
+        call: ModelToolCall,
+        *,
+        machine: str,
+        scopes: set[str],
+        expires: int | None,
+        registered: Collection[str],
+        claim: bool = False,
+        receipt: dict | None = None,
+    ) -> tuple[bool, dict | None]:
+        """Claim a finite native effect once, or check/settle that exact claim.
+
+        A NULL receipt is permanently uncertain: recovery must not resend input.
+        Unlike durable resource starts, native input has no lookup receipt.
+        """
+        complete_tool_batch([call])
+        if call.name not in {
+            "send_persistent_shell_input",
+            "resize_persistent_shell",
+        }:
+            raise ValueError("Expected native Shell effect")
+        session_id = TypeAdapter(SessionId).validate_python(
+            call.arguments.get("session_id"),
+            strict=True,
+        )
+        shell_id = TypeAdapter(ReservedShellId).validate_python(
+            call.arguments.get("shell_id"),
+            strict=True,
+        )
+        fingerprint = _fingerprint(call.name, call.arguments)
+        with (
+            self.database.connect()
+            if claim or receipt is not None
+            else self.database.read_snapshot()
+        ) as db:
+            if claim or receipt is not None:
+                db.execute("BEGIN IMMEDIATE")
+            run = self._run(db, lease)
+            prior = db.execute(
+                "SELECT * FROM agent_native_effect_calls WHERE run_id=? AND call_id=?",
+                (lease.run_id, call.call_id),
+            ).fetchone()
+            if prior is not None:
+                if (
+                    prior["fingerprint"] != fingerprint
+                    or prior["machine"] != machine
+                ):
+                    raise PermissionError(
+                        "A replayed tool call cannot change a durable request"
+                    )
+                scopes, expires = self._grant(prior, scopes, expires)
+            elif not claim:
+                raise PermissionError("Native Shell effect was not claimed")
+            if db.execute(
+                "SELECT 1 FROM agent_durable_tasks WHERE owner=? AND run_id=? AND call_id=? "
+                "UNION ALL SELECT 1 FROM agent_job_cancel_calls WHERE run_id=? AND call_id=?",
+                (
+                    lease.owner,
+                    lease.run_id,
+                    call.call_id,
+                    lease.run_id,
+                    call.call_id,
+                ),
+            ).fetchone():
+                raise PermissionError(
+                    "A replayed tool call cannot change a durable request"
+                )
+            self._require_parent(
+                db, run, "shell", machine, {"session_id": session_id}
+            )
+            if not self._owned(
+                db,
+                lease.owner,
+                run["conversation_id"],
+                "shell",
+                shell_id,
+                machine,
+                session_id,
+            ):
+                raise PermissionError(
+                    "Native Shell does not belong to this conversation"
+                )
+            self._authorize(
+                db,
+                run,
+                machine,
+                "shell",
+                scopes,
+                expires,
+                registered,
+                run["conversation_id"],
+            )
+            if prior is None:
+                db.execute(
+                    "INSERT INTO agent_native_effect_calls(run_id,call_id,fingerprint,machine,scopes,grant_expires) "
+                    "VALUES(?,?,?,?,?,?)",
+                    (
+                        lease.run_id,
+                        call.call_id,
+                        fingerprint,
+                        machine,
+                        json.dumps(sorted(scopes)),
+                        expires,
+                    ),
+                )
+                return True, None
+            if receipt is not None:
+                if claim or prior["receipt"] is not None:
+                    raise ValueError("Native Shell effect is already settled")
+                db.execute(
+                    "UPDATE agent_native_effect_calls SET receipt=? WHERE run_id=? AND call_id=?",
+                    (
+                        json.dumps(receipt, allow_nan=False),
+                        lease.run_id,
+                        call.call_id,
+                    ),
+                )
+                return False, receipt
+            return False, json.loads(prior["receipt"]) if prior[
+                "receipt"
+            ] is not None else None
+
     def cancel_attempts(
         self,
         lease: ActorLease,
@@ -559,6 +683,13 @@ class DurableTaskRepository:
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             run = self._run(db, lease)
+            if db.execute(
+                "SELECT 1 FROM agent_native_effect_calls WHERE run_id=? AND call_id=?",
+                (lease.run_id, call.call_id),
+            ).fetchone():
+                raise PermissionError(
+                    "A replayed tool call cannot change a durable request"
+                )
             if db.execute(
                 "SELECT 1 FROM agent_durable_tasks WHERE owner=? AND run_id=? AND call_id=?",
                 (lease.owner, lease.run_id, call.call_id),
@@ -704,6 +835,13 @@ class DurableTaskRepository:
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             run = self._run(db, lease)
+            if db.execute(
+                "SELECT 1 FROM agent_native_effect_calls WHERE run_id=? AND call_id=?",
+                (lease.run_id, call.call_id),
+            ).fetchone():
+                raise PermissionError(
+                    "A replayed tool call cannot change a durable request"
+                )
             if db.execute(
                 "SELECT 1 FROM agent_job_cancel_calls WHERE run_id=? AND call_id=?",
                 (lease.run_id, call.call_id),

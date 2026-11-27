@@ -1,4 +1,4 @@
-"""Read-only Hosted Chat access to existing owned native Sessions.
+"""Hosted Chat access to existing owned native Sessions.
 
 The final upstream registry's read classification and live authorization
 recheck are adapted to Workgate's native catalog and Session identities.
@@ -8,21 +8,34 @@ import asyncio
 import copy
 import json
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from typing import Any
 
 from mcp.types import CallToolResult, TextContent
-from pydantic import TypeAdapter
+from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from ..hosted_chat.durable_tasks import DurableTaskRepository
 from ..hosted_chat.generation_actor_lease import ActorLease
 from ..hosted_chat.provider_common import ModelToolCall, complete_tool_batch
 from ..protocol.ids import ReservedShellId, SessionId
+from ..schemas.input_models.shell import (
+    EnterArg,
+    InputTextArg,
+    ShellColumnsArg,
+    ShellRowsArg,
+)
 from ..schemas.result_models.shell import (
     ListPersistentShellsOutput,
     PersistentShellInfo,
     ReadPersistentShellOutput,
+    ResizePersistentShellOutput,
+    SendPersistentShellInputOutput,
 )
-from .hosted_chat_native_creation import _grant, _registered
+from .hosted_chat_native_creation import (
+    NativeCreationUncertain,
+    _grant,
+    _registered,
+)
 from .mcp.app import build_mcp
 from .runtime import ControlRuntime
 
@@ -33,7 +46,28 @@ SESSION_FILE_READ_TOOLS = frozenset(
 SESSION_SHELL_READ_TOOLS = frozenset(
     {"read_persistent_shell_output", "list_persistent_shells"}
 )
+SESSION_SHELL_EFFECT_TOOLS = frozenset(
+    {"send_persistent_shell_input", "resize_persistent_shell"}
+)
 _AUTHORIZATION_RECHECK_SECONDS = 0.5
+
+
+class _ShellSend(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    session_id: SessionId
+    shell_id: ReservedShellId
+    input_text: InputTextArg
+    enter: EnterArg = True
+
+
+class _ShellResize(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    session_id: SessionId
+    shell_id: ReservedShellId
+    cols: ShellColumnsArg
+    rows: ShellRowsArg
 
 
 async def _await_authorized[T](
@@ -56,7 +90,7 @@ async def _await_authorized[T](
         raise
 
 
-class NativeSessionReadDispatcher:
+class NativeSessionDispatcher:
     """Reuse native MCP validation, routing, watchdog, and result projection."""
 
     def __init__(self, runtime: ControlRuntime) -> None:
@@ -81,6 +115,15 @@ class NativeSessionReadDispatcher:
         scopes, expires = _grant(runtime, lease.owner, scopes, expires)
         call = copy.deepcopy(call)
         complete_tool_batch([call])
+        if call.name in SESSION_SHELL_EFFECT_TOOLS:
+            return await self._interact(
+                repository,
+                lease,
+                call,
+                machine=machine,
+                scopes=scopes,
+                expires=expires,
+            )
         if call.name not in SESSION_FILE_READ_TOOLS | SESSION_SHELL_READ_TOOLS:
             raise PermissionError(
                 "Native tool is not an authorized Session read"
@@ -172,3 +215,100 @@ class NativeSessionReadDispatcher:
                 ],
             )
         return result.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+    async def _interact(
+        self,
+        repository: DurableTaskRepository,
+        lease: ActorLease,
+        call: ModelToolCall,
+        *,
+        machine: str,
+        scopes: set[str],
+        expires: int | None,
+    ) -> dict[str, Any]:
+        runtime = self._runtime
+        request = (
+            _ShellSend.model_validate(call.arguments)
+            if call.name == "send_persistent_shell_input"
+            else _ShellResize.model_validate(call.arguments)
+        )
+        call = replace(call, arguments=request.model_dump(mode="json"))
+
+        def check_native_session() -> None:
+            record = runtime.session_coordinator.require_session_status(
+                request.session_id,
+                {"active"},
+            )
+            if str(record.executor_id) != machine:
+                raise PermissionError("Native Session binding mismatch")
+
+        def check_effect(*, claim: bool = False, receipt: dict | None = None):
+            check_native_session()
+            return repository.shell_effect(
+                lease,
+                call,
+                machine=machine,
+                scopes=scopes,
+                expires=expires,
+                registered=_registered(runtime),
+                claim=claim,
+                receipt=receipt,
+            )
+
+        fresh, receipt = check_effect(claim=True)
+        if not fresh:
+            if receipt is None:
+                raise NativeCreationUncertain(
+                    "Native Shell effect is unconfirmed; do not resend"
+                )
+            return receipt
+
+        def authorize() -> None:
+            check_effect()
+
+        authorize()
+        result = await _await_authorized(
+            self._mcp.call_tool(call.name, call.arguments),
+            authorize,
+        )
+        if (
+            not isinstance(result, CallToolResult)
+            or result.is_error
+            or result.structured_content is None
+        ):
+            raise NativeCreationUncertain("Native Shell effect is unconfirmed")
+        if isinstance(request, _ShellSend):
+            output = SendPersistentShellInputOutput.model_validate(
+                result.structured_content
+            )
+            if (
+                output.shell_id != request.shell_id
+                or output.enter != request.enter
+                or output.sent_bytes != len(request.input_text.encode())
+            ):
+                raise NativeCreationUncertain(
+                    "Native Shell input receipt is mismatched"
+                )
+        else:
+            output = ResizePersistentShellOutput.model_validate(
+                result.structured_content
+            )
+            if (
+                output.shell_id != request.shell_id
+                or output.cols != request.cols
+                or output.rows != request.rows
+            ):
+                raise NativeCreationUncertain(
+                    "Native Shell resize receipt is mismatched"
+                )
+        projection = output.model_dump(mode="json")
+        envelope = CallToolResult(
+            structured_content=projection,
+            content=[
+                TextContent(
+                    type="text", text=json.dumps(projection, ensure_ascii=False)
+                )
+            ],
+        ).model_dump(mode="json", by_alias=True, exclude_none=True)
+        check_effect(receipt=envelope)
+        return envelope

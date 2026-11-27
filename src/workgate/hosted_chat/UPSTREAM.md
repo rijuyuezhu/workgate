@@ -198,8 +198,11 @@ read receipts must match the exact reserved Shell and lists rebuild their
 model-visible text from filtered metadata. Explicit PTY cancellation uses
 the same durable call ledger and native cleanup path as Jobs. A lost stop
 response is reconciled by exact native absence; it does not invent a successful
-kill receipt or authorize another Shell. General native tool dispatch and
-runtime wiring follow.
+kill receipt or authorize another Shell. Owned PTY input and resize reuse
+the native MCP dispatcher. An immutable effect claim is committed before
+invocation, a confirmed matching receipt is persisted before model disclosure,
+and uncertain calls are never resent. General native tool dispatch and runtime
+wiring follow.
 
 
 Agent authoring starts with the final upstream repository and validators.
