@@ -317,3 +317,13 @@ selection, not a new Executor operation. Native MCP result envelopes reuse the
 provider artifact formatter, with a bounded text projection and without
 repeating identical structured fallback text. Foreground human approval and
 live lifecycle orchestration are still required before route activation.
+
+The private foreground loop driver adapts pinned AgentRunner streaming and
+generation lifecycle callbacks (generation_routes.py). It retains the owner
+fence, renews the running actor lease, persists text/reasoning deltas, and
+records the last observable delta cursor in each loop checkpoint. Recovery
+cannot replay an already observable uncheckpointed stream, and the persisted
+run recovery marker prevents an expired/pruned checkpoint from becoming a
+fresh generation. Provider failures expose safe category/status messages.
+The driver requires a caller-supplied authorization callback; no HTTP route,
+human-review admission, steering queue, or UI step lifecycle is activated.

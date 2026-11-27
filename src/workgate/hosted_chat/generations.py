@@ -446,6 +446,20 @@ class GenerationStore:
             ).fetchall()
             return [(int(row[0]), json.loads(row[1])) for row in rows]
 
+    def public_delta_cursor(self, actor_lease: ActorLease) -> int:
+        """Latest observable provider delta within this owned active generation."""
+        with self.database.read_snapshot() as db:
+            self._assert_actor(
+                db, actor_lease.owner, actor_lease.run_id, actor_lease
+            )
+            return int(
+                db.execute(
+                    "SELECT coalesce(max(seq),0) FROM generation_events WHERE run_id=? "
+                    "AND json_extract(data,'$.event') IN ('on_message_delta','on_reasoning_delta')",
+                    (actor_lease.run_id,),
+                ).fetchone()[0]
+            )
+
     def finish(
         self,
         owner: str,

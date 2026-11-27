@@ -53,7 +53,7 @@ class NativeLoopToolNode:
 
         self.native = NativeToolDispatcher(runtime)
 
-    def _check(self) -> tuple[set[str], int | None]:
+    def current_grant(self) -> tuple[set[str], int | None]:
         self.checkpoint.lease.assert_current()
         self._check_grant()
         scopes, expires = _grant(
@@ -69,7 +69,7 @@ class NativeLoopToolNode:
         return scopes, expires
 
     async def refresh_tools(self, state: AgentLoopState) -> None:
-        scopes, expires = self._check()
+        scopes, expires = self.current_grant()
         state.context.tools = await self.native.definitions(
             self.repository,
             self.checkpoint.lease,
@@ -78,12 +78,12 @@ class NativeLoopToolNode:
             expires=expires,
             task_machine=self.task_machine,
         )
-        self._check()
+        self.current_grant()
 
     def preflight(
         self, calls: list[ModelToolCall], state: AgentLoopState
     ) -> list[ModelToolCall]:
-        self._check()
+        self.current_grant()
         calls = copy.deepcopy(complete_tool_batch(calls))
         shown = {tool["function"]["name"] for tool in state.context.tools}
         if any(call.name not in shown for call in calls):
@@ -103,14 +103,14 @@ class NativeLoopToolNode:
         calls = copy.deepcopy(complete_tool_batch(calls))
 
         def check() -> None:
-            self._check()
+            self.current_grant()
             _, agent = self.repository.tool_context(self.checkpoint.lease)
             enabled = _selected_tools(agent, self.allowed_tools)
             if any(call.name not in enabled for call in calls):
                 raise PermissionError("Native tool no longer selected")
 
         async def execute(call: ModelToolCall) -> dict:
-            scopes, expires = self._check()
+            scopes, expires = self.current_grant()
             return await self.native.dispatch_model_call(
                 self.repository,
                 self.checkpoint.lease,

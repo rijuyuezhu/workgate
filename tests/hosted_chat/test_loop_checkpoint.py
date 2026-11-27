@@ -385,3 +385,21 @@ async def test_corrupt_receipt_slots_fail_closed(lease, records, error):
         await execute_checkpointed_batch(
             checkpoint, calls, forbidden, check_grant=lambda: None
         )
+
+
+@pytest.mark.asyncio
+async def test_pruned_checkpoint_never_restarts_an_owned_generation(lease):
+    checkpoint = OwnedLoopCheckpoint(lease)
+    state = AgentLoopState(context(), [])
+    await checkpoint.save(state, [])
+    checkpoint.saver.delete_generation(checkpoint.base)
+    with pytest.raises(RuntimeSafetyError, match="no longer available"):
+        checkpoint.restore(context())
+    lease.release()
+    replacement = ActorLease.claim(lease.database, lease.owner, lease.run_id)
+    assert replacement is not None
+    fresh = OwnedLoopCheckpoint(replacement)
+    with pytest.raises(RuntimeSafetyError, match="no longer available"):
+        fresh.restore(context())
+    with pytest.raises(RuntimeSafetyError, match="Restore existing"):
+        await fresh.save(state, [])

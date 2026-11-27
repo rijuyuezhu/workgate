@@ -1,0 +1,174 @@
+"""Private foreground generation driver over the owned native Agent loop."""
+
+import asyncio
+import copy
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import suppress
+
+import httpx
+
+from ..hosted_chat.agent_runtime import (
+    AgentContext,
+    AgentLoopState,
+    AgentSuspended,
+    RuntimeSafetyError,
+    ToolBatchOutput,
+    run_agent_loop,
+)
+from ..hosted_chat.generation_actor_lease import ActorLeaseLost
+from ..hosted_chat.generations import GenerationStore
+from ..hosted_chat.provider_common import (
+    ModelFinish,
+    ModelThought,
+    ModelToolCall,
+    ModelUsage,
+)
+from ..hosted_chat.providers import stream_model, stream_model_with_tools
+from .hosted_chat_native_tool_node import NativeLoopToolNode
+
+
+class ObservableStreamInterrupted(RuntimeSafetyError):
+    """A crash occurred after public output but before its durable loop boundary."""
+
+
+def safe_generation_error(error: Exception) -> str:
+    """Return provider failure context without leaking request URLs or tokens."""
+    if isinstance(error, httpx.HTTPStatusError):
+        return f"Model provider returned HTTP {error.response.status_code} (HTTPStatusError)"
+    if isinstance(error, httpx.TransportError):
+        return f"Model provider stream disconnected ({type(error).__name__})"
+    if isinstance(error, ObservableStreamInterrupted):
+        return "Provider stream was interrupted after observable output; cannot replay it safely"
+    return f"Generation failed ({type(error).__name__})"
+
+
+async def run_foreground_native_loop(
+    node: NativeLoopToolNode,
+    context: AgentContext,
+    history: list[dict],
+    *,
+    authorize_batch: Callable[
+        [list[ModelToolCall], AgentLoopState], Awaitable[None]
+    ],
+    stream_tools: Callable[
+        ...,
+        AsyncIterator[
+            str | ModelToolCall | ModelThought | ModelUsage | ModelFinish
+        ],
+    ] = stream_model_with_tools,
+    stream_text: Callable[
+        ..., AsyncIterator[str | ModelThought | ModelUsage | ModelFinish]
+    ] = stream_model,
+) -> AgentLoopState:
+    """Run a caller-authorized native turn; no public route or grant admission.
+
+    Approval and content-policy orchestration must be supplied by the caller.
+    A caller owns lease admission/release; the running coroutine renews it.
+    """
+    checkpoint = node.checkpoint
+    lease = checkpoint.lease
+    store = GenerationStore(lease.database)
+    node.current_grant()
+    generation = store.get(lease.owner, lease.run_id)
+    if generation is None:
+        raise ActorLeaseLost("Generation is no longer available")
+    heartbeat = asyncio.create_task(lease.keep_alive())
+    partial_text: list[str] = []
+    cursor = 0
+
+    async def emit(value: str, kind: str) -> None:
+        nonlocal cursor
+        node.current_grant()
+        if not value:
+            return
+        part = {"type": kind, kind: value}
+        if kind == "text":
+            part["phase"] = "final_answer"
+            partial_text.append(value)
+        cursor = store.append(
+            lease.owner,
+            lease.run_id,
+            {
+                "event": "on_message_delta"
+                if kind == "text"
+                else "on_reasoning_delta",
+                "data": {
+                    "id": generation.response_message_id,
+                    "delta": {"content": part},
+                },
+            },
+            actor_lease=lease,
+        )
+
+    async def text(value: str) -> None:
+        await emit(value, "text")
+
+    async def thought(value: str) -> None:
+        await emit(value, "think")
+
+    async def save(state: AgentLoopState, calls: list[ModelToolCall]) -> None:
+        node.current_grant()
+        await checkpoint.save(
+            state,
+            calls,
+            partial_text="".join(partial_text),
+            public_delta_cursor=cursor,
+        )
+
+    async def dispatch(
+        calls: list[ModelToolCall], state: AgentLoopState
+    ) -> ToolBatchOutput:
+        node.current_grant()
+        await authorize_batch(copy.deepcopy(calls), state)
+        return await node.dispatch(calls, state)
+
+    async def check_stream() -> bool:
+        node.current_grant()
+        return False
+
+    try:
+        restored = checkpoint.restore(context)
+        if restored is None:
+            state = AgentLoopState(context, copy.deepcopy(history))
+        else:
+            state = restored.state
+            partial_text.append(restored.partial_text)
+            cursor = restored.public_delta_cursor
+        if store.public_delta_cursor(lease) != cursor:
+            raise ObservableStreamInterrupted(
+                "Uncheckpointed public provider delta"
+            )
+        await run_agent_loop(
+            state,
+            stream_tools=stream_tools,
+            stream_text=stream_text,
+            dispatch=dispatch,
+            on_text=text,
+            on_thought=thought,
+            save_state=save,
+            before_model=node.refresh_tools,
+            preflight_calls=node.preflight,
+            on_stream_chunk=check_stream,
+        )
+        node.current_grant()
+        store.finish(
+            lease.owner, lease.run_id, status="complete", actor_lease=lease
+        )
+        return state
+    except ActorLeaseLost, AgentSuspended, asyncio.CancelledError:
+        raise
+    except Exception as error:
+        store.finish(
+            lease.owner,
+            lease.run_id,
+            status="interrupted"
+            if isinstance(error, ObservableStreamInterrupted)
+            else "error",
+            error=safe_generation_error(error),
+            actor_lease=lease,
+        )
+        raise
+    finally:
+        heartbeat.cancel()
+        with suppress(asyncio.CancelledError):
+            await heartbeat
