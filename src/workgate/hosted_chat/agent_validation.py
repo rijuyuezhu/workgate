@@ -64,6 +64,12 @@ def clean_agent_config(payload: Any, *, create: bool = False) -> dict:
             result[key] = _strings(value, key)
     if "provider" in result and not result["provider"].strip():
         raise ValueError("Agent provider is required")
+    if "approval_mode" in obj:
+        from .approval_settings import validate_mode
+
+        result["approval_mode"] = validate_mode(
+            obj["approval_mode"], inherit=True
+        )
     if "model_parameters" in obj:
         result["model_parameters"] = copy.deepcopy(
             _require(obj["model_parameters"], dict, "model_parameters")
