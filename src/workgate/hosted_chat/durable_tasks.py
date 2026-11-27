@@ -56,7 +56,8 @@ TASK_METADATA_EFFECT_TOOLS = frozenset({"task", "task_plan", "write_todos"})
 def _task_metadata_effect(call: ModelToolCall) -> bool:
     return call.name in TASK_METADATA_EFFECT_TOOLS and (
         call.name != "task"
-        or call.arguments.get("action") in {"report", "block", "resume"}
+        or call.arguments.get("action")
+        in {"report", "block", "resume", "finish", "cancel", "delete"}
     )
 
 
@@ -601,6 +602,11 @@ class DurableTaskRepository:
         """
         complete_tool_batch([call])
         task_metadata = _task_metadata_effect(call)
+        deleting_task = (
+            task_metadata
+            and call.name == "task"
+            and call.arguments.get("action") == "delete"
+        )
         session_metadata = call.name in SESSION_METADATA_EFFECT_TOOLS
         shell = call.name in SESSION_SHELL_EFFECT_TOOLS
         command = call.name in SESSION_COMMAND_EFFECT_TOOLS
@@ -678,9 +684,18 @@ class DurableTaskRepository:
                     "A replayed tool call cannot change a durable request"
                 )
             if task_id is not None:
-                self._authorize_task_metadata(
-                    db, run, task_id, scopes, expires, write=True
-                )
+                if (
+                    deleting_task
+                    and prior is not None
+                    and prior["receipt"] is not None
+                ):
+                    # The confirmed deletion retired the Task ownership row.
+                    # Only this exact immutable call may disclose its receipt.
+                    require_machine_scope(scopes, "write", expires=expires)
+                else:
+                    self._authorize_task_metadata(
+                        db, run, task_id, scopes, expires, write=True
+                    )
             else:
                 self._require_parent(
                     db, run, "shell", machine, {"session_id": session_id}
@@ -727,7 +742,7 @@ class DurableTaskRepository:
                 return True, None
             if receipt is not None:
                 if claim or prior["receipt"] is not None:
-                    raise ValueError("Native Session effect is already settled")
+                    raise ValueError("Native effect is already settled")
                 db.execute(
                     "UPDATE agent_native_effect_calls SET receipt=? WHERE run_id=? AND call_id=?",
                     (
@@ -736,6 +751,12 @@ class DurableTaskRepository:
                         call.call_id,
                     ),
                 )
+                if deleting_task:
+                    db.execute(
+                        "UPDATE agent_durable_tasks SET state='stopped',updated_at=?,next_attempt_at=NULL "
+                        "WHERE owner=? AND conversation_id=? AND kind='task' AND native_id=? AND state='active'",
+                        (_now(), lease.owner, run["conversation_id"], task_id),
+                    )
                 return False, receipt
             return False, json.loads(prior["receipt"]) if prior[
                 "receipt"
