@@ -7400,6 +7400,7 @@ async def test_detached_worker_nested_foreground_catalogue(bound, mode):
     from workgate.hosted_chat.detached_task_controls import check_detached_task
     from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
     from workgate.hosted_chat.provider_common import ProviderConfig
+    from workgate.hosted_chat.storage import WorkspaceRepository
     from workgate.hosted_chat.subagent_wakeup import WakeupLease
     from workgate.hosted_chat.subagents import (
         build_subagent_configs,
@@ -7617,6 +7618,25 @@ async def test_detached_worker_nested_foreground_catalogue(bound, mode):
                 db,
                 lease.owner,
                 task_id,
+                scopes=set(SCOPES),
+                expires=None,
+                disclosure_access=access,
+            )
+    if mode == "normal":
+        with db.read_snapshot() as conn:
+            child_conversation = conn.execute(
+                "SELECT child_conversation_id FROM subagent_tasks WHERE id=?",
+                (task_id,),
+            ).fetchone()[0]
+        assert WorkspaceRepository(db).delete_conversation(
+            lease.owner, child_conversation
+        )
+        with pytest.raises(
+            PermissionError, match="provenance no longer available"
+        ):
+            check_detached_task(
+                checkpoint,
+                poll,
                 scopes=set(SCOPES),
                 expires=None,
                 disclosure_access=access,

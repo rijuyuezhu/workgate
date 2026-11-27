@@ -564,14 +564,19 @@ class DetachedTaskLease:
                 db=db,
             )
             row = self._current(db)
-            if json.loads(row["execution_options"])["child_configs"]:
-                validate_detached_descendants(
-                    db,
-                    self.owner,
-                    self.task_id,
-                    row["child_run_id"],
-                    scopes,
-                    expires,
+            options = json.loads(row["execution_options"])
+            if options["child_configs"] and validate_detached_descendants(
+                db,
+                self.owner,
+                self.task_id,
+                row["child_run_id"],
+                scopes,
+                expires,
+            ):
+                options["nested_provenance"] = True
+                db.execute(
+                    "UPDATE subagent_tasks SET execution_options=? WHERE id=?",
+                    (json.dumps(options, allow_nan=False), self.task_id),
                 )
             initial = json.loads(row["initial_messages"])
             if messages[: len(initial)] != initial:
