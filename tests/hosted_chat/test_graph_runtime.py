@@ -482,3 +482,152 @@ async def test_grant_revoked_at_superstep_boundary(owned):
             check_grant=grant,
             recursion_limit=30,
         )
+
+
+@pytest.mark.asyncio
+async def test_member_checkpoint_and_receipts_are_isolated_and_recover_exact_activation(
+    owned,
+):
+    from dataclasses import replace
+
+    from workgate.hosted_chat.agent_runtime import AgentContext, AgentLoopState
+    from workgate.hosted_chat.approval_claims import ApprovalClaimStore
+    from workgate.hosted_chat.generation_actor_lease import ActorLeaseLost
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.loop_receipts import execute_checkpointed_batch
+    from workgate.hosted_chat.provider_common import (
+        ModelToolCall,
+        ProviderConfig,
+    )
+
+    repo, agents, lease = owned
+    configure(owned, [{"from": "root", "to": ["left", "right"]}])
+    scopes = {}
+    executed = []
+
+    async def execute(activation):
+        scope = activation.scope
+        name = activation.agent["model"]
+        scopes[name] = scope
+        checkpoint = OwnedLoopCheckpoint(lease, scope=scope)
+        context = AgentContext(
+            ProviderConfig(
+                "openai", name, "https://provider.invalid", "secret"
+            ),
+            [],
+            agent=activation.agent,
+        )
+        assert checkpoint.restore(context) is None
+        call = ModelToolCall("same-provider-call", "read", {"path": name})
+        state = AgentLoopState(
+            context,
+            activation.history,
+            step=2,
+            model_turn=1,
+            pending_calls=[call],
+            tool_step_started=True,
+        )
+        await checkpoint.save(state, [call])
+
+        async def effect(value):
+            executed.append((name, value.call_id))
+            return {"text": name}
+
+        assert await execute_checkpointed_batch(
+            checkpoint, [call], effect, check_grant=lambda: None
+        ) == [{"text": name}]
+        claims = ApprovalClaimStore(repo.database)
+        with pytest.raises(PermissionError, match="graph-aware"):
+            claims.pause(checkpoint, [call])
+        assert OwnedLoopCheckpoint(lease).restore(context) is None
+        return reply(activation)
+
+    await run(owned, execute)
+    assert len(executed) == 3
+    assert (
+        len(
+            {
+                scope.native_call_id("same-provider-call")
+                for scope in scopes.values()
+            }
+        )
+        == 3
+    )
+    old = OwnedLoopCheckpoint(lease, scope=scopes["left"])
+    lease.release()
+    fresh = ActorLease.claim(repo.database, "alice", "run")
+    assert fresh is not None
+    with pytest.raises(ActorLeaseLost):
+        old.assert_current()
+    with pytest.raises(PermissionError, match="identity changed"):
+        OwnedLoopCheckpoint(
+            fresh,
+            scope=replace(scopes["left"], member_id=agents["right"]["id"]),
+        )
+    with pytest.raises(PermissionError, match="namespace"):
+        OwnedLoopCheckpoint(
+            fresh,
+            scope=replace(
+                scopes["left"], graph_namespace="other:graph:foreground"
+            ),
+        )
+    with pytest.raises(PermissionError, match="no admitted"):
+        OwnedLoopCheckpoint(
+            fresh,
+            scope=replace(scopes["left"], graph_namespace="run:graph:absent"),
+        )
+    with pytest.raises(ValueError, match="UUID|badly formed"):
+        OwnedLoopCheckpoint(
+            fresh, scope=replace(scopes["left"], activation_id="invalid")
+        )
+    for name, scope in scopes.items():
+        checkpoint = OwnedLoopCheckpoint(fresh, scope=scope)
+        context = AgentContext(
+            ProviderConfig(
+                "openai", name, "https://provider.invalid", "new-secret"
+            ),
+            [],
+            agent=agents[name],
+        )
+        recovery = checkpoint.restore(context)
+        assert recovery is not None
+        with pytest.raises(RuntimeSafetyError, match="member context"):
+            checkpoint.restore(
+                AgentContext(context.profile, [], agent={"id": "wrong"})
+            )
+
+        async def forbidden(value):
+            pytest.fail("A settled sibling receipt must not execute twice")
+
+        assert await execute_checkpointed_batch(
+            checkpoint,
+            recovery.state.pending_calls,
+            forbidden,
+            check_grant=lambda: None,
+        ) == [{"text": name}]
+    # Expiration cannot turn one old member into a new model/native activation.
+    with repo.database.connect() as conn:
+        conn.execute(
+            "UPDATE agent_checkpoints SET expires_at=0 WHERE checkpoint_ns=?",
+            (scopes["left"].checkpoint_namespace,),
+        )
+    context = AgentContext(
+        ProviderConfig(
+            "openai", "left", "https://provider.invalid", "new-secret"
+        ),
+        [],
+        agent=agents["left"],
+    )
+    with pytest.raises(RuntimeSafetyError, match="no longer available"):
+        OwnedLoopCheckpoint(fresh, scope=scopes["left"]).restore(context)
+    # A different member remains recoverable; a changed root fences all.
+    right = OwnedLoopCheckpoint(fresh, scope=scopes["right"])
+    assert (
+        right.restore(AgentContext(context.profile, [], agent=agents["right"]))
+        is not None
+    )
+    repo.update("alice", agents["root"]["id"], {"name": "new definition"})
+    with pytest.raises(PermissionError, match="definition"):
+        right.assert_current()
+    with pytest.raises(PermissionError, match="definition"):
+        right.saver.put_writes(right.active, [("messages", {})], "stale")

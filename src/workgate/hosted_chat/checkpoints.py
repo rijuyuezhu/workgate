@@ -18,6 +18,7 @@ from typing import Any
 
 from .database import SQLiteDatabase
 from .generation_actor_lease import ActorLease, ActorLeaseLost
+from .graph_member_scope import GraphMemberScope
 
 OWNER_KEY = "__librechat_checkpoint_owner"
 NAMESPACE_KEY = "__librechat_checkpoint_ns"
@@ -105,6 +106,7 @@ class SQLiteCheckpointSaver:
         hard_limit_bytes: int = CHECKPOINT_HARD_LIMIT_BYTES,
         warn_bytes: int = CHECKPOINT_WARN_BYTES,
         actor_lease: ActorLease | None = None,
+        member_scope: GraphMemberScope | None = None,
     ):
         if not isinstance(owner, str) or not owner:
             raise ValueError("Checkpoint owner is required")
@@ -125,7 +127,12 @@ class SQLiteCheckpointSaver:
             raise PermissionError("Checkpoint actor lease owner mismatch")
         self.database = database
         self.owner = owner
+        if member_scope is not None and actor_lease is None:
+            raise PermissionError(
+                "Graph member checkpoints require an actor lease"
+            )
         self.actor_lease = actor_lease
+        self.member_scope = member_scope
         self.ttl_seconds = ttl_seconds
         self.hard_limit_bytes = hard_limit_bytes
         self.warn_bytes = warn_bytes
@@ -224,6 +231,12 @@ class SQLiteCheckpointSaver:
                 "Checkpoint identity does not match generation actor lease"
             )
         lease.assert_current(db)
+        if self.member_scope is not None:
+            if namespace != self.member_scope.checkpoint_namespace:
+                raise ActorLeaseLost(
+                    "Checkpoint namespace does not match graph member activation"
+                )
+            self.member_scope.resolve(db, lease)
 
     def _check_size(self, db: sqlite3.Connection, key: tuple) -> None:
         """The durable limit covers the stored tuple and its pending writes."""

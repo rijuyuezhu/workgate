@@ -154,6 +154,10 @@ class ApprovalClaimStore:
         *,
         question: bool,
     ) -> dict:
+        if checkpoint.scope is not None:
+            raise PermissionError(
+                "Graph member human actions require graph-aware recovery"
+            )
         lease = checkpoint.lease
         if lease.database.path != self.database.path:
             raise ActorLeaseLost(
@@ -400,6 +404,10 @@ class ApprovalClaimStore:
     def approved_batch(
         self, checkpoint: OwnedLoopCheckpoint
     ) -> ApprovalBatch | None:
+        if checkpoint.scope is not None:
+            raise PermissionError(
+                "Graph member human actions require graph-aware recovery"
+            )
         lease = checkpoint.lease
         if lease.database.path != self.database.path:
             raise ActorLeaseLost(
@@ -469,6 +477,10 @@ class ApprovalClaimStore:
             return answer
 
     def answered_question(self, checkpoint: OwnedLoopCheckpoint) -> dict | None:
+        if checkpoint.scope is not None:
+            raise PermissionError(
+                "Graph member human actions require graph-aware recovery"
+            )
         lease = checkpoint.lease
         if lease.database.path != self.database.path:
             raise ActorLeaseLost(

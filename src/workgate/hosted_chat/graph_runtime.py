@@ -16,6 +16,7 @@ from typing import Annotated, Any, TypedDict, cast
 from .agent_runtime import RuntimeSafetyError
 from .agents import AgentRepository
 from .generation_actor_lease import ActorLease
+from .graph_member_scope import GraphMemberScope
 from .graph_topology import admit_agent_graph, endpoints
 from .handoff import (
     PARENT,
@@ -98,10 +99,14 @@ class GraphActivation:
     """One durable LangGraph task, with live owner-scoped member configuration."""
 
     agent: dict
-    activation_id: str
+    scope: GraphMemberScope
     history: list[dict]
     handoff_tools: list[dict]
     handoff_state: dict
+
+    @property
+    def activation_id(self) -> str:
+        return self.scope.activation_id
 
 
 @dataclass
@@ -339,7 +344,17 @@ async def run_multi_agent_graph(
         )
         result = await execute_member(
             GraphActivation(
-                member, activation_id, incoming, tools, route.snapshot()
+                member,
+                GraphMemberScope(
+                    graph_namespace,
+                    root_agent_id,
+                    root["version"],
+                    agent_id,
+                    activation_id,
+                ),
+                incoming,
+                tools,
+                route.snapshot(),
             )
         )
         live_member(agent_id)

@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .agent_runtime import AgentContext, AgentLoopState, RuntimeSafetyError
 from .checkpoints import SQLiteCheckpointSaver
 from .generation_actor_lease import ActorLease, ActorLeaseLost
+from .graph_member_scope import GraphMemberScope
 from .provider_common import ModelToolCall, complete_tool_batch
 
 
@@ -57,8 +58,11 @@ class LoopRecovery:
 class OwnedLoopCheckpoint:
     """One authenticated generation actor's ordered event-actor checkpoints."""
 
-    def __init__(self, lease: ActorLease):
+    def __init__(
+        self, lease: ActorLease, *, scope: GraphMemberScope | None = None
+    ):
         self.lease = lease
+        self.scope = scope
         with lease.database.read_snapshot() as db:
             lease.assert_current(db)
             row = db.execute(
@@ -68,14 +72,26 @@ class OwnedLoopCheckpoint:
             if row is None:
                 raise ActorLeaseLost("Generation no longer exists")
             conversation = row["conversation_id"]
-            started = (
-                json.loads(row["state"]).get("ownedLoopCheckpoint") is True
-            )
+            run_state = json.loads(row["state"])
+            if scope is None:
+                started = run_state.get("ownedLoopCheckpoint") is True
+            else:
+                scope.resolve(db, lease)
+                marker = run_state.get("ownedGraphMemberCheckpoints", {}).get(
+                    scope.checkpoint_namespace
+                )
+                if marker is not None and marker != scope.marker:
+                    raise RuntimeSafetyError(
+                        "Graph activation checkpoint identity changed"
+                    )
+                started = marker is not None
         self.saver = SQLiteCheckpointSaver(
-            lease.database, lease.owner, actor_lease=lease
+            lease.database, lease.owner, actor_lease=lease, member_scope=scope
         )
         self.base = self.saver.config(
-            conversation, lease.run_id, event_actor=True
+            conversation,
+            scope.checkpoint_namespace if scope is not None else lease.run_id,
+            event_actor=True,
         )
         self.active = self.base
         self._recovery_required = (
@@ -83,10 +99,27 @@ class OwnedLoopCheckpoint:
         )
         self._started = started
 
+    def assert_current(self) -> None:
+        if self.scope is None:
+            self.lease.assert_current()
+        else:
+            with self.lease.database.read_snapshot() as db:
+                self.scope.resolve(db, self.lease)
+
+    def _check_context(self, context: AgentContext) -> None:
+        if (
+            self.scope is not None
+            and (context.agent or {}).get("id") != self.scope.member_id
+        ):
+            raise RuntimeSafetyError(
+                "Graph member context does not match its activation"
+            )
+
     def restore(self, context: AgentContext) -> LoopRecovery | None:
-        self.lease.assert_current()
+        self.assert_current()
+        self._check_context(context)
         row = self.saver.get_tuple(self.base)
-        self.lease.assert_current()
+        self.assert_current()
         if row is None:
             if self._recovery_required or self._started:
                 raise RuntimeSafetyError(
@@ -125,7 +158,8 @@ class OwnedLoopCheckpoint:
         partial_text: str = "",
         public_delta_cursor: int = 0,
     ) -> None:
-        self.lease.assert_current()
+        self.assert_current()
+        self._check_context(state.context)
         if self._recovery_required:
             raise RuntimeSafetyError(
                 "Restore existing Agent loop checkpoint before saving"
@@ -156,10 +190,33 @@ class OwnedLoopCheckpoint:
             with self.lease.database.connect() as db:
                 db.execute("BEGIN IMMEDIATE")
                 self.lease.assert_current(db)
-                db.execute(
-                    "UPDATE runs SET state=json_set(state,'$.ownedLoopCheckpoint',json('true')) WHERE id=?",
-                    (self.lease.run_id,),
-                )
+                if self.scope is None:
+                    db.execute(
+                        "UPDATE runs SET state=json_set(state,'$.ownedLoopCheckpoint',json('true')) WHERE id=?",
+                        (self.lease.run_id,),
+                    )
+                else:
+                    self.scope.resolve(db, self.lease)
+                    row = db.execute(
+                        "SELECT state FROM runs WHERE id=?",
+                        (self.lease.run_id,),
+                    ).fetchone()
+                    run_state = json.loads(row["state"])
+                    markers = run_state.setdefault(
+                        "ownedGraphMemberCheckpoints", {}
+                    )
+                    if self.scope.checkpoint_namespace in markers:
+                        raise RuntimeSafetyError(
+                            "Graph activation already has a recovery obligation"
+                        )
+                    markers[self.scope.checkpoint_namespace] = self.scope.marker
+                    db.execute(
+                        "UPDATE runs SET state=? WHERE id=?",
+                        (
+                            json.dumps(run_state, separators=(",", ":")),
+                            self.lease.run_id,
+                        ),
+                    )
             self._started = True
         parent = self.active["configurable"].get("checkpoint_id")
         identity = (
