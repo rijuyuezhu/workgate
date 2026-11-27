@@ -252,3 +252,53 @@ async def test_approval_abort_preserves_leftovers_without_resurrecting_claim(
             ).fetchone()[0]
         )
     assert "pendingAction" not in saved and "approvalCheckpointId" not in saved
+
+
+def test_drain_is_fifo_owned_and_rolls_back_partial_publication(
+    context, monkeypatch
+):
+    from workgate.hosted_chat import steering as module
+    from workgate.hosted_chat.generation_actor_lease import ActorLeaseLost
+
+    generations, steering, job = context
+    one = enqueue(steering, job, "one")
+    lease = ActorLease.claim(generations.database, "alice", job.run_id)
+    assert lease is not None
+    assert steering.drain(lease, boundary="stream") == []
+    two = enqueue(steering, job, "two", preempt=True)
+    monkeypatch.setattr(module, "EVENT_LIMIT", 4)
+    with pytest.raises(SteerRejection, match="STEER_EVENT_LIMIT"):
+        steering.drain(lease, boundary="stream")
+    assert steering.applied_parts(lease) == []
+    assert len(steering.pending("alice", job.run_id)) == 2
+    assert len(generations.events("alice", job.run_id)) == 3
+    lease.release()
+    fresh = ActorLease.claim(generations.database, "alice", job.run_id)
+    assert fresh is not None
+    with pytest.raises(ActorLeaseLost):
+        steering.drain(lease, boundary="stream")
+    monkeypatch.setattr(module, "EVENT_LIMIT", 30000)
+    applied = steering.drain(fresh, boundary="stream")
+    assert [part["steerId"] for part in applied] == [
+        one["steerId"],
+        two["steerId"],
+    ]
+    assert steering.drain(fresh, boundary="terminal") == []
+    assert steering.applied_parts(fresh) == applied
+    assert enqueue(steering, job, "two", preempt=True)["settled"]
+    assert not enqueue(steering, job, "two", preempt=True)["leftover"]
+    events = [
+        event
+        for _, event in generations.events("alice", job.run_id)
+        if event.get("event") == "on_steer_applied"
+    ]
+    assert [event["data"]["index"] for event in events] == [0, 1]
+    assert generations.finish(
+        "alice", job.run_id, status="complete", actor_lease=fresh
+    )
+    assert (
+        generations.events("alice", job.run_id)[-1][1]["responseMessage"][
+            "content"
+        ]
+        == applied
+    )

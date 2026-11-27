@@ -4810,3 +4810,240 @@ async def test_ask_user_requires_live_opt_in_and_lone_valid_proposal(bound):
     with pytest.raises(PermissionError, match="no longer selected"):
         await node.dispatch(calls, state)
     assert not intent_rows(repo)
+
+
+@pytest.mark.parametrize("preempt", [True, False])
+@pytest.mark.asyncio
+async def test_foreground_steering_preserves_fifo_and_safe_tool_boundary(
+    bound, preempt
+):
+    from workgate.control.hosted_chat_foreground_loop import (
+        run_foreground_native_loop,
+    )
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.hosted_chat.agent_runtime import AgentContext
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+    from workgate.hosted_chat.steering import SteeringStore
+
+    harness, repo, lease, generation = bound
+    steering = SteeringStore(repo.database)
+    context = AgentContext(
+        ProviderConfig("openai", "model", "https://example.invalid", "fake"), []
+    )
+    node = NativeLoopToolNode(
+        harness.control,
+        repo,
+        OwnedLoopCheckpoint(lease),
+        allowed_tools={"task"},
+        scopes=SCOPES,
+        expires=None,
+        task_machine=harness.executor_id,
+        check_grant=lambda: None,
+    )
+    calls = 0
+    queued = []
+
+    def submit(text, armed):
+        ack = steering.enqueue(
+            lease.owner,
+            {
+                "conversationId": generation.conversation_id,
+                "generationCreatedAt": generation.generation_created_at,
+                "text": text,
+                "preempt": armed,
+            },
+            preempt_capable=True,
+            validate_submission=lambda text: None,
+        )
+        queued.append(ack["steerId"])
+
+    async def stream(model, messages, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            yield "prefix "
+            yield ModelToolCall("task", "task", {"action": "create"})
+            submit("first", False)
+            submit("second", preempt)
+        else:
+            assert calls == 2
+            assert [
+                message["content"]
+                for message in messages
+                if message.get("source") == "steer"
+            ] == ["first", "second"]
+            tool_messages = [
+                message for message in messages if message["role"] == "tool"
+            ]
+            assert bool(tool_messages) is not preempt
+            yield "done"
+
+    async def authorize(calls, state):
+        assert not preempt
+
+    async def no_text(*args, **kwargs):
+        raise AssertionError("Task should be advertised")
+        yield ""
+
+    state = await run_foreground_native_loop(
+        node,
+        context,
+        [{"role": "user", "content": "start"}],
+        authorize_batch=authorize,
+        stream_tools=stream,
+        stream_text=no_text,
+    )
+    assert state.completed and calls == 2
+    assert bool(intent_rows(repo)) is not preempt
+    events = [
+        event
+        for _, event in GenerationStore(repo.database).events(
+            lease.owner, lease.run_id
+        )
+    ]
+    assert [
+        event["data"]["steerId"]
+        for event in events
+        if event.get("event") == "on_steer_applied"
+    ] == queued
+    assert [
+        event["data"]["index"]
+        for event in events
+        if event.get("event") == "on_steer_applied"
+    ] == [1, 2]
+    final = events[-1]["responseMessage"]
+    assert final["text"] == "prefix done"
+    assert [part["type"] for part in final["content"]] == [
+        "text",
+        "steer",
+        "steer",
+        "text",
+    ]
+
+
+@pytest.mark.parametrize("with_tool", [False, True])
+@pytest.mark.asyncio
+async def test_foreground_steering_recovers_committed_delivery_without_replay(
+    bound, monkeypatch, with_tool
+):
+    from workgate.control.hosted_chat_foreground_loop import (
+        run_foreground_native_loop,
+    )
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.hosted_chat.agent_runtime import AgentContext
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+    from workgate.hosted_chat.steering import SteeringStore
+
+    harness, repo, lease, generation = bound
+    steering = SteeringStore(repo.database)
+
+    def make_node(actor):
+        return NativeLoopToolNode(
+            harness.control,
+            repo,
+            OwnedLoopCheckpoint(actor),
+            allowed_tools={"task"},
+            scopes=SCOPES,
+            expires=None,
+            task_machine=harness.executor_id,
+            check_grant=lambda: None,
+        )
+
+    def context():
+        return AgentContext(
+            ProviderConfig(
+                "openai", "model", "https://example.invalid", "fake"
+            ),
+            [],
+        )
+
+    seen = []
+
+    async def authorize(calls, state):
+        seen.extend(call.call_id for call in calls)
+
+    ack = steering.enqueue(
+        lease.owner,
+        {
+            "conversationId": generation.conversation_id,
+            "text": "redirect",
+            "clientSteerId": "once",
+        },
+        preempt_capable=True,
+        validate_submission=lambda text: None,
+    )
+
+    async def first(*args, **kwargs):
+        yield "prefix "
+        if with_tool:
+            yield ModelToolCall("task", "task", {"action": "create"})
+
+    async def no_text(*args, **kwargs):
+        raise AssertionError("Task should be advertised")
+        yield ""
+
+    drain = SteeringStore.drain
+
+    def crash_after_drain(self, actor, *, boundary):
+        applied = drain(self, actor, boundary=boundary)
+        if applied:
+            raise asyncio.CancelledError()
+        return applied
+
+    monkeypatch.setattr(SteeringStore, "drain", crash_after_drain)
+    with pytest.raises(asyncio.CancelledError):
+        await run_foreground_native_loop(
+            make_node(lease),
+            context(),
+            [],
+            authorize_batch=authorize,
+            stream_tools=first,
+            stream_text=no_text,
+        )
+    assert steering.applied_parts(lease)[0]["steerId"] == ack["steerId"]
+    assert bool(intent_rows(repo)) is with_tool
+    assert seen == (["task"] if with_tool else [])
+    lease.release()
+    fresh = ActorLease.claim(repo.database, lease.owner, lease.run_id)
+    assert fresh is not None
+    monkeypatch.setattr(SteeringStore, "drain", drain)
+
+    async def second(model, messages, **kwargs):
+        assert messages[-1]["steerId"] == ack["steerId"]
+        assert (
+            len(
+                [
+                    message
+                    for message in messages
+                    if message.get("source") == "steer"
+                ]
+            )
+            == 1
+        )
+        assert len(
+            [message for message in messages if message["role"] == "tool"]
+        ) == int(with_tool)
+        yield "done"
+
+    state = await run_foreground_native_loop(
+        make_node(fresh),
+        context(),
+        [],
+        authorize_batch=authorize,
+        stream_tools=second,
+        stream_text=no_text,
+    )
+    assert state.completed
+    assert seen == (["task"] if with_tool else [])
+    events = [
+        event
+        for _, event in GenerationStore(repo.database).events(
+            lease.owner, lease.run_id
+        )
+    ]
+    assert (
+        sum(event.get("event") == "on_steer_applied" for event in events) == 1
+    )
+    assert events[-1]["responseMessage"]["text"] == "prefix done"

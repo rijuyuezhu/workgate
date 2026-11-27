@@ -4,7 +4,7 @@ Request markers may only lower a job's immutable negotiated protocol. Keeping
 this separate from transport lets SQLite retries and SSE share the same rule.
 """
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 GENERATION_PROTOCOL_HEADER = "x-librechat-generation-protocol"
@@ -88,3 +88,44 @@ def request_protocol(
         if stored_version is None
         else {"generationProtocolVersion": stored_version},
     )
+
+
+def public_content(events: Iterable[dict]) -> list[dict]:
+    """Project ordered foreground provider deltas and applied steer parts."""
+    content = []
+    # Replay the final source's ordered public text/reasoning parts.
+    # Keep a list of chunks per part instead of repeatedly copying
+    # a growing string for each token.
+    for value in events:
+        kind = value.get("event")
+        if kind == "on_steer_applied":
+            part = value.get("data", {}).get("part")
+            if isinstance(part, dict) and part.get("type") == "steer":
+                content.append(part.copy())
+            continue
+        if kind not in {"on_message_delta", "on_reasoning_delta"}:
+            continue
+        delta = value["data"].get("delta", {})
+        part = delta.get("content", {}) if isinstance(delta, dict) else {}
+        if not isinstance(part, dict):
+            continue
+        field_name = "text" if kind == "on_message_delta" else "think"
+        chunk = part.get(field_name)
+        if (
+            part.get("type") != field_name
+            or not isinstance(chunk, str)
+            or not chunk
+        ):
+            continue
+        if content and content[-1]["type"] == field_name:
+            content[-1][field_name].append(chunk)
+        else:
+            content.append({"type": field_name, field_name: [chunk]})
+    for part in content:
+        key = part["type"]
+        if key not in {"text", "think"}:
+            continue
+        part[key] = "".join(part[key])
+        if key == "text":
+            part["phase"] = "final_answer"
+    return content

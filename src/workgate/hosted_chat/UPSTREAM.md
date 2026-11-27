@@ -393,3 +393,12 @@ terminal leftovers. A caller-supplied submission validator precedes admission;
 media and event-trigger ingress are not exposed by this unit. Event budgets
 share the generation protocol constants. Queue delivery and public admission
 remain separate integration work.
+
+Foreground steering delivery consumes queued text and quotes at the pinned
+stream, post-tool and terminal boundaries. Public parts and FIFO consumption
+commit together under the owning actor lease, and the ordered content
+projection is shared with final messages. Observable model output is sealed
+before stream/terminal delivery; a recovered pending tool edge reuses exact
+receipts before reinserting missing deterministic steer IDs. Uncommitted tool
+proposals can be preempted, but settled work is not undone. Media, graph
+recipient election and public route activation remain separate.

@@ -16,6 +16,7 @@ from .generation_protocol import (
     EVENT_LIMIT,
     MAX_EVENT_BYTES,
     job_generation_protocol,
+    public_content,
 )
 from .provider_profiles import ProviderRepository
 from .providers import selected_provider
@@ -503,39 +504,13 @@ class GenerationStore:
         run_id = row["id"]
         generation = self._run(row)
         now = _now()
-        content = []
-        # Replay the final source's ordered public text/reasoning parts.
-        # Keep a list of chunks per part instead of repeatedly copying
-        # a growing string for each token.
-        for event in db.execute(
-            "SELECT data FROM generation_events WHERE run_id=? ORDER BY seq",
-            (run_id,),
-        ):
-            value = json.loads(event["data"])
-            kind = value.get("event")
-            if kind not in {"on_message_delta", "on_reasoning_delta"}:
-                continue
-            delta = value["data"].get("delta", {})
-            part = delta.get("content", {}) if isinstance(delta, dict) else {}
-            if not isinstance(part, dict):
-                continue
-            field_name = "text" if kind == "on_message_delta" else "think"
-            chunk = part.get(field_name)
-            if (
-                part.get("type") != field_name
-                or not isinstance(chunk, str)
-                or not chunk
-            ):
-                continue
-            if content and content[-1]["type"] == field_name:
-                content[-1][field_name].append(chunk)
-            else:
-                content.append({"type": field_name, field_name: [chunk]})
-        for part in content:
-            key = part["type"]
-            part[key] = "".join(part[key])
-            if key == "text":
-                part["phase"] = "final_answer"
+        content = public_content(
+            json.loads(event["data"])
+            for event in db.execute(
+                "SELECT data FROM generation_events WHERE run_id=? ORDER BY seq",
+                (run_id,),
+            )
+        )
         streamed = "".join(
             part["text"] for part in content if part["type"] == "text"
         )
