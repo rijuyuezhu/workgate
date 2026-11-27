@@ -47,6 +47,9 @@ SESSION_FILE_EFFECT_TOOLS = frozenset(
 )
 
 
+SESSION_COMMAND_EFFECT_TOOLS = frozenset({"bash", "run_python_code"})
+
+
 def _fingerprint(name: str, arguments: dict) -> str:
     return hashlib.sha256(
         json.dumps(
@@ -545,7 +548,18 @@ class DurableTaskRepository:
         """
         complete_tool_batch([call])
         shell = call.name in SESSION_SHELL_EFFECT_TOOLS
-        if not shell and call.name not in SESSION_FILE_EFFECT_TOOLS:
+        command = call.name in SESSION_COMMAND_EFFECT_TOOLS
+        if command and any(
+            call.arguments.get(flag, False) is not False
+            for flag in ("async_", "pty", "persist_on_timeout")
+        ):
+            raise ValueError(
+                "Tracked or PTY execution requires native reservation"
+            )
+        if (
+            not (shell or command)
+            and call.name not in SESSION_FILE_EFFECT_TOOLS
+        ):
             raise ValueError("Expected a finite native Session effect")
         session_id = TypeAdapter(SessionId).validate_python(
             call.arguments.get("session_id"),
@@ -615,7 +629,7 @@ class DurableTaskRepository:
                 db,
                 run,
                 machine,
-                "shell" if shell else "session_write",
+                "shell" if shell or command else "session_write",
                 scopes,
                 expires,
                 registered,

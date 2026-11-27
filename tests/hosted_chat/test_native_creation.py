@@ -2863,3 +2863,56 @@ async def test_owned_file_effects_preserve_native_grounding_and_replay(
     with pytest.raises(PermissionError, match="read-only"):
         await dispatch(write)
     assert not path.exists()
+
+
+@pytest.mark.asyncio
+async def test_bounded_command_mode_and_replay(bound):
+    from workgate.control.hosted_chat_session_tools import (
+        NativeSessionDispatcher,
+    )
+
+    harness, repo, lease, _ = bound
+    _, sid = await native_session(harness, repo, lease)
+    dispatcher = NativeSessionDispatcher(harness.control)
+    call = ModelToolCall(
+        "bounded-echo",
+        "bash",
+        {"session_id": sid, "command": "echo bounded-output"},
+    )
+
+    async def dispatch(proposal, scopes=SCOPES):
+        return await dispatcher.dispatch(
+            repo,
+            lease,
+            proposal,
+            machine=harness.executor_id,
+            scopes=scopes,
+            expires=None,
+        )
+
+    with pytest.raises(PermissionError, match="shell:execute"):
+        await dispatch(call, {"shell:read", "shell:write"})
+    for flag in ("async_", "pty", "persist_on_timeout"):
+        with pytest.raises(ValueError, match="requires native reservation"):
+            await dispatch(
+                ModelToolCall(
+                    "mode-" + flag, call.name, call.arguments | {flag: True}
+                )
+            )
+    result = await dispatch(call)
+    assert result["structuredContent"]["mode"] == "command"
+    assert "bounded-output" in result["structuredContent"]["result"]["stdout"]
+    assert await dispatch(call) == result
+    python = ModelToolCall(
+        "bounded-print",
+        "run_python_code",
+        {"session_id": sid, "code": "print('bounded-python')"},
+    )
+    result = await dispatch(python)
+    assert result["structuredContent"]["mode"] == "command"
+    assert "bounded-python" in result["structuredContent"]["result"]["stdout"]
+    assert await dispatch(python) == result
+    assert {row["kind"] for row in intent_rows(repo).values()} == {
+        "task",
+        "session",
+    }
