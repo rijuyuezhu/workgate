@@ -22,6 +22,7 @@ from ...jobs.persistence import (
 from ...jobs.persistence import (
     remove_attempt_paths as _remove_attempt_paths,
 )
+from ...jobs.projection import compact_job
 from ...jobs.recovery import store_transaction as _store_transaction
 from ...jobs.state import (
     ACTIVE_STATUSES,
@@ -898,3 +899,39 @@ async def lookup_job_attempt_unlocked(
         return ReservedJobAttemptReceipt(
             **receipt, state="matching", job=_public_job(job)
         )
+
+
+async def list_job_attempts_unlocked(
+    config: ExecutorConfig,
+    session_store: ToolSessionStore,
+    session_id: str,
+    requests: list[ReservedJobAttemptRequest],
+) -> list[ReservedJobAttemptReceipt]:
+    """Inspect requested retained attempts in one native snapshot, without logs."""
+    session_store.admit_active_session(session_id)
+    active = await authoritative_persistent_shell_ids_execute(
+        config, session_store
+    )
+    receipts = []
+    with _store_transaction() as store:
+        for request in requests:
+            try:
+                job = _find_session_job(store, session_id, request.job_id)
+            except KeyError:
+                continue
+            if str(job.get("kind") or "shell") != "shell":
+                continue
+            job = _refresh_job_status(job, active)
+            if (
+                job_attempt_state(job, request.attempt, request.retry_key)
+                == "matching"
+            ):
+                receipts.append(
+                    ReservedJobAttemptReceipt(
+                        **request.model_dump(),
+                        session_id=session_id,
+                        state="matching",
+                        job=compact_job(_public_job(job)),
+                    )
+                )
+    return receipts

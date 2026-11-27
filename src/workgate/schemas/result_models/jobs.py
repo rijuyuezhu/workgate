@@ -123,6 +123,10 @@ class ReservedJobAttemptReceipt(ReservedJobAttemptRequest):
         )
 
 
+class ReservedJobAttemptBatchReceipt(BaseModel):
+    receipts: list[ReservedJobAttemptReceipt] = Field(max_length=64)
+
+
 class JobStartOutput(JobInfo):
     """Tracked job record created after starting shell or managed work."""
 

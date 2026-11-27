@@ -395,6 +395,69 @@ class DurableTaskRepository:
                 result.append(self._intent(row))
             return result
 
+    def list_attempts(
+        self,
+        lease: ActorLease,
+        session_id: str,
+        *,
+        machine: str,
+        scopes: set[str],
+        expires: int | None,
+        registered: Collection[str],
+    ) -> list[Intent]:
+        """List confirmed owned attempts, excluding unauthorized destinations."""
+        with self.database.read_snapshot() as db:
+            run = self._run(db, lease)
+            self._require_parent(
+                db, run, "job", machine, {"session_id": session_id}
+            )
+            self._authorize(
+                db,
+                run,
+                machine,
+                "poll",
+                scopes,
+                expires,
+                registered,
+                run["conversation_id"],
+            )
+            rows = db.execute(
+                "SELECT * FROM (SELECT *, ROW_NUMBER() OVER "
+                "(PARTITION BY native_id ORDER BY native_attempt DESC, id DESC) AS rank "
+                "FROM agent_durable_tasks WHERE owner=? AND conversation_id=? "
+                "AND machine=? AND native_session_id=? AND native_id IS NOT NULL "
+                "AND native_attempt IS NOT NULL AND kind IN ('job','retry','copy') "
+                "AND state IN ('active','stopped')) WHERE rank=1 ORDER BY native_id",
+                (run["owner"], run["conversation_id"], machine, session_id),
+            )
+            result = []
+            for row in rows:
+                try:
+                    self._require_parent(
+                        db,
+                        run,
+                        "retry",
+                        machine,
+                        {"session_id": session_id},
+                        row["destination_machine"],
+                        row["destination_session_id"],
+                    )
+                    self._authorize(
+                        db,
+                        run,
+                        machine,
+                        "poll",
+                        scopes,
+                        expires,
+                        registered,
+                        run["conversation_id"],
+                        row["destination_machine"],
+                    )
+                except PermissionError:
+                    continue
+                result.append(self._intent(row))
+            return result
+
     def reserve(
         self,
         lease: ActorLease,

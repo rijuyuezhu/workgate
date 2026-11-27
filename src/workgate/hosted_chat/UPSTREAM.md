@@ -181,7 +181,9 @@ Native Job polling uses the latest confirmed conversation-owned attempt and
 read access to all bound endpoints. The private lookup supports the native
 bounded log-tail length; a superseding public retry is never projected as
 owned work. Authorization and ownership are rechecked before publishing the
-result. Owned Job list, explicit cancellation and runtime wiring follow.
+result. Owned Job listing uses bounded exact-attempt metadata batches, without
+reading logs. It filters out unrelated, superseded and unauthorized Jobs before
+computing counts or pagination. Explicit cancellation and runtime wiring follow.
 
 
 Agent authoring starts with the final upstream repository and validators.
