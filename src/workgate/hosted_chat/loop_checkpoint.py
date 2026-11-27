@@ -15,6 +15,7 @@ from .checkpoints import SQLiteCheckpointSaver
 from .generation_actor_lease import ActorLease, ActorLeaseLost
 from .graph_member_scope import GraphMemberScope
 from .provider_common import ModelToolCall, complete_tool_batch
+from .subagent_scope import SubagentScope
 
 
 class _Snapshot(BaseModel):
@@ -59,10 +60,18 @@ class OwnedLoopCheckpoint:
     """One authenticated generation actor's ordered event-actor checkpoints."""
 
     def __init__(
-        self, lease: ActorLease, *, scope: GraphMemberScope | None = None
+        self,
+        lease: ActorLease,
+        *,
+        scope: GraphMemberScope | SubagentScope | None = None,
     ):
         self.lease = lease
         self.scope = scope
+        self._marker_key = (
+            "ownedSubagentLoopCheckpoints"
+            if isinstance(scope, SubagentScope)
+            else "ownedGraphMemberCheckpoints"
+        )
         with lease.database.read_snapshot() as db:
             lease.assert_current(db)
             row = db.execute(
@@ -77,7 +86,7 @@ class OwnedLoopCheckpoint:
                 started = run_state.get("ownedLoopCheckpoint") is True
             else:
                 scope.resolve(db, lease)
-                marker = run_state.get("ownedGraphMemberCheckpoints", {}).get(
+                marker = run_state.get(self._marker_key, {}).get(
                     scope.checkpoint_namespace
                 )
                 if marker is not None and marker != scope.marker:
@@ -202,9 +211,7 @@ class OwnedLoopCheckpoint:
                         (self.lease.run_id,),
                     ).fetchone()
                     run_state = json.loads(row["state"])
-                    markers = run_state.setdefault(
-                        "ownedGraphMemberCheckpoints", {}
-                    )
+                    markers = run_state.setdefault(self._marker_key, {})
                     if self.scope.checkpoint_namespace in markers:
                         raise RuntimeSafetyError(
                             "Graph activation already has a recovery obligation"
