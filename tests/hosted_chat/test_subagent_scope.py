@@ -870,3 +870,178 @@ async def test_detached_reservation_limit_and_expiry(setup, monkeypatch):
             ).fetchone()[0]
             == 1
         )
+
+
+@pytest.mark.asyncio
+async def test_detached_lease_recovery_and_atomic_completion(setup):
+    from workgate.hosted_chat.detached_task_lease import DetachedTaskLease
+
+    parent_lease, parent, child, _ = setup
+    checkpoint = OwnedLoopCheckpoint(parent_lease)
+    call = await edge(checkpoint, parent, child["id"], background=True)
+    value = await invocation(checkpoint, parent, call)
+    reservation = reserve_detached_child(checkpoint, call, value)
+    db = parent_lease.database
+    grant = {"scopes": set(value.scopes), "expires": value.grant_expires}
+    args = (db, "alice", "chat", reservation.task_id)
+    with pytest.raises(PermissionError, match="owner scope"):
+        DetachedTaskLease.claim(db, "bob", "chat", reservation.task_id, **grant)
+    with pytest.raises(PermissionError, match="reduced"):
+        DetachedTaskLease.claim(*args, scopes=set(), expires=None)
+    parent_lease.release()
+    with db.connect() as conn:
+        conn.execute("UPDATE runs SET status='complete' WHERE id='run'")
+    old = DetachedTaskLease.claim(*args, **grant)
+    assert old is not None
+    assert DetachedTaskLease.claim(*args, **grant) is None
+    old.renew(**grant)
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE subagent_tasks SET lease_until=0 WHERE id=?",
+            (reservation.task_id,),
+        )
+    fresh = DetachedTaskLease.claim(*args, **grant)
+    assert fresh is not None
+    with pytest.raises(ActorLeaseLost):
+        old.assert_current(**grant)
+    old.release()
+    fresh.assert_current(**grant)
+    with pytest.raises(PermissionError, match="reduced"):
+        fresh.renew(scopes=set(), expires=None)
+    with pytest.raises(ValueError, match="admitted input"):
+        fresh.complete([{"role": "assistant", "content": "wrong"}], **grant)
+    fresh.complete(
+        value.messages + [{"role": "assistant", "content": "final"}], **grant
+    )
+    with db.read_snapshot() as conn:
+        row = conn.execute(
+            "SELECT status,result,lease_owner FROM subagent_tasks WHERE id=?",
+            (reservation.task_id,),
+        ).fetchone()
+        assert tuple(row) == ("completed", "final", None)
+        marker = conn.execute(
+            "SELECT active FROM active_subagent_threads WHERE thread_id=?",
+            (reservation.child_conversation_id,),
+        ).fetchone()
+        assert marker[0] == 0
+        assert (
+            json.loads(
+                conn.execute(
+                    "SELECT messages FROM subagent_threads WHERE id=?",
+                    (reservation.thread_id,),
+                ).fetchone()[0]
+            )[-1]["content"]
+            == "final"
+        )
+    assert DetachedTaskLease.claim(*args, **grant) is None
+
+
+@pytest.mark.asyncio
+async def test_detached_lease_cancel_and_live_authority(setup):
+    from workgate.hosted_chat.detached_task_lease import (
+        DetachedTaskLease,
+        request_cancel,
+    )
+
+    parent_lease, parent, child, _ = setup
+    checkpoint = OwnedLoopCheckpoint(parent_lease)
+    call = await edge(checkpoint, parent, child["id"], background=True)
+    value = await invocation(checkpoint, parent, call)
+    reservation = reserve_detached_child(
+        checkpoint, call, value, disclosure_access={"machines": ["one"]}
+    )
+    db = parent_lease.database
+    args = (db, "alice", "chat", reservation.task_id)
+    grant = {
+        "scopes": set(value.scopes),
+        "expires": value.grant_expires,
+        "disclosure_access": {"machines": ["one"]},
+    }
+    with pytest.raises(PermissionError, match="authority changed"):
+        DetachedTaskLease.claim(*args, scopes=set(value.scopes), expires=None)
+    lease = DetachedTaskLease.claim(*args, **grant)
+    assert lease is not None
+    with pytest.raises(PermissionError, match="not requested"):
+        lease.acknowledge_cancel()
+    with pytest.raises(PermissionError, match="expired"):
+        lease.assert_current(**{**grant, "expires": 1})
+    request_cancel(*args)
+    with pytest.raises(ActorLeaseLost, match="cancellation"):
+        lease.complete(value.messages, **grant)
+    assert DetachedTaskLease.claim(*args, **grant) is None
+    lease.acknowledge_cancel()
+    with db.read_snapshot() as conn:
+        assert (
+            conn.execute(
+                "SELECT status FROM subagent_tasks WHERE id=?",
+                (reservation.task_id,),
+            ).fetchone()[0]
+            == "cancelled"
+        )
+        assert (
+            conn.execute(
+                "SELECT active FROM active_subagent_threads WHERE thread_id=?",
+                (reservation.child_conversation_id,),
+            ).fetchone()[0]
+            == 0
+        )
+    call = await edge(checkpoint, parent, child["id"], background=True)
+    reservation = reserve_detached_child(
+        checkpoint, call, await invocation(checkpoint, parent, call)
+    )
+    request_cancel(db, "alice", "chat", reservation.task_id)
+    with db.read_snapshot() as conn:
+        assert (
+            conn.execute(
+                "SELECT status FROM subagent_tasks WHERE id=?",
+                (reservation.task_id,),
+            ).fetchone()[0]
+            == "cancelled"
+        )
+
+
+@pytest.mark.asyncio
+async def test_detached_reconcile_only_idle_reservations(setup):
+    from workgate.hosted_chat.detached_task_lease import (
+        DetachedTaskLease,
+        reconcile_reservations,
+        request_cancel,
+    )
+
+    parent_lease, parent, child, _ = setup
+    checkpoint = OwnedLoopCheckpoint(parent_lease)
+    call = await edge(checkpoint, parent, child["id"], background=True)
+    value = await invocation(checkpoint, parent, call)
+    reservation = reserve_detached_child(checkpoint, call, value)
+    db = parent_lease.database
+    lease = DetachedTaskLease.claim(
+        db,
+        "alice",
+        "chat",
+        reservation.task_id,
+        scopes=set(value.scopes),
+        expires=value.grant_expires,
+    )
+    assert lease is not None
+    request_cancel(db, "alice", "chat", reservation.task_id)
+    assert reconcile_reservations(db, "alice", "chat") == 0
+    lease.release()
+    assert reconcile_reservations(db, "bob", "chat") == 0
+    assert reconcile_reservations(db, "alice", "chat") == 1
+    assert reconcile_reservations(db, "alice", "chat") == 0
+    call = await edge(checkpoint, parent, child["id"], background=True)
+    reservation = reserve_detached_child(
+        checkpoint, call, await invocation(checkpoint, parent, call)
+    )
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE subagent_tasks SET grant_expires=1 WHERE id=?",
+            (reservation.task_id,),
+        )
+    assert reconcile_reservations(db, "alice", "chat") == 1
+    with db.read_snapshot() as conn:
+        row = conn.execute(
+            "SELECT status,error FROM subagent_tasks WHERE id=?",
+            (reservation.task_id,),
+        ).fetchone()
+        assert tuple(row) == ("error", "Authentication grant expired")
