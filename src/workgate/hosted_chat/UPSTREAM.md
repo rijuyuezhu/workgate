@@ -584,3 +584,10 @@ revocation and timeout stop the worker; cooperative shutdown releases the
 lease for recovery. Provider resolution and content authorization remain
 injected by the caller. Public scheduling and team/nested execution remain
 separate units.
+
+Detached root-parent task controls adapt the pinned host's list, poll and
+cancel operations. The current committed tool edge and owner/conversation/
+Agent scope fence each invocation; terminal result claims and replay receipts
+commit atomically, retiring a pending wakeup in the same transaction. Result
+replay rechecks the original grant and disclosure ceiling. Worker scheduling,
+steering controls and nested control authority remain separate units.
