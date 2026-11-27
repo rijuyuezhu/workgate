@@ -33,7 +33,13 @@ class _ParentCheckpoint(Protocol):
     @property
     def scope(
         self,
-    ) -> GraphMemberScope | SubagentScope | SubagentGraphScope | None: ...
+    ) -> (
+        GraphMemberScope
+        | SubagentScope
+        | SubagentGraphScope
+        | DetachedExecutionScope
+        | None
+    ): ...
 
 
 def _json(value: object) -> str:
@@ -332,6 +338,8 @@ class SubagentScope:
                 "Subagent input does not match the delegated task"
             )
         parent = checkpoint.scope
+        if isinstance(parent, DetachedExecutionScope):
+            raise PermissionError("Nested detached delegation is not enabled")
         if isinstance(parent, SubagentGraphScope):
             raise PermissionError("Team graph member delegation is not enabled")
         expires = invocation.grant_expires
@@ -522,3 +530,108 @@ class SubagentGraphScope:
         return self.resolve_owned(
             db, lease.owner, lease.run_id, current_edges=True
         )
+
+
+@dataclass(frozen=True)
+class DetachedExecutionScope:
+    """A private child actor bound to the original parent's durable admission."""
+
+    task_id: str
+    run_id: str
+    authorization_conversation_id: str
+    admission: SubagentScope
+    disclosure_access: dict | None
+
+    @property
+    def member_id(self) -> str | None:
+        return self.admission.member_id
+
+    @property
+    def checkpoint_namespace(self) -> str:
+        return self.run_id + ":child:" + _digest(self.task_id)
+
+    @property
+    def marker(self) -> list:
+        return [self.task_id, self.admission.marker]
+
+    def native_call_id(self, call_id: str) -> str:
+        return "child:" + _digest([self.checkpoint_namespace, call_id])
+
+    def effective_grant(
+        self, scopes: set[str] | frozenset[str], expires: int | None
+    ) -> tuple[set[str], int | None]:
+        return self.admission.effective_grant(scopes, expires)
+
+    def cap_machine_access(self, policy: dict[str, str]) -> dict[str, str]:
+        ceiling = (self.disclosure_access or {}).get("machines", {})
+        rank = {"none": 0, "read": 1, "write": 2}
+        return {
+            machine: min(
+                level, ceiling.get(machine, "none"), key=rank.__getitem__
+            )
+            for machine, level in policy.items()
+        }
+
+    @classmethod
+    def load(
+        cls, db: sqlite3.Connection, owner: str, run_id: str
+    ) -> DetachedExecutionScope:
+        row = db.execute(
+            "SELECT t.*,r.state AS child_state,r.agent_id AS child_agent FROM subagent_tasks t "
+            "JOIN runs r ON r.id=t.child_run_id JOIN conversations c ON c.id=r.conversation_id "
+            "JOIN conversations p ON p.id=t.parent_conversation_id "
+            "JOIN active_subagent_threads a ON a.owner=t.owner AND a.thread_id=c.id AND a.parent_run_id=t.parent_run_id "
+            "WHERE t.child_run_id=? AND t.owner=? AND c.owner=t.owner AND p.owner=t.owner "
+            "AND c.id=t.child_conversation_id AND t.child_registered=1 AND t.cancel_requested=0 "
+            "AND t.status IN ('running','completed')",
+            (run_id, owner),
+        ).fetchone()
+        if row is None:
+            raise PermissionError("Detached child admission is unavailable")
+        options = json.loads(row["execution_options"])
+        admission = SubagentScope.from_record(options["scope"])
+        if (
+            not admission.detached
+            or admission.run_id != row["parent_run_id"]
+            or admission.checkpoint_namespace != row["idempotency_key"]
+            or admission.invocation_hash != row["fingerprint"]
+            or list(admission.scopes) != json.loads(row["granted_scopes"])
+            or admission.grant_expires != row["grant_expires"]
+            or admission.member_id != row["child_agent"]
+            or json.loads(row["child_state"]).get("detachedTaskId") != row["id"]
+        ):
+            raise PermissionError("Detached child admission identity changed")
+        if admission.team_definition_hash is not None:
+            raise PermissionError("Detached team execution is not enabled")
+        return cls(
+            row["id"],
+            run_id,
+            row["parent_conversation_id"],
+            admission,
+            options.get("disclosure_access"),
+        )
+
+    @classmethod
+    def from_actor(cls, lease: ActorLease) -> DetachedExecutionScope:
+        with lease.database.read_snapshot() as db:
+            lease.assert_current(db)
+            scope = cls.load(db, lease.owner, lease.run_id)
+            scope.resolve(db, lease)
+            return scope
+
+    def resolve_owned(
+        self, db: sqlite3.Connection, owner: str, run_id: str
+    ) -> tuple[dict | None, ...]:
+        if run_id != self.run_id or self.load(db, owner, run_id) != self:
+            raise PermissionError("Detached child execution scope changed")
+        # The parent may have advanced or finished. Its immutable admission
+        # and all original Agent revisions still fence the detached child.
+        return self.admission.resolve_owned(db, owner, self.admission.run_id)
+
+    def resolve(
+        self, db: sqlite3.Connection, lease: ActorLease
+    ) -> tuple[dict | None, ...]:
+        lease.assert_current(db)
+        if lease.detached_task_id != self.task_id:
+            raise PermissionError("Detached scope requires its task actor")
+        return self.resolve_owned(db, lease.owner, lease.run_id)

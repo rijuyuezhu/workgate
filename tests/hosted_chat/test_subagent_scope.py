@@ -23,7 +23,10 @@ from workgate.hosted_chat.generation_actor_lease import (
 )
 from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
 from workgate.hosted_chat.provider_common import ModelToolCall, ProviderConfig
-from workgate.hosted_chat.subagent_scope import SubagentScope
+from workgate.hosted_chat.subagent_scope import (
+    DetachedExecutionScope,
+    SubagentScope,
+)
 from workgate.hosted_chat.subagents import (
     build_subagent_configs,
     chat_subagent_config,
@@ -1110,9 +1113,13 @@ async def test_detached_generation_is_private_and_settles_atomically(
         )
     with pytest.raises(PermissionError, match="model deltas"):
         store.append("alice", generation.run_id, {}, actor_lease=actor)
-    with pytest.raises(PermissionError, match="native effect authority"):
+    with pytest.raises(PermissionError, match="admitted execution scope"):
         DurableTaskRepository(db).tool_context_chain(actor)
-    private = OwnedLoopCheckpoint(actor)
+    with pytest.raises(PermissionError, match="admitted execution scope"):
+        OwnedLoopCheckpoint(actor)
+    private = OwnedLoopCheckpoint(
+        actor, scope=DetachedExecutionScope.from_actor(actor)
+    )
     assert private.restore(context(child)) is None
     state = AgentLoopState(
         context(child),
@@ -1133,7 +1140,9 @@ async def test_detached_generation_is_private_and_settles_atomically(
     assert new_actor.token != actor.token
     task.release()
     new_actor.assert_current()
-    recovered = OwnedLoopCheckpoint(new_actor).restore(context(child))
+    recovered = OwnedLoopCheckpoint(
+        new_actor, scope=DetachedExecutionScope.from_actor(new_actor)
+    ).restore(context(child))
     assert recovered is not None and recovered.state.messages == state.messages
     if outcome == "complete":
         replacement.complete(state.messages, **grant)
@@ -1188,3 +1197,172 @@ async def test_detached_generation_is_private_and_settles_atomically(
     assert workspace.delete_conversation("alice", cid)
     with pytest.raises(PermissionError, match="read-only"):
         workspace.create_conversation("alice", {"conversationId": cid})
+
+
+@pytest.mark.asyncio
+async def test_detached_native_scope_keeps_parent_authority_and_child_resources(
+    setup,
+):
+    from workgate.hosted_chat.detached_task_lease import DetachedTaskLease
+    from workgate.hosted_chat.storage import WorkspaceRepository
+    from workgate.protocol.ids import new_executor_id
+
+    parent_lease, parent, child, _ = setup
+    root = OwnedLoopCheckpoint(parent_lease)
+    db = parent_lease.database
+    machine = new_executor_id()
+    registered = (machine,)
+    scopes = {"shell:read", "shell:write", "shell:execute"}
+    call = await edge(root, parent, child["id"], background=True)
+    value = await invocation(root, parent, call, scopes=scopes)
+    access = {
+        "scopes": sorted(scopes),
+        "machines": {machine: "read"},
+        "task_machine": machine,
+    }
+    reservation = reserve_detached_child(
+        root, call, value, disclosure_access=access
+    )
+    grant = {
+        "scopes": scopes,
+        "expires": value.grant_expires,
+        "disclosure_access": access,
+    }
+    task_lease = DetachedTaskLease.claim(
+        db, "alice", "chat", reservation.task_id, **grant
+    )
+    assert task_lease is not None
+    generation, actor = task_lease.materialize(**grant)
+    scope = DetachedExecutionScope.from_actor(actor)
+    ledger = DurableTaskRepository(db, scope=scope)
+    child_conversation, chain = ledger.tool_context_chain(actor)
+    assert child_conversation == generation.conversation_id
+    assert [a["id"] for a in chain if a] == [parent["id"], child["id"]]
+    assert ledger.tool_context_chain(actor, authorization=True)[0] == "chat"
+    with pytest.raises(PermissionError, match="requires its task actor"):
+        ledger.tool_context_chain(parent_lease)
+    workspace = WorkspaceRepository(db)
+    workspace.save_setting(
+        "alice", "agent.machine_policy.conversation.chat", {machine: "none"}
+    )
+    task = ModelToolCall("call", "task", {"action": "create"})
+    with pytest.raises(PermissionError):
+        ledger.reserve(
+            actor,
+            task,
+            machine=machine,
+            scopes=scopes,
+            expires=None,
+            registered=registered,
+        )
+    workspace.save_setting(
+        "alice", "agent.machine_policy.conversation.chat", {machine: "write"}
+    )
+    with pytest.raises(PermissionError, match="verified child lineage"):
+        ledger.reserve(
+            actor,
+            task,
+            machine=machine,
+            scopes=scopes,
+            expires=None,
+            registered=registered,
+            authorization_conversation_id=child_conversation,
+        )
+    with pytest.raises(PermissionError, match="reduced"):
+        ledger.reserve(
+            actor,
+            task,
+            machine=machine,
+            scopes={"shell:read"},
+            expires=None,
+            registered=registered,
+        )
+    with pytest.raises(PermissionError, match="admission ceiling"):
+        ledger.reserve(
+            actor,
+            task,
+            machine=new_executor_id(),
+            scopes=scopes,
+            expires=None,
+            registered=registered,
+        )
+    intent = ledger.reserve(
+        actor,
+        task,
+        machine=machine,
+        scopes=scopes,
+        expires=None,
+        registered=registered,
+    )
+    assert ledger.claim(
+        actor, intent, task, scopes=scopes, expires=None, registered=registered
+    )
+    ledger.bind(actor, intent, intent.key)
+    assert ledger.owned("alice", child_conversation, "task", intent.key)
+    assert ledger.cap_machine_access({machine: "write"}) == {machine: "read"}
+    session = ModelToolCall(
+        "session",
+        "session_start",
+        {"executor_id": machine, "task_id": intent.key},
+    )
+    session_intent = ledger.reserve(
+        actor,
+        session,
+        machine=machine,
+        scopes=scopes,
+        expires=None,
+        registered=registered,
+    )
+    assert ledger.claim(
+        actor,
+        session_intent,
+        session,
+        scopes=scopes,
+        expires=None,
+        registered=registered,
+    )
+    ledger.bind(actor, session_intent, session_intent.key)
+    command = ModelToolCall(
+        "command",
+        "bash",
+        {"session_id": session_intent.key, "command": "true", "async_": True},
+    )
+    with pytest.raises(PermissionError, match="admission ceiling"):
+        ledger.reserve(
+            actor,
+            command,
+            machine=machine,
+            scopes=scopes,
+            expires=None,
+            registered=registered,
+        )
+    assert not ledger.owned("alice", "chat", "task", intent.key)
+    with db.read_snapshot() as conn:
+        row = conn.execute(
+            "SELECT conversation_id,authorization_conversation_id,member_namespace FROM agent_durable_tasks WHERE id=?",
+            (intent.id,),
+        ).fetchone()
+        assert tuple(row) == (
+            child_conversation,
+            "chat",
+            scope.checkpoint_namespace,
+        )
+    await edge(root, parent, child["id"])
+    parent_lease.release()
+    with db.connect() as conn:
+        conn.execute("UPDATE runs SET status='complete' WHERE id='run'")
+    assert ledger.tool_context_chain(actor)[1] == chain
+    task_lease.complete(
+        value.messages + [{"role": "assistant", "content": "final"}], **grant
+    )
+    assert not actor.is_current()
+    root_ledger = DurableTaskRepository(db)
+    assert root_ledger.cancellation_batch(registered) == []
+    workspace.save_setting(
+        "alice", "agent.machine_policy.conversation.chat", {machine: "none"}
+    )
+    with db.connect() as conn:
+        conn.execute("UPDATE agent_durable_tasks SET next_attempt_at=NULL")
+    assert {
+        row["id"] for row in root_ledger.cancellation_batch(registered)
+    } == {intent.id, session_intent.id}

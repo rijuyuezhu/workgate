@@ -144,7 +144,9 @@ class NativeToolDispatcher:
         tools = await self._mcp.list_tools()
         scopes, expires = _grant(runtime, lease.owner, scopes, expires)
         scopes, expires = repository.cap_grant(scopes, expires)
-        conversation_id, agents = repository.tool_context_chain(lease)
+        conversation_id, agents = repository.tool_context_chain(
+            lease, authorization=True
+        )
         selected = _selected_tools(agents, allowed_tools)
         policy, _ = effective_machine_access(
             lease.owner,
@@ -156,6 +158,7 @@ class NativeToolDispatcher:
             repo=WorkspaceRepository(repository.database),
             registered=_registered(runtime),
         )
+        policy = repository.cap_machine_access(policy)
         readable = [
             key for key, level in policy.items() if level in {"read", "write"}
         ]
