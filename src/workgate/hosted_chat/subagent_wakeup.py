@@ -575,6 +575,47 @@ class WakeupLease:
             disclosure_access=disclosure_access,
         )
 
+    def execution_input(
+        self, **grant
+    ) -> tuple[set[str], int | None, list[dict]]:
+        """Resolve the admitted grant ceiling and exact persisted text branch."""
+        with self.database.read_snapshot() as db:
+            self.assert_current(db=db, **grant)
+            row = _row(db, self.owner, self.task_id)
+            original = SubagentScope.from_record(
+                json.loads(row["execution_options"])["scope"]
+            )
+            scopes, expires = original.effective_grant(
+                grant["scopes"], grant["expires"]
+            )
+            run = _continuation(db, row)
+            message_id = json.loads(run["state"])["userMessageId"]
+            history = []
+            seen = set()
+            while message_id is not None:
+                if message_id in seen:
+                    raise PermissionError(
+                        "Completion history has a cyclic branch"
+                    )
+                seen.add(message_id)
+                message = db.execute(
+                    "SELECT id,parent_id,role,text FROM messages WHERE id=? AND conversation_id=?",
+                    (message_id, row["parent_conversation_id"]),
+                ).fetchone()
+                if message is None or message["role"] not in {
+                    "user",
+                    "assistant",
+                }:
+                    raise PermissionError(
+                        "Completion history branch is unavailable"
+                    )
+                history.append(
+                    {"role": message["role"], "content": message["text"]}
+                )
+                message_id = message["parent_id"]
+            history.reverse()
+            return scopes, expires, history
+
     def renew(self, **grant) -> None:
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -612,12 +653,14 @@ class WakeupLease:
                 }
             )
             encoded = json.dumps(history[-_MAX_ATTEMPTS:], allow_nan=False)
-            if attempt >= _MAX_ATTEMPTS:
+            if isinstance(error, PermissionError) or attempt >= _MAX_ATTEMPTS:
                 _dead(
                     self.database,
                     db,
                     row,
-                    "Automatic delivery exhausted retry attempts",
+                    "Completion authority unavailable"
+                    if isinstance(error, PermissionError)
+                    else "Automatic delivery exhausted retry attempts",
                     attempts=attempt,
                     history=encoded,
                 )

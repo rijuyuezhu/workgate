@@ -141,6 +141,7 @@ class NativeLoopToolNode:
         # allowed_tools. Saved Agents must also retain their explicit selection.
         if (
             isinstance(self.checkpoint.scope, DetachedExecutionScope)
+            or self.checkpoint.lease.wakeup_task_id is not None
             or ASK_USER_QUESTION_TOOL_NAME not in self.allowed_tools
         ):
             return False
@@ -321,7 +322,11 @@ class NativeLoopToolNode:
         native resource. Preserve the full readable/writable ceiling rather
         than infer authorization from the provider's argument shape.
         """
-        scopes, expires = self.current_grant()
+        return self._effective_receipt_access(*self.current_grant())
+
+    def _effective_receipt_access(
+        self, scopes: set[str], expires: int | None
+    ) -> dict:
         lease = self.checkpoint.lease
         conversation, agents = self.repository.tool_context_chain(
             lease, authorization=True
@@ -517,6 +522,7 @@ class NativeLoopToolNode:
                 self.checkpoint.scope,
                 (SubagentScope, SubagentGraphScope, DetachedExecutionScope),
             )
+            child = child or self.checkpoint.lease.wakeup_task_id is not None
             claim = (
                 None if child else claim_store.approved_batch(self.checkpoint)
             )

@@ -75,7 +75,11 @@ async def run_foreground_native_loop(
     generation = store.get(lease.owner, lease.run_id)
     if generation is None:
         raise ActorLeaseLost("Generation is no longer available")
-    heartbeat = asyncio.create_task(lease.keep_alive())
+    heartbeat = (
+        asyncio.create_task(lease.keep_alive())
+        if lease.wakeup_task_id is None
+        else None
+    )
     partial_text: list[str] = []
     cursor = 0
 
@@ -196,6 +200,7 @@ async def run_foreground_native_loop(
         )
         raise
     finally:
-        heartbeat.cancel()
-        with suppress(asyncio.CancelledError):
-            await heartbeat
+        if heartbeat is not None:
+            heartbeat.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat
