@@ -402,3 +402,11 @@ before stream/terminal delivery; a recovered pending tool edge reuses exact
 receipts before reinserting missing deterministic steer IDs. Uncommitted tool
 proposals can be preempted, but settled work is not undone. Media, graph
 recipient election and public route activation remain separate.
+
+Graph construction and owner admission use the final `webui/graph_topology.py`
+(blob `8e075ec8c3a3c0a1199c573489c35acf1616819a`) and original agents SDK
+constructor vectors/live oracle at `c4ffb9b1b78421bf63eba3e56993017f922387f3`.
+The differential oracle tests construction, reachability, grouped prerequisites,
+handoff scopes and parallel capability, not execution. Workgate checks malformed
+endpoint shape before owner lookup and rejects missing or inaccessible members.
+Saved authoring and StateGraph execution are separate dependent units.
