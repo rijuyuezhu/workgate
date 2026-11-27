@@ -211,6 +211,10 @@ class DurableTaskRepository:
         | SubagentGraphScope
         | None = None,
     ):
+        if isinstance(scope, SubagentScope) and scope.detached:
+            raise PermissionError(
+                "Detached child requires its own execution lease"
+            )
         self.database = database
         self.scope = scope
 

@@ -442,6 +442,8 @@ async def invoke_subagent(
     parent_agent_id: str | None = None,
     max_depth: int = MAX_SUBAGENT_DEPTH,
     propagate_error: Callable[[Exception], bool] | None = None,
+    execute_background: Callable[[SubagentInvocation], Awaitable[str]]
+    | None = None,
 ) -> str:
     """Prepare isolated source input for a trusted native child host.
 
@@ -524,7 +526,7 @@ async def invoke_subagent(
     thread = args.get("subagent_thread_id")
     if isinstance(thread, str) and thread.strip() and not background:
         return '{"status":"rejected","tool":"subagent","message":"Child-thread continuation requires run_in_background."}'
-    if background:
+    if background and execute_background is None:
         raise ValueError(
             "Background subagent execution is not available without a host task store"
         )
@@ -577,6 +579,12 @@ async def invoke_subagent(
         ordinary_chat=config.ordinary_chat,
         parent_revision=config.parent_revision,
     )
+    if background:
+        assert execute_background is not None
+        result = await execute_background(invocation)
+        check_grant()
+        check_ownership()
+        return result
     try:
         result = await execute_child(invocation)
     except PermissionError, ActorLeaseLost, AgentSuspended, RuntimeSafetyError:

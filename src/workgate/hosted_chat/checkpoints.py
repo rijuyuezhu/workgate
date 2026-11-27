@@ -135,6 +135,10 @@ class SQLiteCheckpointSaver:
             raise PermissionError(
                 "Graph member checkpoints require an actor lease"
             )
+        if isinstance(member_scope, SubagentScope) and member_scope.detached:
+            raise PermissionError(
+                "Detached child requires its own execution lease"
+            )
         self.actor_lease = actor_lease
         self.member_scope = member_scope
         self.ttl_seconds = ttl_seconds
