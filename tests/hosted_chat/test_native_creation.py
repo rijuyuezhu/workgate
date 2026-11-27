@@ -7123,7 +7123,9 @@ async def test_authenticated_wakeup_reuses_foreground_loop(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("interrupt", ["none", "restart", "revision"])
+@pytest.mark.parametrize(
+    "interrupt", ["none", "restart", "revision", "interrupt", "queue", "steer"]
+)
 async def test_detached_team_result_only_native_effects_and_recovery(
     bound, interrupt
 ):
@@ -7136,6 +7138,7 @@ async def test_detached_team_result_only_native_effects_and_recovery(
     from workgate.hosted_chat.agent_runtime import AgentContext, AgentLoopState
     from workgate.hosted_chat.agents import AgentRepository
     from workgate.hosted_chat.detached_subagents import reserve_detached_child
+    from workgate.hosted_chat.detached_task_controls import check_detached_task
     from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
     from workgate.hosted_chat.provider_common import ProviderConfig
     from workgate.hosted_chat.subagents import (
@@ -7185,6 +7188,8 @@ async def test_detached_team_result_only_native_effects_and_recovery(
     blocked = asyncio.Event()
     resume = asyncio.Event()
     pause = interrupt != "none"
+    control_counts = []
+    controls = interrupt in {"interrupt", "queue", "steer"}
 
     async def resolve(_generation, agent):
         return AgentContext(
@@ -7199,6 +7204,9 @@ async def test_detached_team_result_only_native_effects_and_recovery(
         assert "parent private" not in str(messages)
         assert "subagent" not in {tool["function"]["name"] for tool in tools}
         models.append(profile.model)
+        control_counts.append(
+            sum(m.get("content") == "change direction" for m in messages)
+        )
         if profile.model == "entry":
             if not any(m["role"] == "tool" for m in messages):
                 yield ModelToolCall("same", "task", {"action": "create"})
@@ -7267,14 +7275,15 @@ async def test_detached_team_result_only_native_effects_and_recovery(
         database=db,
         parent_agent_id=root["id"],
     )
-    assert GenerationStore(db).finish(
-        lease.owner,
-        actor.run_id,
-        status="complete",
-        text="accepted",
-        actor_lease=actor,
-    )
-    actor.release()
+    if not controls:
+        assert GenerationStore(db).finish(
+            lease.owner,
+            actor.run_id,
+            status="complete",
+            text="accepted",
+            actor_lease=actor,
+        )
+        actor.release()
     authorized = []
 
     async def authorize(calls, _state):
@@ -7302,9 +7311,48 @@ async def test_detached_team_result_only_native_effects_and_recovery(
     else:
         running = asyncio.create_task(execute())
         await asyncio.wait_for(blocked.wait(), timeout=30)
-        running.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await running
+        if controls:
+            control = ModelToolCall(
+                "team-control",
+                "check_background_task",
+                {
+                    "background_task_id": task_id,
+                    "action": interrupt,
+                    "message": "change direction",
+                },
+            )
+            await checkpoint.save(
+                AgentLoopState(
+                    context, [], pending_calls=[control], tool_step_started=True
+                ),
+                [control],
+            )
+            receipt = check_detached_task(
+                checkpoint,
+                control,
+                scopes=set(SCOPES),
+                expires=None,
+                disclosure_access=access,
+            )
+            assert receipt["status"] == "accepted"
+            pause = False
+            resume.set()
+            assert await asyncio.wait_for(running, timeout=30)
+            assert control_counts[-1] == 1
+            with db.read_snapshot() as conn:
+                status = conn.execute(
+                    "SELECT status,boundary FROM subagent_task_controls WHERE id=?",
+                    (receipt["control_id"],),
+                ).fetchone()
+                assert tuple(status) == (
+                    "applied",
+                    "preempt" if interrupt == "interrupt" else "turn",
+                )
+            actor.release()
+        else:
+            running.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await running
         if interrupt == "revision":
             agents.update(lease.owner, final["id"], {"instructions": "changed"})
             with pytest.raises(
@@ -7312,8 +7360,9 @@ async def test_detached_team_result_only_native_effects_and_recovery(
             ):
                 await execute()
             return
-        pause = False
-        assert await execute()
+        if not controls:
+            pause = False
+            assert await execute()
     assert len(await harness.control.task_service.list_tasks()) == 2
     assert authorized == ["same", "final-call"]
     with db.read_snapshot() as conn:

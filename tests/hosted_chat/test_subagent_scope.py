@@ -2152,6 +2152,7 @@ async def test_detached_team_graph_saver_and_member_activation_are_isolated(
 ):
     from uuid import uuid4
 
+    from workgate.hosted_chat.detached_task_controls import check_detached_task
     from workgate.hosted_chat.detached_task_lease import DetachedTaskLease
     from workgate.protocol.ids import new_executor_id
 
@@ -2255,12 +2256,44 @@ async def test_detached_team_graph_saver_and_member_activation_are_isolated(
     graph_state["id"] = "graph1"
     saved = saver.put(config, graph_state, {"source": "input", "step": 0}, {})
     assert saver.get_tuple(saved) is not None
+    sibling = SubagentGraphScope(scope, child["id"], str(uuid4()))
+    control = ModelToolCall(
+        "team-interrupt",
+        "check_background_task",
+        {
+            "background_task_id": reservation.task_id,
+            "action": "interrupt",
+            "message": "change direction",
+        },
+    )
+    await root.save(
+        AgentLoopState(
+            context(parent), [], pending_calls=[control], tool_step_started=True
+        ),
+        [control],
+    )
+    receipt = check_detached_task(root, control, **grant)
+    assert receipt["status"] == "accepted"
+    assert task_lease.has_interrupt(member=member, **grant)
+    assert not task_lease.has_interrupt(member=sibling, **grant)
+    assert task_lease.claim_controls("turn", member=sibling, **grant) == []
+    messages = task_lease.claim_controls("preempt", member=member, **grant)
+    assert len(messages) == 1 and messages[0]["id"] == receipt["control_id"]
+    task_lease.acknowledge_controls(member=member, **grant)
+    with lease.database.read_snapshot() as conn:
+        assert (
+            conn.execute(
+                "SELECT status FROM subagent_task_controls WHERE id=?",
+                (receipt["control_id"],),
+            ).fetchone()[0]
+            == "accepted"
+        )
     owned = OwnedLoopCheckpoint(lease, scope=member)
     assert owned.restore(context(leaf)) is None
     await owned.save(
         AgentLoopState(
             context(leaf),
-            [{"role": "assistant", "content": "member only"}],
+            [{"role": "assistant", "content": "member only"}, *messages],
             completed=True,
         ),
         [],
@@ -2327,6 +2360,34 @@ async def test_detached_team_graph_saver_and_member_activation_are_isolated(
         context(leaf)
     )
     assert recovered is not None and recovered.state.completed
+    assert (
+        replacement_task.claim_controls("turn", member=sibling, **grant) == []
+    )
+    assert (
+        replacement_task.claim_controls("preempt", member=member, **grant)
+        == messages
+    )
+    replacement_task.acknowledge_controls(member=sibling, **grant)
+    with lease.database.read_snapshot() as conn:
+        assert (
+            conn.execute(
+                "SELECT status FROM subagent_task_controls WHERE id=?",
+                (receipt["control_id"],),
+            ).fetchone()[0]
+            == "accepted"
+        )
+    replacement_task.acknowledge_controls(member=member, **grant)
+    with lease.database.read_snapshot() as conn:
+        assert tuple(
+            conn.execute(
+                "SELECT status,boundary FROM subagent_task_controls WHERE id=?",
+                (receipt["control_id"],),
+            ).fetchone()
+        ) == ("applied", "preempt")
+    assert replacement_task.claim_controls("turn", member=member, **grant) == []
+    assert (
+        replacement_task.claim_controls("turn", member=sibling, **grant) == []
+    )
     repo.update("alice", child["id"], {"instructions": "changed"})
     with pytest.raises(PermissionError, match="target revision changed"):
         fresh.get_tuple(saved)
