@@ -23,7 +23,8 @@ from .checkpoints import SQLiteCheckpointSaver
 from .database import SQLiteDatabase
 from .durable_tasks import DurableTaskRepository
 from .generation_actor_lease import ActorLeaseLost
-from .generations import _EVENT_LIMIT, _MAX_EVENT_BYTES, GenerationStore, _json
+from .generation_protocol import EVENT_LIMIT, MAX_EVENT_BYTES
+from .generations import GenerationStore, _json
 from .loop_checkpoint import OwnedLoopCheckpoint, _Snapshot
 from .provider_common import ModelToolCall
 from .storage import _now
@@ -198,7 +199,7 @@ class ApprovalClaimStore:
                 "payload": payload,
             }
             event = _json({"event": "on_pending_action", "data": pending})
-            if len(event.encode("utf-8")) > _MAX_EVENT_BYTES:
+            if len(event.encode("utf-8")) > MAX_EVENT_BYTES:
                 raise ValueError(
                     "Approval event exceeds generation event limit"
                 )
@@ -207,7 +208,7 @@ class ApprovalClaimStore:
                     "SELECT count(*) FROM generation_events WHERE run_id=?",
                     (lease.run_id,),
                 ).fetchone()[0]
-                >= _EVENT_LIMIT
+                >= EVENT_LIMIT
             ):
                 raise ValueError("Generation event retention limit reached")
             checkpoint.saver._put_writes(

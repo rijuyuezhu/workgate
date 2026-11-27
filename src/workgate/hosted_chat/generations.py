@@ -12,16 +12,18 @@ from typing import Any
 
 from .database import SQLiteDatabase
 from .generation_actor_lease import ActorLease, ActorLeaseLost
-from .generation_protocol import job_generation_protocol
+from .generation_protocol import (
+    EVENT_LIMIT,
+    MAX_EVENT_BYTES,
+    job_generation_protocol,
+)
 from .provider_profiles import ProviderRepository
 from .providers import selected_provider
 from .sampling import validate_sampling
 from .storage import WorkspaceRepository, _now
 
 _TERMINAL = frozenset({"complete", "aborted", "error", "interrupted"})
-_EVENT_LIMIT = 30000
 _MAX_PROMPT_BYTES = 128 * 1024
-_MAX_EVENT_BYTES = 256 * 1024
 _ROOT_MESSAGE = "00000000-0000-0000-0000-000000000000"
 
 
@@ -390,7 +392,7 @@ class GenerationStore:
         self, owner: str, run_id: str, event: dict, *, actor_lease: ActorLease
     ) -> int:
         encoded = _json(event)
-        if len(encoded.encode("utf-8")) > _MAX_EVENT_BYTES:
+        if len(encoded.encode("utf-8")) > MAX_EVENT_BYTES:
             raise ValueError("Generation event exceeds 256 KiB")
         # Tool completion, attachments, steering and lifecycle events require
         # their own transactional evidence and cannot enter this generic path.
@@ -425,7 +427,7 @@ class GenerationStore:
                 "SELECT count(*) FROM generation_events WHERE run_id=?",
                 (run_id,),
             ).fetchone()[0]
-            if count >= _EVENT_LIMIT:
+            if count >= EVENT_LIMIT:
                 raise ValueError("Generation event retention limit reached")
             cursor = db.execute(
                 "INSERT INTO generation_events(run_id,data) VALUES(?,?)",
@@ -575,9 +577,19 @@ class GenerationStore:
                     now,
                 ),
             )
+        from .steering import SteeringStore
+
+        # Human-action terminal transitions may have updated state in this
+        # transaction already; never resurrect a consumed pending claim.
+        state = json.loads(
+            db.execute(
+                "SELECT state FROM runs WHERE id=?", (run_id,)
+            ).fetchone()[0]
+        )
+        pending_steers = SteeringStore.settle_leftovers(state)
         db.execute(
-            "UPDATE runs SET status=?,updated_at=? WHERE id=?",
-            (status, now, run_id),
+            "UPDATE runs SET status=?,state=?,updated_at=? WHERE id=?",
+            (status, _json(state), now, run_id),
         )
         unread = db.execute(
             "UPDATE conversations SET updated_at=?,unread_marker=CASE WHEN unread_marker LIKE 'manual:%' THEN ? ELSE ? END WHERE id=? RETURNING unread_marker",
@@ -594,6 +606,7 @@ class GenerationStore:
             "generationProtocolVersion": generation.protocol_version,
             "conversation": {"conversationId": generation.conversation_id},
             "responseMessage": response_message,
+            **({"pendingSteers": pending_steers} if pending_steers else {}),
             **({"aborted": True} if status == "aborted" else {}),
             **(
                 {"error": error or "Generation failed"}
