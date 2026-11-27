@@ -1993,3 +1993,154 @@ async def test_wakeup_atomic_admission_and_recovery(setup, outcome):
     second.release()
     assert not second.actor.is_current()
     assert WakeupLease.claim(*args, **grant) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "outcome", ["retry", "revoked", "deleted", "lost-run", "failed", "complete"]
+)
+async def test_wakeup_dispatch_reconciliation_and_bounded_retry(setup, outcome):
+    from workgate.hosted_chat.detached_task_lease import DetachedTaskLease
+    from workgate.hosted_chat.generations import GenerationStore
+    from workgate.hosted_chat.storage import WorkspaceRepository
+    from workgate.hosted_chat.subagent_wakeup import (
+        WakeupLease,
+        dead_wakeups,
+        reconcile_wakeups,
+        requeue_dead_wakeup,
+        retry_at,
+        waiting_retry_seconds,
+    )
+
+    old, parent, child, _ = setup
+    db = old.database
+    old.release()
+    with db.connect() as conn:
+        conn.execute("DELETE FROM runs WHERE id='run'")
+    store = GenerationStore(db)
+    run, _ = store.begin(
+        "alice",
+        {
+            "conversationId": "chat",
+            "agent_id": parent["id"],
+            "text": "parent",
+            "provider": "openai",
+            "model": "model",
+        },
+    )
+    actor = ActorLease.claim(db, "alice", run.run_id)
+    assert actor is not None
+    root = OwnedLoopCheckpoint(actor)
+    call = await edge(root, parent, child["id"], background=True)
+    value = await invocation(root, parent, call)
+    item = reserve_detached_child(root, call, value)
+    args = (db, "alice", item.task_id)
+    grant = {"scopes": set(value.scopes), "expires": value.grant_expires}
+    assert waiting_retry_seconds(0, 0) == 5
+    assert waiting_retry_seconds(0, 1_000_000) == 60
+    assert 500 <= retry_at(1, 0) < 1000
+    assert 150000 <= retry_at(100, 0) < 300000
+    with pytest.raises(ValueError):
+        retry_at(0, 0)
+    assert WakeupLease.claim(*args, **grant) is None
+    with db.read_snapshot() as conn:
+        row = conn.execute(
+            "SELECT next_attempt_at,attempts FROM subagent_wakeups WHERE task_id=?",
+            (item.task_id,),
+        ).fetchone()
+        assert row["next_attempt_at"] is not None and row["attempts"] == 0
+    worker = DetachedTaskLease.claim(db, "alice", "chat", item.task_id, **grant)
+    assert worker is not None
+    child_generation, _ = worker.materialize(**grant)
+    worker.complete(
+        value.messages + [{"role": "assistant", "content": "child result"}],
+        **grant,
+    )
+    store.finish(
+        "alice", run.run_id, status="complete", text="reply", actor_lease=actor
+    )
+    actor.release()
+    claimed = WakeupLease.claim(*args, **grant)
+    assert claimed is not None
+    generation, lease = claimed
+    assert reconcile_wakeups(db, "bob") == 0
+    assert reconcile_wakeups(db, "alice") == 0
+    if outcome == "retry":
+        first = lease
+        for attempt in range(1, 9):
+            assert lease.fail_dispatch(
+                RuntimeError("secret not persisted")
+            ) == (attempt < 8)
+            assert not lease.actor.is_current()
+            with pytest.raises(ActorLeaseLost, match="replaced"):
+                lease.fail_dispatch(RuntimeError())
+            if attempt < 8:
+                assert WakeupLease.claim(*args, **grant) is None
+                with db.connect() as conn:
+                    conn.execute(
+                        "UPDATE subagent_wakeups SET next_attempt_at=0 WHERE task_id=?",
+                        (item.task_id,),
+                    )
+                again = WakeupLease.claim(*args, **grant)
+                assert again is not None
+                same, lease = again
+                assert same.run_id == generation.run_id
+                first.release()
+                lease.assert_current(**grant)
+        failed = store.get("alice", generation.run_id)
+        assert failed is not None and failed.status == "interrupted"
+        dead = dead_wakeups(db, "alice")
+        assert dead[0]["attempts"] == 8
+        assert "secret not persisted" not in str(dead)
+        assert len(json.loads(dead[0]["failure_history"])) == 8
+        assert not requeue_dead_wakeup(db, "bob", item.task_id)
+        assert requeue_dead_wakeup(*args)
+        assert not requeue_dead_wakeup(*args)
+        fresh = WakeupLease.claim(*args, **grant)
+        assert fresh is not None and fresh[0].run_id != generation.run_id
+        store.finish(
+            "alice",
+            fresh[0].run_id,
+            status="complete",
+            text="done",
+            actor_lease=fresh[1].actor,
+        )
+        assert reconcile_wakeups(db, "alice") == 1
+        assert dead_wakeups(db, "alice") == []
+        return
+    if outcome == "revoked":
+        lease.release()
+        with db.connect() as conn:
+            conn.execute(
+                "UPDATE subagent_tasks SET grant_expires=1 WHERE id=?",
+                (item.task_id,),
+            )
+    elif outcome == "deleted":
+        lease.release()
+        assert WorkspaceRepository(db).delete_conversation(
+            "alice", child_generation.conversation_id
+        )
+    elif outcome == "lost-run":
+        with db.connect() as conn:
+            conn.execute("DELETE FROM runs WHERE id=?", (generation.run_id,))
+    else:
+        store.finish(
+            "alice",
+            generation.run_id,
+            status="complete" if outcome == "complete" else "error",
+            text="answer",
+            actor_lease=lease.actor,
+        )
+    assert reconcile_wakeups(db, "alice") == 1
+    assert reconcile_wakeups(db, "alice") == 0
+    assert not lease.actor.is_current()
+    with db.read_snapshot() as conn:
+        row = conn.execute(
+            "SELECT status FROM subagent_wakeups WHERE task_id=?",
+            (item.task_id,),
+        ).fetchone()
+        assert row["status"] == ("done" if outcome == "complete" else "dead")
+        assert conn.execute(
+            "SELECT result_claimed FROM subagent_tasks WHERE id=?",
+            (item.task_id,),
+        ).fetchone()[0] == (outcome == "complete")

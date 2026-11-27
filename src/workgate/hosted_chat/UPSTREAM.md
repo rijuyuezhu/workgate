@@ -616,3 +616,10 @@ of the original reply; cancelled, deleted, expired and disabled sources do
 not dispatch. The wakeup token is its generation actor, and ordinary actor
 claim cannot adopt that generation. Terminal reconciliation, backoff and
 native host scheduling remain separate units.
+
+Completion dispatch now defers waiting sources using the pinned readiness
+backoff without charging attempts. Transient failures retain the admitted
+run and one-shot claim across at most eight attempts; fenced exhaustion
+interrupts the run and restores manual result availability. Terminal
+reconciliation and owner-scoped dead letters/requeue do not execute work.
+A requeue allocates a new request identity and still requires live authority.
