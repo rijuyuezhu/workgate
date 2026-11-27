@@ -269,6 +269,30 @@ class DetachedTaskLease:
             raise ActorLeaseLost("Detached task cancellation requested")
         _authorize(db, row, scopes, expires, disclosure_access)
 
+    def execution_input(
+        self,
+        *,
+        scopes: set[str],
+        expires: int | None,
+        disclosure_access: dict | None = None,
+    ) -> tuple[dict | None, list[dict], int | None]:
+        with self.database.read_snapshot() as db:
+            self.assert_current(
+                scopes=scopes,
+                expires=expires,
+                disclosure_access=disclosure_access,
+                db=db,
+            )
+            task = self._current(db)
+            options = json.loads(task["execution_options"])
+            return (
+                None
+                if options.get("ordinary_chat")
+                else json.loads(task["agent_config"]),
+                json.loads(task["initial_messages"]),
+                options.get("recursion_limit"),
+            )
+
     def materialize(
         self,
         *,

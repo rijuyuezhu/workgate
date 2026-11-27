@@ -576,3 +576,11 @@ its original admission, parent conversation authority and machine-access
 ceiling. Native resources remain owned by the child conversation; permissions,
 approval settings and historical revocation use the original parent chain.
 Detached team/nested execution and host scheduling are separate units.
+
+The detached single-Agent worker now drives the existing native model loop
+under the task lease and an explicit live authenticated caller. Recovery
+reuses the private checkpoint and native call ledger. Cancellation, grant
+revocation and timeout stop the worker; cooperative shutdown releases the
+lease for recovery. Provider resolution and content authorization remain
+injected by the caller. Public scheduling and team/nested execution remain
+separate units.
