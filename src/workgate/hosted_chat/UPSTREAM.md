@@ -504,3 +504,14 @@ recursion budgets; child configuration omits Ask User and inherited discovery
 or summary state. This is not a permission or execution boundary: the schema
 builders are not wired to runtime tool advertisement, team execution is not
 enabled, and shareFiles/background/continuation require their own integration.
+
+The private invocation adapter also ports `SubagentInvocation` and the
+foreground path of `invoke_subagent` from the same pinned source. It
+preserves isolated child instructions/task input, selected-tool hints,
+explicit depth and recursion budgets, parent edge identity and final text.
+Workgate additionally fences the saved parent and target revisions, checks
+live inherited grants before admission and before returning results, and
+does not return raw provider exception strings (which may contain secrets).
+Native child checkpoints, per-effect inherited ACL enforcement, artifact
+prompt composition, and detached execution remain separate integration work;
+the callback cannot be reached from a public generation route.
