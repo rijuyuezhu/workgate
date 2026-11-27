@@ -5047,3 +5047,113 @@ async def test_foreground_steering_recovers_committed_delivery_without_replay(
         sum(event.get("event") == "on_steer_applied" for event in events) == 1
     )
     assert events[-1]["responseMessage"]["text"] == "prefix done"
+
+
+@pytest.mark.asyncio
+async def test_graph_native_activation_identity_and_live_member_ceiling(bound):
+    from dataclasses import replace
+    from uuid import uuid4
+
+    from workgate.control.hosted_chat_native_dispatch import (
+        NATIVE_TOOLS,
+        NativeToolDispatcher,
+    )
+    from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.graph_runtime import (
+        GraphMemberResult,
+        run_multi_agent_graph,
+    )
+
+    pytest.importorskip("langgraph")
+    harness, original, lease, _ = bound
+    agents = AgentRepository(original.database)
+    member = agents.create(
+        lease.owner,
+        {"provider": "openai", "model": "member", "tools": ["read", "bash"]},
+    )
+    root = agents.create(
+        lease.owner,
+        {"provider": "openai", "model": "root", "tools": ["read"]},
+    )
+    agents.update(
+        lease.owner,
+        root["id"],
+        {
+            "edges": [
+                {"from": root["id"], "to": member["id"], "edgeType": "direct"}
+            ]
+        },
+    )
+    generation, _ = GenerationStore(original.database).begin(
+        lease.owner, {"text": "graph", "agent_id": root["id"]}
+    )
+    actor = ActorLease.claim(original.database, lease.owner, generation.run_id)
+    assert actor is not None
+    dispatcher = NativeToolDispatcher(harness.control)
+    created = {}
+
+    async def execute(activation):
+        repo = DurableTaskRepository(original.database, scope=activation.scope)
+        call = ModelToolCall("same-provider-id", "task", {"action": "create"})
+        names = {
+            tool["function"]["name"]
+            for tool in await dispatcher.definitions(
+                repo,
+                actor,
+                allowed_tools=NATIVE_TOOLS,
+                scopes=SCOPES,
+                expires=None,
+                task_machine=harness.executor_id,
+            )
+        }
+        assert "read" in names
+        assert "bash" not in names
+        result = await invoke(harness, repo, actor, call)
+        assert await invoke(harness, repo, actor, call) == result
+        intent = repo.reserve(
+            actor,
+            call,
+            machine=harness.executor_id,
+            scopes=SCOPES,
+            expires=None,
+            registered={harness.executor_id},
+        )
+        assert intent.native_id == result["task_id"]
+        other = DurableTaskRepository(
+            original.database,
+            scope=replace(activation.scope, activation_id=str(uuid4())),
+        )
+        with pytest.raises(PermissionError, match="does not belong"):
+            other.bind(actor, intent, result["task_id"])
+        created[activation.scope.member_id] = result["task_id"]
+        if activation.scope.member_id == member["id"]:
+            agents.update(
+                lease.owner,
+                member["id"],
+                {"machine_default_permission": "none"},
+            )
+            with pytest.raises(PermissionError):
+                await invoke(harness, repo, actor, call)
+            revoked = original.cancellation_batch({harness.executor_id})
+            assert {row["native_id"] for row in revoked} == {result["task_id"]}
+        return GraphMemberResult(
+            [*activation.history, {"role": "assistant", "content": "done"}]
+        )
+
+    await run_multi_agent_graph(
+        actor,
+        root["id"],
+        [{"role": "user", "content": "graph"}],
+        execute_member=execute,
+        check_grant=lambda: None,
+        recursion_limit=30,
+    )
+    assert set(created) == {root["id"], member["id"]}
+    assert len(set(created.values())) == 2
+    with original.database.connect() as db:
+        rows = db.execute(
+            "SELECT * FROM agent_durable_tasks WHERE run_id=?", (actor.run_id,)
+        ).fetchall()
+    assert len(rows) == 2
+    assert all(row["call_id"].startswith("graph:") for row in rows)
+    assert len({row["member_namespace"] for row in rows}) == 2

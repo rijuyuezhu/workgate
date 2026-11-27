@@ -8,7 +8,7 @@ Native dispatch must still enforce the live trust, routing and tool scopes.
 
 import json
 import time
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
@@ -128,6 +128,16 @@ def _agent_ceiling(
     }, default
 
 
+def _agent_chain_ceiling(
+    policy: dict[str, str], agent: dict | None, ancestors: Sequence[dict | None]
+) -> tuple[dict[str, str], str]:
+    policy, default = _agent_ceiling(policy, agent)
+    for parent in ancestors:
+        policy, parent_default = _agent_ceiling(policy, parent)
+        default = min(default, parent_default, key=_RANK.__getitem__)
+    return policy, default
+
+
 def effective_machine_access(
     owner: str,
     conversation_id: str,
@@ -137,13 +147,15 @@ def effective_machine_access(
     expires: int | None = None,
     repo: WorkspaceRepository,
     registered: Collection[str],
+    ancestors: Sequence[dict | None] = (),
 ) -> tuple[dict[str, str], str]:
     """Resolve the live Executor ACL subject to the Agent and principal ceilings."""
-    policy, default = _agent_ceiling(
+    policy, default = _agent_chain_ceiling(
         resolve_access(
             owner, conversation_id, repo=repo, registered=registered
         ),
         agent,
+        ancestors,
     )
     effective: dict[str, str] = {}
     for name, level in sorted(policy.items()):
@@ -263,6 +275,7 @@ def authorize_machine_action(
     expires: int | None = None,
     repo: WorkspaceRepository,
     registered: Collection[str],
+    ancestors: Sequence[dict | None] = (),
 ) -> None:
     """Pre-dispatch ACL gate; the native dispatcher still checks tool scopes.
 
@@ -274,11 +287,12 @@ def authorize_machine_action(
         _validate_executor_id(machine)
     except ValueError as exc:
         raise PermissionError("Invalid target Executor") from exc
-    policy, _ = _agent_ceiling(
+    policy, _ = _agent_chain_ceiling(
         resolve_access(
             owner, conversation_id, repo=repo, registered=registered
         ),
         agent,
+        ancestors,
     )
     granted = policy.get(machine, "none")
     if granted == "none":

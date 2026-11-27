@@ -127,6 +127,17 @@ def clean_agent_config(payload: Any, *, create: bool = False) -> dict:
             result[key] = _strings(value, key)
     if "provider" in result and not result["provider"].strip():
         raise ValueError("Agent provider is required")
+    if "machine_permissions" in obj:
+        from .machine_permissions import validate_access_map
+
+        result["machine_permissions"] = validate_access_map(
+            obj["machine_permissions"]
+        )
+    if "machine_default_permission" in obj:
+        from .machine_permissions import agent_access_policy
+
+        _, default = agent_access_policy(obj) or ({}, "write")
+        result["machine_default_permission"] = default
     if "approval_mode" in obj:
         from .approval_settings import validate_mode
 

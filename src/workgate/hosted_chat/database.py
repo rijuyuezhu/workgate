@@ -16,7 +16,7 @@ from ..app_paths import ensure_private_directory
 from ..utils.private_files import private_file_lock
 
 DB_NAME = "chat.sqlite3"
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _APPLICATION_ID = 0x57474348  # WGCH
 
 
@@ -488,6 +488,8 @@ CREATE TABLE IF NOT EXISTS agent_durable_tasks (
     run_id TEXT,
     call_id TEXT NOT NULL,
     agent_id TEXT,
+    member_agent_id TEXT,
+    member_namespace TEXT,
     tool TEXT NOT NULL,
     kind TEXT NOT NULL,
     machine TEXT NOT NULL,
@@ -630,7 +632,7 @@ class SQLiteDatabase:
                 application_id = db.execute("PRAGMA application_id").fetchone()[
                     0
                 ]
-                if version not in (0, _SCHEMA_VERSION):
+                if version not in (0, 1, _SCHEMA_VERSION):
                     raise RuntimeError(
                         "Unsupported Hosted Chat database schema version"
                     )
@@ -642,10 +644,7 @@ class SQLiteDatabase:
                             "SELECT 1 FROM sqlite_master LIMIT 1"
                         ).fetchone()
                     )
-                ) or (
-                    version == _SCHEMA_VERSION
-                    and application_id != _APPLICATION_ID
-                ):
+                ) or (version != 0 and application_id != _APPLICATION_ID):
                     raise RuntimeError(
                         "Unrecognized Hosted Chat database schema"
                     )
@@ -655,6 +654,12 @@ class SQLiteDatabase:
                     )
                 if version == 0:
                     self._initialize(db)
+                elif version == 1:
+                    db.executescript(
+                        "BEGIN IMMEDIATE; ALTER TABLE agent_durable_tasks ADD COLUMN member_agent_id TEXT;"
+                        "ALTER TABLE agent_durable_tasks ADD COLUMN member_namespace TEXT;"
+                        "PRAGMA user_version=2; COMMIT;"
+                    )
                 self.fts_enabled = (
                     db.execute(
                         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='message_search'"

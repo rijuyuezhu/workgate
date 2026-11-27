@@ -8,7 +8,7 @@ Source: webui/durable_tasks.py (9b50208b63aac266387b4e3b6b8e9ce6128b17e4).
 import hashlib
 import json
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
@@ -30,6 +30,8 @@ from ..protocol.ids import (
 )
 from .database import SQLiteDatabase
 from .generation_actor_lease import ActorLease, ActorLeaseLost
+from .graph_member_scope import GraphMemberScope
+from .graph_topology import graph_members
 from .machine_permissions import authorize_machine_action, require_machine_scope
 from .provider_common import ModelToolCall, complete_tool_batch
 from .storage import WorkspaceRepository, _now
@@ -217,8 +219,18 @@ class DurableTaskRepository:
     Even a missing receipt does not authorize a second mutation.
     """
 
-    def __init__(self, database: SQLiteDatabase):
+    def __init__(
+        self, database: SQLiteDatabase, *, scope: GraphMemberScope | None = None
+    ):
         self.database = database
+        self.scope = scope
+
+    def _ledger_call(self, call: ModelToolCall) -> ModelToolCall:
+        return (
+            call
+            if self.scope is None
+            else replace(call, call_id=self.scope.native_call_id(call.call_id))
+        )
 
     @staticmethod
     def _intent(row) -> Intent:
@@ -253,7 +265,17 @@ class DurableTaskRepository:
             ).fetchone()
         ):
             raise PermissionError("Generation was cancelled")
-        return row
+        if self.scope is not None:
+            self.scope.resolve(db, lease)
+        return {
+            **dict(row),
+            "member_namespace": self.scope.checkpoint_namespace
+            if self.scope
+            else None,
+            "member_agent_id": self.scope.member_id
+            if self.scope is not None
+            else None,
+        }
 
     @staticmethod
     def _agent_for_run(db, run) -> dict | None:
@@ -268,11 +290,37 @@ class DurableTaskRepository:
             agent = json.loads(row[0])
         return agent
 
-    def tool_context(self, lease: ActorLease) -> tuple[str, dict | None]:
-        """Resolve the current generation and owner-scoped Agent selection."""
+    @classmethod
+    def _agents_for_run(cls, db, run) -> tuple[dict | None, ...]:
+        root = cls._agent_for_run(db, run)
+        member_id = run["member_agent_id"]
+        if member_id is None or member_id == run["agent_id"]:
+            return (root,)
+        if root is None or member_id not in graph_members(
+            {**root, "id": run["agent_id"]}
+        ):
+            raise PermissionError(
+                "Graph member is no longer in the original Agent graph"
+            )
+        row = db.execute(
+            "SELECT config FROM agents WHERE id=? AND owner=?",
+            (member_id, run["owner"]),
+        ).fetchone()
+        if row is None:
+            raise PermissionError("Graph member Agent no longer exists")
+        return root, json.loads(row["config"])
+
+    def tool_context_chain(
+        self, lease: ActorLease
+    ) -> tuple[str, tuple[dict | None, ...]]:
         with self.database.read_snapshot() as db:
             run = self._run(db, lease)
-            return run["conversation_id"], self._agent_for_run(db, run)
+            return run["conversation_id"], self._agents_for_run(db, run)
+
+    def tool_context(self, lease: ActorLease) -> tuple[str, dict | None]:
+        """Resolve the current generation and owner-scoped member selection."""
+        conversation, chain = self.tool_context_chain(lease)
+        return conversation, chain[-1]
 
     def _authorize(
         self,
@@ -286,7 +334,7 @@ class DurableTaskRepository:
         authorization_id: str,
         destination_machine: str | None = None,
     ) -> None:
-        agent = self._agent_for_run(db, run)
+        chain = self._agents_for_run(db, run)
         # Task is Control-owned metadata, but reserve it only for a selected
         # authorized Executor; no implicit Controller machine target.
         for target, operation in _requirements(
@@ -297,7 +345,8 @@ class DurableTaskRepository:
                 authorization_id,
                 target,
                 operation,
-                agent=agent,
+                agent=chain[-1],
+                ancestors=chain[:-1],
                 scopes=scopes,
                 expires=expires,
                 repo=WorkspaceRepository(self.database),
@@ -647,6 +696,7 @@ class DurableTaskRepository:
         Unlike durable resource starts, these effects have no lookup receipt.
         """
         complete_tool_batch([call])
+        call = self._ledger_call(call)
         task_metadata = _task_metadata_effect(call)
         deleting_task = (
             task_metadata
@@ -820,6 +870,7 @@ class DurableTaskRepository:
     ) -> list[dict]:
         """Atomically authorize and latch a whole immutable cancellation batch."""
         complete_tool_batch([call])
+        call = self._ledger_call(call)
         arguments = call.arguments
         shell = call.name == "kill_persistent_shell"
         session = call.name == "session_end"
@@ -1041,6 +1092,7 @@ class DurableTaskRepository:
     ) -> list[Intent]:
         """Reserve the complete call atomically, one intent per retry target."""
         complete_tool_batch([call])
+        call = self._ledger_call(call)
         targets = _retry_targets(call) if call.name == "job" else [None]
         fingerprint = _fingerprint(call.name, call.arguments)
         with self.database.connect() as db:
@@ -1202,6 +1254,8 @@ class DurableTaskRepository:
                 or prior["destination_machine"] != destination_machine
                 or prior["target_job_id"] != target_job_id
                 or prior["agent_id"] != run["agent_id"]
+                or prior["member_agent_id"] != run["member_agent_id"]
+                or prior["member_namespace"] != run["member_namespace"]
                 or prior["authorization_conversation_id"] != authorization_id
             ):
                 raise PermissionError(
@@ -1256,8 +1310,8 @@ class DurableTaskRepository:
         now = _now()
         db.execute(
             "INSERT INTO agent_durable_tasks(id,owner,conversation_id,authorization_conversation_id,"
-            "run_id,call_id,agent_id,tool,kind,machine,native_session_id,destination_session_id,destination_machine,target_job_id,native_attempt,requirements,fingerprint,idempotency_key,key_hash,"
-            "scopes,grant_expires,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "run_id,call_id,agent_id,member_agent_id,member_namespace,tool,kind,machine,native_session_id,destination_session_id,destination_machine,target_job_id,native_attempt,requirements,fingerprint,idempotency_key,key_hash,"
+            "scopes,grant_expires,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 identity,
                 lease.owner,
@@ -1266,6 +1320,8 @@ class DurableTaskRepository:
                 lease.run_id,
                 call.call_id,
                 run["agent_id"],
+                run["member_agent_id"],
+                run["member_namespace"],
                 call.name,
                 kind,
                 machine,
@@ -1304,14 +1360,19 @@ class DurableTaskRepository:
             deadlines
         ) if deadlines else None
 
-    @staticmethod
-    def _row(db, lease: ActorLease, intent: Intent):
+    def _row(self, db, lease: ActorLease, intent: Intent):
+        if self.scope is not None:
+            self.scope.resolve(db, lease)
         row = db.execute(
             "SELECT * FROM agent_durable_tasks WHERE id=? AND owner=? AND run_id=?",
             (intent.id, lease.owner, lease.run_id),
         ).fetchone()
         if (
             row is None
+            or row["member_agent_id"]
+            != (self.scope.member_id if self.scope is not None else None)
+            or row["member_namespace"]
+            != (self.scope.checkpoint_namespace if self.scope else None)
             or row["idempotency_key"] != intent.key
             or row["tool"] != intent.name
             or row["machine"] != intent.machine
@@ -1338,6 +1399,7 @@ class DurableTaskRepository:
     ) -> bool:
         """Persist the single dispatch claim before crossing native admission."""
         complete_tool_batch([call])
+        call = self._ledger_call(call)
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             run = self._run(db, lease)
