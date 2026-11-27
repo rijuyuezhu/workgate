@@ -1,6 +1,8 @@
 """Paired native Task/Session creation with durable intent reconciliation."""
 
 import asyncio
+import json
+import shutil
 import time
 
 import pytest
@@ -2154,3 +2156,203 @@ async def test_unified_owned_job_dispatch_uses_exact_operation_adapters(
         await dispatch("retry", {"cancel": [jid]})
     poll = await dispatch("read-new", {"poll": [jid]}, {"shell:read"})
     assert poll["outputs"][0]["job"]["attempts"] == 2
+
+
+@pytest.mark.asyncio
+async def test_owned_file_reads_use_native_catalog_and_live_acl(
+    bound, tmp_path
+):
+    from workgate.control.hosted_chat_session_read import (
+        NativeSessionReadDispatcher,
+    )
+    from workgate.protocol.ids import new_session_id
+
+    harness, repo, lease, generation = bound
+    runtime = harness.control
+    _, sid = await native_session(harness, repo, lease)
+    (tmp_path / "owned.txt").write_text("native file payload\n")
+    dispatcher = NativeSessionReadDispatcher(runtime)
+
+    async def dispatch(name, args, scopes=None):
+        return await dispatcher.dispatch(
+            repo,
+            lease,
+            ModelToolCall("read-call", name, args),
+            machine=harness.executor_id,
+            scopes={"shell:read"} if scopes is None else scopes,
+            expires=None,
+        )
+
+    args = {"session_id": sid, "path": str(tmp_path / "owned.txt")}
+    workspace = WorkspaceRepository(repo.database)
+    policy = "agent.machine_policy.conversation." + generation.conversation_id
+    workspace.save_setting(lease.owner, policy, {harness.executor_id: "read"})
+    result = await dispatch("read", args)
+    assert not result.get("isError")
+    assert "native file payload" in str(result["content"])
+    assert "structuredContent" in result
+    listing = await dispatch(
+        "list_files", {"session_id": sid, "path": str(tmp_path)}
+    )
+    assert "owned.txt" in str(listing["structuredContent"])
+    for name, values in (
+        ("tree_view", {"cwd": str(tmp_path)}),
+        ("glob_search", {"cwd": str(tmp_path), "pattern": "*.txt"}),
+        (
+            "search",
+            {
+                "paths": [str(tmp_path / "owned.txt")],
+                "pattern": "native file payload",
+            },
+        ),
+    ):
+        result = await dispatch(name, {"session_id": sid} | values)
+        assert not result.get("isError")
+        if name == "search" and shutil.which("rg") is None:
+            # Native search is optional on this platform. The canonical tool
+            # reports the missing executable rather than inventing matches.
+            assert result["structuredContent"]["ok"] is False
+            assert result["structuredContent"]["matches"] == []
+            assert "rg:" in result["structuredContent"]["stderr"]
+        else:
+            assert "owned.txt" in str(result["structuredContent"])
+
+    with pytest.raises(PermissionError, match="does not belong"):
+        await dispatch("read", args | {"session_id": new_session_id()})
+    with pytest.raises(PermissionError, match="shell:read"):
+        await dispatch("read", args, set())
+    with pytest.raises(PermissionError, match="not an authorized"):
+        await dispatch("write_file", args | {"content": "unapproved"})
+    assert (tmp_path / "owned.txt").read_text() == "native file payload\n"
+    rows = [
+        json.loads(line)
+        for line in get_settings()
+        .audit_log_path.read_text(encoding="utf-8")
+        .splitlines()
+        if line
+    ]
+    assert any(
+        row.get("tool") == "read"
+        and row.get("transport") == "hosted-chat"
+        and row.get("event") == "tool_call_end"
+        and row.get("ok") is True
+        for row in rows
+    )
+    workspace.save_setting(lease.owner, policy, {harness.executor_id: "none"})
+    with pytest.raises(PermissionError):
+        await dispatch("read", args)
+
+
+@pytest.mark.asyncio
+async def test_owned_file_read_discards_result_on_revocation(
+    bound, tmp_path, monkeypatch
+):
+    from workgate.control.hosted_chat_session_read import (
+        NativeSessionReadDispatcher,
+    )
+
+    harness, repo, lease, generation = bound
+    runtime = harness.control
+    _, sid = await native_session(harness, repo, lease)
+    (tmp_path / "owned.txt").write_text("native file payload")
+    transport = runtime.executor_transport
+    original = transport.call
+
+    async def revoked(
+        executor_id, op, args=None, *, session_id=None, timeout_s=None
+    ):
+        result = await original(
+            executor_id, op, args, session_id=session_id, timeout_s=timeout_s
+        )
+        if op == "read":
+            WorkspaceRepository(repo.database).save_setting(
+                lease.owner,
+                "agent.machine_policy.conversation."
+                + generation.conversation_id,
+                {harness.executor_id: "none"},
+            )
+        return result
+
+    monkeypatch.setattr(transport, "call", revoked)
+    dispatcher = NativeSessionReadDispatcher(runtime)
+    with pytest.raises(PermissionError):
+        await dispatcher.dispatch(
+            repo,
+            lease,
+            ModelToolCall(
+                "read-call",
+                "read",
+                {"session_id": sid, "path": str(tmp_path / "owned.txt")},
+            ),
+            machine=harness.executor_id,
+            scopes={"shell:read"},
+            expires=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_owned_file_read_rechecks_while_native_call_is_pending(
+    bound, tmp_path, monkeypatch
+):
+    from workgate.control.hosted_chat_session_read import (
+        NativeSessionReadDispatcher,
+    )
+
+    harness, repo, lease, generation = bound
+    runtime = harness.control
+    _, sid = await native_session(harness, repo, lease)
+    entered = asyncio.Event()
+    released = asyncio.Event()
+    transport = runtime.executor_transport
+    original = transport.call
+
+    async def delayed(
+        executor_id, op, args=None, *, session_id=None, timeout_s=None
+    ):
+        if op != "read":
+            return await original(
+                executor_id,
+                op,
+                args,
+                session_id=session_id,
+                timeout_s=timeout_s,
+            )
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            released.set()
+
+    monkeypatch.setattr(transport, "call", delayed)
+    dispatcher = NativeSessionReadDispatcher(runtime)
+    task = asyncio.create_task(
+        dispatcher.dispatch(
+            repo,
+            lease,
+            ModelToolCall(
+                "pending-read",
+                "read",
+                {
+                    "session_id": sid,
+                    "path": str(tmp_path / "owned.txt"),
+                },
+            ),
+            machine=harness.executor_id,
+            scopes={"shell:read"},
+            expires=None,
+        )
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        WorkspaceRepository(repo.database).save_setting(
+            lease.owner,
+            "agent.machine_policy.conversation." + generation.conversation_id,
+            {harness.executor_id: "none"},
+        )
+        with pytest.raises(PermissionError):
+            await asyncio.wait_for(task, timeout=5)
+        assert released.is_set()
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)

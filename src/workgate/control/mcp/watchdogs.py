@@ -63,6 +63,8 @@ def _mcp_tool_audit_watchdog_wrapper(
     managed_jobs_runtime: ManagedJobsRuntime | None,
     agent_activity_observer: Callable[[tuple[str, ...]], Awaitable[None]]
     | None,
+    *,
+    audit_transport: str = "mcp",
 ) -> Callable[..., Awaitable[Any]]:
     """Return a wrapper that audits every MCP tool call and enforces the tool timeout."""
 
@@ -84,7 +86,7 @@ def _mcp_tool_audit_watchdog_wrapper(
         tool_input = _mcp_tool_input(args, kwargs)
         session_ids, task_ids = audit_tool_call_start(
             call_id=call_id,
-            transport="mcp",
+            transport=audit_transport,
             tool=tool_name,
             input=tool_input,
         )
@@ -118,7 +120,7 @@ def _mcp_tool_audit_watchdog_wrapper(
                 payload = None
             audit_tool_call_end(
                 call_id=call_id,
-                transport="mcp",
+                transport=audit_transport,
                 tool=tool_name,
                 ok=False,
                 duration_ms=duration_ms,
@@ -138,7 +140,7 @@ def _mcp_tool_audit_watchdog_wrapper(
             duration_ms = int((time.time() - start) * 1000)
             audit_tool_call_end(
                 call_id=call_id,
-                transport="mcp",
+                transport=audit_transport,
                 tool=tool_name,
                 ok=False,
                 duration_ms=duration_ms,
@@ -163,7 +165,7 @@ def _mcp_tool_audit_watchdog_wrapper(
         )
         audit_tool_call_end(
             call_id=call_id,
-            transport="mcp",
+            transport=audit_transport,
             tool=tool_name,
             ok=True,
             duration_ms=duration_ms,
@@ -202,6 +204,7 @@ class WorkgateMCPServer(MCPServer):
         managed_jobs_runtime: ManagedJobsRuntime | None,
         agent_activity_observer: Callable[[tuple[str, ...]], Awaitable[None]]
         | None,
+        audit_transport: str = "mcp",
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -210,6 +213,7 @@ class WorkgateMCPServer(MCPServer):
         self._workgate_oauth_state = oauth_state
         self._workgate_managed_jobs_runtime = managed_jobs_runtime
         self._workgate_agent_activity_observer = agent_activity_observer
+        self._workgate_audit_transport = audit_transport
         self._registered_tool_names: set[str] = set()
 
     def add_tool(
@@ -240,6 +244,7 @@ class WorkgateMCPServer(MCPServer):
                 self._workgate_oauth_state,
                 self._workgate_managed_jobs_runtime,
                 observer,
+                audit_transport=self._workgate_audit_transport,
             ),
             name=tool_name,
             title=title,

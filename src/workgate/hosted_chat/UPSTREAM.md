@@ -189,7 +189,11 @@ retains pending cleanup if a response is unconfirmed. Replaying an older call
 never selects a newer attempt. The private unified Job dispatcher validates
 mutually exclusive operations and canonicalizes public defaults before using
 the owned adapters. Mutation replay identities cannot cross retry and cancel
-ledgers. General native tool dispatch and runtime wiring follow.
+ledgers. Session file inspection uses the canonical native MCP schema, router,
+watchdog and result projection; the explicit read-tool classification and
+periodic live authorization recheck follow the final pinned lsm_tool_registry.py.
+Only confirmed owned Sessions are eligible. General native tool dispatch and
+runtime wiring follow.
 
 
 Agent authoring starts with the final upstream repository and validators.

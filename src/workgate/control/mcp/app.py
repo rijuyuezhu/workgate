@@ -50,6 +50,7 @@ def build_mcp(
     tool_catalog: ToolCatalog | None = None,
     runtime: ControlRuntime | None = None,
     own_runtime_lifespan: bool = False,
+    audit_transport: str = "mcp",
 ) -> MCPServer:
     """Create the MCP server from a routed control runtime or explicit catalog."""
     auto_runtime = runtime is None and tool_catalog is None
@@ -81,6 +82,7 @@ def build_mcp(
     mcp = WorkgateMCPServer(
         name="workgate",
         config=settings,
+        audit_transport=audit_transport,
         state_store=state_store,
         oauth_state=None
         if runtime is None
