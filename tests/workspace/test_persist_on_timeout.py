@@ -127,15 +127,19 @@ async def test_python_job_keeps_source_for_pruning_and_retry(tmp_path: Path):
     final = await service.jobs.wait(session_id, job_id, 5)
     assert final.job.status == "succeeded"
     assert marker.read_text() == "x"
-    # A completed receipt may precede the backing tmux shell's exit.
-    # Keep the retry liveness guard; wait for cleanup instead of racing it.
+    # A completed receipt may precede authoritative tmux shell disappearance.
+    # Both live and temporarily unknown inventories must fail closed; wait
+    # for positive cleanup evidence instead of racing the native retry guard.
     async with asyncio.timeout(5):
         while True:
             try:
                 retry = await service.jobs.retry(session_id, job_id)
                 break
             except RuntimeError as exc:
-                if "previous attempt shell is still active" not in str(exc):
+                if str(exc) not in {
+                    f"cannot retry job while previous attempt shell is still active: {job_id}",
+                    f"cannot retry job while previous attempt shell liveness is unknown: {job_id}",
+                }:
                     raise
                 await asyncio.sleep(0.05)
     assert retry.job_id == job_id
