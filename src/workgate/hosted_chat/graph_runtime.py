@@ -23,6 +23,7 @@ from .handoff import (
     HandoffRouting,
     combine_handoff_commands,
     handoff_tools,
+    is_transfer_tool,
     merge_handoff_state,
     receive_handoff,
 )
@@ -417,11 +418,14 @@ async def run_multi_agent_graph(
             update["handoffState"] = route.snapshot()
             # Transfer acknowledgements belong to the shared history exactly
             # once; parallel Send payloads carry their own recipient history.
-            seen_tools = {
-                m.get("tool_call_id")
-                for m in [*state.get("messages", []), *diff]
-                if m.get("role") == "tool"
-            }
+            # A provider may reuse an earlier call ID. Only deduplicate
+            # receipts from the current final proposal, not prior turns.
+            seen_tools = set()
+            for message in reversed(diff):
+                if message.get("role") in {"assistant", "ai"}:
+                    break
+                if message.get("role") == "tool":
+                    seen_tools.add(message.get("tool_call_id"))
             applied_steers = [
                 m
                 for m in diff
@@ -445,10 +449,18 @@ async def run_multi_agent_graph(
                     else [command.get("update") or {}]
                 )
                 for payload in payloads:
-                    for message in payload.get("messages") or []:
+                    # The source builder ends each transfer payload with
+                    # its acknowledgement. Prior payload history is not a
+                    # new receipt and must not be re-appended to shared state.
+                    payload_messages = payload.get("messages") or []
+                    if payload_messages:
+                        message = payload_messages[-1]
                         identity = message.get("tool_call_id")
+                        name = message.get("name")
                         if (
                             message.get("role") == "tool"
+                            and isinstance(name, str)
+                            and is_transfer_tool(name)
                             and isinstance(identity, str)
                             and identity not in seen_tools
                         ):

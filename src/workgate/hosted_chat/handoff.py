@@ -678,35 +678,37 @@ def receive_handoff(
             break
     if tool_message is None:
         return None
-    transfer_ids = {tool_message["tool_call_id"]}
-    for message in messages:
-        if (
-            message.get("role") == "tool"
-            and isinstance(message.get("name"), str)
-            and is_transfer_tool(message["name"])
-        ):
-            transfer_ids.add(message.get("tool_call_id"))
-        elif message.get("role") in {"assistant", "ai"}:
-            for call in message.get("tool_calls") or []:
-                name = call.get("name") or (call.get("function") or {}).get(
-                    "name"
-                )
-                if (
-                    isinstance(name, str)
-                    and is_transfer_tool(name)
-                    and call.get("id") is not None
-                ):
-                    transfer_ids.add(call["id"])
+    # Provider correlation IDs are local to a tool round, not globally
+    # unique across graph members or model turns. Filter by the current
+    # assistant proposal, retaining unrelated earlier native receipts.
+    transfer_ids = set()
     filtered = []
     for message in messages:
-        if (
-            message.get("role") == "tool"
-            and message.get("tool_call_id") in transfer_ids
-        ):
-            continue
-        if message.get("role") in {"assistant", "ai"} and message.get(
-            "tool_calls"
-        ):
+        role = message.get("role")
+        if role == "tool":
+            name = message.get("name")
+            if (
+                isinstance(name, str) and is_transfer_tool(name)
+            ) or message.get("tool_call_id") in transfer_ids:
+                continue
+        elif role in {"assistant", "ai"}:
+            calls = message.get("tool_calls") or []
+            transfer_ids = {
+                call["id"]
+                for call in calls
+                if call.get("id") is not None
+                and isinstance(
+                    name := (
+                        call.get("name")
+                        or (call.get("function") or {}).get("name")
+                    ),
+                    str,
+                )
+                and is_transfer_tool(name)
+            }
+        else:
+            transfer_ids = set()
+        if role in {"assistant", "ai"} and message.get("tool_calls"):
             calls = message["tool_calls"]
             retained = [
                 call

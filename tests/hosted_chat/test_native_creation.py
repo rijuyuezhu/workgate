@@ -5267,3 +5267,150 @@ async def test_graph_cached_native_receipt_cannot_cross_member_revocation(
         check_grant=lambda: None,
         recursion_limit=30,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "edge_type", ["direct", "handoff", "reused-id", "retry"]
+)
+async def test_native_graph_member_model_loop_and_completed_recovery(
+    bound, edge_type
+):
+    from workgate.control.hosted_chat_graph_loop import run_native_graph
+    from workgate.hosted_chat.agent_runtime import AgentContext
+    from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.provider_common import ProviderConfig
+
+    pytest.importorskip("langgraph")
+    harness, repo, lease, _ = bound
+    agents = AgentRepository(repo.database)
+    member = agents.create(
+        lease.owner,
+        {
+            "provider": "openai",
+            "model": "member",
+            "instructions": "member only",
+        },
+    )
+    root = agents.create(
+        lease.owner,
+        {"provider": "openai", "model": "root", "instructions": "root only"},
+    )
+    agents.update(
+        lease.owner,
+        root["id"],
+        {
+            "edges": [
+                {
+                    "from": root["id"],
+                    "to": member["id"],
+                    "edgeType": "direct"
+                    if edge_type in {"direct", "retry"}
+                    else "handoff",
+                }
+            ]
+        },
+    )
+    generation, _ = GenerationStore(repo.database).begin(
+        lease.owner, {"text": "graph", "agent_id": root["id"]}
+    )
+    actor = ActorLease.claim(repo.database, lease.owner, generation.run_id)
+    assert actor is not None
+    turns = []
+    authorized = []
+    transfer_name = "transfer_to_" + member["id"]
+
+    async def resolve(agent):
+        return AgentContext(
+            ProviderConfig(
+                "openai", agent["model"], "https://example.invalid", "fake"
+            ),
+            [{"function": {"name": "forbidden"}}],
+        )
+
+    async def authorize(calls, state):
+        authorized.append(
+            (state.context.profile.model, [call.name for call in calls])
+        )
+
+    async def stream(profile, messages, **kwargs):
+        name = profile.model
+        turns.append(name)
+        assert "forbidden" not in {
+            tool["function"]["name"] for tool in kwargs["tools"]
+        }
+        assert [m["content"] for m in messages if m["role"] == "system"] == [
+            name + " only"
+        ]
+        if turns.count(name) == 1:
+            if name == "member" and edge_type == "reused-id":
+                assert any(
+                    m.get("role") == "tool"
+                    and m.get("tool_call_id") == "same-id"
+                    and "task_id" in m.get("content", "")
+                    for m in messages
+                )
+                assert all(m.get("name") != transfer_name for m in messages)
+            yield ModelToolCall("same-id", "task", {"action": "create"})
+            if name == "root" and edge_type == "handoff":
+                assert transfer_name in {
+                    tool["function"]["name"] for tool in kwargs["tools"]
+                }
+                yield ModelToolCall("transfer-id", transfer_name, {})
+        else:
+            assert messages[-1]["role"] == "tool"
+            if name == "root" and edge_type == "reused-id":
+                yield ModelToolCall("same-id", transfer_name, {})
+            elif (
+                edge_type == "retry"
+                and name == "member"
+                and turns.count(name) == 2
+            ):
+                raise RuntimeError("simulated member interruption")
+            else:
+                yield name + " complete"
+
+    async def execute(actor):
+        return await run_native_graph(
+            harness.control,
+            actor,
+            root["id"],
+            [{"role": "user", "content": "graph"}],
+            resolve_context=resolve,
+            authorize_batch=authorize,
+            allowed_tools={"task"},
+            scopes=SCOPES,
+            expires=None,
+            task_machine=harness.executor_id,
+            check_grant=lambda: None,
+            recursion_limit=20,
+            stream_tools=stream,
+            stream_text=stream,
+        )
+
+    if edge_type == "retry":
+        with pytest.raises(RuntimeError, match="simulated member interruption"):
+            await execute(actor)
+        assert len(await harness.control.task_service.list_tasks()) == 2
+        actor.release()
+        actor = ActorLease.claim(repo.database, lease.owner, generation.run_id)
+        assert actor is not None
+    result = await execute(actor)
+    assert result[-1]["content"] == "member complete"
+    assert len(await harness.control.task_service.list_tasks()) == 2
+    assert turns.count("member") == (
+        3 if edge_type == "retry" else 2
+    ) and turns.count("root") == (1 if edge_type == "handoff" else 2)
+    assert sum("task" in names for _, names in authorized) == 2
+    if edge_type in {"handoff", "reused-id"}:
+        assert len([m for m in result if m.get("name") == transfer_name]) == 1
+    # The graph driver has no public-generation terminal authority.
+    current = GenerationStore(repo.database).get(lease.owner, generation.run_id)
+    assert current is not None and current.status == "running"
+    before = turns.copy()
+    actor.release()
+    fresh = ActorLease.claim(repo.database, lease.owner, generation.run_id)
+    assert fresh is not None
+    assert await execute(fresh) == result
+    assert turns == before
+    assert len(await harness.control.task_service.list_tasks()) == 2

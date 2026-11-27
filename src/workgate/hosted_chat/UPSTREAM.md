@@ -457,3 +457,11 @@ inside checkpoint writes. Provider call IDs remain unchanged in model history;
 a derived activation-scoped native identity is available to the native
 dispatcher. Root-only human claims cannot be published from member checkpoints
 until graph-aware claim recovery is connected.
+
+The native graph driver binds each official StateGraph activation to the same
+checkpointed Agent loop and native tool node used by foreground turns. Provider
+resolution and content admission remain caller-owned. Transfer tools come only
+from live declared edges; their source Commands are settled with the same tool
+receipts and projected by StateGraph, never by an unrestricted MCP fallback.
+Provider correlation IDs remain round-local in handoff history. Member output
+stays private until graph-aware event, approval and steering integration.
