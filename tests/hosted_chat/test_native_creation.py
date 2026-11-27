@@ -3688,3 +3688,208 @@ async def test_model_batch_resolves_only_confirmed_owned_native_targets(
             "after-end", "read", {"session_id": sid, "path": str(path)}
         )
     assert harness.executor.sessions.lookup(other_sid) is not None
+
+
+@pytest.mark.asyncio
+async def test_native_tool_node_runs_model_tools_cycle_and_reuses_receipts(
+    bound, tmp_path
+):
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.hosted_chat.agent_runtime import (
+        AgentContext,
+        AgentLoopState,
+        run_agent_loop,
+    )
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+
+    harness, repo, lease, _ = bound
+    checkpoint = OwnedLoopCheckpoint(lease)
+    selected = {"task", "session_start", "write_file", "read", "session_end"}
+    revoked = False
+
+    def check_grant():
+        if revoked:
+            raise PermissionError("principal revoked")
+
+    node = NativeLoopToolNode(
+        harness.control,
+        repo,
+        checkpoint,
+        allowed_tools=selected,
+        scopes=SCOPES,
+        expires=None,
+        task_machine=harness.executor_id,
+        check_grant=check_grant,
+    )
+    ctx = AgentContext(
+        ProviderConfig("openai", "model", "https://example.invalid", "fake"), []
+    )
+    state = AgentLoopState(ctx, [{"role": "user", "content": "make file"}])
+    path = tmp_path / "node-test.txt"
+    turns = []
+    rendered = []
+
+    def receipt(message):
+        return json.loads(
+            message["content"].split("Structured content: ", 1)[1]
+        )
+
+    async def stream(model, messages, **kwargs):
+        turns.append(len(turns) + 1)
+        assert {
+            item["function"]["name"] for item in kwargs["tools"]
+        } == selected
+        if turns[-1] == 1:
+            yield ModelToolCall("node-task", "task", {"action": "create"})
+        elif turns[-1] == 2:
+            task_id = receipt(messages[-1])["task_id"]
+            yield ModelToolCall(
+                "node-session",
+                "session_start",
+                {"executor_id": harness.executor_id, "task_id": task_id},
+            )
+        elif turns[-1] == 3:
+            sid = receipt(messages[-1])["session_id"]
+            yield ModelToolCall(
+                "node-write",
+                "write_file",
+                {
+                    "session_id": sid,
+                    "path": str(path),
+                    "content": "native loop",
+                },
+            )
+        else:
+            assert "created" in messages[-1]["content"]
+            assert path.read_text() == "native loop"
+            yield "complete"
+
+    async def save(loop, calls):
+        await checkpoint.save(loop, calls)
+
+    async def on_text(value):
+        rendered.append(value)
+
+    async def no_text(*args, **kwargs):
+        raise AssertionError("native tools must be advertised")
+        yield ""
+
+    async def dispatch(calls, loop):
+        result = await node.dispatch(calls, loop)
+        if calls[0].call_id == "node-write":
+            path.write_text("changed after completion")
+            assert (
+                await node.dispatch(calls, loop)
+            ).messages == result.messages
+            assert path.read_text() == "changed after completion"
+            path.write_text("native loop")
+        return result
+
+    await run_agent_loop(
+        state,
+        stream_tools=stream,
+        stream_text=no_text,
+        dispatch=dispatch,
+        on_text=on_text,
+        save_state=save,
+        before_model=node.refresh_tools,
+        preflight_calls=node.preflight,
+    )
+    assert turns == [1, 2, 3, 4]
+    assert rendered == ["complete"]
+    assert state.completed and len(intent_rows(repo)) == 2
+    assert path.read_text() == "native loop"
+    revoked = True
+    with pytest.raises(PermissionError, match="principal revoked"):
+        await node.refresh_tools(state)
+
+
+@pytest.mark.asyncio
+async def test_native_tool_node_checks_current_selection_and_principal_on_replay(
+    bound, tmp_path
+):
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.hosted_chat.agent_runtime import AgentContext, AgentLoopState
+    from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+
+    harness, repo, original, _ = bound
+    agents = AgentRepository(repo.database)
+    agent = agents.create(
+        original.owner,
+        {"provider": "openai", "model": "agent-model", "tools": ["read"]},
+    )
+    generation, _ = GenerationStore(repo.database).begin(
+        original.owner, {"text": "read", "agent_id": agent["id"]}
+    )
+    lease = ActorLease.claim(repo.database, original.owner, generation.run_id)
+    assert lease is not None
+    _, sid = await native_session(harness, repo, lease)
+    checkpoint = OwnedLoopCheckpoint(lease)
+    context = AgentContext(
+        ProviderConfig("openai", "model", "https://example.invalid", "fake"),
+        [],
+        agent=agent,
+    )
+    state = AgentLoopState(context, [])
+
+    def make_node(
+        repository: DurableTaskRepository, expires: int | None = None
+    ):
+        return NativeLoopToolNode(
+            harness.control,
+            repository,
+            checkpoint,
+            allowed_tools={"read"},
+            scopes=SCOPES,
+            task_machine=harness.executor_id,
+            expires=expires,
+            check_grant=lambda: None,
+        )
+
+    with pytest.raises(PermissionError, match="checkpoint database"):
+        make_node(DurableTaskRepository(SQLiteDatabase(tmp_path / "other")))
+    expired = make_node(repo, 1)
+    with pytest.raises(PermissionError, match="expired"):
+        await expired.refresh_tools(state)
+    node = make_node(repo)
+    await node.refresh_tools(state)
+    with pytest.raises(PermissionError, match="not advertised"):
+        node.preflight([ModelToolCall("bad", "bash", {})], state)
+
+    path = tmp_path / "owned-replay.txt"
+    path.write_text("original")
+    calls = node.preflight(
+        [
+            ModelToolCall(
+                "read-once", "read", {"session_id": sid, "path": str(path)}
+            )
+        ],
+        state,
+    )
+    state.pending_calls = calls
+    state.tool_step_started = True
+    await checkpoint.save(state, calls)
+    result = await node.dispatch(calls, state)
+    assert "original" in result.messages[0]["content"]
+    path.write_text("changed")
+    assert (await node.dispatch(calls, state)).messages == result.messages
+
+    token = bind_oauth_claims(
+        {
+            "sub": lease.owner,
+            "scope": "shell:read",
+            "exp": int(time.time()) + 60,
+        }
+    )
+    try:
+        with pytest.raises(PermissionError, match="grant was reduced"):
+            await node.dispatch(calls, state)
+    finally:
+        reset_oauth_claims(token)
+
+    agents.update(lease.owner, agent["id"], {"tools": []})
+    with pytest.raises(PermissionError, match="no longer selected"):
+        await node.dispatch(calls, state)

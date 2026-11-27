@@ -23,6 +23,7 @@ async def execute_checkpointed_batch(
     execute: Callable[[ModelToolCall], Awaitable[Any]],
     *,
     check_grant: Callable[[], None],
+    preflight_unsettled: Callable[[list[ModelToolCall]], None] | None = None,
     interrupting_names: frozenset[str] = frozenset(),
     is_interrupt: Callable[[BaseException], bool] = lambda error: False,
 ) -> list[Any]:
@@ -72,6 +73,15 @@ async def execute_checkpointed_batch(
         if key in settled:
             raise ValueError("Duplicate settled tool receipt")
         settled[key] = record
+
+    if preflight_unsettled is not None:
+        preflight_unsettled(
+            [
+                copy.deepcopy(call)
+                for position, call in enumerate(calls)
+                if replay_key(call, position) not in settled
+            ]
+        )
 
     async def run(call: ModelToolCall) -> Any:
         check()
