@@ -51,7 +51,7 @@ async def run_native_graph(
 
     The trusted caller supplies provider resolution and content authorization.
     A graph activation has its own checkpoint, not its own public generation.
-    Human interrupts, steering and public graph event projection are separate.
+    Graph human interrupts use the SDK barrier. Steering and public graph event projection are separate.
     """
 
     if lease.database.root != runtime.config.state_dir / "hosted-chat":
@@ -147,6 +147,7 @@ async def run_native_graph(
             check_grant=check,
             recursion_limit=recursion_limit,
             result_only=result_only,
+            human_actions=True,
         )
     finally:
         heartbeat.cancel()

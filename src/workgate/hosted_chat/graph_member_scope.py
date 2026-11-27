@@ -42,8 +42,14 @@ class GraphMemberScope:
         self, db: sqlite3.Connection, lease: ActorLease
     ) -> tuple[dict, dict]:
         lease.assert_current(db)
+        return self.resolve_owned(db, lease.owner, lease.run_id)
+
+    def resolve_owned(
+        self, db: sqlite3.Connection, owner: str, run_id: str
+    ) -> tuple[dict, dict]:
+        """Verify the saved graph subject even while its actor is parked."""
         if (
-            not self.graph_namespace.startswith(lease.run_id + ":graph:")
+            not self.graph_namespace.startswith(run_id + ":graph:")
             or "|" in self.graph_namespace
         ):
             raise PermissionError(
@@ -52,7 +58,8 @@ class GraphMemberScope:
         if str(UUID(self.activation_id)) != self.activation_id:
             raise ValueError("Invalid graph activation identity")
         run = db.execute(
-            "SELECT agent_id,state FROM runs WHERE id=?", (lease.run_id,)
+            "SELECT r.agent_id,r.state FROM runs r JOIN conversations c ON c.id=r.conversation_id WHERE r.id=? AND c.owner=?",
+            (run_id, owner),
         ).fetchone()
         if run is None or run["agent_id"] != self.root_id:
             raise PermissionError(
@@ -74,7 +81,7 @@ class GraphMemberScope:
         def agent(identity: str) -> dict:
             row = db.execute(
                 "SELECT config FROM agents WHERE id=? AND owner=?",
-                (identity, lease.owner),
+                (identity, owner),
             ).fetchone()
             if row is None:
                 raise PermissionError(
