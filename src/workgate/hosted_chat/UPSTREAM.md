@@ -272,3 +272,19 @@ Tool completions, human actions, steering, attachment admission and checkpoint
 recovery remain their own transactional contracts; this private unit registers
 no generation routes or startup execution. Runner-level total output and
 resource budgets remain part of runtime acceptance.
+
+The private model/tool loop follows the final pinned Agent runtime:
+
+| Workgate file | Upstream source at the pin | Git blob |
+| --- | --- | --- |
+| `agent_runtime.py` | `src/local_shell_mcp/webui/agent_runtime.py` | `443e1fff953d12b6712618d17d9c45e1d7491e79` |
+| `tests/hosted_chat/test_agent_runtime.py` | `tests/test_webui_agent_runtime.py` (runtime cases) | `57c4a4c17827457928cba1dd7f04666642ad6470` |
+
+The source model/tools cycle, checkpoint boundaries, provider reasoning and
+usage events, pre-event retry policy, human/steering callbacks and graph
+handoff slots are retained. Complete proposals (including resumed ones) must
+pass the native batch validator before checkpointing or dispatch. The
+no-progress signature ignores provider tool-call correlation IDs so identical
+outcomes cannot evade it by changing IDs. Semantic-index typing and the
+route-level safe provider error test follow with their corresponding modules.
+This private loop does not itself launch workers or expose routes.
