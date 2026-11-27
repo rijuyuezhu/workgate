@@ -18,6 +18,7 @@ from .subagent_scope import (
     DetachedExecutionScope,
     SubagentGraphScope,
     SubagentScope,
+    detached_root_scope,
 )
 
 
@@ -41,11 +42,19 @@ class OwnedLoopCheckpoint:
         | DetachedExecutionScope
         | None = None,
     ):
-        if lease.detached_task_id is not None and not isinstance(
-            scope, DetachedExecutionScope
+        if (
+            lease.detached_task_id is not None
+            and detached_root_scope(scope) is None
         ):
             raise PermissionError(
                 "Detached checkpoint requires its admitted execution scope"
+            )
+        if (
+            isinstance(scope, DetachedExecutionScope)
+            and scope.team_definition_hash is not None
+        ):
+            raise PermissionError(
+                "Detached team requires a scheduler or member scope"
             )
         self.lease = lease
         if isinstance(scope, SubagentGraphScope) and scope.member_id is None:

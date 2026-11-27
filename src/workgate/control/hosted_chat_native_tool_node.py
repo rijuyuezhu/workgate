@@ -43,6 +43,7 @@ from ..hosted_chat.subagent_scope import (
     DetachedExecutionScope,
     SubagentGraphScope,
     SubagentScope,
+    detached_root_scope,
 )
 from ..hosted_chat.subagents import SUBAGENT_TOOL_NAME
 from .hosted_chat_native_creation import _grant, _registered
@@ -111,11 +112,10 @@ class NativeLoopToolNode:
                 "Native node does not belong to checkpoint database"
             )
 
-        if isinstance(
-            checkpoint.scope, DetachedExecutionScope
-        ) and task_machine != (checkpoint.scope.disclosure_access or {}).get(
-            "task_machine"
-        ):
+        detached = detached_root_scope(checkpoint.scope)
+        if detached is not None and task_machine != (
+            detached.disclosure_access or {}
+        ).get("task_machine"):
             raise PermissionError(
                 "Detached task machine differs from admission"
             )

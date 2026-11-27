@@ -91,6 +91,8 @@ async def run_detached_subagent(
     async def execute() -> list[dict]:
         generation, actor = lease.materialize(**grant())
         scope = DetachedExecutionScope.from_actor(actor)
+        if scope.team_definition_hash is not None:
+            raise PermissionError("Detached team worker is not enabled")
         agent, history, recursion_limit = lease.execution_input(**grant())
         context = await resolve_context(generation, copy.deepcopy(agent))
         check()

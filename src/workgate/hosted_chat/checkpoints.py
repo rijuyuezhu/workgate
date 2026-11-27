@@ -24,6 +24,7 @@ from .subagent_scope import (
     DetachedExecutionScope,
     SubagentGraphScope,
     SubagentScope,
+    detached_root_scope,
 )
 
 OWNER_KEY = "__librechat_checkpoint_owner"
@@ -147,10 +148,17 @@ class SQLiteCheckpointSaver:
         if (
             actor_lease is not None
             and actor_lease.detached_task_id is not None
-            and not isinstance(member_scope, DetachedExecutionScope)
+            and detached_root_scope(member_scope) is None
         ):
             raise PermissionError(
                 "Detached checkpoint requires its admitted execution scope"
+            )
+        if (
+            isinstance(member_scope, DetachedExecutionScope)
+            and member_scope.team_definition_hash is not None
+        ):
+            raise PermissionError(
+                "Detached team requires a scheduler or member scope"
             )
         self.actor_lease = actor_lease
         self.member_scope = member_scope

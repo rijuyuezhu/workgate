@@ -24,7 +24,11 @@ from ..hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
 from ..hosted_chat.provider_common import ModelToolCall
 from ..hosted_chat.providers import stream_model, stream_model_with_tools
 from ..hosted_chat.steering import SteeringStore, reconcile_applied_steers
-from ..hosted_chat.subagent_scope import SubagentGraphScope, SubagentScope
+from ..hosted_chat.subagent_scope import (
+    DetachedExecutionScope,
+    SubagentGraphScope,
+    SubagentScope,
+)
 from .hosted_chat_native_creation import _grant
 from .hosted_chat_native_tool_node import NativeLoopToolNode
 from .runtime import ControlRuntime
@@ -50,7 +54,7 @@ async def run_native_graph(
     stream_tools=stream_model_with_tools,
     stream_text=stream_model,
     result_only: bool = False,
-    team_scope: SubagentScope | None = None,
+    team_scope: SubagentScope | DetachedExecutionScope | None = None,
     team_root: dict | None = None,
 ) -> list[dict]:
     """Bind StateGraph tasks to native effects without publishing member deltas.
