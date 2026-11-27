@@ -186,7 +186,10 @@ reading logs. It filters out unrelated, superseded and unauthorized Jobs before
 computing counts or pagination. Explicit cancellation preflights the complete
 owned batch, records immutable target attempts before stopping native work, and
 retains pending cleanup if a response is unconfirmed. Replaying an older call
-never selects a newer attempt. Runtime wiring follows.
+never selects a newer attempt. The private unified Job dispatcher validates
+mutually exclusive operations and canonicalizes public defaults before using
+the owned adapters. Mutation replay identities cannot cross retry and cancel
+ledgers. General native tool dispatch and runtime wiring follow.
 
 
 Agent authoring starts with the final upstream repository and validators.

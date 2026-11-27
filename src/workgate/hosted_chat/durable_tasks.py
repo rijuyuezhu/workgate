@@ -498,6 +498,13 @@ class DurableTaskRepository:
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             run = self._run(db, lease)
+            if db.execute(
+                "SELECT 1 FROM agent_durable_tasks WHERE owner=? AND run_id=? AND call_id=?",
+                (lease.owner, lease.run_id, call.call_id),
+            ).fetchone():
+                raise PermissionError(
+                    "A replayed tool call cannot change a durable request"
+                )
             prior = db.execute(
                 "SELECT * FROM agent_job_cancel_calls WHERE run_id=? AND call_id=?",
                 (lease.run_id, call.call_id),
@@ -634,6 +641,13 @@ class DurableTaskRepository:
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             run = self._run(db, lease)
+            if db.execute(
+                "SELECT 1 FROM agent_job_cancel_calls WHERE run_id=? AND call_id=?",
+                (lease.run_id, call.call_id),
+            ).fetchone():
+                raise PermissionError(
+                    "A replayed tool call cannot change a durable request"
+                )
             prior_rows = db.execute(
                 "SELECT fingerprint FROM agent_durable_tasks WHERE owner=? AND run_id=? AND call_id=?",
                 (lease.owner, lease.run_id, call.call_id),
