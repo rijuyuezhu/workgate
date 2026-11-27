@@ -1,6 +1,7 @@
 """Private owner-scoped background task controls at a committed parent edge."""
 
 import json
+import secrets
 import time
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -75,11 +76,18 @@ def check_detached_task(
     if expires is not None and expires <= time.time():
         raise PermissionError("Authentication grant expired")
     args = call.arguments
-    if set(args) - {"background_task_id", "action"}:
+    if set(args) - {"background_task_id", "action", "message", "control_id"}:
         raise ValueError("Unsupported background task control arguments")
     action = args.get("action", "poll")
     task_id = args.get("background_task_id")
-    if action not in ("poll", "cancel"):
+    if action not in (
+        "poll",
+        "cancel",
+        "steer",
+        "queue",
+        "interrupt",
+        "cancel_message",
+    ):
         raise ValueError("Unsupported background task control action")
     if task_id is not None and (
         not isinstance(task_id, str)
@@ -87,8 +95,26 @@ def check_detached_task(
         or len(task_id) > 256
     ):
         raise ValueError("Invalid background task ID")
-    if action == "cancel" and task_id is None:
-        raise ValueError("Cancellation requires a background task ID")
+    if action != "poll" and task_id is None:
+        raise ValueError("Control requires a background task ID")
+    message = args.get("message")
+    control_id = args.get("control_id")
+    if action in ("steer", "queue", "interrupt"):
+        if (
+            not isinstance(message, str)
+            or not message.strip()
+            or len(message) > 65536
+        ):
+            raise ValueError(
+                "A non-empty control message of at most 65536 characters is required"
+            )
+    elif message is not None:
+        raise ValueError("Unexpected control message")
+    if action == "cancel_message":
+        if not isinstance(control_id, str) or not 0 < len(control_id) <= 256:
+            raise ValueError("A control ID is required")
+    elif control_id is not None:
+        raise ValueError("Unexpected control ID")
     lease = checkpoint.lease
     with lease.database.connect() as db:
         db.execute("BEGIN IMMEDIATE")
@@ -163,7 +189,52 @@ def check_detached_task(
             output = {"status": "not_found", "background_task_id": task_id}
         else:
             row = rows[0]
-            if action == "cancel" and row["status"] == "running":
+            if action in ("steer", "queue", "interrupt", "cancel_message"):
+                if row["status"] != "running" or row["cancel_requested"]:
+                    output = _snapshot(row, status="not_running")
+                else:
+                    _authorize_result(
+                        db, row, scopes, expires, disclosure_access
+                    )
+                    if action == "cancel_message":
+                        changed = db.execute(
+                            "UPDATE subagent_task_controls SET status='rejected',reason='withdrawn',updated_at=? WHERE task_id=? AND id=? AND status='accepted' AND boundary IS NULL",
+                            (_now(), task_id, control_id),
+                        ).rowcount
+                        output = _snapshot(
+                            row,
+                            status="accepted"
+                            if changed
+                            else "control_not_found",
+                        )
+                        output["control_id"] = control_id
+                    else:
+                        pending = db.execute(
+                            "SELECT count(*) FROM subagent_task_controls WHERE task_id=? AND status='accepted'",
+                            (task_id,),
+                        ).fetchone()[0]
+                        if pending >= 32:
+                            raise ValueError(
+                                "Task already has 32 pending messages"
+                            )
+                        assert isinstance(message, str)
+                        control_id = "control_" + secrets.token_hex(16)
+                        now = _now()
+                        db.execute(
+                            "INSERT INTO subagent_task_controls(id,task_id,invocation_key,action,message,status,created_at,updated_at) VALUES(?,?,?,?,?,'accepted',?,?)",
+                            (
+                                control_id,
+                                task_id,
+                                fingerprint,
+                                action,
+                                message.strip(),
+                                now,
+                                now,
+                            ),
+                        )
+                        output = _snapshot(row, status="accepted")
+                        output["control_id"] = control_id
+            elif action == "cancel" and row["status"] == "running":
                 _request_cancel_locked(lease.database, db, row)
                 row = db.execute(
                     "SELECT * FROM subagent_tasks WHERE id=?", (task_id,)

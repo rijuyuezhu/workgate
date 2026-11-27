@@ -11,6 +11,7 @@ import time
 import uuid
 from dataclasses import dataclass
 
+from .checkpoint_types import LoopSnapshot
 from .database import SQLiteDatabase
 from .detached_subagents import _MAX_THREAD_HISTORY
 from .generation_actor_lease import ActorLease, ActorLeaseLost
@@ -18,7 +19,7 @@ from .generations import Generation, GenerationStore
 from .provider_profiles import ProviderRepository
 from .providers import selected_provider
 from .storage import _now as _generation_now
-from .subagent_scope import SubagentScope
+from .subagent_scope import DetachedExecutionScope, SubagentScope
 from .subagents import filter_subagent_result
 
 _LEASE_MS = 30_000
@@ -193,6 +194,10 @@ def _settle(
         (status, result, error, now, row["id"]),
     )
     db.execute(
+        "UPDATE subagent_task_controls SET status='failed',reason='task_settled',updated_at=? WHERE task_id=? AND status='accepted'",
+        (now, row["id"]),
+    )
+    db.execute(
         "UPDATE active_subagent_threads SET active=0,updated_at=unixepoch() WHERE owner=? AND thread_id=? AND parent_run_id=?",
         (row["owner"], row["child_conversation_id"], row["parent_run_id"]),
     )
@@ -268,6 +273,101 @@ class DetachedTaskLease:
         if row["cancel_requested"]:
             raise ActorLeaseLost("Detached task cancellation requested")
         _authorize(db, row, scopes, expires, disclosure_access)
+
+    def has_interrupt(self, **grant) -> bool:
+        with self.database.read_snapshot() as db:
+            self.assert_current(db=db, **grant)
+            return (
+                db.execute(
+                    "SELECT 1 FROM subagent_task_controls WHERE task_id=? AND status='accepted' AND action='interrupt' LIMIT 1",
+                    (self.task_id,),
+                ).fetchone()
+                is not None
+            )
+
+    def claim_controls(self, boundary: str, **grant) -> list[dict]:
+        """Reserve delivery before saving; a replacement lease can retry it."""
+        allowed = {
+            "preempt": {"interrupt"},
+            "tool": {"steer", "interrupt"},
+            "turn": {"queue", "steer", "interrupt"},
+        }[boundary]
+        with self.database.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self.assert_current(db=db, **grant)
+            rows = db.execute(
+                "SELECT * FROM subagent_task_controls WHERE task_id=? AND status='accepted' ORDER BY created_at,rowid",
+                (self.task_id,),
+            ).fetchall()
+            messages = []
+            for row in rows:
+                if row["boundary"] is None and row["action"] not in allowed:
+                    continue
+                db.execute(
+                    "UPDATE subagent_task_controls SET boundary=coalesce(boundary,?),updated_at=? WHERE id=?",
+                    (boundary, _now(), row["id"]),
+                )
+                messages.append(
+                    {
+                        "id": row["id"],
+                        "role": "user",
+                        "content": row["message"],
+                        "additional_kwargs": {
+                            "source": "steer",
+                            "control_id": row["id"],
+                        },
+                    }
+                )
+            return messages
+
+    def acknowledge_controls(self, **grant) -> None:
+        """Acknowledge only exact messages already in the durable child head."""
+        with self.database.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self.assert_current(db=db, **grant)
+            task = self._current(db)
+            if task["child_run_id"] is None:
+                return
+            scope = DetachedExecutionScope.load(
+                db, self.owner, task["child_run_id"]
+            )
+            head = db.execute(
+                "SELECT checkpoint FROM agent_checkpoints WHERE owner=? AND thread_id=? AND checkpoint_ns=? AND expires_at>? AND checkpoint IS NOT NULL ORDER BY checkpoint_id DESC LIMIT 1",
+                (
+                    self.owner,
+                    task["child_conversation_id"],
+                    scope.checkpoint_namespace,
+                    time.time(),
+                ),
+            ).fetchone()
+            if head is None:
+                return
+            snapshot = LoopSnapshot.model_validate(
+                json.loads(head["checkpoint"])["channel_values"]
+            )
+            messages = {
+                message.get("id"): message
+                for message in snapshot.messages
+                if isinstance(message.get("id"), str)
+            }
+            for row in db.execute(
+                "SELECT * FROM subagent_task_controls WHERE task_id=? AND status='accepted' AND boundary IS NOT NULL",
+                (self.task_id,),
+            ):
+                expected = {
+                    "id": row["id"],
+                    "role": "user",
+                    "content": row["message"],
+                    "additional_kwargs": {
+                        "source": "steer",
+                        "control_id": row["id"],
+                    },
+                }
+                if messages.get(row["id"]) == expected:
+                    db.execute(
+                        "UPDATE subagent_task_controls SET status='applied',updated_at=? WHERE id=?",
+                        (_now(), row["id"]),
+                    )
 
     def execution_input(
         self,
