@@ -2356,3 +2356,101 @@ async def test_owned_file_read_rechecks_while_native_call_is_pending(
         if not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_owned_shell_read_and_list_hide_unowned_native_handles(
+    bound,
+    reserved_shell_backend,
+    monkeypatch,
+):
+    from workgate.control.hosted_chat_session_read import (
+        NativeSessionReadDispatcher,
+    )
+    from workgate.protocol.ids import new_reserved_shell_id
+    from workgate.schemas.result_models.shell import (
+        ListPersistentShellsOutput,
+        PersistentShellInfo,
+    )
+
+    harness, repo, lease, generation = bound
+    started, _ = reserved_shell_backend
+    _, sid = await native_session(harness, repo, lease)
+    result = await invoke(
+        harness,
+        repo,
+        lease,
+        ModelToolCall(
+            "pty-inspect",
+            "bash",
+            {"session_id": sid, "pty": True, "command": "shell"},
+        ),
+    )
+    owned = result["result"]["shell_id"]
+    foreign = new_reserved_shell_id()
+    started[foreign] = sid
+
+    async def inventory(_config, _store):
+        return ListPersistentShellsOutput(
+            shells=[
+                PersistentShellInfo(shell_id=owned, command="owned command"),
+                PersistentShellInfo(shell_id=foreign, command="unowned marker"),
+            ]
+        )
+
+    async def read(_config, shell_id, lines=200, *, preserve_ansi=False):
+        return ReadPersistentShellOutput(
+            shell_id=shell_id, output="owned output", lines=lines
+        )
+
+    monkeypatch.setattr(
+        shell_service, "list_persistent_shells_execute", inventory
+    )
+    monkeypatch.setattr(
+        shell_service, "read_persistent_shell_output_execute", read
+    )
+    dispatcher = NativeSessionReadDispatcher(harness.control)
+
+    async def dispatch(name, args):
+        return await dispatcher.dispatch(
+            repo,
+            lease,
+            ModelToolCall("shell-inspect", name, {"session_id": sid} | args),
+            machine=harness.executor_id,
+            scopes={"shell:read"},
+            expires=None,
+        )
+
+    listing = await dispatch("list_persistent_shells", {})
+    assert [
+        row["shell_id"] for row in listing["structuredContent"]["shells"]
+    ] == [owned]
+    assert foreign not in str(listing)
+    assert "unowned marker" not in str(listing)
+    read_result = await dispatch(
+        "read_persistent_shell_output", {"shell_id": owned, "lines": 7}
+    )
+    assert read_result["structuredContent"]["output"] == "owned output"
+    assert read_result["structuredContent"]["lines"] == 7
+
+    async def mismatched_read(
+        _config, shell_id, lines=200, *, preserve_ansi=False
+    ):
+        return ReadPersistentShellOutput(
+            shell_id=foreign, output="unowned marker", lines=lines
+        )
+
+    monkeypatch.setattr(
+        shell_service, "read_persistent_shell_output_execute", mismatched_read
+    )
+    with pytest.raises(RuntimeError, match="mismatched identity"):
+        await dispatch("read_persistent_shell_output", {"shell_id": owned})
+    with pytest.raises(PermissionError, match="Shell does not belong"):
+        await dispatch("read_persistent_shell_output", {"shell_id": foreign})
+    WorkspaceRepository(repo.database).save_setting(
+        lease.owner,
+        "agent.machine_policy.conversation." + generation.conversation_id,
+        {harness.executor_id: "none"},
+    )
+    with pytest.raises(PermissionError):
+        await dispatch("list_persistent_shells", {})

@@ -370,7 +370,8 @@ class DurableTaskRepository:
         scopes: set[str],
         expires: int | None,
         registered: Collection[str],
-    ) -> None:
+        inspect_shells: bool = False,
+    ) -> frozenset[str]:
         """Require a live generation and its confirmed native Session."""
         with self.database.read_snapshot() as db:
             run = self._run(db, lease)
@@ -394,6 +395,16 @@ class DurableTaskRepository:
                 expires,
                 registered,
                 run["conversation_id"],
+            )
+            if not inspect_shells:
+                return frozenset()
+            return frozenset(
+                row["native_id"]
+                for row in db.execute(
+                    "SELECT native_id FROM agent_durable_tasks WHERE owner=? AND conversation_id=? "
+                    "AND machine=? AND native_session_id=? AND kind='shell' AND state='active' AND native_id IS NOT NULL",
+                    (lease.owner, run["conversation_id"], machine, session_id),
+                )
             )
 
     def poll_attempts(
