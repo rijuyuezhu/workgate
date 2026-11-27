@@ -7642,3 +7642,135 @@ async def test_detached_worker_nested_foreground_catalogue(bound, mode):
                 disclosure_access=access,
             )
     actor.release()
+
+
+@pytest.mark.asyncio
+async def test_root_detached_delegation_dispatch_and_replay(bound):
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.control.hosted_chat_root_delegation import RootDelegation
+    from workgate.hosted_chat.agent_runtime import AgentContext, AgentLoopState
+    from workgate.hosted_chat.detached_task_lease import DetachedTaskLease
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+    from workgate.hosted_chat.subagents import chat_subagent_config
+
+    harness, original, actor, generation = bound
+    context = AgentContext(
+        ProviderConfig("openai", "parent", "https://example.invalid", "fake"),
+        [],
+    )
+    reservations = []
+
+    async def resolve(_agent):
+        raise AssertionError(
+            "Detached reservation must not run the foreground model"
+        )
+
+    async def reserved(reservation, access):
+        reservations.append((reservation, access))
+
+    delegation = RootDelegation(
+        [chat_subagent_config(actor.owner)], resolve, on_reserved=reserved
+    )
+    root = OwnedLoopCheckpoint(actor)
+    node = NativeLoopToolNode(
+        harness.control,
+        original,
+        root,
+        allowed_tools={"task"},
+        scopes=set(SCOPES),
+        expires=None,
+        task_machine=harness.executor_id,
+        check_grant=lambda: None,
+        delegation=delegation,
+    )
+    state = AgentLoopState(context, [])
+    await node.refresh_tools(state)
+    tools = {
+        tool["function"]["name"]: tool["function"] for tool in context.tools
+    }
+    assert "check_background_task" in tools
+    assert "run_in_background" in tools["subagent"]["parameters"]["properties"]
+    call = ModelToolCall(
+        "detach",
+        "subagent",
+        {
+            "subagent_type": "self",
+            "description": "child task",
+            "run_in_background": True,
+        },
+    )
+    with pytest.raises(ValueError, match="boolean"):
+        delegation.validate(
+            ModelToolCall(
+                "invalid",
+                "subagent",
+                {"subagent_type": "self", "run_in_background": "true"},
+            )
+        )
+    with pytest.raises(ValueError, match="Thread continuation"):
+        delegation.validate(
+            ModelToolCall(
+                "invalid",
+                "subagent",
+                {"subagent_type": "self", "subagent_thread_id": "thread"},
+            )
+        )
+
+    async def save(call):
+        state.pending_calls = node.preflight([call], state)
+        state.tool_step_started = True
+        await root.save(state, [call])
+
+    await save(call)
+    first = await node.dispatch([call], state)
+    assert len(reservations) == 1
+    reservation, access = reservations[0]
+    assert (
+        json.loads(first.messages[0]["content"])["background_task_id"]
+        == reservation.task_id
+    )
+    assert (await node.dispatch([call], state)).messages == first.messages
+    assert len(reservations) == 1
+    child = DetachedTaskLease.claim(
+        original.database,
+        actor.owner,
+        generation.conversation_id,
+        reservation.task_id,
+        scopes=set(SCOPES),
+        expires=None,
+        disclosure_access=access,
+    )
+    assert child is not None
+    child.complete(
+        [
+            {"role": "user", "content": "child task"},
+            {"role": "assistant", "content": "private final"},
+        ],
+        scopes=set(SCOPES),
+        expires=None,
+        disclosure_access=access,
+    )
+    poll = ModelToolCall(
+        "poll",
+        "check_background_task",
+        {"background_task_id": reservation.task_id},
+    )
+    await save(poll)
+    result = await node.dispatch([poll], state)
+    assert (
+        json.loads(result.messages[0]["content"])["result"] == "private final"
+    )
+    assert (await node.dispatch([poll], state)).messages == result.messages
+    second = ModelToolCall(
+        "second",
+        "check_background_task",
+        {"background_task_id": reservation.task_id},
+    )
+    await save(second)
+    assert (
+        json.loads(
+            (await node.dispatch([second], state)).messages[0]["content"]
+        )["status"]
+        == "claimed"
+    )
