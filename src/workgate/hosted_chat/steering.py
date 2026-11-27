@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from .database import SQLiteDatabase
 from .generation_actor_lease import ActorLease, ActorLeaseLost
 from .generation_protocol import EVENT_LIMIT, MAX_EVENT_BYTES, public_content
+from .graph_member_scope import GraphMemberScope
 from .storage import _json, _now
 
 QUEUE_LIMIT = 10
@@ -80,6 +81,32 @@ def _fingerprint(
         {"text": text, "files": files, "preempt": preempt, "quotes": quotes}
     )
     return hashlib.sha256(normalized.encode()).hexdigest()
+
+
+def reconcile_applied_steers(messages: list[dict], parts: list[dict]) -> bool:
+    """Inject only undelivered durable parts in their original FIFO order."""
+    seen = {
+        message.get("steerId")
+        for message in messages
+        if message.get("source") == "steer"
+    }
+    added = False
+    for part in parts:
+        if part["steerId"] in seen:
+            continue
+        messages.append(
+            {
+                "role": "user",
+                "content": merged_text(part),
+                "source": "steer",
+                "steerId": part["steerId"],
+                "id": "steer:" + part["steerId"],
+                "files": [],
+            }
+        )
+        seen.add(part["steerId"])
+        added = True
+    return added
 
 
 @dataclass
@@ -418,7 +445,13 @@ class SteeringStore:
                 )
             )
 
-    def drain(self, lease: ActorLease, *, boundary: str) -> list[dict]:
+    def drain(
+        self,
+        lease: ActorLease,
+        *,
+        boundary: str,
+        scope: GraphMemberScope | None = None,
+    ) -> list[dict]:
         """Consume FIFO and publish the exact public parts in one owned transaction."""
         if lease.database.path != self.database.path:
             raise ActorLeaseLost("Steering actor database mismatch")
@@ -427,6 +460,8 @@ class SteeringStore:
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             lease.assert_current(db)
+            if scope is not None:
+                scope.resolve(db, lease)
             row = db.execute(
                 "SELECT * FROM runs WHERE id=?", (lease.run_id,)
             ).fetchone()
@@ -487,6 +522,12 @@ class SteeringStore:
                 )
                 index += 1
             state.setdefault("steerParts", []).extend(applied)
+            # Routing is private recovery evidence, never part of the public event.
+            routes = state.setdefault("steerDelivery", {})
+            for part in applied:
+                routes[part["steerId"]] = (
+                    scope.checkpoint_namespace if scope is not None else ""
+                )
             steer["queue"] = []
             db.execute(
                 "UPDATE runs SET state=?,updated_at=? WHERE id=?",
@@ -494,15 +535,26 @@ class SteeringStore:
             )
             return applied
 
-    def applied_parts(self, lease: ActorLease) -> list[dict]:
+    def applied_parts(
+        self, lease: ActorLease, *, scope: GraphMemberScope | None = None
+    ) -> list[dict]:
         if lease.database.path != self.database.path:
             raise ActorLeaseLost("Steering actor database mismatch")
         with self.database.read_snapshot() as db:
             lease.assert_current(db)
+            if scope is not None:
+                scope.resolve(db, lease)
             row = db.execute(
                 "SELECT state FROM runs WHERE id=?", (lease.run_id,)
             ).fetchone()
-            return self._state(row).get("steerParts", [])
+            state = self._state(row)
+            routes = state.get("steerDelivery", {})
+            namespace = scope.checkpoint_namespace if scope is not None else ""
+            return [
+                part
+                for part in state.get("steerParts", [])
+                if routes.get(part["steerId"], "") == namespace
+            ]
 
     def pending(self, owner, run_id):
         with self.database.connect() as db:

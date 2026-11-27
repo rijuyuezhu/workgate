@@ -474,3 +474,11 @@ the latest SDK task interruption, including its proposal and activation.
 Prior SDK interrupt positions replay against their durable action IDs;
 approval and Ask User can occur successively at the same tool edge. Missing
 graph checkpoints or changed graph membership cannot authorize a resume.
+
+Foreground graph steering adapts the pinned source recipient_namespace
+delivery map to the owned activation namespace. One SQLite FIFO drain
+atomically publishes public steer parts and records its private recipient;
+only that member may reconcile delivery after a crash. The shared model
+history projection serves ordinary and graph turns. Tool-only preemption,
+post-tool transfer delivery, parallel election and actor replacement are
+covered with the existing native loop and SDK graph.

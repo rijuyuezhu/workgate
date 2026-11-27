@@ -22,6 +22,7 @@ from ..hosted_chat.graph_runtime import (
 from ..hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
 from ..hosted_chat.provider_common import ModelToolCall
 from ..hosted_chat.providers import stream_model, stream_model_with_tools
+from ..hosted_chat.steering import SteeringStore, reconcile_applied_steers
 from .hosted_chat_native_creation import _grant
 from .hosted_chat_native_tool_node import NativeLoopToolNode
 from .runtime import ControlRuntime
@@ -51,13 +52,14 @@ async def run_native_graph(
 
     The trusted caller supplies provider resolution and content authorization.
     A graph activation has its own checkpoint, not its own public generation.
-    Graph human interrupts use the SDK barrier. Steering and public graph event projection are separate.
+    Graph human interrupts use the SDK barrier. Foreground steering elects one member; public model-delta projection remains separate.
     """
 
     if lease.database.root != runtime.config.state_dir / "hosted-chat":
         raise PermissionError(
             "Graph generation belongs to another Control runtime"
         )
+    steering = SteeringStore(lease.database)
     scopes = set(scopes)
     allowed_tools = frozenset(allowed_tools)
 
@@ -108,7 +110,21 @@ async def run_native_graph(
 
         async def stream_boundary() -> bool:
             node.current_grant()
-            return False
+            return steering.has_preempt(lease.owner, lease.run_id)
+
+        def reconcile(loop: AgentLoopState) -> bool:
+            added = reconcile_applied_steers(
+                loop.messages,
+                steering.applied_parts(lease, scope=activation.scope),
+            )
+            if added:
+                loop.completed = False
+            return added
+
+        async def boundary(loop: AgentLoopState, kind: str) -> bool:
+            node.current_grant()
+            steering.drain(lease, boundary=kind, scope=activation.scope)
+            return reconcile(loop)
 
         async def save(
             loop: AgentLoopState, calls: list[ModelToolCall]
@@ -121,6 +137,8 @@ async def run_native_graph(
                 calls, loop, authorize_effects=authorize_batch
             )
 
+        if not state.pending_calls and reconcile(state):
+            await save(state, [])
         await run_agent_loop(
             state,
             stream_tools=stream_tools,
@@ -132,6 +150,7 @@ async def run_native_graph(
             before_model=node.refresh_tools,
             preflight_calls=node.preflight,
             on_stream_chunk=stream_boundary,
+            on_boundary=boundary,
         )
         node.current_grant()
         return GraphMemberResult(state.messages, state.graph_commands)

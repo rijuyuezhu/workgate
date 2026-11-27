@@ -24,7 +24,7 @@ from ..hosted_chat.provider_common import (
     ModelUsage,
 )
 from ..hosted_chat.providers import stream_model, stream_model_with_tools
-from ..hosted_chat.steering import SteeringStore, merged_text
+from ..hosted_chat.steering import SteeringStore, reconcile_applied_steers
 from .hosted_chat_native_tool_node import NativeLoopToolNode
 
 
@@ -127,26 +127,9 @@ async def run_foreground_native_loop(
         )
 
     def reconcile_steers(state: AgentLoopState) -> bool:
-        seen = {
-            message.get("steerId")
-            for message in state.messages
-            if message.get("source") == "steer"
-        }
-        added = False
-        for part in steering.applied_parts(lease):
-            if part["steerId"] not in seen:
-                state.messages.append(
-                    {
-                        "role": "user",
-                        "content": merged_text(part),
-                        "source": "steer",
-                        "steerId": part["steerId"],
-                        "id": "steer:" + part["steerId"],
-                        "files": [],
-                    }
-                )
-                seen.add(part["steerId"])
-                added = True
+        added = reconcile_applied_steers(
+            state.messages, steering.applied_parts(lease)
+        )
         if added:
             state.completed = False
         return added

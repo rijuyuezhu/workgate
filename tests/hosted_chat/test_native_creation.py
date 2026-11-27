@@ -5726,3 +5726,262 @@ async def test_native_graph_approval_then_ask_user_same_activation(bound):
     assert result[-1]["content"] == "member complete"
     assert turns == ["root", "member", "member"]
     assert await execute() == result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("crash", [False, True])
+async def test_native_graph_steering_elects_one_recipient_and_recovers(
+    bound, monkeypatch, crash
+):
+    from workgate.control.hosted_chat_graph_loop import run_native_graph
+    from workgate.hosted_chat.agent_runtime import AgentContext
+    from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.provider_common import ProviderConfig
+    from workgate.hosted_chat.steering import SteeringStore
+
+    pytest.importorskip("langgraph")
+    harness, repo, lease, _ = bound
+    agents = AgentRepository(repo.database)
+    root = agents.create(lease.owner, {"provider": "openai", "model": "root"})
+    members = [
+        agents.create(lease.owner, {"provider": "openai", "model": name})
+        for name in ("left", "right")
+    ]
+    agents.update(
+        lease.owner,
+        root["id"],
+        {
+            "edges": [
+                {
+                    "from": root["id"],
+                    "to": [a["id"] for a in members],
+                    "edgeType": "direct",
+                }
+            ]
+        },
+    )
+    generation, _ = GenerationStore(repo.database).begin(
+        lease.owner, {"text": "graph", "agent_id": root["id"]}
+    )
+    steering = SteeringStore(repo.database)
+    submitted = []
+    delivered = []
+    turns = []
+    arrived = set()
+    both = asyncio.Event()
+    drain = SteeringStore.drain
+    failed = False
+
+    def crash_after_drain(self, actor, *, boundary, scope=None):
+        nonlocal failed
+        applied = drain(self, actor, boundary=boundary, scope=scope)
+        if crash and applied and not failed:
+            failed = True
+            raise RuntimeError("simulated crash after graph steer delivery")
+        return applied
+
+    monkeypatch.setattr(SteeringStore, "drain", crash_after_drain)
+
+    async def resolve(agent):
+        return AgentContext(
+            ProviderConfig(
+                "openai", agent["model"], "https://example.invalid", "fake"
+            ),
+            [],
+        )
+
+    async def authorize(calls, state):
+        pytest.fail("Graph steer test must not execute tools")
+
+    async def stream(profile, messages, **kwargs):
+        name = profile.model
+        turns.append(name)
+        if name == "root":
+            yield "root complete"
+            return
+        steers = [m["steerId"] for m in messages if m.get("source") == "steer"]
+        if steers:
+            delivered.append((name, steers))
+            assert steers == submitted
+            yield name + " redirected"
+            return
+        arrived.add(name)
+        if len(arrived) == 2:
+            if not submitted:
+                for index in (1, 2):
+                    ack = steering.enqueue(
+                        lease.owner,
+                        {
+                            "conversationId": generation.conversation_id,
+                            "text": f"steer {index}",
+                            "clientSteerId": f"graph-{index}",
+                        },
+                        preempt_capable=True,
+                        validate_submission=lambda text: None,
+                    )
+                    submitted.append(ack["steerId"])
+            both.set()
+        await asyncio.wait_for(both.wait(), 2)
+        yield name + " initial"
+
+    async def execute():
+        actor = ActorLease.claim(repo.database, lease.owner, generation.run_id)
+        assert actor is not None
+        try:
+            result = await run_native_graph(
+                harness.control,
+                actor,
+                root["id"],
+                [{"role": "user", "content": "graph"}],
+                resolve_context=resolve,
+                authorize_batch=authorize,
+                allowed_tools=set(),
+                scopes=set(),
+                expires=None,
+                task_machine=None,
+                check_grant=lambda: None,
+                recursion_limit=20,
+                stream_tools=stream,
+                stream_text=stream,
+            )
+            assert steering.applied_parts(actor) == []
+            return result
+        finally:
+            actor.release()
+
+    if crash:
+        with pytest.raises(RuntimeError, match="simulated crash"):
+            await execute()
+    result = await execute()
+    assert len(delivered) == 1
+    assert delivered[0][1] == submitted
+    assert turns.count("root") == 1
+    assert [
+        m["steerId"] for m in result if m.get("source") == "steer"
+    ] == submitted
+    events = [
+        event
+        for _, event in GenerationStore(repo.database).events(
+            lease.owner, generation.run_id
+        )
+    ]
+    applied = [
+        event["data"]
+        for event in events
+        if event.get("event") == "on_steer_applied"
+    ]
+    assert [item["steerId"] for item in applied] == submitted
+    assert all(
+        "namespace" not in item and "recipientNamespace" not in item
+        for item in applied
+    )
+    with repo.database.read_snapshot() as db:
+        state = json.loads(
+            db.execute(
+                "SELECT state FROM runs WHERE id=?", (generation.run_id,)
+            ).fetchone()[0]
+        )
+    assert len(set(state["steerDelivery"].values())) == 1
+    assert set(state["steerDelivery"]) == set(submitted)
+    assert await execute() == result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("preempt", [False, True])
+async def test_native_graph_handoff_keeps_post_tool_steer_with_recipient(
+    bound, preempt
+):
+    from workgate.control.hosted_chat_graph_loop import run_native_graph
+    from workgate.hosted_chat.agent_runtime import AgentContext
+    from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.provider_common import ProviderConfig
+    from workgate.hosted_chat.steering import SteeringStore
+
+    pytest.importorskip("langgraph")
+    harness, repo, lease, _ = bound
+    agents = AgentRepository(repo.database)
+    root = agents.create(lease.owner, {"provider": "openai", "model": "root"})
+    member = agents.create(
+        lease.owner, {"provider": "openai", "model": "member"}
+    )
+    agents.update(
+        lease.owner,
+        root["id"],
+        {
+            "edges": [
+                {"from": root["id"], "to": member["id"], "edgeType": "handoff"}
+            ]
+        },
+    )
+    generation, _ = GenerationStore(repo.database).begin(
+        lease.owner, {"text": "graph", "agent_id": root["id"]}
+    )
+    actor = ActorLease.claim(repo.database, lease.owner, generation.run_id)
+    assert actor is not None
+    steering = SteeringStore(repo.database)
+    submitted = []
+    turns = []
+
+    async def resolve(agent):
+        return AgentContext(
+            ProviderConfig(
+                "openai", agent["model"], "https://example.invalid", "fake"
+            ),
+            [],
+        )
+
+    async def authorize(calls, state):
+        assert not preempt
+        assert [call.name for call in calls] == ["transfer_to_" + member["id"]]
+
+    async def stream(profile, messages, **kwargs):
+        turns.append(profile.model)
+        if profile.model == "root":
+            if submitted:
+                assert preempt and messages[-1]["steerId"] == submitted[0]
+                yield "root redirected"
+                return
+            ack = steering.enqueue(
+                lease.owner,
+                {
+                    "conversationId": generation.conversation_id,
+                    "text": "redirect",
+                    "clientSteerId": "handoff-steer",
+                    "preempt": preempt,
+                },
+                preempt_capable=True,
+                validate_submission=lambda text: None,
+            )
+            submitted.append(ack["steerId"])
+            yield ModelToolCall("transfer", "transfer_to_" + member["id"], {})
+        else:
+            assert messages[-1]["source"] == "steer"
+            assert messages[-1]["steerId"] == submitted[0]
+            assert all(
+                m.get("name") != "transfer_to_" + member["id"] for m in messages
+            )
+            yield "member redirected"
+
+    result = await run_native_graph(
+        harness.control,
+        actor,
+        root["id"],
+        [{"role": "user", "content": "graph"}],
+        resolve_context=resolve,
+        authorize_batch=authorize,
+        allowed_tools=set(),
+        scopes=set(),
+        expires=None,
+        task_machine=None,
+        check_grant=lambda: None,
+        recursion_limit=20,
+        stream_tools=stream,
+        stream_text=stream,
+    )
+    assert turns == (["root", "root"] if preempt else ["root", "member"])
+    assert [
+        m["steerId"] for m in result if m.get("source") == "steer"
+    ] == submitted
+    assert result[-1]["content"] == (
+        "root redirected" if preempt else "member redirected"
+    )
