@@ -19,6 +19,7 @@ from ..hosted_chat.providers import stream_model, stream_model_with_tools
 from ..hosted_chat.subagent_scope import SubagentScope
 from ..hosted_chat.subagents import (
     MAX_SUBAGENT_DEPTH,
+    SUBAGENT_TOOL_NAME,
     SubagentConfig,
     SubagentInvocation,
     invoke_subagent,
@@ -63,7 +64,8 @@ class ForegroundDelegation:
 
     def validate(self, call: ModelToolCall) -> None:
         if (
-            not isinstance(call.arguments, dict)
+            call.name != SUBAGENT_TOOL_NAME
+            or not isinstance(call.arguments, dict)
             or set(call.arguments) - {"intent", "description", "subagent_type"}
             or any(
                 not isinstance(value, str) for value in call.arguments.values()
@@ -75,9 +77,8 @@ class ForegroundDelegation:
                 "Subagent call is not an advertised foreground delegation"
             )
 
-    @staticmethod
     def authorize_receipt(
-        node: NativeLoopToolNode, call: ModelToolCall, record: dict
+        self, node: NativeLoopToolNode, call: ModelToolCall, record: dict
     ) -> None:
         scope = SubagentScope.from_record(record)
         checkpoint = node.checkpoint

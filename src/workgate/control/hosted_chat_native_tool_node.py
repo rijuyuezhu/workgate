@@ -21,6 +21,7 @@ from ..hosted_chat.ask_user_tools import (
     ask_user_requested,
     build_ask_user_payload,
 )
+from ..hosted_chat.detached_task_controls import CHECK_BACKGROUND_TASK
 from ..hosted_chat.durable_tasks import DurableTaskRepository
 from ..hosted_chat.graph_human_request import (
     GraphHumanActionRequested,
@@ -49,6 +50,8 @@ from ..hosted_chat.subagents import SUBAGENT_TOOL_NAME
 from .hosted_chat_native_creation import _grant, _registered
 from .hosted_chat_native_dispatch import NativeToolDispatcher, _selected_tools
 from .runtime import ControlRuntime
+
+_DELEGATION_TOOLS = frozenset({SUBAGENT_TOOL_NAME, CHECK_BACKGROUND_TASK})
 
 
 class Delegation(Protocol):
@@ -246,7 +249,7 @@ class NativeLoopToolNode:
         for call in calls:
             if is_transfer_tool(call.name):
                 self._transfer(call, [])
-            elif call.name == SUBAGENT_TOOL_NAME:
+            elif call.name in _DELEGATION_TOOLS:
                 if self.delegation is None:
                     raise PermissionError("Foreground delegation is disabled")
                 self.delegation.validate(call)
@@ -258,7 +261,7 @@ class NativeLoopToolNode:
                 for call in calls
                 if not is_transfer_tool(call.name)
                 and call.name
-                not in {ASK_USER_QUESTION_TOOL_NAME, SUBAGENT_TOOL_NAME}
+                not in ({ASK_USER_QUESTION_TOOL_NAME} | _DELEGATION_TOOLS)
             ],
             allowed_tools=self.allowed_tools,
             task_machine=self.task_machine,
@@ -354,13 +357,13 @@ class NativeLoopToolNode:
 
     def _authorize_receipt(self, call: ModelToolCall, receipt: dict) -> None:
         expected = {"result", "access"}
-        if call.name == SUBAGENT_TOOL_NAME:
+        if call.name in _DELEGATION_TOOLS:
             expected.add("childScope")
         if not isinstance(receipt, dict) or set(receipt) != expected:
             raise PermissionError(
                 "Native receipt lacks disclosure authorization evidence"
             )
-        if call.name == SUBAGENT_TOOL_NAME:
+        if call.name in _DELEGATION_TOOLS:
             if self.delegation is None:
                 raise PermissionError("Foreground delegation is disabled")
             self.delegation.validate(call)
@@ -436,7 +439,10 @@ class NativeLoopToolNode:
                 tool["function"]["name"] for tool in self._handoffs()[1]
             }
             if self.delegation is not None and self.delegation.definitions():
-                enabled |= {SUBAGENT_TOOL_NAME}
+                enabled |= {
+                    tool["function"]["name"]
+                    for tool in self.delegation.definitions()
+                }
             if any(call.name not in enabled for call in calls):
                 raise PermissionError("Native tool no longer selected")
 
@@ -486,7 +492,7 @@ class NativeLoopToolNode:
                 return {
                     "graphCommand": self._transfer(prepared, state.messages)
                 }
-            if prepared.name == SUBAGENT_TOOL_NAME:
+            if prepared.name in _DELEGATION_TOOLS:
                 if self.delegation is None:
                     raise PermissionError("Foreground delegation is disabled")
                 result, scope = await self.delegation.invoke(
@@ -513,7 +519,7 @@ class NativeLoopToolNode:
                     "Native receipt disclosure grant changed during execution"
                 )
             receipt: dict = {"result": result, "access": access}
-            if call.name == SUBAGENT_TOOL_NAME:
+            if call.name in _DELEGATION_TOOLS:
                 receipt["childScope"] = child_scopes.get(call.call_id)
             return receipt
 
@@ -552,7 +558,7 @@ class NativeLoopToolNode:
                     reviewed.add(call.call_id)
                     effective[call.call_id] = entry.tool_call()
                     if (
-                        call.name == SUBAGENT_TOOL_NAME
+                        call.name in _DELEGATION_TOOLS
                         and effective[call.call_id] != call
                     ):
                         raise PermissionError(

@@ -64,25 +64,13 @@ def _authorize_result(db, row, scopes, expires, disclosure_access):
         )
 
 
-def check_detached_task(
-    checkpoint: OwnedLoopCheckpoint,
+def validate_background_task_call(
     call: ModelToolCall,
-    *,
-    scopes: set[str],
-    expires: int | None,
-    disclosure_access: dict | None = None,
-) -> dict:
-    """List, poll or cancel without starting a worker; claim a result once.
-
-    The caller supplies a current grant. Only a root parent tool edge is
-    supported here; graph-member and child control authority are not inferred.
-    """
-    if checkpoint.scope is not None or call.name != CHECK_BACKGROUND_TASK:
-        raise PermissionError(
-            "Background task control requires a root parent edge"
-        )
-    if expires is not None and expires <= time.time():
-        raise PermissionError("Authentication grant expired")
+) -> tuple[str, str | None, str | None, str | None]:
+    if call.name != CHECK_BACKGROUND_TASK or not isinstance(
+        call.arguments, dict
+    ):
+        raise ValueError("Invalid background task control")
     args = call.arguments
     if set(args) - {"background_task_id", "action", "message", "control_id"}:
         raise ValueError("Unsupported background task control arguments")
@@ -123,6 +111,30 @@ def check_detached_task(
             raise ValueError("A control ID is required")
     elif control_id is not None:
         raise ValueError("Unexpected control ID")
+    return action, task_id, message, control_id
+
+
+def check_detached_task(
+    checkpoint: OwnedLoopCheckpoint,
+    call: ModelToolCall,
+    *,
+    scopes: set[str],
+    expires: int | None,
+    disclosure_access: dict | None = None,
+    replay_only: bool = False,
+) -> dict:
+    """List, poll or cancel without starting a worker; claim a result once.
+
+    The caller supplies a current grant. Only a root parent tool edge is
+    supported here; graph-member and child control authority are not inferred.
+    """
+    if checkpoint.scope is not None or call.name != CHECK_BACKGROUND_TASK:
+        raise PermissionError(
+            "Background task control requires a root parent edge"
+        )
+    if expires is not None and expires <= time.time():
+        raise PermissionError("Authentication grant expired")
+    action, task_id, message, control_id = validate_background_task_call(call)
     lease = checkpoint.lease
     with lease.database.connect() as db:
         db.execute("BEGIN IMMEDIATE")
@@ -188,6 +200,8 @@ def check_detached_task(
                     db, rows[0], scopes, expires, disclosure_access
                 )
             return output
+        if replay_only:
+            raise PermissionError("Background task receipt is missing")
         if task_id is None:
             output = {
                 "tasks": [_snapshot(row) for row in rows],
@@ -286,3 +300,44 @@ def check_detached_task(
             (*key, fingerprint, json.dumps(output, allow_nan=False), now, now),
         )
         return output
+
+
+def check_background_task_tools() -> list[dict]:
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": CHECK_BACKGROUND_TASK,
+                "description": "List or check your detached subagent tasks, collect a completed result once, or send controls to a running task.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "background_task_id": {
+                            "type": "string",
+                            "description": "Omit to list tasks in this conversation.",
+                        },
+                        "action": {
+                            "type": "string",
+                            "enum": [
+                                "poll",
+                                "cancel",
+                                "steer",
+                                "queue",
+                                "interrupt",
+                                "cancel_message",
+                            ],
+                        },
+                        "message": {
+                            "type": "string",
+                            "description": "Message for steer, queue, or interrupt.",
+                        },
+                        "control_id": {
+                            "type": "string",
+                            "description": "Pending control to withdraw with cancel_message.",
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+            },
+        }
+    ]
