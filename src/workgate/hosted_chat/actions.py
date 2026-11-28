@@ -7,6 +7,7 @@ model schemas, HTTP responses, or execution error strings.
 import json
 import re
 import secrets
+from collections.abc import Callable
 from urllib.parse import urlsplit
 
 from .action_spec import (
@@ -261,7 +262,17 @@ class ActionRepository:
                     tools.append({"type": "function", "function": func})
         return tools
 
-    def save(self, owner: str, agent_id: str, body: dict) -> tuple[dict, dict]:
+    def save(
+        self,
+        owner: str,
+        agent_id: str,
+        body: dict,
+        *,
+        check_grant: Callable[[], None] = lambda: None,
+    ) -> tuple[dict, dict]:
+        check_grant()
+        if set(body) - {"action_id", "metadata", "functions"}:
+            raise ValueError("Unknown Action request field")
         functions = body.get("functions")
         if not isinstance(functions, list) or not functions:
             raise ValueError("No functions provided")
@@ -284,6 +295,7 @@ class ActionRepository:
             self.cipher.initialize()
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            check_grant()
             row = self._bound(db, owner, agent_id)
             if row is None:
                 raise KeyError("Agent not found for adding action")
@@ -490,11 +502,20 @@ class ActionRepository:
                 "SELECT * FROM action_records WHERE id=?", (action_id,)
             ).fetchone()
             assert updated is not None and saved is not None
+            check_grant()
             return updated, self._public(saved)
 
-    def delete(self, owner: str, agent_id: str, action_id: str) -> bool:
+    def delete(
+        self,
+        owner: str,
+        agent_id: str,
+        action_id: str,
+        *,
+        check_grant: Callable[[], None] = lambda: None,
+    ) -> bool:
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            check_grant()
             row = self._bound(db, owner, agent_id)
             if row is None:
                 raise KeyError("Agent not found for deleting action")
@@ -535,4 +556,5 @@ class ActionRepository:
                 "DELETE FROM action_records WHERE id=? AND agent_id=?",
                 (action_id, agent_id),
             )
+            check_grant()
             return True
