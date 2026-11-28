@@ -745,3 +745,11 @@ A missing response, HTTP failure, or interrupted settlement is permanently
 uncertain; recovery does not offer the request again. This slice initially
 supports only an interactive root; no child, scheduled or external-event
 actor inherits Action authority. OAuth activation remains separate.
+
+Interactive foreground generations explicitly admit the Action capability.
+The native tool node advertises only live selected non-OAuth Action
+definitions, preflights their arguments, and requires approve/reject
+review with the exact HTTP target before releasing the saved batch.
+The existing policy's explicit deny still wins. Replayed Action receipts
+are checked against the finite-effect ledger. Manual compaction, graph
+members, subagents and unattended actors do not receive this capability.

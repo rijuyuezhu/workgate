@@ -11,6 +11,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
+from ...hosted_chat.action_effects import ACTION_CAPABILITY
 from ...hosted_chat.approval_claims import ApprovalClaimStore
 from ...hosted_chat.ask_user_tools import ASK_USER_QUESTION_TOOL_NAME
 from ...hosted_chat.attachment_history import replay_tool_attachment
@@ -174,7 +175,7 @@ def hosted_chat_generation_routes(runtime: ControlRuntime) -> list[Route]:
             ROOT_NATIVE_TOOLS | MEMORY_TOOLS | {ASK_USER_QUESTION_TOOL_NAME}
             if admission.get("ask_user") is True
             else ROOT_NATIVE_TOOLS | MEMORY_TOOLS
-        )
+        ) | {ACTION_CAPABILITY}
 
         async def authorize_batch(_calls, _state):
             # The native node applies P4 to every effective tool argument

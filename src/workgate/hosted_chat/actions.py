@@ -216,7 +216,12 @@ class ActionRepository:
         return None
 
     def tool_schemas(
-        self, owner: str, agent: dict, *, selected_tools=None
+        self,
+        owner: str,
+        agent: dict,
+        *,
+        selected_tools=None,
+        non_oauth_only: bool = False,
     ) -> list[dict]:
         selected = set(agent.get("tools") or [])
         active = (
@@ -240,6 +245,8 @@ class ActionRepository:
         tools = []
         for row in rows:
             metadata = json.loads(row["metadata"])
+            if non_oauth_only and _auth_type(metadata) == "oauth":
+                continue
             domain = metadata["domain"]
             if encoded_domain(domain) + DELIMITER + row["id"] not in refs:
                 continue

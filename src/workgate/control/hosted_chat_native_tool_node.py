@@ -6,6 +6,8 @@ import time
 from collections.abc import Awaitable, Callable, Collection
 from typing import Protocol
 
+from ..hosted_chat.action_effects import ACTION_CAPABILITY, ActionEffects
+from ..hosted_chat.action_spec import is_action_tool
 from ..hosted_chat.agent_resources import (
     agent_context_messages,
     context_file_ids,
@@ -162,6 +164,9 @@ class NativeLoopToolNode:
                 "Detached task machine differs from admission"
             )
         self.native = NativeToolDispatcher(runtime)
+        self.actions = ActionEffects(
+            checkpoint, current_grant=self.current_grant
+        )
 
     def current_grant(self) -> tuple[set[str], int | None]:
         self.checkpoint.assert_current()
@@ -291,6 +296,14 @@ class NativeLoopToolNode:
         filters = self._filters()
         for call in calls:
             validate_tool_arguments(call.name, call.arguments, filters)
+
+    def _action_tools(self) -> list[dict]:
+        if (
+            ACTION_CAPABILITY not in self.allowed_tools
+            or self.checkpoint.scope is not None
+        ):
+            return []
+        return self.actions.definitions()
 
     def _memory_tools(self) -> list[dict]:
         if not self.allowed_tools >= MEMORY_TOOLS:
@@ -557,6 +570,10 @@ class NativeLoopToolNode:
         for call in calls:
             if is_transfer_tool(call.name):
                 self._transfer(call, [])
+            elif is_action_tool(call.name):
+                if ACTION_CAPABILITY not in self.allowed_tools:
+                    raise PermissionError("Actions are not admitted")
+                self.actions.validate(call)
             elif call.name == ATTACHMENT_TOOL:
                 self._attachment_request(call)
             elif call.name in MEMORY_TOOLS:
@@ -576,6 +593,7 @@ class NativeLoopToolNode:
                 call
                 for call in calls
                 if not is_transfer_tool(call.name)
+                and not is_action_tool(call.name)
                 and call.name
                 not in (
                     {ASK_USER_QUESTION_TOOL_NAME, ATTACHMENT_TOOL}
@@ -603,6 +621,7 @@ class NativeLoopToolNode:
         if self._question_enabled(agent):
             state.context.tools.extend(copy.deepcopy(ASK_USER_TOOLS))
         state.context.tools.extend(self._memory_tools())
+        state.context.tools.extend(self._action_tools())
         if self._attachment_enabled():
             state.context.tools.append(attachment_definition())
         state.context.tools.extend(copy.deepcopy(self._handoffs()[1]))
@@ -641,6 +660,11 @@ class NativeLoopToolNode:
         endpoints = repo.setting(lease.owner, "endpoints", {}) or {}
         legacy = (endpoints.get("agents") or {}).get("toolApproval")
         decision = call_decision(mode, legacy, call.name, call.arguments) or {}
+        if is_action_tool(call.name) and decision.get("decision") != "deny":
+            return {
+                "decision": "ask",
+                "reason": "Confirm external Action request",
+            }
         if call.name in MEMORY_TOOLS and decision.get("decision") != "deny":
             return {
                 "decision": "ask",
@@ -716,6 +740,10 @@ class NativeLoopToolNode:
                 != receipt["result"]
             ):
                 raise PermissionError("Memory receipt changed")
+        if is_action_tool(call.name):
+            if ACTION_CAPABILITY not in self.allowed_tools:
+                raise PermissionError("Actions are not admitted")
+            self.actions.authorize_receipt(call, receipt["result"])
         if (
             call.name == ATTACHMENT_TOOL
             and receipt["result"].get("isError") is not True
@@ -797,6 +825,9 @@ class NativeLoopToolNode:
             enabled |= {
                 tool["function"]["name"] for tool in self._memory_tools()
             }
+            enabled |= {
+                tool["function"]["name"] for tool in self._action_tools()
+            }
             if self._question_enabled(agents[-1]):
                 enabled = enabled | {ASK_USER_QUESTION_TOOL_NAME}
             enabled |= {
@@ -866,6 +897,8 @@ class NativeLoopToolNode:
                 child_scopes[call.call_id] = scope
                 return result
             scopes, expires = self.current_grant()
+            if is_action_tool(prepared.name):
+                return await self.actions.execute(prepared)
             if prepared.name == ATTACHMENT_TOOL:
                 request, authorize = self._attachment_request(prepared)
                 binder = ToolAttachmentPublication(
@@ -938,11 +971,12 @@ class NativeLoopToolNode:
                     if resolution["type"] not in {"approve", "edit"}:
                         raise ValueError("Unsupported native approval decision")
                     if (
-                        call.name in MEMORY_TOOLS
-                        and resolution["type"] != "approve"
-                    ):
+                        call.name in MEMORY_TOOLS or is_action_tool(call.name)
+                    ) and resolution["type"] != "approve":
                         blocked[call.call_id] = (
                             "Memory changes require exact approval"
+                            if call.name in MEMORY_TOOLS
+                            else "External Actions require exact approval"
                         )
                         continue
                     reviewed.add(call.call_id)
@@ -977,11 +1011,23 @@ class NativeLoopToolNode:
                 await authorize_effects(copy.deepcopy(candidates), state)
             check()
             if ask:
+                action_descriptions = {
+                    call.call_id: self.actions.bind(call)
+                    for call in ask
+                    if is_action_tool(call.name)
+                }
                 if self.activation is not None:
                     raise GraphHumanActionRequested(
                         GraphHumanRequest.from_checkpoint(self.checkpoint, ask)
                     )
-                claim_store.pause(self.checkpoint, ask)
+                claim_store.pause(
+                    self.checkpoint,
+                    ask,
+                    exact_tools={
+                        call.name for call in ask if is_action_tool(call.name)
+                    },
+                    descriptions=action_descriptions,
+                )
                 raise AgentSuspended("Waiting for native tool approval")
             for call in effective.values():
                 refresh_decision(call)
