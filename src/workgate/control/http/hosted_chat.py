@@ -13,6 +13,7 @@ from starlette.routing import Route
 
 from ...hosted_chat.approval_claims import ApprovalClaimStore
 from ...hosted_chat.ask_user_tools import ASK_USER_QUESTION_TOOL_NAME
+from ...hosted_chat.attachment_history import replay_tool_attachment
 from ...hosted_chat.attachment_recovery import recover_private_attachments
 from ...hosted_chat.content_filters import ContentFilterBlocked
 from ...hosted_chat.database import DB_NAME, SQLiteDatabase
@@ -502,6 +503,26 @@ def hosted_chat_generation_routes(runtime: ControlRuntime) -> list[Route]:
                     for seq, event in batch:
                         principal.check()
                         cursor = seq
+                        if event.get("event") == "attachment":
+                            data = event.get("data")
+                            if not isinstance(data, dict):
+                                continue
+                            if (
+                                data.get("type") != "memory"
+                                and "shell:read" not in principal.scopes
+                            ):
+                                continue
+                            with repo.database.read_snapshot() as db:
+                                live = replay_tool_attachment(
+                                    db,
+                                    principal.owner,
+                                    generation.run_id,
+                                    event,
+                                )
+                            if live is None:
+                                continue
+                            event = live
+                            principal.check()
                         yield f"id: {seq}\ndata: {json.dumps(event, ensure_ascii=False, separators=(',', ':'))}\n\n"
                     current = repo.get(principal.owner, generation.run_id)
                     if current is None or (

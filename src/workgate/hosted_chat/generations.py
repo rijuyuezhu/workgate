@@ -875,7 +875,14 @@ class GenerationStore:
             "content": content,
             **metadata,
         }
-        if content or model_steps:
+        if (
+            content
+            or model_steps
+            or db.execute(
+                "SELECT 1 FROM tool_attachment_links WHERE run_id=? LIMIT 1",
+                (run_id,),
+            ).fetchone()
+        ):
             db.execute(
                 "INSERT INTO messages(id,conversation_id,parent_id,role,text,content,metadata,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
                 (

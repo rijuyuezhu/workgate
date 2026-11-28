@@ -47,6 +47,44 @@ def _attachment(row, message_id, tool_call_id, conversation_id):
     }
 
 
+def replay_tool_attachment(
+    db, owner: str, run_id: str, event: dict
+) -> dict | None:
+    """Resolve a historical publication event against its current owned link."""
+    data = event.get("data")
+    if not isinstance(data, dict):
+        return None
+    if data.get("type") == "memory":
+        return event
+    row = db.execute(
+        "SELECT f.*,r.conversation_id AS run_conversation,l.response_message_id,l.tool_call_id "
+        "FROM tool_attachment_links l JOIN runs r ON r.id=l.run_id "
+        "JOIN conversations c ON c.id=r.conversation_id "
+        "JOIN attachments f ON f.id=l.file_id AND f.owner=c.owner "
+        "WHERE c.owner=? AND r.id=? AND l.file_id=? AND l.tool_call_id=? "
+        "AND l.response_message_id=? AND l.response_message_id=json_extract(r.state,'$.responseMessageId') "
+        "AND NOT EXISTS (SELECT 1 FROM attachment_deletions d WHERE d.file_id=f.id)",
+        (
+            owner,
+            run_id,
+            data.get("file_id"),
+            data.get("toolCallId"),
+            data.get("messageId"),
+        ),
+    ).fetchone()
+    if row is None or data.get("conversationId") != row["run_conversation"]:
+        return None
+    return {
+        "event": "attachment",
+        "data": _attachment(
+            row,
+            row["response_message_id"],
+            row["tool_call_id"],
+            row["run_conversation"],
+        ),
+    }
+
+
 def response_attachments(db, owner: str, message_ids):
     """Read canonical live file records, not stale message metadata snapshots."""
     ids = list(dict.fromkeys(message_ids))
@@ -58,9 +96,9 @@ def response_attachments(db, owner: str, message_ids):
         "JOIN conversations c ON c.id=r.conversation_id "
         "JOIN messages m ON m.id=l.response_message_id AND m.conversation_id=r.conversation_id "
         "JOIN attachments f ON f.id=l.file_id AND f.owner=c.owner "
-        "WHERE c.owner=? AND l.response_message_id IN ("
-        + ",".join("?" for _ in ids)
-        + ") "
+        "WHERE c.owner=? AND l.response_message_id=json_extract(r.state,'$.responseMessageId') "
+        "AND NOT EXISTS (SELECT 1 FROM attachment_deletions d WHERE d.file_id=f.id) "
+        "AND l.response_message_id IN (" + ",".join("?" for _ in ids) + ") "
         "ORDER BY l.rowid",
         (owner, *ids),
     ).fetchall()
