@@ -63,7 +63,8 @@ def _ancestry(
                         isinstance(parts, list)
                         and isinstance(response, dict)
                         and (
-                            response.get("messageId") == cursor
+                            not response.get("userSubmittedPaths")
+                            and response.get("messageId") == cursor
                             and response.get("conversationId")
                             == conversation_id
                             and response.get("parentMessageId")

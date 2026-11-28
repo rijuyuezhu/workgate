@@ -663,3 +663,21 @@ effective mode; retries reuse the original mode and the actual resolved
 provider transport determines the template. Manual compaction and internal
 completion wakeups do not add artifact prompts. No artifact execution,
 preview, editing, or additional tool grant is introduced in this slice.
+
+### L6 transactional artifact editing
+
+| Workgate file | Upstream source at the pin | Git blob |
+| --- | --- | --- |
+| `artifacts.py` | `src/local_shell_mcp/webui/artifacts.py` | `bbe17ae4afb1918fd3d988e5e4078f581b19a895` |
+| `artifact_edits.py`, `control/http/hosted_chat_artifacts.py` | `src/local_shell_mcp/webui/artifact_routes.py` | `e43587fc717dd100aadf05e224412cdf789c551a` |
+| `tests/hosted_chat/test_artifacts_source.py` | `tests/test_webui_artifacts_source.py` | `7ceb26e1a47f0f24043dc22a6aa17a813ea74a55` |
+
+The UTF-16 and fence-aware parser follows the original Node oracle. The
+native edit transaction checks owner, live write grant, content policy,
+terminal response identity, and the ordered canonical artifact sequence.
+Visible text, canonical model steps and the final replay DTO change together;
+the original streamed deltas and tool receipts remain untouched. Edited
+responses carry user-submitted path markers and are excluded from inferred
+model-origin semantic provenance. Active conversations and private child
+threads are read-only. Inconsistent legacy text/content representations
+or artifacts split across incompatible content parts fail closed.
