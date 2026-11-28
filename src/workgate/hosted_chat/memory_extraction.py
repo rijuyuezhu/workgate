@@ -138,7 +138,8 @@ def _plan_snapshot(
     # A foreground memory action (including rejection) must never be
     # silently retried by a second model after human review.
     if (
-        state.get("memoryManualReview")
+        state.get("automaticMemoryReceipt")
+        or state.get("memoryManualReview")
         or state.get("memoryMutationReceipts")
         or any(
             call.get("name") in MEMORY_TOOLS
@@ -193,10 +194,16 @@ def _plan_snapshot(
         return None
     entries = []
     remaining = _MAX_CONTEXT_BYTES
+    memory_revision = hashlib.sha256()
     for memory in db.execute(
         "SELECT * FROM webui_memories WHERE owner=? AND agent_id=? ORDER BY updated_at DESC,id DESC",
         (owner, partition),
     ):
+        memory_revision.update(
+            json.dumps(
+                dict(memory), sort_keys=True, ensure_ascii=False
+            ).encode()
+        )
         if len(memory["value"].encode()) > remaining:
             continue
         record = project_stored_memories(
@@ -232,7 +239,15 @@ def _plan_snapshot(
         raise finding
     fingerprint = hashlib.sha256(
         json.dumps(
-            [lease.run_id, config, chosen, root, filters, messages],
+            [
+                lease.run_id,
+                config,
+                chosen,
+                root,
+                filters,
+                messages,
+                memory_revision.hexdigest(),
+            ],
             sort_keys=True,
             ensure_ascii=False,
             allow_nan=False,
