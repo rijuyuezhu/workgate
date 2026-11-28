@@ -276,7 +276,7 @@ def test_generation_http_question_resolution_is_one_shot(tmp_path, monkeypatch):
                 "question", "ask_user_question", {"question": "Which format?"}
             )
         else:
-            assert "JSON" in str(messages[-1])
+            assert "JSON" in str(messages)
             yield "test answer"
 
     async def execute(*args, **kwargs):
@@ -328,6 +328,35 @@ def test_generation_http_question_resolution_is_one_shot(tmp_path, monkeypatch):
             == 404
         )
         assert len(calls) == 2
+        successor = client.post(
+            PREFIX,
+            json={
+                **payload,
+                "text": "next question",
+                "conversationId": first.json()["conversationId"],
+            },
+        )
+        assert successor.status_code == 202, successor.text
+        assert (
+            "test answer"
+            in client.get(
+                PREFIX + "/" + successor.json()["runId"] + "/events"
+            ).text
+        )
+        assert len(calls) == 3
+        replay = [
+            message for message in calls[-1] if message["role"] != "system"
+        ]
+        assert [message["role"] for message in replay] == [
+            "user",
+            "assistant",
+            "tool",
+            "assistant",
+            "user",
+        ]
+        assert replay[1]["tool_calls"][0]["id"] == "question"
+        assert replay[2]["tool_call_id"] == "question"
+        assert "JSON" in replay[2]["content"]
 
 
 @pytest.mark.asyncio

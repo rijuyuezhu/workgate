@@ -26,6 +26,7 @@ from .generation_protocol import (
     job_generation_protocol,
     public_content,
 )
+from .model_history import completed_model_steps
 from .provider_profiles import ProviderRepository
 from .providers import selected_provider
 from .sampling import validate_sampling
@@ -57,12 +58,60 @@ class Generation:
     model: str = ""
 
 
-def generation_text_history(
+def _saved_model_steps(
+    db: sqlite3.Connection, conversation_id: str, message_id: str, message
+) -> list[dict] | None:
+    """Read only canonical steps of the unique terminal host response."""
+    rows = db.execute(
+        "SELECT id,status,state FROM runs WHERE conversation_id=? "
+        "AND json_extract(state,'$.responseMessageId')=? "
+        "AND json_type(state,'$.modelSteps') IS NOT NULL LIMIT 2",
+        (conversation_id, message_id),
+    ).fetchall()
+    if not rows:
+        return None
+    if len(rows) != 1 or rows[0]["status"] != "complete":
+        raise PermissionError("Canonical model response identity changed")
+    run = rows[0]
+    state = json.loads(run["state"])
+    if state.get("userMessageId") != message["parent_id"]:
+        raise PermissionError("Canonical model response parent changed")
+    terminal = db.execute(
+        "SELECT data FROM generation_events WHERE run_id=? "
+        "AND json_extract(data,'$.final')=1 LIMIT 2",
+        (run["id"],),
+    ).fetchall()
+    if len(terminal) != 1:
+        raise PermissionError("Canonical model response is not terminal")
+    response = json.loads(terminal[0]["data"]).get("responseMessage")
+    if not isinstance(response, dict) or (
+        response.get("messageId") != message_id
+        or response.get("conversationId") != conversation_id
+        or response.get("parentMessageId") != message["parent_id"]
+        or response.get("text") != message["text"]
+        or response.get("content") != json.loads(message["content"])
+    ):
+        raise PermissionError(
+            "Canonical model response does not match terminal record"
+        )
+    steps = state["modelSteps"]
+    if not isinstance(steps, list) or not all(
+        isinstance(item, dict) for item in steps
+    ):
+        raise PermissionError("Invalid canonical model steps")
+    try:
+        return completed_model_steps([], steps)
+    except ValueError as error:
+        raise PermissionError("Incomplete canonical model steps") from error
+
+
+def _generation_history(
     db: sqlite3.Connection,
     owner: str,
     generation: Generation,
     *,
-    include_message_ids: bool = False,
+    include_message_ids: bool,
+    rich: bool,
 ) -> list[dict]:
     """Project the admitted user-message branch, not the latest conversation."""
     row = db.execute(
@@ -72,14 +121,14 @@ def generation_text_history(
     if row is None or GenerationStore._run(row) != generation:
         raise PermissionError("Generation history identity changed")
     message_id = generation.user_message_id
-    history = []
+    groups = []
     seen = set()
     while message_id is not None:
         if message_id in seen:
             raise PermissionError("Generation history has a cyclic branch")
         seen.add(message_id)
         message = db.execute(
-            "SELECT m.parent_id,m.role,m.text,EXISTS("
+            "SELECT m.parent_id,m.role,m.text,m.content,EXISTS("
             "SELECT 1 FROM runs r WHERE r.conversation_id=m.conversation_id "
             "AND json_extract(r.state,'$.responseMessageId')=m.id "
             "AND json_extract(r.state,'$.manualCompaction')=1) AS manual_summary "
@@ -89,23 +138,72 @@ def generation_text_history(
         if message is None or message["role"] not in {"user", "assistant"}:
             raise PermissionError("Generation history branch is unavailable")
         if not (message["role"] == "assistant" and message["manual_summary"]):
-            history.append(
-                {
-                    "role": message["role"],
-                    "content": message["text"],
-                    **(
-                        {"messageId": message_id} if include_message_ids else {}
-                    ),
-                }
+            steps = (
+                _saved_model_steps(
+                    db, generation.conversation_id, message_id, message
+                )
+                if rich and message["role"] == "assistant"
+                else None
+            )
+            if steps is None:
+                # Legacy display history remains text-only: never promote
+                # UI tool previews into authoritative provider evidence.
+                steps = [{"role": message["role"], "content": message["text"]}]
+            groups.append(
+                [
+                    {
+                        **step,
+                        **(
+                            {"messageId": message_id}
+                            if include_message_ids
+                            else {}
+                        ),
+                    }
+                    for step in steps
+                ]
             )
         message_id = message["parent_id"]
-    history.reverse()
+    history = [step for group in reversed(groups) for step in group]
     if not history or (
         not json.loads(row["state"]).get("manualCompaction")
         and history[-1]["role"] != "user"
     ):
         raise PermissionError("Generation user message is unavailable")
     return history
+
+
+def generation_text_history(
+    db: sqlite3.Connection,
+    owner: str,
+    generation: Generation,
+    *,
+    include_message_ids: bool = False,
+) -> list[dict]:
+    """Keep the existing bounded-text consumer contract."""
+    return _generation_history(
+        db,
+        owner,
+        generation,
+        include_message_ids=include_message_ids,
+        rich=False,
+    )
+
+
+def generation_model_history(
+    db: sqlite3.Connection,
+    owner: str,
+    generation: Generation,
+    *,
+    include_message_ids: bool = False,
+) -> list[dict]:
+    """Replay exact ordered host-owned model steps on the admitted branch."""
+    return _generation_history(
+        db,
+        owner,
+        generation,
+        include_message_ids=include_message_ids,
+        rich=True,
+    )
 
 
 class GenerationConflict(Exception):
