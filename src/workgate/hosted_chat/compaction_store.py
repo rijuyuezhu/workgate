@@ -115,6 +115,9 @@ def _plan(
     if (
         not source
         or (not tail and retain_turns != 0)
+        # Attachment bytes must not enter a durable summary until its
+        # fingerprint also binds live file availability and integrity.
+        or any(message.get("files") for message in source)
         or len(_encode(source).encode()) > _MAX_PREFIX_BYTES
     ):
         return None
