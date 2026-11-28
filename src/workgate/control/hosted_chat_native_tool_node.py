@@ -61,6 +61,7 @@ from ..hosted_chat.memory_protection import MemoryContentBlocked
 from ..hosted_chat.memory_tools import MEMORY_TOOLS, execute_memory_call
 from ..hosted_chat.memory_tools import definitions as memory_definitions
 from ..hosted_chat.memory_tools import validate_call as validate_memory_call
+from ..hosted_chat.message_media import project_message_media
 from ..hosted_chat.provider_common import ModelToolCall, complete_tool_batch
 from ..hosted_chat.storage import WorkspaceRepository
 from ..hosted_chat.subagent_scope import (
@@ -333,6 +334,23 @@ class NativeLoopToolNode:
         self.current_grant()
         return with_agent_context(messages, documents)
 
+    def project_file_messages(self, messages: list[dict]) -> list[dict]:
+        if not any(
+            message.get("role") == "user" and message.get("files")
+            for message in messages
+        ):
+            return messages
+        scopes, expires = self.current_grant()
+        require_machine_scope(scopes, "read", expires=expires)
+        lease = self.checkpoint.lease
+        with lease.database.read_snapshot() as db:
+            lease.assert_current(db)
+            projected = project_message_media(
+                lease.database, db, lease.owner, messages
+            )
+        self.current_grant()
+        return projected
+
     def project_messages(
         self, state: AgentLoopState, *, include_resources: bool = True
     ) -> list[dict]:
@@ -354,7 +372,9 @@ class NativeLoopToolNode:
             else [{"role": "system", "content": memory}, *state.messages]
         )
         return (
-            self.project_resource_messages(state, messages)
+            self.project_file_messages(
+                self.project_resource_messages(state, messages)
+            )
             if include_resources
             else messages
         )
