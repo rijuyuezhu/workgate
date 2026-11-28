@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .ask_user_tools import ask_user_requested
+from .attachment_history import message_file_ids, resolve_message_files
 from .content_filters import (
     filters_from_snapshot,
     validate_agent_submission,
@@ -149,6 +150,23 @@ def _generation_history(
                 # Legacy display history remains text-only: never promote
                 # UI tool previews into authoritative provider evidence.
                 steps = [{"role": message["role"], "content": message["text"]}]
+                if rich and message["role"] == "user":
+                    admitted = db.execute(
+                        "SELECT state FROM runs WHERE conversation_id=? "
+                        "AND json_extract(state,'$.userMessageId')=? "
+                        "AND json_type(state,'$.messageFileIds') IS NOT NULL LIMIT 2",
+                        (generation.conversation_id, message_id),
+                    ).fetchall()
+                    if len(admitted) > 1:
+                        raise PermissionError(
+                            "Attachment admission identity changed"
+                        )
+                    if admitted:
+                        ids = json.loads(admitted[0]["state"])["messageFileIds"]
+                        steps[0]["files"] = [
+                            {"file_id": ident} for ident in ids
+                        ]
+
             groups.append(
                 [
                     {
@@ -355,12 +373,20 @@ class GenerationStore:
                 "isRegenerate",
                 "editedContent",
                 "responseMessageId",
-                "files",
                 "manualSkills",
                 "content",
             )
         ):
             raise ValueError("Unsupported generation request")
+        file_ids = message_file_ids(payload.get("files"))
+        if file_ids and (manual or wakeup_task_id is not None):
+            raise ValueError("Attachments require an interactive turn")
+        if (
+            file_ids
+            and native_admission is not None
+            and "shell:read" not in native_admission["scopes"]
+        ):
+            raise PermissionError("Attachments require read scope")
         assert isinstance(prompt, str)
         user_message_id = (
             payload.get("parentMessageId")
@@ -406,6 +432,10 @@ class GenerationStore:
                     manual and previous["userMessageId"] != user_message_id
                 ):
                     raise ValueError("Request id belongs to another operation")
+                if previous.get("messageFileIds", []) != file_ids:
+                    raise ValueError(
+                        "Request id belongs to different attachments"
+                    )
                 return self._run(prior), False
         now = _now()
         convo = None
@@ -498,6 +528,8 @@ class GenerationStore:
             "model": model,
             "sampling": sampling,
         }
+        if file_ids:
+            state["messageFileIds"] = file_ids
         if manual:
             state["manualCompaction"] = True
         if native_admission is not None:
@@ -569,7 +601,7 @@ class GenerationStore:
             "sender": "User",
             "isCreatedByUser": True,
             "endpoint": provider,
-            "files": [],
+            "files": resolve_message_files(db, owner, file_ids),
         }
         if not manual:
             db.execute(

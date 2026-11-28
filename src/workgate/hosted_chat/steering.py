@@ -15,6 +15,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from .attachment_history import message_file_ids, resolve_message_files
 from .content_filters import filters_from_snapshot, validate_message_submission
 from .database import SQLiteDatabase
 from .generation_actor_lease import ActorLease, ActorLeaseLost
@@ -102,7 +103,10 @@ def reconcile_applied_steers(messages: list[dict], parts: list[dict]) -> bool:
                 "source": "steer",
                 "steerId": part["steerId"],
                 "id": "steer:" + part["steerId"],
-                "files": [],
+                "files": [
+                    {"file_id": ident}
+                    for ident in message_file_ids(part.get("files"))
+                ],
             }
         )
         seen.add(part["steerId"])
@@ -190,16 +194,17 @@ class SteeringStore:
             or not CLIENT_ID_PATTERN.fullmatch(client_id)
         ):
             raise SteerRejection(400, "INVALID_CLIENT_STEER_ID")
-        if body.get("files") not in (None, []):
-            raise SteerRejection(400, "INVALID_FILES")
-        files: list[dict] = []
+        try:
+            file_ids = message_file_ids(body.get("files"))
+        except ValueError:
+            raise SteerRejection(400, "INVALID_FILES") from None
         quotes = _quotes(body.get("quotes"))
         parts = [text, *quotes, merged_text({"text": text, "quotes": quotes})]
         if validate_submission is not None:
             for part in parts:
                 validate_submission(part)
         desired_preempt = body.get("preempt") is True
-        fingerprint = _fingerprint(text, files, desired_preempt, quotes)
+        fingerprint = _fingerprint(text, file_ids, desired_preempt, quotes)
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = self._latest(db, owner, cid)
@@ -252,6 +257,12 @@ class SteeringStore:
             self._ensure_epoch(row, body.get("generationCreatedAt"))
             if expected_run_id is not None and row["id"] != expected_run_id:
                 raise SteerRejection(409, "RUN_REPLACED")
+            if (
+                file_ids
+                and "nativeAdmission" in state
+                and "shell:read" not in state["nativeAdmission"]["scopes"]
+            ):
+                raise PermissionError("Attachments require admitted read scope")
             if row["status"] not in {"running", "requires_action"}:
                 raise SteerRejection(404, "NO_ACTIVE_RUN")
             if row["status"] == "requires_action":
@@ -269,6 +280,10 @@ class SteeringStore:
                     del steer["receipts"][receipt_id]
             if client_id and len(steer["receipts"]) >= RECEIPT_LIMIT:
                 raise SteerRejection(429, "STEER_RECEIPT_LIMIT")
+            try:
+                files = resolve_message_files(db, owner, file_ids)
+            except KeyError:
+                raise SteerRejection(400, "INVALID_FILES") from None
             item = {
                 "steerId": "steer_" + uuid.uuid4().hex,
                 "text": text,

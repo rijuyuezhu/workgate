@@ -126,3 +126,42 @@ def visible_response_attachments(
             ):
                 ui.append(record)
     return [*files, *ui]
+
+
+def message_file_ids(files: object) -> list[str]:
+    """Normalize only client file identities, never client metadata or paths."""
+    if files is None:
+        return []
+    if not isinstance(files, list) or len(files) > 32:
+        raise ValueError("Invalid attachment list")
+    ids = []
+    for value in files:
+        ident = value.get("file_id") if isinstance(value, dict) else None
+        if not isinstance(ident, str) or not ident or len(ident) > 128:
+            raise ValueError("Invalid attachment id")
+        if ident not in ids:
+            ids.append(ident)
+    return ids
+
+
+def resolve_message_files(db, owner: str, ids: list[str]) -> list[dict]:
+    """Resolve references within the admission transaction, excluding deletion intents."""
+    records = []
+    for ident in ids:
+        row = db.execute(
+            "SELECT id,name,content_type FROM attachments WHERE id=? AND owner=? "
+            "AND NOT EXISTS (SELECT 1 FROM attachment_deletions WHERE file_id=?)",
+            (ident, owner, ident),
+        ).fetchone()
+        if row is None:
+            raise KeyError("Attachment not found")
+        records.append(
+            {
+                "file_id": row["id"],
+                "filename": row["name"],
+                "type": row["content_type"],
+                "filepath": "/api/ui/chat/files/download/" + row["id"],
+                "source": "local",
+            }
+        )
+    return records
