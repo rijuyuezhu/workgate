@@ -636,3 +636,9 @@ member-native authority under the detached task token. The original input
 prefix is preserved while only the designated result member is appended to
 the durable task transcript. Team steering remains disabled until a durable
 member recipient election is implemented; ordinary cancellation still works.
+
+Detached team steering elects a single durable member activation inside
+its existing child-run state, without a database schema change. Interrupt
+recipients are elected before preemption; steer/queue use the existing model
+loop boundaries. The exact member checkpoint must contain the reserved
+message before acknowledgment; replacement workers retain the election.

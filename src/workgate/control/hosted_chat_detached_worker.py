@@ -139,6 +139,8 @@ async def run_detached_subagent(
                 result_only=True,
                 team_scope=scope,
                 team_root=agent,
+                detached_controls=lease,
+                control_grant=grant,
             )
             check()
             return [*history, *result]

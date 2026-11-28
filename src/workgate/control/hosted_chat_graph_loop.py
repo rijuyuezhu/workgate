@@ -12,6 +12,7 @@ from ..hosted_chat.agent_runtime import (
     AgentLoopState,
     run_agent_loop,
 )
+from ..hosted_chat.detached_task_lease import DetachedTaskLease
 from ..hosted_chat.durable_tasks import DurableTaskRepository
 from ..hosted_chat.generation_actor_lease import ActorLease
 from ..hosted_chat.graph_member_scope import GraphMemberScope
@@ -56,6 +57,8 @@ async def run_native_graph(
     result_only: bool = False,
     team_scope: SubagentScope | DetachedExecutionScope | None = None,
     team_root: dict | None = None,
+    detached_controls: DetachedTaskLease | None = None,
+    control_grant: Callable[[], dict] | None = None,
 ) -> list[dict]:
     """Bind StateGraph tasks to native effects without publishing member deltas.
 
@@ -73,6 +76,16 @@ async def run_native_graph(
     steering = SteeringStore(lease.database)
     if (team_scope is None) != (team_root is None):
         raise PermissionError("Team graph requires an admitted definition")
+    if (detached_controls is None) != (control_grant is None) or (
+        detached_controls is not None
+        and (
+            not isinstance(team_scope, DetachedExecutionScope)
+            or detached_controls.task_id != team_scope.task_id
+            or detached_controls.token != lease.token
+            or detached_controls.database.path != lease.database.path
+        )
+    ):
+        raise PermissionError("Detached graph control owner mismatch")
     scopes = set(scopes)
     allowed_tools = frozenset(allowed_tools)
 
@@ -139,6 +152,14 @@ async def run_native_graph(
 
         async def stream_boundary() -> bool:
             node.current_grant()
+            if detached_controls is not None:
+                assert (
+                    isinstance(scope, SubagentGraphScope)
+                    and control_grant is not None
+                )
+                return detached_controls.has_interrupt(
+                    member=scope, **control_grant()
+                )
             return isinstance(scope, GraphMemberScope) and steering.has_preempt(
                 lease.owner, lease.run_id
             )
@@ -165,12 +186,56 @@ async def run_native_graph(
         ) -> None:
             node.current_grant()
             await checkpoint.save(loop, calls)
+            if detached_controls is not None:
+                assert (
+                    isinstance(scope, SubagentGraphScope)
+                    and control_grant is not None
+                )
+                detached_controls.acknowledge_controls(
+                    member=scope, **control_grant()
+                )
+
+        async def inject_controls(loop: AgentLoopState, kind: str) -> bool:
+            if detached_controls is None:
+                return False
+            assert (
+                isinstance(scope, SubagentGraphScope)
+                and control_grant is not None
+            )
+            node.current_grant()
+            messages = detached_controls.claim_controls(
+                kind, member=scope, **control_grant()
+            )
+            existing = {
+                item.get("id")
+                for item in loop.messages
+                if isinstance(item.get("id"), str)
+            }
+            pending = [
+                message for message in messages if message["id"] not in existing
+            ]
+            if not pending:
+                return False
+            loop.messages.extend(pending)
+            loop.completed = False
+            await save(loop, loop.pending_calls)
+            return True
 
         async def dispatch(calls: list[ModelToolCall], loop: AgentLoopState):
             return await node.dispatch(
                 calls, loop, authorize_effects=authorize_batch
             )
 
+        if detached_controls is not None:
+            assert (
+                isinstance(scope, SubagentGraphScope)
+                and control_grant is not None
+            )
+            detached_controls.acknowledge_controls(
+                member=scope, **control_grant()
+            )
+            if state.completed and not state.graph_commands:
+                await inject_controls(state, "turn")
         if not state.pending_calls and reconcile(state):
             await save(state, [])
         await run_agent_loop(
@@ -185,6 +250,9 @@ async def run_native_graph(
             preflight_calls=node.preflight,
             on_stream_chunk=stream_boundary,
             on_boundary=boundary,
+            inject_controls=inject_controls
+            if detached_controls is not None
+            else None,
         )
         node.current_grant()
         return GraphMemberResult(state.messages, state.graph_commands)

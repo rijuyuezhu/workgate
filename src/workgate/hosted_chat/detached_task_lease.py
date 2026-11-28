@@ -19,7 +19,11 @@ from .generations import Generation, GenerationStore
 from .provider_profiles import ProviderRepository
 from .providers import selected_provider
 from .storage import _now as _generation_now
-from .subagent_scope import DetachedExecutionScope, SubagentScope
+from .subagent_scope import (
+    DetachedExecutionScope,
+    SubagentGraphScope,
+    SubagentScope,
+)
 from .subagents import filter_subagent_result
 
 _LEASE_MS = 30_000
@@ -274,9 +278,48 @@ class DetachedTaskLease:
             raise ActorLeaseLost("Detached task cancellation requested")
         _authorize(db, row, scopes, expires, disclosure_access)
 
-    def has_interrupt(self, **grant) -> bool:
+    def _control_target(self, db, member: SubagentGraphScope | None):
+        task = self._current(db)
+        if task["child_run_id"] is None:
+            if member is not None:
+                raise PermissionError(
+                    "Team control requires a materialized child"
+                )
+            return task, None, None
+        scope = DetachedExecutionScope.load(
+            db, self.owner, task["child_run_id"]
+        )
+        if member is None:
+            if scope.team_definition_hash is not None:
+                raise PermissionError(
+                    "Team control requires a member activation"
+                )
+            return task, scope.checkpoint_namespace, None
+        if member.team != scope or member.member_id is None:
+            raise PermissionError("Control recipient belongs to another team")
+        actor = ActorLease(
+            self.database, self.owner, scope.run_id, self.token, self.task_id
+        )
+        member.resolve(db, actor)
+        row = db.execute(
+            "SELECT state FROM runs WHERE id=?", (scope.run_id,)
+        ).fetchone()
+        return task, member.checkpoint_namespace, json.loads(row["state"])
+
+    def has_interrupt(
+        self, *, member: SubagentGraphScope | None = None, **grant
+    ) -> bool:
+        if member is not None:
+            # Elect the recipient before interrupting its stream. Siblings
+            # cannot observe the same pending interrupt as their own.
+            return bool(
+                self.claim_controls(
+                    "preempt", member=member, interrupt_only=True, **grant
+                )
+            )
         with self.database.read_snapshot() as db:
             self.assert_current(db=db, **grant)
+            self._control_target(db, None)
             return (
                 db.execute(
                     "SELECT 1 FROM subagent_task_controls WHERE task_id=? AND status='accepted' AND action='interrupt' LIMIT 1",
@@ -285,7 +328,14 @@ class DetachedTaskLease:
                 is not None
             )
 
-    def claim_controls(self, boundary: str, **grant) -> list[dict]:
+    def claim_controls(
+        self,
+        boundary: str,
+        *,
+        member: SubagentGraphScope | None = None,
+        interrupt_only: bool = False,
+        **grant,
+    ) -> list[dict]:
         """Reserve delivery before saving; a replacement lease can retry it."""
         allowed = {
             "preempt": {"interrupt"},
@@ -295,18 +345,34 @@ class DetachedTaskLease:
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             self.assert_current(db=db, **grant)
+            task, namespace, state = self._control_target(db, member)
+            routes = (
+                state.setdefault("detachedControlRecipients", {})
+                if state is not None
+                else {}
+            )
             rows = db.execute(
                 "SELECT * FROM subagent_task_controls WHERE task_id=? AND status='accepted' ORDER BY created_at,rowid",
                 (self.task_id,),
             ).fetchall()
             messages = []
             for row in rows:
+                if interrupt_only and row["action"] != "interrupt":
+                    continue
+                if (
+                    state is not None
+                    and row["boundary"] is not None
+                    and routes.get(row["id"]) != namespace
+                ):
+                    continue
                 if row["boundary"] is None and row["action"] not in allowed:
                     continue
                 db.execute(
                     "UPDATE subagent_task_controls SET boundary=coalesce(boundary,?),updated_at=? WHERE id=?",
                     (boundary, _now(), row["id"]),
                 )
+                if state is not None:
+                    routes[row["id"]] = namespace
                 messages.append(
                     {
                         "id": row["id"],
@@ -318,25 +384,32 @@ class DetachedTaskLease:
                         },
                     }
                 )
+            if state is not None and messages:
+                db.execute(
+                    "UPDATE runs SET state=? WHERE id=?",
+                    (
+                        json.dumps(state, separators=(",", ":")),
+                        task["child_run_id"],
+                    ),
+                )
             return messages
 
-    def acknowledge_controls(self, **grant) -> None:
-        """Acknowledge only exact messages already in the durable child head."""
+    def acknowledge_controls(
+        self, *, member: SubagentGraphScope | None = None, **grant
+    ) -> None:
+        """Acknowledge only exact messages already in the elected durable head."""
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             self.assert_current(db=db, **grant)
-            task = self._current(db)
-            if task["child_run_id"] is None:
+            task, namespace, state = self._control_target(db, member)
+            if namespace is None:
                 return
-            scope = DetachedExecutionScope.load(
-                db, self.owner, task["child_run_id"]
-            )
             head = db.execute(
                 "SELECT checkpoint FROM agent_checkpoints WHERE owner=? AND thread_id=? AND checkpoint_ns=? AND expires_at>? AND checkpoint IS NOT NULL ORDER BY checkpoint_id DESC LIMIT 1",
                 (
                     self.owner,
                     task["child_conversation_id"],
-                    scope.checkpoint_namespace,
+                    namespace,
                     time.time(),
                 ),
             ).fetchone()
@@ -350,10 +423,17 @@ class DetachedTaskLease:
                 for message in snapshot.messages
                 if isinstance(message.get("id"), str)
             }
+            routes = (
+                state.get("detachedControlRecipients", {})
+                if state is not None
+                else {}
+            )
             for row in db.execute(
                 "SELECT * FROM subagent_task_controls WHERE task_id=? AND status='accepted' AND boundary IS NOT NULL",
                 (self.task_id,),
             ):
+                if state is not None and routes.get(row["id"]) != namespace:
+                    continue
                 expected = {
                     "id": row["id"],
                     "role": "user",
@@ -368,6 +448,15 @@ class DetachedTaskLease:
                         "UPDATE subagent_task_controls SET status='applied',updated_at=? WHERE id=?",
                         (_now(), row["id"]),
                     )
+                    routes.pop(row["id"], None)
+            if state is not None:
+                db.execute(
+                    "UPDATE runs SET state=? WHERE id=?",
+                    (
+                        json.dumps(state, separators=(",", ":")),
+                        task["child_run_id"],
+                    ),
+                )
 
     def execution_input(
         self,
