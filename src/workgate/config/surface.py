@@ -147,6 +147,7 @@ SETTING_SPECS: tuple[SettingSpec, ...] = (
     SettingSpec("log_level", "Server", metavar="LEVEL"),
     SettingSpec("forwarded_allow_ips", "Server", metavar="IPS"),
     SettingSpec("ui_enabled", "WebUI"),
+    SettingSpec("hosted_chat_enabled", "WebUI"),
     SettingSpec("ui_path", "WebUI", metavar="PATH"),
     SettingSpec("ui_task_page_size", "WebUI", metavar="COUNT"),
     SettingSpec(

@@ -38,6 +38,7 @@ class ControlConfig(SharedRoleConfig):
     mcp_session_idle_timeout_s: int
     mcp_max_sessions: int
 
+    hosted_chat_enabled: bool
     ui_enabled: bool
     ui_task_page_size: int
     ui_path: str
@@ -115,6 +116,7 @@ def resolve_control_config(settings: Settings) -> ControlConfig:
         oauth_registration_max_client_name_chars=settings.oauth_registration_max_client_name_chars,
         mcp_session_idle_timeout_s=settings.mcp_session_idle_timeout_s,
         mcp_max_sessions=settings.mcp_max_sessions,
+        hosted_chat_enabled=settings.hosted_chat_enabled,
         ui_enabled=settings.ui_enabled,
         ui_task_page_size=settings.ui_task_page_size,
         ui_path=settings.ui_path,

@@ -14,6 +14,11 @@ from ..core.context import bind_oauth_claims, reset_oauth_claims
 from .auth import request_authentication_is_bypassed, verify_request
 
 
+def revalidate_browser_session(request: Request) -> dict[str, object] | None:
+    """Recheck the credential for long-lived authenticated HTTP work."""
+    return ui_session_claims(request)
+
+
 def _public_route_matches(route: BaseRoute, scope: Scope) -> bool:
     """Return whether a configured public route fully matches the request scope."""
     match, _ = route.matches(scope)

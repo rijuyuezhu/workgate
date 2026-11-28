@@ -26,7 +26,7 @@ from ..schemas.result_models.task import TaskDeleteOutput, TaskOutput
 from ..schemas.result_models.todo import ReadTodosOutput
 from .hosted_chat_native_creation import NativeCreationUncertain, _grant
 from .hosted_chat_session_tools import _await_authorized
-from .mcp.app import build_mcp
+from .mcp.composition import build_mcp
 from .runtime import ControlRuntime
 
 

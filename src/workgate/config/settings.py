@@ -91,6 +91,8 @@ class Settings(BaseSettings):
     """Comma-separated proxy addresses/networks trusted for forwarded HTTP headers."""
 
     # WebUI.
+    hosted_chat_enabled: bool = False
+    """Enable development-stage Hosted Chat routes; off pending acceptance."""
     ui_enabled: bool = True
     """Mount the browser WebUI and its authenticated API on the HTTP server."""
     ui_path: str = "/ui"

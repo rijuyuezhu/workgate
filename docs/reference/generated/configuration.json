@@ -164,6 +164,26 @@
         ],
         [
           {
+            "code": "hosted_chat_enabled"
+          },
+          {
+            "lines": [
+              {
+                "code": "--hosted-chat-enabled"
+              }
+            ]
+          },
+          {
+            "code": "WORKGATE_HOSTED_CHAT_ENABLED"
+          },
+          "true | false",
+          {
+            "code": "false"
+          },
+          "Enable development-stage Hosted Chat routes; off pending acceptance."
+        ],
+        [
+          {
             "code": "ui_path"
           },
           {
@@ -2160,6 +2180,22 @@
       "description": "Mount the browser WebUI and its authenticated API on the HTTP server.",
       "env": "WORKGATE_UI_ENABLED",
       "name": "ui_enabled",
+      "nullable": false,
+      "section": "WebUI",
+      "type": "true | false",
+      "unset_cli": null
+    },
+    {
+      "choices": [
+        "true",
+        "false"
+      ],
+      "cli": "--hosted-chat-enabled",
+      "default": false,
+      "default_display": "false",
+      "description": "Enable development-stage Hosted Chat routes; off pending acceptance.",
+      "env": "WORKGATE_HOSTED_CHAT_ENABLED",
+      "name": "hosted_chat_enabled",
       "nullable": false,
       "section": "WebUI",
       "type": "true | false",

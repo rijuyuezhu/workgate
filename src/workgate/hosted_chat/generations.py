@@ -132,14 +132,42 @@ class GenerationStore:
             ).fetchone()
             return self._run(row) if row else None
 
+    def native_admission(self, owner: str, run_id: str) -> dict | None:
+        """Public root admission metadata; never a persisted credential."""
+        with self.database.read_snapshot() as db:
+            row = db.execute(
+                "SELECT r.state FROM runs r JOIN conversations c ON c.id=r.conversation_id WHERE r.id=? AND c.owner=?",
+                (run_id, owner),
+            ).fetchone()
+        if row is None:
+            return None
+        state = json.loads(row["state"])
+        admission = state.get("nativeAdmission")
+        if (
+            not isinstance(admission, dict)
+            or state.get("detachedTaskId")
+            or state.get("completionWakeupTaskId")
+        ):
+            return None
+        return admission
+
     def begin(
-        self, owner: str, payload: dict, *, protocol_version: int = 2
+        self,
+        owner: str,
+        payload: dict,
+        *,
+        protocol_version: int = 2,
+        native_admission: dict | None = None,
     ) -> tuple[Generation, bool]:
         """Admit a single ordinary turn in its own transaction."""
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             return self._begin_locked(
-                db, owner, payload, protocol_version=protocol_version
+                db,
+                owner,
+                payload,
+                protocol_version=protocol_version,
+                native_admission=native_admission,
             )
 
     def _begin_locked(
@@ -150,6 +178,7 @@ class GenerationStore:
         *,
         protocol_version: int = 2,
         wakeup_task_id: str | None = None,
+        native_admission: dict | None = None,
     ) -> tuple[Generation, bool]:
         """Internal admission seam for the atomic completion transaction."""
         if type(protocol_version) is not int or protocol_version not in (1, 2):
@@ -327,6 +356,8 @@ class GenerationStore:
             "model": model,
             "sampling": sampling,
         }
+        if native_admission is not None:
+            state["nativeAdmission"] = native_admission
         if agent is not None:
             state["agentRevision"] = agent.get("_version", 1)
         if wakeup_task_id is not None:

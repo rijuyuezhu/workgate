@@ -74,7 +74,7 @@ from .hosted_chat_native_creation import (
     _grant,
     _registered,
 )
-from .mcp.app import build_mcp
+from .mcp.composition import build_mcp
 from .runtime import ControlRuntime
 
 # Explicit source-derived classifications, not MCP annotation heuristics.
