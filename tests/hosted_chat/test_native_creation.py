@@ -4012,6 +4012,18 @@ async def test_foreground_loop_suspends_then_resumes_exact_native_tool_edge(
         if event.get("event") == "on_reasoning_delta"
     ] == ["summary"]
     assert events[-1]["responseMessage"]["text"] == "prefix done"
+    with repo.database.read_snapshot() as db:
+        saved = json.loads(
+            db.execute(
+                "SELECT state FROM runs WHERE id=?", (lease.run_id,)
+            ).fetchone()[0]
+        )
+    assert saved["modelSteps"] == result.messages[len(history) :]
+    assert [step["role"] for step in saved["modelSteps"]] == [
+        "assistant",
+        "tool",
+        "assistant",
+    ]
 
 
 @pytest.mark.asyncio
@@ -4925,6 +4937,18 @@ async def test_foreground_steering_preserves_fifo_and_safe_tool_boundary(
         if event.get("event") == "on_steer_applied"
     ] == [1, 2]
     final = events[-1]["responseMessage"]
+    with repo.database.read_snapshot() as db:
+        saved = json.loads(
+            db.execute(
+                "SELECT state FROM runs WHERE id=?", (lease.run_id,)
+            ).fetchone()[0]
+        )
+    assert saved["modelSteps"] == state.messages[1:]
+    assert [
+        step["steerId"]
+        for step in saved["modelSteps"]
+        if step.get("source") == "steer"
+    ] == queued
     assert final["text"] == "prefix done"
     assert [part["type"] for part in final["content"]] == [
         "text",
