@@ -200,7 +200,7 @@ async def run_foreground_native_loop(
             before_model=compaction.before_model,
             on_model_usage=on_model_usage,
             validate_model_input=node.validate_model_input,
-            project_messages=compaction.project,
+            project_messages=compaction.project_for_provider,
             preflight_calls=node.preflight,
             on_stream_chunk=check_stream,
             on_boundary=boundary,

@@ -17,6 +17,8 @@ from ..hosted_chat.context_budget import (
 )
 from ..hosted_chat.context_calibration import TokenCalibration
 from ..hosted_chat.context_usage import _context_options
+from ..hosted_chat.fading_projection import project_faded_provider_messages
+from ..hosted_chat.fading_store import update_root_fading
 from ..hosted_chat.generation_actor_lease import ActorLeaseLost
 from ..hosted_chat.provider_common import ModelFinish, ModelThought, ModelUsage
 from ..hosted_chat.tokenizer import count_tokens
@@ -92,6 +94,19 @@ class ForegroundCompaction:
             self.lease, messages, manual_only=not self._enabled(config)
         )
 
+    def project_for_provider(self, state: AgentLoopState) -> list[dict]:
+        # Policy must see original arguments and outputs even when the
+        # provider will receive only a compacted or faded projection.
+        original = self.node.project_messages(state)
+        self.node.validate_model_input(state, original)
+        messages = self.project(state)
+        if self.node.checkpoint.scope is not None:
+            return messages
+        tier = update_root_fading(
+            self.lease, state, messages, check_grant=self.node.current_grant
+        )
+        return project_faded_provider_messages(messages, tier)
+
     def _check(self) -> None:
         self.node.current_grant()
         if self.preempt():
@@ -123,6 +138,7 @@ class ForegroundCompaction:
 
     async def before_model(self, state: AgentLoopState) -> None:
         await self.node.refresh_tools(state)
+        self.node.validate_model_input(state, self.node.project_messages(state))
         try:
             await self._compact(state)
         except ActorLeaseLost:
