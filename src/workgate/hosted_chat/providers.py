@@ -29,7 +29,7 @@ from .provider_common import (
     provider_http_client,
     provider_scope,
 )
-from .provider_profiles import ProviderRepository
+from .provider_profiles import ProviderRepository, canonical_channel
 from .provider_responses import stream_responses
 from .provider_tool_protocols import native_messages, stream_native_tools
 
@@ -38,10 +38,10 @@ def selected_provider(payload: dict, agent: dict | None = None) -> str:
     """Use the exact configured endpoint identity for history and Agents."""
     selected = (agent or {}).get("provider") or payload.get("provider")
     if selected:
-        return str(selected)
+        return canonical_channel(str(selected))
     endpoint = payload.get("endpoint")
     return (
-        str(endpoint)
+        canonical_channel(endpoint)
         if isinstance(endpoint, str) and endpoint not in {"agents", ""}
         else "openai"
     )

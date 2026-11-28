@@ -325,6 +325,10 @@ def clean_agent_config(payload: Any, *, create: bool = False) -> dict:
         result["approval_mode"] = validate_mode(
             obj["approval_mode"], inherit=True
         )
+    if "end_after_tools" in obj:
+        result["end_after_tools"] = _require(
+            obj["end_after_tools"], bool, "end_after_tools"
+        )
     if "model_parameters" in obj:
         result["model_parameters"] = copy.deepcopy(
             _require(obj["model_parameters"], dict, "model_parameters")
