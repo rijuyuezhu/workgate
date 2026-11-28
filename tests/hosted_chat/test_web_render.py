@@ -196,3 +196,114 @@ async def test_render_deadline(monkeypatch):
     monkeypatch.setattr(render, "_RENDER_DEADLINE", 0)
     with pytest.raises(WebResearchError, match="deadline"):
         await render.render_html("https://example.org/")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "success",
+        "launch",
+        "http",
+        "missing",
+        "oversize",
+        "challenge",
+        "budget",
+        "route_closed",
+    ],
+)
+async def test_render_lifecycle_without_browser_install(monkeypatch, mode):
+    """Exercise orchestration on runners that cannot start sandboxed Chromium."""
+    from contextlib import asynccontextmanager
+
+    from playwright import async_api
+
+    route_callback = None
+    socket_callback = None
+    page = SimpleNamespace(
+        url="https://example.org/",
+        evaluate=AsyncMock(
+            return_value=(
+                None
+                if mode == "oversize"
+                else "<html><title>Access denied</title><p>Challenge</p></html>"
+                if mode == "challenge"
+                else "<html><title>Research</title><p>Readable paper.</p></html>"
+            )
+        ),
+    )
+    context = SimpleNamespace(
+        close=AsyncMock(), new_page=AsyncMock(return_value=page)
+    )
+    browser = SimpleNamespace(
+        close=AsyncMock(), new_context=AsyncMock(return_value=context)
+    )
+
+    async def register_route(pattern, callback):
+        nonlocal route_callback
+        assert pattern == "**/*"
+        route_callback = callback
+
+    async def register_socket(pattern, callback):
+        nonlocal socket_callback
+        assert pattern == "**/*"
+        socket_callback = callback
+
+    context.route = register_route
+    context.route_web_socket = register_socket
+
+    async def goto(url, **kwargs):
+        assert url == page.url and kwargs["wait_until"] == "domcontentloaded"
+        assert route_callback is not None and socket_callback is not None
+        socket = SimpleNamespace(close=AsyncMock())
+        await socket_callback(socket)
+        socket.close.assert_awaited_once()
+        blocked = route(method="POST")
+        await route_callback(blocked)
+        if mode not in {"route_closed", "budget"}:
+            blocked.abort.assert_awaited_once()
+        return (
+            None
+            if mode == "missing"
+            else SimpleNamespace(status=403 if mode == "http" else 200)
+        )
+
+    page.goto = goto
+    if mode == "budget":
+        monkeypatch.setattr(render, "_RENDER_REQUESTS", 0)
+
+        async def exhaust(_route):
+            budget.exhausted = True
+
+        budget = render.RenderBudget()
+        monkeypatch.setattr(budget, "handle", exhaust)
+        monkeypatch.setattr(render, "RenderBudget", lambda: budget)
+    if mode == "route_closed":
+
+        async def closed(_self, _route):
+            raise async_api.Error("closed")
+
+        monkeypatch.setattr(render.RenderBudget, "handle", closed)
+
+    async def launch(**kwargs):
+        assert kwargs["chromium_sandbox"] is True
+        assert kwargs["proxy"]["server"].startswith("http://127.0.0.1:")
+        if mode == "launch":
+            raise async_api.Error("browser unavailable")
+        return browser
+
+    @asynccontextmanager
+    async def playwright():
+        yield SimpleNamespace(chromium=SimpleNamespace(launch=launch))
+
+    monkeypatch.setattr(async_api, "async_playwright", playwright)
+    monkeypatch.setattr(render, "_RENDER_SETTLE", 0)
+    if mode in {"success", "route_closed"}:
+        result = await render.render_html(page.url)
+        assert result["text"] == "Readable paper."
+    else:
+        with pytest.raises(WebResearchError):
+            await render.render_html(page.url)
+    if mode != "launch":
+        context.close.assert_awaited_once()
+        browser.close.assert_awaited_once()
