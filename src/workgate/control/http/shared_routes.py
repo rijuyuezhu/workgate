@@ -12,6 +12,7 @@ from .config_inspection import config_inspection_routes
 from .executor_admin import executor_admin_routes
 from .executor_routes import executor_routes
 from .hosted_chat import hosted_chat_generation_routes
+from .hosted_chat_workspace import hosted_chat_workspace_routes
 from .integration_oauth import browser_mcp_oauth_routes
 from .stream_routes import desktop_stream_routes, terminal_stream_routes
 
@@ -44,6 +45,7 @@ def control_http_routes(
     if runtime is not None:
         if settings.ui_enabled and settings.hosted_chat_enabled:
             ui_routes.extend(hosted_chat_generation_routes(runtime))
+            ui_routes.extend(hosted_chat_workspace_routes(runtime))
         ui_routes.extend(config_inspection_routes(api_prefix=UI_API_PREFIX))
         ui_routes.extend(
             executor_admin_routes(

@@ -2,60 +2,22 @@
 
 import asyncio
 import json
-from typing import Literal
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.support.hosted_chat_http import provider, runtime_for
 from workgate.config.settings import Settings
 from workgate.control.execution_context import control_execution_context
 from workgate.control.http import hosted_chat
 from workgate.control.http.app import build_http_app
-from workgate.control.runtime import build_control_runtime
-from workgate.hosted_chat.credential_cipher import CredentialCipher
-from workgate.hosted_chat.database import SQLiteDatabase
 from workgate.hosted_chat.generations import GenerationStore
-from workgate.hosted_chat.provider_profiles import ProviderRepository
 from workgate.hosted_chat.storage import WorkspaceRepository
 from workgate.oauth.core.urls import resource_url
 from workgate.oauth.protocol.token_codec import issue_access_token
 
 PREFIX = "/api/ui/chat/generations"
-
-
-def runtime_for(
-    tmp_path,
-    *,
-    enabled=True,
-    auth_mode: Literal["none", "oauth"] = "none",
-    ui_enabled=True,
-):
-    return build_control_runtime(
-        Settings(
-            default_workdir=tmp_path,
-            state_dir=tmp_path / ".state",
-            auth_mode=auth_mode,
-            auth_bypass_localhost=False,
-            hosted_chat_enabled=enabled,
-            ui_enabled=ui_enabled,
-            agent_bridge_enabled=False,
-        )
-    )
-
-
-def provider(runtime):
-    db = SQLiteDatabase(runtime.config.state_dir)
-    ProviderRepository(db, CredentialCipher(db)).save(
-        {
-            "name": "test-provider",
-            "provider": "openai",
-            "models": ["test-model"],
-            "base_url": "https://models.invalid/v1",
-            "api_key": "test-secret",
-        }
-    )
-    return db
 
 
 def fake_stream(monkeypatch, *, pause=None):
