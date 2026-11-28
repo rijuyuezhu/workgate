@@ -5,6 +5,7 @@ import json
 
 from .agent_runtime import AgentContext
 from .agents import AgentRepository
+from .artifact_prompts import agent_instructions
 from .credential_cipher import CredentialCipher
 from .database import SQLiteDatabase
 from .generations import Generation, GenerationStore, generation_model_history
@@ -14,12 +15,14 @@ from .sampling import merge_sampling
 
 
 def with_agent_instructions(
-    history: list[dict], agent: dict | None
+    history: list[dict],
+    agent: dict | None,
+    *,
+    endpoint: str | None = None,
+    mode: str | None = None,
 ) -> list[dict]:
-    instructions = "\n\n".join(
-        text
-        for key in ("instructions", "additional_instructions")
-        if isinstance(text := (agent or {}).get(key), str) and text
+    instructions = agent_instructions(
+        agent, endpoint or "openai", mode if endpoint is not None else ""
     )
     return (
         [{"role": "system", "content": instructions}] if instructions else []
@@ -169,4 +172,9 @@ class GenerationContextResolver:
             history = generation_model_history(db, self.owner, generation)
         if context.agent != self.root_agent(generation):
             raise PermissionError("Generation history Agent identity changed")
-        return with_agent_instructions(history, context.agent)
+        return with_agent_instructions(
+            history,
+            context.agent,
+            endpoint=context.profile.provider,
+            mode=generation.artifacts_mode,
+        )
