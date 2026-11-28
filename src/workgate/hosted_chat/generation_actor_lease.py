@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass
 
 from .database import SQLiteDatabase
+from .event_actor_identity import live_event
 
 _LEASE_MS = 120_000
 _RENEW_S = 20
@@ -34,6 +35,7 @@ class ActorLease:
     token: str
     detached_task_id: str | None = None
     wakeup_task_id: str | None = None
+    event_delivery_id: str | None = None
 
     @classmethod
     def claim(
@@ -43,6 +45,7 @@ class ActorLease:
         run_id: str,
         *,
         schedule_occurrence_id: str | None = None,
+        event_delivery_id: str | None = None,
     ) -> ActorLease | None:
         token = secrets.token_hex(24)
         with database.connect() as db:
@@ -51,10 +54,17 @@ class ActorLease:
             match = db.execute(
                 "SELECT 1 FROM runs r JOIN conversations c ON c.id=r.conversation_id "
                 "WHERE r.id=? AND c.owner=? AND r.status='running' "
-                "AND NOT EXISTS(SELECT 1 FROM active_subagent_threads a WHERE a.owner=c.owner AND a.thread_id=c.id) "
+                "AND (? IS NOT NULL OR NOT EXISTS(SELECT 1 FROM active_subagent_threads a WHERE a.owner=c.owner AND a.thread_id=c.id)) "
                 "AND json_extract(r.state,'$.completionWakeupTaskId') IS NULL "
-                "AND json_extract(r.state,'$.scheduleOccurrenceId') IS ?",
-                (run_id, owner, schedule_occurrence_id),
+                "AND json_extract(r.state,'$.scheduleOccurrenceId') IS ? "
+                "AND json_extract(r.state,'$.eventDeliveryId') IS ?",
+                (
+                    run_id,
+                    owner,
+                    event_delivery_id,
+                    schedule_occurrence_id,
+                    event_delivery_id,
+                ),
             ).fetchone()
             if match is None:
                 return None
@@ -75,6 +85,30 @@ class ActorLease:
                 )
                 if not claimed.rowcount:
                     return None
+            if event_delivery_id is not None:
+                event = live_event(db, owner, event_delivery_id)
+                if (
+                    event is None
+                    or event["status"] != "pending"
+                    or event["run_id"] != run_id
+                ):
+                    return None
+                changed = db.execute(
+                    "UPDATE agent_event_deliveries SET status='leased',lease_owner=?,lease_until=?,attempts=attempts+1,updated_at=? "
+                    "WHERE id=? AND owner=? AND run_id=? AND status='pending' "
+                    "AND NOT EXISTS(SELECT 1 FROM generation_actor_leases WHERE run_id=?)",
+                    (
+                        token,
+                        now + _LEASE_MS,
+                        now,
+                        event_delivery_id,
+                        owner,
+                        run_id,
+                        run_id,
+                    ),
+                )
+                if not changed.rowcount:
+                    return None
             db.execute(
                 "INSERT INTO generation_actor_leases(run_id,owner,token,expires_at) "
                 "VALUES(?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET "
@@ -87,7 +121,13 @@ class ActorLease:
                 (run_id, owner),
             ).fetchone()
             return (
-                cls(database, owner, run_id, token)
+                cls(
+                    database,
+                    owner,
+                    run_id,
+                    token,
+                    event_delivery_id=event_delivery_id,
+                )
                 if row and row["token"] == token
                 else None
             )
@@ -141,13 +181,41 @@ class ActorLease:
                 ).fetchone()
                 is not None
             )
+        if self.event_delivery_id is not None:
+            event = live_event(db, self.owner, self.event_delivery_id)
+            if (
+                event is None
+                or event["status"] != "leased"
+                or event["run_id"] != self.run_id
+                or event["lease_owner"] != self.token
+                or event["lease_until"] <= _now()
+            ):
+                return False
+            return (
+                db.execute(
+                    "SELECT 1 FROM generation_actor_leases l JOIN runs r ON r.id=l.run_id JOIN conversations c ON c.id=r.conversation_id "
+                    "WHERE l.run_id=? AND l.owner=? AND l.token=? AND l.expires_at>? AND c.owner=l.owner AND r.status='running' "
+                    "AND json_extract(r.state,'$.eventDeliveryId')=? AND json_extract(r.state,'$.eventSourceKeyId')=? "
+                    "AND json_extract(r.state,'$.nativeAdmission') IS NULL",
+                    (
+                        self.run_id,
+                        self.owner,
+                        self.token,
+                        _now(),
+                        self.event_delivery_id,
+                        event["source_key_id"],
+                    ),
+                ).fetchone()
+                is not None
+            )
         return (
             db.execute(
                 "SELECT 1 FROM generation_actor_leases l JOIN runs r ON r.id=l.run_id "
                 "JOIN conversations c ON c.id=r.conversation_id WHERE l.run_id=? AND l.owner=? "
                 "AND l.token=? AND l.expires_at>? AND r.status='running' AND c.owner=l.owner "
                 "AND NOT EXISTS(SELECT 1 FROM active_subagent_threads a WHERE a.owner=c.owner AND a.thread_id=c.id) "
-                "AND json_extract(r.state,'$.completionWakeupTaskId') IS NULL",
+                "AND json_extract(r.state,'$.completionWakeupTaskId') IS NULL "
+                "AND json_extract(r.state,'$.eventDeliveryId') IS NULL",
                 (self.run_id, self.owner, self.token, _now()),
             ).fetchone()
             is not None
@@ -168,6 +236,19 @@ class ActorLease:
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             now = _now()
+            if self.event_delivery_id is not None:
+                if not self.is_current(db):
+                    return False
+                db.execute(
+                    "UPDATE agent_event_deliveries SET lease_until=?,updated_at=? WHERE id=? AND owner=? AND lease_owner=?",
+                    (
+                        now + _LEASE_MS,
+                        now,
+                        self.event_delivery_id,
+                        self.owner,
+                        self.token,
+                    ),
+                )
             cursor = db.execute(
                 "UPDATE generation_actor_leases SET expires_at=? WHERE run_id=? AND owner=? "
                 "AND token=? AND expires_at>? AND EXISTS(SELECT 1 FROM runs r "
