@@ -74,6 +74,8 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-timeout>=2.4.0",
+    # Exercise content policy on native CI; runtime dependency remains Control-only.
+    "regex>=2024.5,<2027",
     "ruff==0.17.0",
     "wheel>=0.46.3",
 ]

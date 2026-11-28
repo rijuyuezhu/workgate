@@ -2628,6 +2628,7 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-timeout" },
+    { name = "regex" },
     { name = "ruff" },
     { name = "wheel" },
 ]
@@ -2686,6 +2687,7 @@ dev = [
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
     { name = "pytest-timeout", specifier = ">=2.4.0" },
+    { name = "regex", specifier = ">=2024.5,<2027" },
     { name = "ruff", specifier = "==0.17.0" },
     { name = "wheel", specifier = ">=0.46.3" },
 ]
