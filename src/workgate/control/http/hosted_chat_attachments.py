@@ -1,12 +1,15 @@
 """Authenticated native private attachment transport."""
 
 import asyncio
+import csv
+import hashlib
 import json
 import os
 import sqlite3
 import stat
 from pathlib import Path
 from urllib.parse import quote
+from xml.etree.ElementTree import ParseError
 
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
@@ -29,12 +32,81 @@ from ...hosted_chat.context_extraction import (
 )
 from ...hosted_chat.database import SQLiteDatabase
 from ...hosted_chat.machine_permissions import require_machine_scope
+from ...hosted_chat.office_preview import (
+    buffer_to_office_html,
+    office_html_bucket,
+)
 from ...ui.http.routes import UI_API_PREFIX
 from ..runtime import ControlRuntime
 from .hosted_chat import _HEADERS, _principal
 
 _PREFIX = UI_API_PREFIX + "/chat/files"
 _FILE_HEADERS = {**_HEADERS, "X-Content-Type-Options": "nosniff"}
+_PREVIEW_HEADERS = {
+    **_FILE_HEADERS,
+    "Content-Security-Policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'",
+    "Referrer-Policy": "no-referrer",
+}
+
+
+def _preview_record(database: SQLiteDatabase, owner: str, ident: str):
+    with database.read_snapshot() as db:
+        row = db.execute(
+            "SELECT f.* FROM attachments f JOIN tool_attachment_links l ON l.file_id=f.id "
+            "JOIN runs r ON r.id=l.run_id JOIN conversations c ON c.id=r.conversation_id "
+            "WHERE f.id=? AND f.owner=? AND c.owner=f.owner "
+            "AND l.response_message_id=json_extract(r.state,'$.responseMessageId') "
+            "AND NOT EXISTS (SELECT 1 FROM attachment_deletions WHERE file_id=f.id)",
+            (ident, owner),
+        ).fetchone()
+    if (
+        row is None
+        or office_html_bucket(row["name"], row["content_type"]) is None
+    ):
+        raise KeyError("Preview not found")
+    return row
+
+
+async def _office_preview(
+    database: SQLiteDatabase, owner: str, ident: str, check
+):
+    row = _preview_record(database, owner, ident)
+    metadata = json.loads(row["metadata"])
+    try:
+        data = await asyncio.to_thread(_read_bytes, database, Path(row["path"]))
+    except OSError as error:
+        raise KeyError("Preview unavailable") from error
+    if (
+        metadata.get("bytes") != len(data)
+        or metadata.get("sha256") != hashlib.sha256(data).hexdigest()
+    ):
+        raise KeyError("Preview bytes changed")
+    check()
+    try:
+        rendered = await asyncio.to_thread(
+            buffer_to_office_html, data, row["name"], row["content_type"]
+        )
+    except (
+        ValueError,
+        ParseError,
+        OSError,
+        KeyError,
+        OverflowError,
+        csv.Error,
+        RecursionError,
+    ):
+        rendered = None
+    check()
+    # Deletion and revocation during rendering must not disclose old bytes.
+    if dict(_preview_record(database, owner, ident)) != dict(row):
+        raise KeyError("Preview changed")
+    if rendered is None:
+        return JSONResponse(
+            {"error": "Office preview unavailable; original download retained"},
+            status_code=422,
+            headers=_PREVIEW_HEADERS,
+        )
+    return Response(rendered, media_type="text/html", headers=_PREVIEW_HEADERS)
 
 
 def _record(row):
@@ -310,9 +382,46 @@ def hosted_chat_attachment_routes(runtime: ControlRuntime) -> list[Route]:
                 headers=_FILE_HEADERS,
             )
 
+    async def preview(request: Request):
+        try:
+            principal = _principal(runtime, request)
+
+            def check():
+                principal.check()
+                require_machine_scope(
+                    set(principal.scopes), "read", expires=principal.expires
+                )
+
+            check()
+            return await _office_preview(
+                SQLiteDatabase(runtime.config.state_dir),
+                principal.owner,
+                request.path_params["file_id"],
+                check,
+            )
+        except PermissionError:
+            return JSONResponse(
+                {"error": "Attachment operation denied"},
+                status_code=403,
+                headers=_PREVIEW_HEADERS,
+            )
+        except KeyError:
+            return JSONResponse(
+                {"error": "Preview not found"},
+                status_code=404,
+                headers=_PREVIEW_HEADERS,
+            )
+        except OSError, sqlite3.DatabaseError:
+            return JSONResponse(
+                {"error": "Preview unavailable"},
+                status_code=503,
+                headers=_PREVIEW_HEADERS,
+            )
+
     return [
         Route(_PREFIX, handle, methods=["GET", "POST", "DELETE"]),
         Route(_PREFIX + "/download/{file_id}", handle, methods=["GET"]),
+        Route(_PREFIX + "/preview/{file_id}", preview, methods=["GET"]),
         Route(
             _PREFIX + "/agent/{agent_id}",
             handle,

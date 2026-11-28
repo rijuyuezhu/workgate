@@ -2,6 +2,8 @@
 
 import json
 
+from .office_preview import office_html_bucket
+
 
 def _public_attachment_metadata(metadata):
     """Never surface unsanitized legacy HTML as a trusted office preview."""
@@ -13,7 +15,13 @@ def _public_attachment_metadata(metadata):
         key: value
         for key, value in metadata.items()
         if key
-        not in {"extracted_text", "trustedOfficeRenderer", "path", "owner"}
+        not in {
+            "extracted_text",
+            "trustedOfficeRenderer",
+            "path",
+            "owner",
+            "previewUrl",
+        }
     }
     if public_metadata.get("textFormat") == "html" and not trusted:
         public_metadata.pop("text", None)
@@ -39,8 +47,13 @@ def file_record(row):
 
 
 def _attachment(row, message_id, tool_call_id, conversation_id):
+    record = file_record(row)
+    # Only a verified native publication exposes the preview locator. Do not
+    # embed generated HTML in a bounded SSE event or in provider tool receipts.
+    if office_html_bucket(row["name"], row["content_type"]) is not None:
+        record["previewUrl"] = "/api/ui/chat/files/preview/" + row["id"]
     return {
-        **file_record(row),
+        **record,
         "messageId": message_id,
         "toolCallId": tool_call_id,
         "conversationId": conversation_id,

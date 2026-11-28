@@ -692,3 +692,10 @@ Only escaped static HTML is generated, with optional xlrd for legacy XLS.
 WorkGate additionally rejects duplicate ZIP members, excessive member/sheet
 counts and aggregate rendered cell counts. Publication and browser isolation
 are separate adapters; no model-facing or public route is introduced here.
+
+The native publication adapter returns a private preview locator with the
+owned attachment descriptor. Preview HTML is generated on demand from
+checksum-verified original bytes, not embedded in event payloads or passed
+to a model. The read route rechecks live authorization and attachment identity
+after conversion, serves generated HTML under a sandboxed no-network CSP,
+and preserves the original binary download if conversion is unavailable.
