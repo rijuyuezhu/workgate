@@ -14,7 +14,12 @@ from dataclasses import dataclass
 
 from .database import SQLiteDatabase
 from .generation_actor_lease import ActorLease, ActorLeaseLost
-from .generations import Generation, GenerationConflict, GenerationStore
+from .generations import (
+    Generation,
+    GenerationConflict,
+    GenerationStore,
+    generation_text_history,
+)
 from .subagent_scope import SubagentScope, validate_detached_descendants
 
 _LEASE_MS = 120_000
@@ -598,31 +603,9 @@ class WakeupLease:
                 grant["scopes"], grant["expires"]
             )
             run = _continuation(db, row)
-            message_id = json.loads(run["state"])["userMessageId"]
-            history = []
-            seen = set()
-            while message_id is not None:
-                if message_id in seen:
-                    raise PermissionError(
-                        "Completion history has a cyclic branch"
-                    )
-                seen.add(message_id)
-                message = db.execute(
-                    "SELECT id,parent_id,role,text FROM messages WHERE id=? AND conversation_id=?",
-                    (message_id, row["parent_conversation_id"]),
-                ).fetchone()
-                if message is None or message["role"] not in {
-                    "user",
-                    "assistant",
-                }:
-                    raise PermissionError(
-                        "Completion history branch is unavailable"
-                    )
-                history.append(
-                    {"role": message["role"], "content": message["text"]}
-                )
-                message_id = message["parent_id"]
-            history.reverse()
+            history = generation_text_history(
+                db, self.owner, GenerationStore._run(run)
+            )
             return scopes, expires, history
 
     def renew(self, **grant) -> None:

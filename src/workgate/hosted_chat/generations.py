@@ -50,6 +50,37 @@ class Generation:
     model: str = ""
 
 
+def generation_text_history(
+    db: sqlite3.Connection, owner: str, generation: Generation
+) -> list[dict]:
+    """Project the admitted user-message branch, not the latest conversation."""
+    row = db.execute(
+        "SELECT r.* FROM runs r JOIN conversations c ON c.id=r.conversation_id WHERE r.id=? AND c.owner=?",
+        (generation.run_id, owner),
+    ).fetchone()
+    if row is None or GenerationStore._run(row) != generation:
+        raise PermissionError("Generation history identity changed")
+    message_id = generation.user_message_id
+    history = []
+    seen = set()
+    while message_id is not None:
+        if message_id in seen:
+            raise PermissionError("Generation history has a cyclic branch")
+        seen.add(message_id)
+        message = db.execute(
+            "SELECT parent_id,role,text FROM messages WHERE id=? AND conversation_id=?",
+            (message_id, generation.conversation_id),
+        ).fetchone()
+        if message is None or message["role"] not in {"user", "assistant"}:
+            raise PermissionError("Generation history branch is unavailable")
+        history.append({"role": message["role"], "content": message["text"]})
+        message_id = message["parent_id"]
+    history.reverse()
+    if not history or history[-1]["role"] != "user":
+        raise PermissionError("Generation user message is unavailable")
+    return history
+
+
 class GenerationConflict(Exception):
     def __init__(self, existing: Generation):
         self.existing = existing
@@ -284,6 +315,8 @@ class GenerationStore:
             "model": model,
             "sampling": sampling,
         }
+        if agent is not None:
+            state["agentRevision"] = agent.get("_version", 1)
         if wakeup_task_id is not None:
             state["completionWakeupTaskId"] = wakeup_task_id
         parent_id = payload.get("parentMessageId")

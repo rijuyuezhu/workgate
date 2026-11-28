@@ -67,6 +67,15 @@ _RESERVED = frozenset(
 _NAME = re.compile(r"^[^\W\d_][\w .-]{0,63}$")
 
 
+def canonical_channel(channel: str) -> str:
+    """Resolve legacy aliases without rewriting configured channel names."""
+    normalized = channel.strip().lower()
+    for kind, aliases in _LEGACY_ALIASES.items():
+        if normalized in aliases:
+            return kind
+    return channel
+
+
 def _valid_name(name: object) -> bool:
     return (
         isinstance(name, str)
@@ -367,11 +376,7 @@ class ProviderRepository:
         """Resolve the channel in the caller's snapshot without decrypting keys."""
         if not isinstance(channel, str):
             raise ValueError("Invalid model channel")
-        normalized = channel.strip().lower()
-        for kind, aliases in _LEGACY_ALIASES.items():
-            if normalized in aliases:
-                normalized = kind
-                break
+        normalized = canonical_channel(channel)
         if normalized in _DEFAULTS:
             value = cls._read(db, _PREFIX + normalized) or cls._default_profile(
                 normalized

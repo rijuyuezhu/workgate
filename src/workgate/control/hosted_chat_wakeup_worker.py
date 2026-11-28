@@ -10,6 +10,7 @@ from ..hosted_chat.agent_runtime import AgentContext, AgentLoopState
 from ..hosted_chat.database import SQLiteDatabase
 from ..hosted_chat.durable_tasks import DurableTaskRepository
 from ..hosted_chat.generation_actor_lease import ActorLeaseLost
+from ..hosted_chat.generation_context import with_agent_instructions
 from ..hosted_chat.generations import Generation
 from ..hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
 from ..hosted_chat.provider_common import ModelToolCall
@@ -123,7 +124,7 @@ async def run_authenticated_wakeup(
         await run_foreground_native_loop(
             node,
             context,
-            history,
+            with_agent_instructions(history, context.agent),
             authorize_batch=authorize_batch,
             stream_tools=stream_tools,
             stream_text=stream_text,
