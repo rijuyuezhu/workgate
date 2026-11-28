@@ -74,6 +74,7 @@ class AuthenticatedChildHost:
         self._wake = asyncio.Event()
         self._serving = False
         self._closed = False
+        self._drain = False
 
     def _access(self) -> dict:
         self.check_grant()
@@ -119,30 +120,40 @@ class AuthenticatedChildHost:
             raise PermissionError("Reservation disclosure authority changed")
         self._wake.set()
 
-    def _candidates(self, access: dict) -> list[tuple[str, str]]:
+    def finish_when_idle(self) -> None:
+        """Stop after the foreground actor and all eligible durable work finish."""
+        self._drain = True
+        self._wake.set()
+
+    def _candidates(
+        self, access: dict, *, ready_only: bool = True
+    ) -> list[tuple[str, str]]:
         now = int(time.time() * 1000)
         with self.database.read_snapshot() as db:
             rows = db.execute(
                 """SELECT t.id, 'child' AS kind, t.execution_options, t.created_at
                 FROM subagent_tasks t
                 WHERE t.owner=? AND t.parent_conversation_id=? AND t.status='running'
-                AND (t.lease_until IS NULL OR t.lease_until<=?)
+                AND (?=0 OR t.lease_until IS NULL OR t.lease_until<=?)
                 UNION ALL
                 SELECT t.id, 'wakeup', t.execution_options, w.created_at
                 FROM subagent_wakeups w JOIN subagent_tasks t ON t.id=w.task_id
                 WHERE w.owner=? AND w.parent_conversation_id=?
                 AND t.owner=w.owner AND t.parent_conversation_id=w.parent_conversation_id
                 AND w.status IN ('pending','dispatched') AND t.status!='running'
-                AND (w.lease_until IS NULL OR w.lease_until<=?)
-                AND (w.next_attempt_at IS NULL OR w.next_attempt_at<=?)
+                AND (?=0 OR w.lease_until IS NULL OR w.lease_until<=?)
+                AND (?=0 OR w.next_attempt_at IS NULL OR w.next_attempt_at<=?)
                 ORDER BY created_at,id,kind""",
                 (
                     self.owner,
                     self.conversation,
+                    ready_only,
                     now,
                     self.owner,
                     self.conversation,
+                    ready_only,
                     now,
+                    ready_only,
                     now,
                 ),
             ).fetchall()
@@ -217,6 +228,15 @@ class AuthenticatedChildHost:
                         active[key] = asyncio.create_task(
                             self._execute(*key, access)
                         )
+                if (
+                    self._drain
+                    and not active
+                    and not any(
+                        key not in denied
+                        for key in self._candidates(access, ready_only=False)
+                    )
+                ):
+                    return
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(
                         self._wake.wait(), timeout=_POLL_SECONDS

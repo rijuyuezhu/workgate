@@ -8004,3 +8004,187 @@ async def test_authenticated_child_host_lifecycle(bound, monkeypatch, mode):
     finally:
         runner.cancel()
         await asyncio.gather(runner, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mode", ["plain", "detached", "approval", "cancel", "revision"]
+)
+async def test_authenticated_generation_host(bound, monkeypatch, mode):
+    import asyncio
+
+    from workgate.control import hosted_chat_child_host
+    from workgate.control.hosted_chat_generation_host import (
+        run_authenticated_generation,
+    )
+    from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.credential_cipher import CredentialCipher
+    from workgate.hosted_chat.provider_profiles import ProviderRepository
+
+    monkeypatch.setattr(hosted_chat_child_host, "_POLL_SECONDS", 0.02)
+    harness, original, initial, _ = bound
+    db = original.database
+    ProviderRepository(db, CredentialCipher(db)).save(
+        {
+            "name": "host-models",
+            "provider": "openai",
+            "base_url": "https://models.invalid/v1",
+            "api_key": "test-key",
+            "models": ["parent", "child"],
+        }
+    )
+    agents = AgentRepository(db)
+    child = agents.create(
+        initial.owner,
+        {
+            "provider": "host-models",
+            "model": "child",
+            "instructions": "child instructions",
+        },
+    )
+    parent = agents.create(
+        initial.owner,
+        {
+            "provider": "host-models",
+            "model": "parent",
+            "instructions": "parent instructions",
+            "approval_mode": "all" if mode == "approval" else "automatic",
+            "subagents": {
+                "enabled": True,
+                "allowSelf": False,
+                "agent_ids": [child["id"]],
+            },
+        },
+    )
+    store = GenerationStore(db)
+    generation, _ = store.begin(
+        initial.owner, {"text": "parent question", "agent_id": parent["id"]}
+    )
+
+    def status():
+        value = store.get(initial.owner, generation.run_id)
+        assert value is not None
+        return value.status
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    authorized = []
+
+    async def authorize(calls, _state):
+        authorized.extend(call.call_id for call in calls)
+
+    async def stream(profile, messages, *, tools, **kwargs):
+        assert profile.token == "test-key"
+        assert profile.channel == "host-models"
+        if profile.model == "child":
+            assert messages[0] == {
+                "role": "system",
+                "content": "child instructions",
+            }
+            assert "parent question" not in str(messages)
+            if not any(m["role"] == "tool" for m in messages):
+                yield ModelToolCall("child-task", "task", {"action": "create"})
+            else:
+                yield "child answer"
+            return
+        assert messages[0] == {
+            "role": "system",
+            "content": "parent instructions",
+        }
+        if "A detached subagent task has settled" in messages[-1]["content"]:
+            assert "child answer" in messages[-1]["content"]
+            yield "continued reply"
+        elif mode in {"cancel", "revision"}:
+            started.set()
+            await release.wait()
+            yield "root reply"
+        elif (
+            not any(m["role"] == "tool" for m in messages)
+            and mode == "detached"
+        ):
+            assert "run_in_background" in next(
+                tool["function"]["parameters"]["properties"]
+                for tool in tools
+                if tool["function"]["name"] == "subagent"
+            )
+            yield ModelToolCall(
+                "delegate",
+                "subagent",
+                {
+                    "subagent_type": child["id"],
+                    "description": "child work",
+                    "run_in_background": True,
+                },
+            )
+        elif mode == "approval":
+            yield ModelToolCall("approved-task", "task", {"action": "create"})
+        else:
+            yield "root reply"
+
+    async def execute():
+        return await run_authenticated_generation(
+            harness.control,
+            db,
+            initial.owner,
+            generation.run_id,
+            scopes=set(SCOPES),
+            expires=None,
+            allowed_tools={"task"},
+            task_machine=harness.executor_id,
+            check_grant=lambda: None,
+            authorize_batch=authorize,
+            stream_tools=stream,
+        )
+
+    if mode in {"cancel", "revision"}:
+        running = asyncio.create_task(execute())
+        await asyncio.wait_for(started.wait(), timeout=30)
+        if mode == "cancel":
+            running.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await running
+            assert status() == "running"
+            lease = ActorLease.claim(db, initial.owner, generation.run_id)
+            assert lease is not None
+            lease.release()
+        else:
+            agents.update(
+                initial.owner, parent["id"], {"instructions": "changed"}
+            )
+            release.set()
+            with pytest.raises(PermissionError):
+                await running
+            assert status() == "error"
+        return
+
+    assert await asyncio.wait_for(execute(), timeout=30)
+    assert not await execute()
+    if mode == "approval":
+        assert status() == "requires_action"
+        assert not await harness.control.task_service.list_tasks()
+        return
+    assert status() == "complete"
+    with db.read_snapshot() as conn:
+        replies = conn.execute(
+            "SELECT text FROM messages WHERE conversation_id=? AND role='assistant' ORDER BY created_at",
+            (generation.conversation_id,),
+        ).fetchall()
+        assert [row["text"] for row in replies] == (
+            ["root reply", "continued reply"]
+            if mode == "detached"
+            else ["root reply"]
+        )
+        if mode == "detached":
+            assert (
+                conn.execute(
+                    "SELECT status FROM subagent_wakeups WHERE parent_run_id=?",
+                    (generation.run_id,),
+                ).fetchone()[0]
+                == "done"
+            )
+    assert len(await harness.control.task_service.list_tasks()) == (
+        1 if mode == "detached" else 0
+    )
+    assert authorized == (
+        ["delegate", "child-task"] if mode == "detached" else []
+    )
