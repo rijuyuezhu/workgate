@@ -105,8 +105,8 @@ class ActionEffects:
         record = self.repo._get_for_tool(
             db, self.lease.owner, run["agent_id"], call.name
         )
-        if record is None or record[0].get("auth", {}).get("type") == "oauth":
-            raise PermissionError("Action no longer selected or requires OAuth")
+        if record is None:
+            raise PermissionError("Action no longer selected")
         _, _, op = record
         path, _, _, _ = _request(op, call.arguments)
         destination = _full_url(op["server"], path)
@@ -175,7 +175,8 @@ class ActionEffects:
             self._grant()
             return description
 
-    def _approved(self, state, edge, proof, call):
+    @staticmethod
+    def _approved(state, edge, proof, call):
         if state.get("actionProposals", {}).get(call.call_id) != proof:
             raise PermissionError(
                 "Action version or proposal changed after admission"

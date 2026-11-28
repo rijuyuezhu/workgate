@@ -450,6 +450,13 @@ class ApprovalClaimStore:
             )
             if _json(expected) != _json(payload):
                 raise ValueError("Question differs from saved proposal")
+        elif payload.get("type") == "action_oauth" and not namespace:
+            from .action_oauth_flow import ActionOAuthFlows
+            from .actions import ActionRepository
+
+            ActionOAuthFlows(ActionRepository(self.database))._verify(
+                db, saver.owner, row, state, pending, edge
+            )
         else:
             raise ValueError("Unknown pending human action")
         return edge
