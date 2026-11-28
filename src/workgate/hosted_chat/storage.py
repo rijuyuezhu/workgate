@@ -363,6 +363,12 @@ class WorkspaceRepository:
                 raise PermissionError(
                     "Conversation has running detached children"
                 )
+            if db.execute(
+                "SELECT 1 FROM agent_event_bindings b JOIN active_subagent_threads a ON a.owner=b.owner AND a.thread_id=b.conversation_id AND a.active=1 "
+                "WHERE b.owner=? AND b.parent_conversation_id=?",
+                (owner, conversation_id),
+            ).fetchone():
+                raise PermissionError("Conversation has active event bindings")
             result = db.execute(
                 "DELETE FROM conversations WHERE owner=? AND id=?",
                 (owner, conversation_id),

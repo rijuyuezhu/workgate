@@ -8,9 +8,10 @@ import pytest
 from workgate.hosted_chat import event_delivery_queue as queue
 from workgate.hosted_chat.agents import AgentRepository
 from workgate.hosted_chat.database import SQLiteDatabase
+from workgate.hosted_chat.event_bindings import EventBindings
 from workgate.hosted_chat.event_source_keys import EventSourceKeys
+from workgate.hosted_chat.generation_actor_lease import ActorLease
 from workgate.hosted_chat.generations import GenerationStore
-from workgate.hosted_chat.storage import WorkspaceRepository
 
 
 @pytest.fixture
@@ -137,30 +138,31 @@ def test_steer_denies_interactive_native_root(state):
 def test_coalescing_authenticated_binding(state, monkeypatch):
     db, _, repo, source, other, body = state
     agent = body["target"]["agentId"]
-    workspace = WorkspaceRepository(db)
-    parent = workspace.create_conversation("alice", {"agent_id": agent})[
-        "conversationId"
-    ]
-    child = workspace.create_conversation("alice", {"agent_id": agent})[
-        "conversationId"
-    ]
-    binding = "evtbind_" + "a" * 48
-    with db.connect() as conn:
-        conn.execute(
-            "INSERT INTO agent_event_bindings(id,owner,source_key_id,actor_id,parent_conversation_id,parent_message_id,parent_agent_id,agent_id,conversation_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-            (
-                binding,
-                "alice",
-                source,
-                "actor",
-                parent,
-                "message",
-                agent,
-                agent,
-                child,
-                1,
-            ),
-        )
+    AgentRepository(db).update(
+        "alice", agent, {"subagents": {"enabled": True, "allowSelf": True}}
+    )
+    store = GenerationStore(db)
+    generation, _ = store.begin("alice", {"text": "parent", "agent_id": agent})
+    lease = ActorLease.claim(db, "alice", generation.run_id)
+    assert lease is not None
+    store.finish(
+        "alice",
+        generation.run_id,
+        status="complete",
+        text="reply",
+        actor_lease=lease,
+    )
+    lease.release()
+    registered = EventBindings(db).register(
+        "alice",
+        source,
+        "registration",
+        actor_id="actor",
+        parent_conversation_id=generation.conversation_id,
+        parent_message_id=generation.response_message_id,
+        target_agent_id=agent,
+    )
+    child, binding = registered["threadId"], registered["id"]
     monkeypatch.setattr(queue, "_now", lambda: 1000)
     incoming = {
         **body,
