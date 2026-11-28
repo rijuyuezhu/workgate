@@ -7774,3 +7774,233 @@ async def test_root_detached_delegation_dispatch_and_replay(bound):
         )["status"]
         == "claimed"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["complete", "restart", "revoke"])
+async def test_authenticated_child_host_lifecycle(bound, monkeypatch, mode):
+    import asyncio
+
+    from workgate.control import hosted_chat_child_host as host_module
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.control.hosted_chat_root_delegation import RootDelegation
+    from workgate.hosted_chat.agent_runtime import AgentContext, AgentLoopState
+    from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.detached_subagents import DetachedReservation
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+    from workgate.hosted_chat.subagents import build_subagent_configs
+
+    monkeypatch.setattr(host_module, "_POLL_SECONDS", 0.02)
+    harness, original, initial, _ = bound
+    db = original.database
+    agents = AgentRepository(db)
+    child = agents.create(
+        initial.owner, {"provider": "openai", "model": "child"}
+    )
+    parent = agents.create(
+        initial.owner,
+        {
+            "provider": "openai",
+            "model": "parent",
+            "subagents": {
+                "enabled": True,
+                "allowSelf": False,
+                "agent_ids": [child["id"]],
+            },
+        },
+    )
+    store = GenerationStore(db)
+    generation, _ = store.begin(
+        initial.owner, {"text": "parent question", "agent_id": parent["id"]}
+    )
+    actor = ActorLease.claim(db, initial.owner, generation.run_id)
+    assert actor is not None
+    checkpoint = OwnedLoopCheckpoint(actor)
+
+    def context(agent):
+        return AgentContext(
+            ProviderConfig(
+                "openai", agent["model"], "https://example.invalid", "fake"
+            ),
+            [],
+            agent=agent,
+        )
+
+    async def resolve_child(_generation, agent):
+        return context(agent)
+
+    async def resolve_wakeup(wakeup):
+        assert wakeup.agent_id == parent["id"]
+        return context(parent)
+
+    live = True
+    blocked = asyncio.Event()
+    pause = mode != "complete"
+    native = []
+
+    def check():
+        if not live:
+            raise PermissionError("Grant revoked")
+
+    async def authorize(calls, _state):
+        native.extend(call.call_id for call in calls)
+
+    async def stream(profile, messages, *, tools, **_kwargs):
+        if profile.model == "child":
+            assert "parent question" not in str(messages)
+            if not any(m["role"] == "tool" for m in messages):
+                yield ModelToolCall(
+                    "child-native", "task", {"action": "create"}
+                )
+            else:
+                if pause:
+                    blocked.set()
+                    await asyncio.Event().wait()
+                yield "private child result"
+        else:
+            assert profile.model == "parent"
+            assert "private child result" in messages[-1]["content"]
+            yield "continued reply"
+
+    access = {}
+
+    def make_host(conversation=generation.conversation_id):
+        return host_module.AuthenticatedChildHost(
+            harness.control,
+            db,
+            initial.owner,
+            conversation,
+            scopes=set(SCOPES),
+            expires=None,
+            allowed_tools={"task"},
+            check_grant=check,
+            current_access=lambda: access,
+            resolve_child=resolve_child,
+            resolve_wakeup=resolve_wakeup,
+            authorize_batch=authorize,
+            stream_tools=stream,
+        )
+
+    host = make_host()
+    delegation = RootDelegation(
+        build_subagent_configs(initial.owner, parent, db),
+        lambda agent: resolve_child(generation, agent),
+        on_reserved=host.on_reserved,
+    )
+    node = NativeLoopToolNode(
+        harness.control,
+        original,
+        checkpoint,
+        allowed_tools={"task"},
+        scopes=set(SCOPES),
+        expires=None,
+        task_machine=harness.executor_id,
+        check_grant=check,
+        delegation=delegation,
+    )
+    access.update(node._receipt_access(), allowed_tools=["task"])
+    ctx = context(parent)
+    state = AgentLoopState(
+        ctx, [{"role": "user", "content": "parent question"}]
+    )
+    await node.refresh_tools(state)
+    call = ModelToolCall(
+        "delegate",
+        "subagent",
+        {
+            "subagent_type": child["id"],
+            "description": "child work",
+            "run_in_background": True,
+        },
+    )
+    state.pending_calls = node.preflight([call], state)
+    state.tool_step_started = True
+    await checkpoint.save(state, [call])
+    result = await node.dispatch([call], state)
+    task_id = json.loads(result.messages[0]["content"])["background_task_id"]
+    with db.read_snapshot() as conn:
+        row = conn.execute(
+            "SELECT * FROM subagent_tasks WHERE id=?", (task_id,)
+        ).fetchone()
+        reservation = DetachedReservation(
+            task_id,
+            row["thread_id"],
+            row["child_conversation_id"],
+            row["status"],
+        )
+    wrong = make_host("another-conversation")
+    assert wrong._candidates(access) == []
+    with pytest.raises(PermissionError, match="another child host"):
+        await wrong.on_reserved(reservation, access)
+    assert host._candidates({**access, "allowed_tools": []}) == []
+    assert store.finish(
+        initial.owner,
+        actor.run_id,
+        status="complete",
+        text="parent reply",
+        actor_lease=actor,
+    )
+    actor.release()
+
+    async def wait_done():
+        async with asyncio.timeout(30):
+            while True:
+                with db.read_snapshot() as conn:
+                    wakeup = conn.execute(
+                        "SELECT status FROM subagent_wakeups WHERE task_id=?",
+                        (task_id,),
+                    ).fetchone()
+                if wakeup["status"] == "done":
+                    return
+                await asyncio.sleep(0.02)
+
+    runner = asyncio.create_task(host.serve())
+    try:
+        if mode != "complete":
+            await asyncio.wait_for(blocked.wait(), timeout=30)
+            if mode == "revoke":
+                live = False
+                await asyncio.wait_for(runner, timeout=10)
+            else:
+                runner.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await runner
+            with db.read_snapshot() as conn:
+                row = conn.execute(
+                    "SELECT status,lease_owner FROM subagent_tasks WHERE id=?",
+                    (task_id,),
+                ).fetchone()
+                assert tuple(row) == ("running", None)
+            with pytest.raises(PermissionError, match="no longer authorizes"):
+                await host.on_reserved(reservation, access)
+            if mode == "revoke":
+                return
+            pause = False
+            host = make_host()
+            runner = asyncio.create_task(host.serve())
+        # Competing authenticated host is fenced by the task and wakeup leases.
+        competitor = asyncio.create_task(make_host().serve())
+        try:
+            await wait_done()
+        finally:
+            competitor.cancel()
+            await asyncio.gather(competitor, return_exceptions=True)
+        assert native == ["child-native"]
+        assert len(await harness.control.task_service.list_tasks()) == 1
+        with db.read_snapshot() as conn:
+            row = conn.execute(
+                "SELECT status,result_claimed FROM subagent_tasks WHERE id=?",
+                (task_id,),
+            ).fetchone()
+            assert tuple(row) == ("completed", 1)
+            assert (
+                conn.execute(
+                    "SELECT count(*) FROM messages WHERE conversation_id=? AND text='continued reply'",
+                    (generation.conversation_id,),
+                ).fetchone()[0]
+                == 1
+            )
+    finally:
+        runner.cancel()
+        await asyncio.gather(runner, return_exceptions=True)
