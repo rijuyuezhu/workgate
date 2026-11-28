@@ -21,6 +21,7 @@ from .content_filters import (
     validate_model_parameters,
 )
 from .database import SQLiteDatabase
+from .event_actor_identity import live_event
 from .generation_actor_lease import ActorLease, ActorLeaseLost
 from .generation_protocol import (
     EVENT_LIMIT,
@@ -325,6 +326,7 @@ class GenerationStore:
         protocol_version: int = 2,
         wakeup_task_id: str | None = None,
         schedule_occurrence_id: str | None = None,
+        event_delivery_id: str | None = None,
         native_admission: dict | None = None,
     ) -> tuple[Generation, bool]:
         """Internal admission seam for the atomic completion transaction."""
@@ -351,6 +353,10 @@ class GenerationStore:
                     and client_request_id
                     == "schedule:" + schedule_occurrence_id
                 )
+                or (
+                    event_delivery_id is not None
+                    and client_request_id == event_delivery_id
+                )
             ):
                 raise ValueError(
                     "Internal generation request id cannot be submitted"
@@ -366,6 +372,28 @@ class GenerationStore:
             ).fetchone()
         ):
             raise PermissionError("Invalid scheduled occurrence")
+        event_row = None
+        event_target = None
+        if event_delivery_id is not None:
+            event_row = live_event(db, owner, event_delivery_id)
+            if (
+                event_row is None
+                or event_row["status"] != "pending"
+                or event_row["run_id"] is not None
+                or client_request_id != event_delivery_id
+                or native_admission is not None
+                or wakeup_task_id is not None
+                or schedule_occurrence_id is not None
+                or payload.get("compact")
+            ):
+                raise PermissionError("Invalid event admission")
+            event_target = json.loads(event_row["envelope"])["target"]
+            if payload.get("agent_id") != event_target[
+                "agentId"
+            ] or payload.get("conversationId") != event_target.get(
+                "conversationId"
+            ):
+                raise PermissionError("Event target changed")
         raw_id = payload.get("conversationId")
         if raw_id is not None and not isinstance(raw_id, str):
             raise ValueError("Invalid conversation id")
@@ -407,7 +435,11 @@ class GenerationStore:
         ):
             raise ValueError("Unsupported generation request")
         file_ids = message_file_ids(payload.get("files"))
-        if file_ids and (manual or wakeup_task_id is not None):
+        if file_ids and (
+            manual
+            or wakeup_task_id is not None
+            or event_delivery_id is not None
+        ):
             raise ValueError("Attachments require an interactive turn")
         if (
             file_ids
@@ -434,6 +466,7 @@ class GenerationStore:
         run_id = "run_" + secrets.token_hex(16)
         if (
             not new_conversation
+            and event_target is None
             and db.execute(
                 "SELECT 1 FROM active_subagent_threads WHERE thread_id=?",
                 (conversation_id,),
@@ -560,6 +593,7 @@ class GenerationStore:
                 if manual
                 or wakeup_task_id is not None
                 or schedule_occurrence_id is not None
+                or event_delivery_id is not None
                 else artifact_mode(payload, agent)
             ),
         }
@@ -582,6 +616,9 @@ class GenerationStore:
             state["completionWakeupTaskId"] = wakeup_task_id
         if schedule_occurrence_id is not None:
             state["scheduleOccurrenceId"] = schedule_occurrence_id
+        if event_row is not None:
+            state["eventDeliveryId"] = event_delivery_id
+            state["eventSourceKeyId"] = event_row["source_key_id"]
         parent_id = payload.get("parentMessageId")
         if parent_id in (None, _ROOT_MESSAGE):
             parent_id = None

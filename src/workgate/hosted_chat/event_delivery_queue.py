@@ -422,7 +422,7 @@ class EventDeliveryQueue:
                 candidates = db.execute(
                     "SELECT id,available_at,envelope FROM agent_event_deliveries WHERE owner=? AND source_key_id=? "
                     "AND coalesce_key=? AND ordering_key=? AND batch_root_id IS NULL AND status='pending' "
-                    "AND coalesce_until>? AND batch_count<? AND batch_bytes+?<=? ORDER BY seq DESC",
+                    "AND run_id IS NULL AND coalesce_until>? AND batch_count<? AND batch_bytes+?<=? ORDER BY seq DESC",
                     (
                         owner,
                         source_key_id,
