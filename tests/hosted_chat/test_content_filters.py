@@ -634,3 +634,37 @@ def test_rule_metadata_budget_fails_closed():
     )
     with pytest.raises(ContentFilterBlocked):
         validate_message_submission("safe", filters)
+
+
+def test_missing_optional_regex_fails_closed_without_affecting_unconfigured_chat(
+    monkeypatch,
+):
+    import builtins
+
+    from workgate.hosted_chat.content_patterns import _compile
+    from workgate.hosted_chat.memory_protection import project_stored_memories
+
+    original = builtins.__import__
+
+    def missing_regex(name, *args, **kwargs):
+        if name == "regex":
+            raise ImportError("optional regex unavailable")
+        return original(name, *args, **kwargs)
+
+    _compile.cache_clear()
+    monkeypatch.setattr(builtins, "__import__", missing_regex)
+    try:
+        assert validate_message_submission("ordinary", None) is None
+        assert (
+            validate_message_submission(
+                "ordinary", _policy("messages", action="audit")
+            )
+            is None
+        )
+        with pytest.raises(ContentFilterBlocked):
+            validate_message_submission("ordinary", _policy("messages"))
+        assert project_stored_memories(
+            [{"key": "safe", "value": "stored"}], _policy("memories")
+        ) == [{"key": "", "value": "", "contentFilterBlocked": True}]
+    finally:
+        _compile.cache_clear()
