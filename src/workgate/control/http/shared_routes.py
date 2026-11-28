@@ -17,6 +17,7 @@ from .hosted_chat_actions import hosted_chat_action_routes
 from .hosted_chat_agents import hosted_chat_agent_routes
 from .hosted_chat_artifacts import hosted_chat_artifact_routes
 from .hosted_chat_attachments import hosted_chat_attachment_routes
+from .hosted_chat_events import hosted_chat_event_routes
 from .hosted_chat_memory import hosted_chat_memory_routes
 from .hosted_chat_policy import hosted_chat_policy_routes
 from .hosted_chat_providers import hosted_chat_provider_routes
@@ -68,6 +69,9 @@ def control_http_routes(
             ui_routes.extend(hosted_chat_policy_routes(runtime))
             ui_routes.extend(hosted_chat_provider_routes(runtime))
             ui_routes.extend(hosted_chat_schedule_routes(runtime))
+            event_admin, event_ingress = hosted_chat_event_routes(runtime)
+            ui_routes.extend([*event_admin, *event_ingress])
+            ui_public_routes.extend(event_ingress)
         ui_routes.extend(config_inspection_routes(api_prefix=UI_API_PREFIX))
         ui_routes.extend(
             executor_admin_routes(
