@@ -792,3 +792,15 @@ the saved proposal; reattachment rechecks the native grant and approval.
 A settled effect is replayed without token acquisition, an uncertain
 claim is never retried, and a replaced or expired access token cannot
 create a new effect claim. Credentials stay inside the transport.
+
+### M3 public web search
+
+Pinned `webui/web_research.py` (blob
+`f24dbfc21316f0570b943400d69e6b5c856d3e54`) supplies the optional DDGS
+search and Bing RSS fallback, result shape, site filter and public document
+download contract. The DDGS dependency uses its own search-engine networking;
+the native fallback and document downloader use the shared origin-pinned
+transport, no ambient proxies, no credentials, standard ports, bounded
+responses and a total deadline. Each redirect is checked independently.
+Results are bounded and untrusted; search does not retrieve result URLs.
+External MCP search providers remain independent.
