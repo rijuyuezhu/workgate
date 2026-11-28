@@ -731,6 +731,18 @@ async def test_generation_http_abort_cancels_native_effect_and_driver(
         await asyncio.wait_for(cleaned(), timeout=5)
         final = (await client.get(path + "/events")).text
         assert '"aborted":true' in final and '"pendingSteers"' in final
+        with db.read_snapshot() as conn:
+            state = json.loads(
+                conn.execute(
+                    "SELECT state FROM runs WHERE id=?", (run,)
+                ).fetchone()[0]
+            )
+        assert state["modelStepsStatus"] == "aborted"
+        assert [message["role"] for message in state["modelSteps"]] == [
+            "assistant",
+            "tool",
+        ]
+        assert state["modelSteps"][1]["tool_call_id"] == "create"
         assert (await client.post(path + "/abort")).status_code == 409
         assert (await client.post(path + "/attach")).status_code == 202
         assert not runtime.generation_supervisor.active("local-user", run)

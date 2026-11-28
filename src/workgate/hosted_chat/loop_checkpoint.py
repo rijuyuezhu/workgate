@@ -13,6 +13,7 @@ from .checkpoint_types import LoopSnapshot
 from .checkpoints import SQLiteCheckpointSaver
 from .generation_actor_lease import ActorLease, ActorLeaseLost
 from .graph_member_scope import GraphMemberScope
+from .model_history import history_boundary
 from .provider_common import ModelToolCall
 from .subagent_scope import (
     DetachedExecutionScope,
@@ -103,6 +104,39 @@ class OwnedLoopCheckpoint:
             started or self.saver.get_tuple(self.base) is not None
         )
         self._started = started
+
+    def bind_public_history(self, history: list[dict]) -> None:
+        """Bind the original admitted prefix before a public root can save steps."""
+        if (
+            self.scope is not None
+            or self.lease.wakeup_task_id is not None
+            or self.lease.detached_task_id is not None
+        ):
+            return
+        boundary = history_boundary(history)
+        with self.lease.database.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self.lease.assert_current(db)
+            state = json.loads(
+                db.execute(
+                    "SELECT state FROM runs WHERE id=?", (self.lease.run_id,)
+                ).fetchone()["state"]
+            )
+            existing = state.get("modelHistoryBoundary")
+            if existing is not None:
+                if existing != boundary:
+                    raise RuntimeSafetyError(
+                        "Canonical model history prefix changed"
+                    )
+            elif not self._recovery_required:
+                state["modelHistoryBoundary"] = boundary
+                db.execute(
+                    "UPDATE runs SET state=? WHERE id=?",
+                    (
+                        json.dumps(state, separators=(",", ":")),
+                        self.lease.run_id,
+                    ),
+                )
 
     def assert_current(self) -> None:
         if self.scope is None:

@@ -27,7 +27,10 @@ from .generation_protocol import (
     job_generation_protocol,
     public_content,
 )
-from .model_history import completed_model_steps
+from .model_history import (
+    completed_model_steps,
+    recover_interrupted_model_steps,
+)
 from .provider_profiles import ProviderRepository
 from .providers import selected_provider
 from .sampling import validate_sampling
@@ -71,10 +74,12 @@ def _saved_model_steps(
     ).fetchall()
     if not rows:
         return None
-    if len(rows) != 1 or rows[0]["status"] != "complete":
+    if len(rows) != 1 or rows[0]["status"] not in _TERMINAL:
         raise PermissionError("Canonical model response identity changed")
     run = rows[0]
     state = json.loads(run["state"])
+    if state.get("modelStepsStatus", "complete") != run["status"]:
+        raise PermissionError("Canonical model response identity changed")
     if state.get("userMessageId") != message["parent_id"]:
         raise PermissionError("Canonical model response parent changed")
     terminal = db.execute(
@@ -838,6 +843,12 @@ class GenerationStore:
                 "SELECT state FROM runs WHERE id=?", (run_id,)
             ).fetchone()[0]
         )
+        if status != "complete":
+            if model_steps is not None:
+                raise ValueError(
+                    "Only completed model turns can save canonical steps"
+                )
+            model_steps = recover_interrupted_model_steps(db, row, run_state)
         usage = run_state.get("contextUsage")
         if run_state.get("manualCompaction"):
             metadata["manualCompaction"] = True
@@ -889,11 +900,13 @@ class GenerationStore:
             ).fetchone()[0]
         )
         if model_steps is not None:
-            if status != "complete" or state.get("manualCompaction"):
+            if state.get("manualCompaction"):
                 raise ValueError(
                     "Only completed model turns can save canonical steps"
                 )
             state["modelSteps"] = model_steps
+            if status != "complete":
+                state["modelStepsStatus"] = status
         pending_steers = SteeringStore.settle_leftovers(state)
         db.execute(
             "UPDATE runs SET status=?,state=?,updated_at=? WHERE id=?",
