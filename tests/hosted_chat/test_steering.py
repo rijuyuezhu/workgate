@@ -302,3 +302,63 @@ def test_drain_is_fifo_owned_and_rolls_back_partial_publication(
         ]
         == applied
     )
+
+
+def test_exact_run_fence_even_with_equal_epoch(context):
+    generations, steering, job = context
+    lease = ActorLease.claim(generations.database, "alice", job.run_id)
+    assert lease is not None
+    body = {
+        "conversationId": job.conversation_id,
+        "generationCreatedAt": job.generation_created_at,
+        "text": "first",
+        "clientSteerId": "old",
+    }
+    old = steering.enqueue(
+        "alice", body, preempt_capable=True, expected_run_id=job.run_id
+    )
+    assert generations.finish(
+        "alice", job.run_id, status="complete", actor_lease=lease
+    )
+    successor, _ = generations.begin(
+        "alice", {"conversationId": job.conversation_id, "text": "next"}
+    )
+    # Force equal epoch to exercise the stronger run-id fence independently.
+    import json
+
+    with generations.database.connect() as db:
+        state = json.loads(
+            db.execute(
+                "SELECT state FROM runs WHERE id=?", (successor.run_id,)
+            ).fetchone()[0]
+        )
+        state["generationCreatedAt"] = job.generation_created_at
+        db.execute(
+            "UPDATE runs SET state=? WHERE id=?",
+            (json.dumps(state), successor.run_id),
+        )
+    assert steering.enqueue(
+        "alice", body, preempt_capable=True, expected_run_id=job.run_id
+    )["replayed"]
+    with pytest.raises(SteerRejection, match="RUN_REPLACED"):
+        steering.enqueue(
+            "alice",
+            {**body, "clientSteerId": "new"},
+            preempt_capable=True,
+            expected_run_id=job.run_id,
+        )
+    with pytest.raises(SteerRejection, match="RUN_REPLACED"):
+        steering.mutate(
+            "alice",
+            {**body, "steerId": old["steerId"]},
+            arm=False,
+            preempt_capable=True,
+            expected_run_id=successor.run_id,
+        )
+    assert steering.mutate(
+        "alice",
+        {**body, "steerId": old["steerId"]},
+        arm=False,
+        preempt_capable=True,
+        expected_run_id=job.run_id,
+    )["removed"]
