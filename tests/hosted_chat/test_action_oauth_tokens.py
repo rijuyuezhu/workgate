@@ -267,6 +267,7 @@ async def test_exchange_uses_pinned_transport_and_auth(monkeypatch, method):
         (200, {}, b"x" * 32769, ValueError),
         (200, {}, b"{", ValueError),
     ],
+    ids=["redirect", "compressed", "oversize", "invalid-json"],
 )
 async def test_exchange_rejects_unsafe_responses(
     monkeypatch, status, headers, content, exception
