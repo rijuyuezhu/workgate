@@ -58,7 +58,11 @@ class Generation:
 
 
 def generation_text_history(
-    db: sqlite3.Connection, owner: str, generation: Generation
+    db: sqlite3.Connection,
+    owner: str,
+    generation: Generation,
+    *,
+    include_message_ids: bool = False,
 ) -> list[dict]:
     """Project the admitted user-message branch, not the latest conversation."""
     row = db.execute(
@@ -80,7 +84,13 @@ def generation_text_history(
         ).fetchone()
         if message is None or message["role"] not in {"user", "assistant"}:
             raise PermissionError("Generation history branch is unavailable")
-        history.append({"role": message["role"], "content": message["text"]})
+        history.append(
+            {
+                "role": message["role"],
+                "content": message["text"],
+                **({"messageId": message_id} if include_message_ids else {}),
+            }
+        )
         message_id = message["parent_id"]
     history.reverse()
     if not history or history[-1]["role"] != "user":
