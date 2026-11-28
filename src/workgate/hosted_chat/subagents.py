@@ -547,8 +547,8 @@ async def invoke_subagent(
         if isinstance(task, str) and task.strip()
         else "No task description provided"
     )
-    # Artifact prompt composition is a dependent feature unit. Saved child
-    # instructions are separate from the parent's history and runtime state.
+    # Keep the admitted child transcript independent of its parent's history.
+    # The native model boundary adds the child's provider-specific artifact prompt.
     system = "\n\n".join(
         value
         for value in (

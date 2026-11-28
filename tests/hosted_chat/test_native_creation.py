@@ -6019,6 +6019,7 @@ async def test_child_native_node_replays_private_receipt_without_parent_approval
     from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
     from workgate.hosted_chat.agent_runtime import AgentContext, AgentLoopState
     from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.artifact_prompts import generate_artifacts_prompt
     from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
     from workgate.hosted_chat.provider_common import ProviderConfig
     from workgate.hosted_chat.subagent_scope import SubagentScope
@@ -6029,7 +6030,10 @@ async def test_child_native_node_replays_private_receipt_without_parent_approval
 
     harness, original, lease, _ = bound
     agents = AgentRepository(original.database)
-    child = agents.create(lease.owner, {"provider": "openai", "model": "child"})
+    child = agents.create(
+        lease.owner,
+        {"provider": "openai", "model": "child", "artifacts": "default"},
+    )
     root = agents.create(
         lease.owner,
         {
@@ -6083,6 +6087,12 @@ async def test_child_native_node_replays_private_receipt_without_parent_approval
             AgentContext(provider, [], agent=child), value.messages
         )
         await node.refresh_tools(state)
+        expected = generate_artifacts_prompt("openai", "default")
+        assert node.project_messages(state) == [
+            {"role": "system", "content": expected},
+            *value.messages,
+        ]
+        assert state.messages == [{"role": "user", "content": "child task"}]
         calls = node.preflight(
             [ModelToolCall("same", "task", {"action": "create"})], state
         )
@@ -6466,14 +6476,21 @@ async def test_foreground_team_result_only_native_effects_and_recovery(bound):
     from workgate.control.hosted_chat_subagent_loop import ForegroundDelegation
     from workgate.hosted_chat.agent_runtime import AgentContext, AgentLoopState
     from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.artifact_prompts import generate_artifacts_prompt
     from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
     from workgate.hosted_chat.provider_common import ProviderConfig
     from workgate.hosted_chat.subagents import build_subagent_configs
 
     harness, original, lease, _ = bound
     agents = AgentRepository(original.database)
-    entry = agents.create(lease.owner, {"provider": "openai", "model": "entry"})
-    final = agents.create(lease.owner, {"provider": "openai", "model": "final"})
+    entry = agents.create(
+        lease.owner,
+        {"provider": "openai", "model": "entry", "artifacts": "default"},
+    )
+    final = agents.create(
+        lease.owner,
+        {"provider": "openai", "model": "final", "artifacts": "custom"},
+    )
     root = agents.create(
         lease.owner,
         {
@@ -6521,6 +6538,11 @@ async def test_foreground_team_result_only_native_effects_and_recovery(bound):
 
     async def stream(profile, messages, *, tools, **_kwargs):
         assert "parent private" not in str(messages)
+        assert [m["content"] for m in messages if m["role"] == "system"] == (
+            [generate_artifacts_prompt("openai", "default")]
+            if profile.model == "entry"
+            else []
+        )
         assert "subagent" not in {tool["function"]["name"] for tool in tools}
         models.append(profile.model)
         if profile.model == "entry":
@@ -6662,6 +6684,7 @@ async def test_detached_native_worker_recovery_and_cancellation(
     from workgate.control import hosted_chat_detached_worker as worker
     from workgate.hosted_chat.agent_runtime import AgentContext, AgentLoopState
     from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.artifact_prompts import generate_artifacts_prompt
     from workgate.hosted_chat.detached_subagents import reserve_detached_child
     from workgate.hosted_chat.detached_task_controls import check_detached_task
     from workgate.hosted_chat.detached_task_lease import request_cancel
@@ -6675,7 +6698,10 @@ async def test_detached_native_worker_recovery_and_cancellation(
     harness, original, lease, _ = bound
     db = original.database
     agents = AgentRepository(db)
-    child = agents.create(lease.owner, {"provider": "openai", "model": "child"})
+    child = agents.create(
+        lease.owner,
+        {"provider": "openai", "model": "child", "artifacts": "default"},
+    )
     root = agents.create(
         lease.owner,
         {
@@ -6782,6 +6808,9 @@ async def test_detached_native_worker_recovery_and_cancellation(
 
     async def stream(profile, messages, *, tools, **_kwargs):
         assert profile.model == "child"
+        assert [m["content"] for m in messages if m["role"] == "system"] == [
+            generate_artifacts_prompt("openai", "default")
+        ]
         assert "parent private" not in str(messages)
         assert {tool["function"]["name"] for tool in tools} == {"task"}
         turns.append(len(messages))
@@ -8225,6 +8254,7 @@ async def test_authenticated_root_graph_output(bound, monkeypatch, mode):
         run_authenticated_generation,
     )
     from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.artifact_prompts import generate_artifacts_prompt
     from workgate.hosted_chat.credential_cipher import CredentialCipher
     from workgate.hosted_chat.provider_common import ModelThought
     from workgate.hosted_chat.provider_profiles import ProviderRepository
@@ -8242,13 +8272,23 @@ async def test_authenticated_root_graph_output(bound, monkeypatch, mode):
             "models": ["root", "member"],
         }
     )
+    ProviderRepository(db, CredentialCipher(db)).save(
+        {
+            "name": "member-models",
+            "provider": "anthropic",
+            "base_url": "https://models.invalid/v1",
+            "api_key": "test-key",
+            "models": ["member"],
+        }
+    )
     agents = AgentRepository(db)
     member = agents.create(
         lease.owner,
         {
-            "provider": "graph-models",
+            "provider": "member-models",
             "model": "member",
             "instructions": "member only",
+            "artifacts": "default",
         },
     )
     root = agents.create(
@@ -8257,6 +8297,7 @@ async def test_authenticated_root_graph_output(bound, monkeypatch, mode):
             "provider": "graph-models",
             "model": "root",
             "instructions": "root only",
+            "artifacts": "shadcnui",
         },
     )
     agents.update(
@@ -8272,7 +8313,12 @@ async def test_authenticated_root_graph_output(bound, monkeypatch, mode):
     )
     store = GenerationStore(db)
     generation, _ = store.begin(
-        lease.owner, {"text": "graph question", "agent_id": root["id"]}
+        lease.owner,
+        {
+            "text": "graph question",
+            "agent_id": root["id"],
+            "ephemeralAgent": {"artifacts": ""},
+        },
     )
     visible = asyncio.Event()
     turns = []
@@ -8280,9 +8326,12 @@ async def test_authenticated_root_graph_output(bound, monkeypatch, mode):
     async def stream(profile, messages, **kwargs):
         turns.append(profile.model)
         assert profile.token == "test-key"
-        assert [m["content"] for m in messages if m["role"] == "system"] == [
-            profile.model + " only"
-        ]
+        expected = [profile.model + " only"]
+        if profile.model == "member":
+            expected.append(generate_artifacts_prompt("anthropic", "default"))
+        assert [
+            m["content"] for m in messages if m["role"] == "system"
+        ] == expected
         if profile.model == "root":
             yield ModelThought("thinking", text="root reasoning")
             yield "root visible/"
