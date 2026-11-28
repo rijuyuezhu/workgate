@@ -63,11 +63,12 @@ async def run_native_graph(
     detached_controls: DetachedTaskLease | None = None,
     control_grant: Callable[[], dict] | None = None,
 ) -> list[dict]:
-    """Bind StateGraph tasks to native effects without publishing member deltas.
+    """Bind StateGraph tasks to native effects with explicit public visibility.
 
     The trusted caller supplies provider resolution and content authorization.
     A graph activation has its own checkpoint, not its own public generation.
-    Graph human interrupts use the SDK barrier. Foreground steering elects one member; public model-delta projection remains separate.
+    Graph human interrupts use the SDK barrier. Foreground steering elects one member.
+    Public mode returns proven new visible model steps, not private graph state.
     """
 
     if lease.database.root != runtime.config.state_dir / "hosted-chat":

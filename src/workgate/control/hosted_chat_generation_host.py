@@ -221,7 +221,7 @@ async def run_authenticated_generation(
 
         async def graph_turn() -> None:
             assert root_agent is not None
-            await run_native_graph(
+            model_steps = await run_native_graph(
                 runtime,
                 lease,
                 root_agent["id"],
@@ -242,7 +242,13 @@ async def run_authenticated_generation(
             )
             await automatic_memory()
             check_root()
-            store.finish(owner, run_id, status="complete", actor_lease=lease)
+            store.finish(
+                owner,
+                run_id,
+                status="complete",
+                actor_lease=lease,
+                model_steps=model_steps or None,
+            )
 
         child_task = asyncio.create_task(host.serve())
         tasks.append(child_task)

@@ -8344,12 +8344,42 @@ async def test_authenticated_root_graph_output(bound, monkeypatch, mode):
     )
     reasoning = [e for e in events if e.get("event") == "on_reasoning_delta"]
     assert bool(reasoning) == (mode != "hidden")
+    expected_steps = (
+        ["member answer"]
+        if mode == "hidden"
+        else ["root visible/", "member answer"]
+    )
     with db.read_snapshot() as conn:
         reply = conn.execute(
             "SELECT text FROM messages WHERE conversation_id=? AND role='assistant'",
             (generation.conversation_id,),
         ).fetchone()
         assert reply["text"] == expected
+        state = json.loads(
+            conn.execute(
+                "SELECT state FROM runs WHERE id=?", (generation.run_id,)
+            ).fetchone()["state"]
+        )
+        if mode == "interrupt":
+            assert "modelSteps" not in state
+        else:
+            assert [m["content"] for m in state["modelSteps"]] == expected_steps
+    if mode != "interrupt":
+        from workgate.hosted_chat.generations import generation_model_history
+
+        next_turn, _ = store.begin(
+            lease.owner,
+            {
+                "text": "next question",
+                "conversationId": generation.conversation_id,
+                "agent_id": root["id"],
+            },
+        )
+        with db.read_snapshot() as conn:
+            history = generation_model_history(conn, lease.owner, next_turn)
+        assert [
+            m["content"] for m in history if m["role"] == "assistant"
+        ] == expected_steps
 
 
 @pytest.mark.asyncio
