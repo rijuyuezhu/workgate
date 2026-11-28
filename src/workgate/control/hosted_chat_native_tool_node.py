@@ -307,7 +307,11 @@ class NativeLoopToolNode:
             require_machine_scope(scopes, "write", expires=expires)
         except PermissionError:
             return False
-        return ATTACHMENT_TOOL in _selected_tools(agents, self.allowed_tools)
+        # Like native file reads, do not advertise an unusable tool when no
+        # Executor is readable. The schema also consumes provider context.
+        return ATTACHMENT_TOOL in _selected_tools(
+            agents, self.allowed_tools
+        ) and bool(self._effective_receipt_access(scopes, expires)["machines"])
 
     def _attachment_request(
         self, call: ModelToolCall

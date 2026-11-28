@@ -8640,7 +8640,7 @@ async def test_native_chat_attachment_requires_write_scope_and_owned_session(
     from workgate.hosted_chat.tool_attachment_publication import TOOL_NAME
     from workgate.protocol.ids import new_session_id
 
-    harness, repo, lease, _ = bound
+    harness, repo, lease, generation = bound
     checkpoint = OwnedLoopCheckpoint(lease)
     state = AgentLoopState(
         AgentContext(
@@ -8676,3 +8676,11 @@ async def test_native_chat_attachment_requires_write_scope_and_owned_session(
             ],
             state,
         )
+
+    WorkspaceRepository(repo.database).save_setting(
+        lease.owner,
+        "agent.machine_policy.conversation." + generation.conversation_id,
+        {harness.executor_id: "none"},
+    )
+    await writer.refresh_tools(state)
+    assert state.context.tools == []
