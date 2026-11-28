@@ -13,6 +13,7 @@ from .executor_admin import executor_admin_routes
 from .executor_routes import executor_routes
 from .hosted_chat import hosted_chat_generation_routes
 from .hosted_chat_agents import hosted_chat_agent_routes
+from .hosted_chat_memory import hosted_chat_memory_routes
 from .hosted_chat_policy import hosted_chat_policy_routes
 from .hosted_chat_providers import hosted_chat_provider_routes
 from .hosted_chat_workspace import hosted_chat_workspace_routes
@@ -50,6 +51,7 @@ def control_http_routes(
             ui_routes.extend(hosted_chat_generation_routes(runtime))
             ui_routes.extend(hosted_chat_workspace_routes(runtime))
             ui_routes.extend(hosted_chat_agent_routes(runtime))
+            ui_routes.extend(hosted_chat_memory_routes(runtime))
             ui_routes.extend(hosted_chat_policy_routes(runtime))
             ui_routes.extend(hosted_chat_provider_routes(runtime))
         ui_routes.extend(config_inspection_routes(api_prefix=UI_API_PREFIX))
