@@ -20,6 +20,7 @@ from .web_documents import (
     passage,
     validate_fetch,
 )
+from .web_render import render_html
 from .web_research import WebResearchError, _download, _safe_url
 
 _CACHE_TTL = 24 * 60 * 60
@@ -193,7 +194,13 @@ async def _retrieve(url: str) -> dict:
     if document["format"] == "html":
         problem = html_problem(document)
         if problem:
-            raise WebResearchError(problem)
+            if "access denied" in problem:
+                raise WebResearchError(problem)
+            document = await render_html(resolved)
+            if html_problem(document):
+                raise WebResearchError(
+                    "JavaScript rendering returned no readable content"
+                )
     if not document["text"].strip():
         raise WebResearchError("Document has no extractable text")
     return document

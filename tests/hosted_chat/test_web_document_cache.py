@@ -164,6 +164,12 @@ async def test_fetch_errors_and_arxiv_fallback(tmp_path, monkeypatch, mode):
         )
 
     monkeypatch.setattr(cache, "_download", download)
+
+    async def fail_render(_url):
+        assert mode == "shell"
+        raise cache.WebResearchError("Rendering unavailable")
+
+    monkeypatch.setattr(cache, "render_html", fail_render)
     if mode == "deadline":
         monkeypatch.setattr(cache, "_FETCH_TIMEOUT", 0.01)
     if mode == "cache_unavailable":
@@ -233,3 +239,24 @@ def test_cache_rejects_nonprivate_and_symlink_files(tmp_path):
     path.rename(other)
     path.symlink_to(other)
     assert repo.load(URL) is None
+
+
+@pytest.mark.asyncio
+async def test_rendered_shell_cached(tmp_path, monkeypatch):
+    db = SQLiteDatabase(tmp_path)
+    calls = []
+
+    async def download(url):
+        return url, "text/html", b"<html><p>Please enable JavaScript</p></html>"
+
+    async def rendered(url):
+        calls.append(url)
+        return document(url)
+
+    monkeypatch.setattr(cache, "_download", download)
+    monkeypatch.setattr(cache, "render_html", rendered)
+    first = await cache.web_fetch(db, "alice", {"url": URL})
+    assert not first["cached"]
+    assert "Text of a paper." in first["content"]
+    assert (await cache.web_fetch(db, "alice", {"url": URL}))["cached"]
+    assert calls == [URL]
