@@ -194,7 +194,13 @@ class ApprovalClaimStore:
             raise ActorLeaseLost(
                 "Approval checkpoint belongs to another database"
             )
-        payload = build_approval_payload(calls)
+        payload = build_approval_payload(
+            calls,
+            decisions_by_tool_name={
+                "set_memory": ("approve", "reject"),
+                "delete_memory": ("approve", "reject"),
+            },
+        )
         identity = checkpoint.active["configurable"].get("checkpoint_id")
         if not isinstance(identity, str):
             raise ValueError("Approval requires a committed checkpoint")

@@ -802,3 +802,62 @@ def test_memory_reaches_provider_only(tmp_path, monkeypatch):
                 assert "private memory marker" not in repr(
                     [dict(row) for row in rows]
                 )
+
+
+def test_memory_tool_requires_confirmation(tmp_path, monkeypatch):
+    from workgate.hosted_chat.memory import MemoryRepository
+    from workgate.hosted_chat.provider_common import ModelToolCall
+
+    runtime = runtime_for(tmp_path)
+    db = provider(runtime)
+    original = hosted_chat.run_authenticated_generation
+
+    async def stream(profile, messages, **kwargs):
+        if not any(message["role"] == "tool" for message in messages):
+            assert "set_memory" in [
+                tool["function"]["name"] for tool in kwargs["tools"]
+            ]
+            yield ModelToolCall(
+                "remember",
+                "set_memory",
+                {"key": "style", "value": "Use concise answers."},
+            )
+        else:
+            yield "Saved."
+
+    async def execute(*args, **kwargs):
+        return await original(
+            *args, **kwargs, stream_tools=stream, stream_text=stream
+        )
+
+    monkeypatch.setattr(hosted_chat, "run_authenticated_generation", execute)
+    with TestClient(build_http_app(runtime=runtime)) as client:
+        result = client.post(
+            PREFIX,
+            json={
+                "text": "Remember concise answers",
+                "provider": "test-provider",
+                "model": "test-model",
+            },
+        )
+        assert result.status_code == 202
+        path = PREFIX + "/" + result.json()["runId"]
+        assert "on_pending_action" in client.get(path + "/events").text
+        assert MemoryRepository(db).list("local-user") == []
+        action = client.get(path + "/action").json()["pendingAction"]
+        response = client.post(
+            path + "/action",
+            json={
+                "actionId": action["actionId"],
+                "type": "tool_approval",
+                "resolutions": [
+                    {"tool_call_id": "remember", "decision": "approve"}
+                ],
+            },
+        )
+        assert response.status_code == 202, response.text
+        assert "Saved." in client.get(path + "/events").text
+        assert (
+            MemoryRepository(db).list("local-user")[0]["value"]
+            == "Use concise answers."
+        )

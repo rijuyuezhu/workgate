@@ -48,7 +48,11 @@ from ..hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
 from ..hosted_chat.loop_receipts import execute_checkpointed_batch
 from ..hosted_chat.machine_permissions import effective_machine_access
 from ..hosted_chat.mcp_projection import native_tool_history_message
-from ..hosted_chat.memory import MemoryRepository
+from ..hosted_chat.memory import MEMORY_TOOL_USAGE_GUARD, MemoryRepository
+from ..hosted_chat.memory_protection import MemoryContentBlocked
+from ..hosted_chat.memory_tools import MEMORY_TOOLS, execute_memory_call
+from ..hosted_chat.memory_tools import definitions as memory_definitions
+from ..hosted_chat.memory_tools import validate_call as validate_memory_call
 from ..hosted_chat.provider_common import ModelToolCall, complete_tool_batch
 from ..hosted_chat.storage import WorkspaceRepository
 from ..hosted_chat.subagent_scope import (
@@ -264,6 +268,11 @@ class NativeLoopToolNode:
         for call in calls:
             validate_tool_arguments(call.name, call.arguments, filters)
 
+    def _memory_tools(self) -> list[dict]:
+        if not self.allowed_tools >= MEMORY_TOOLS:
+            return []
+        return memory_definitions(self.checkpoint)
+
     def project_messages(self, state: AgentLoopState) -> list[dict]:
         self.current_grant()
         lease = self.checkpoint.lease
@@ -273,6 +282,10 @@ class NativeLoopToolNode:
         memory = MemoryRepository(self.repository.database).provider_context(
             lease.owner, conversation, state.context.agent
         )
+        if self._memory_tools():
+            memory = (
+                memory + "\n\n" if memory else ""
+            ) + MEMORY_TOOL_USAGE_GUARD
         if memory is None:
             return state.messages
         return [{"role": "system", "content": memory}, *state.messages]
@@ -321,6 +334,12 @@ class NativeLoopToolNode:
         for call in calls:
             if is_transfer_tool(call.name):
                 self._transfer(call, [])
+            elif call.name in MEMORY_TOOLS:
+                if not self._memory_tools():
+                    raise PermissionError(
+                        "Memory mutation is no longer selected"
+                    )
+                validate_memory_call(call)
             elif call.name in _DELEGATION_TOOLS:
                 if self.delegation is None:
                     raise PermissionError("Foreground delegation is disabled")
@@ -333,7 +352,11 @@ class NativeLoopToolNode:
                 for call in calls
                 if not is_transfer_tool(call.name)
                 and call.name
-                not in ({ASK_USER_QUESTION_TOOL_NAME} | _DELEGATION_TOOLS)
+                not in (
+                    {ASK_USER_QUESTION_TOOL_NAME}
+                    | _DELEGATION_TOOLS
+                    | MEMORY_TOOLS
+                )
             ],
             allowed_tools=self.allowed_tools,
             task_machine=self.task_machine,
@@ -354,6 +377,7 @@ class NativeLoopToolNode:
         _, agent = self.repository.tool_context(self.checkpoint.lease)
         if self._question_enabled(agent):
             state.context.tools.extend(copy.deepcopy(ASK_USER_TOOLS))
+        state.context.tools.extend(self._memory_tools())
         state.context.tools.extend(copy.deepcopy(self._handoffs()[1]))
         if self.delegation is not None:
             state.context.tools.extend(self.delegation.definitions())
@@ -389,7 +413,13 @@ class NativeLoopToolNode:
         assert mode is not None
         endpoints = repo.setting(lease.owner, "endpoints", {}) or {}
         legacy = (endpoints.get("agents") or {}).get("toolApproval")
-        return call_decision(mode, legacy, call.name, call.arguments) or {}
+        decision = call_decision(mode, legacy, call.name, call.arguments) or {}
+        if call.name in MEMORY_TOOLS and decision.get("decision") != "deny":
+            return {
+                "decision": "ask",
+                "reason": "Confirm persistent memory mutation",
+            }
+        return decision
 
     def _receipt_access(self) -> dict:
         """Capture the effective disclosure ceiling, not a new grant.
@@ -447,6 +477,18 @@ class NativeLoopToolNode:
                 self.delegation.authorize_receipt(
                     self, call, receipt["childScope"]
                 )
+        if (
+            call.name in MEMORY_TOOLS
+            and receipt["result"].get("isError") is not True
+        ):
+            _, expires = self.current_grant()
+            if (
+                execute_memory_call(
+                    self.checkpoint, call, expires=expires, replay_only=True
+                )
+                != receipt["result"]
+            ):
+                raise PermissionError("Memory receipt changed")
         access = receipt["access"]
         if not isinstance(access, dict) or set(access) != {
             "scopes",
@@ -506,6 +548,9 @@ class NativeLoopToolNode:
                 self.checkpoint.lease
             )
             enabled = _selected_tools(agents, self.allowed_tools)
+            enabled |= {
+                tool["function"]["name"] for tool in self._memory_tools()
+            }
             if self._question_enabled(agents[-1]):
                 enabled = enabled | {ASK_USER_QUESTION_TOOL_NAME}
             enabled |= {
@@ -575,6 +620,15 @@ class NativeLoopToolNode:
                 child_scopes[call.call_id] = scope
                 return result
             scopes, expires = self.current_grant()
+            if prepared.name in MEMORY_TOOLS:
+                try:
+                    return execute_memory_call(
+                        self.checkpoint, prepared, expires=expires
+                    )
+                except MemoryContentBlocked:
+                    return rejected("Memory content blocked by policy")
+                except ValueError, OverflowError:
+                    return rejected("Invalid memory request or quota exceeded")
             return await self.native.dispatch_model_call(
                 self.repository,
                 self.checkpoint.lease,
@@ -629,8 +683,18 @@ class NativeLoopToolNode:
                         continue
                     if resolution["type"] not in {"approve", "edit"}:
                         raise ValueError("Unsupported native approval decision")
+                    if (
+                        call.name in MEMORY_TOOLS
+                        and resolution["type"] != "approve"
+                    ):
+                        blocked[call.call_id] = (
+                            "Memory changes require exact approval"
+                        )
+                        continue
                     reviewed.add(call.call_id)
-                    effective[call.call_id] = entry.tool_call()
+                    effective[call.call_id] = (
+                        call if call.name in MEMORY_TOOLS else entry.tool_call()
+                    )
                     if (
                         call.name in _DELEGATION_TOOLS
                         and effective[call.call_id] != call
