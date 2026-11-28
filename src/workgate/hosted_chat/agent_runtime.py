@@ -20,6 +20,7 @@ from .provider_common import (
     ModelUsage,
     ProviderConfig,
     complete_tool_batch,
+    provider_scope,
 )
 
 log = logging.getLogger(__name__)
@@ -103,6 +104,14 @@ def _retryable_model_error(error: Exception) -> bool:
             httpx.PoolTimeout,
         ),
     )
+
+
+def _signed_scope(item: ModelThought, profile: ProviderConfig) -> str | None:
+    """Only the originating native transport may authorize opaque replay."""
+    scope = (item.provider_data or {}).get("scope")
+    if profile.provider == "anthropic" and scope == provider_scope(profile):
+        return scope
+    return None
 
 
 @dataclass
@@ -344,10 +353,26 @@ async def run_agent_loop(
                                 reasoning
                                 and reasoning[-1].get("type") == "thinking"
                             ):
-                                reasoning[-1]["signature"] = item.signature
+                                block = reasoning[-1]
+                                previous = block.get("signature", "")
+                                scope = _signed_scope(item, context.profile)
+                                # All signature fragments must belong to the same
+                                # connection. Unscoped legacy data stays private.
+                                if scope is not None and (
+                                    not previous or block.get("scope") == scope
+                                ):
+                                    block["scope"] = scope
+                                else:
+                                    block.pop("scope", None)
+                                block["signature"] = previous + item.signature
                         elif item.kind == "redacted_thinking":
+                            scope = _signed_scope(item, context.profile)
                             reasoning.append(
-                                {"type": "redacted_thinking", "data": item.data}
+                                {
+                                    "type": "redacted_thinking",
+                                    "data": item.data,
+                                    **({"scope": scope} if scope else {}),
+                                }
                             )
                         elif (
                             item.kind == "responses_item" and item.provider_data
