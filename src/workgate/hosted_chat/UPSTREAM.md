@@ -766,3 +766,13 @@ or expired claims require fresh authorization rather than replaying an
 uncertain rotation. Editing any Action revision invalidates its tokens.
 Browser callback, saved authorization flow and foreground resume are
 separate slices and are not enabled here.
+
+The native OAuth interruption retains the exact approved checkpoint and
+does not create an effect claim before authorization. A browser start
+requires a fresh owner write grant. One-use hashed state and an encrypted
+browser-bound PKCE verifier bind the callback to the run, proposal,
+Action revision, and configured redirect origin. Token settlement and
+release of the saved interruption share a transaction; abort, Action
+edits, expiration, and superseding flows prevent late settlement.
+The callback cannot create an execution lease. Route wiring and resumed
+OAuth execution remain separate.

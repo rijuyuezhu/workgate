@@ -4,12 +4,15 @@ The approval claim and its exact started-edge checkpoint share the same
 SQLite transaction. A resolution is review evidence, never a native grant.
 """
 
+import hashlib
 import json
 import sqlite3
 import time
 import uuid
 from collections.abc import Collection, Mapping
+from dataclasses import asdict
 
+from .actions import ActionRepository
 from .approval_runtime import (
     ApprovalBatch,
     build_approval_payload,
@@ -55,6 +58,41 @@ def _namespace(checkpoint: OwnedLoopCheckpoint) -> str:
         if checkpoint.scope is not None
         else ""
     )
+
+
+def _digest(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode()
+    ).hexdigest()
+
+
+def _pending_call(db, row, state, pending, edge):
+    payload = pending["payload"]
+    if (
+        payload.get("type") != "action_oauth"
+        or pending["namespace"] != ""
+        or row["agent_id"] is None
+        or state.get("manualCompaction")
+        or db.execute(
+            "SELECT 1 FROM agent_run_cancellations WHERE run_id=?", (row["id"],)
+        ).fetchone()
+    ):
+        raise PermissionError("OAuth run is unavailable")
+    call = next(
+        (
+            c
+            for c in LoopSnapshot.model_validate(
+                edge["checkpoint"]["channel_values"]
+            ).calls()
+            if c.call_id == payload.get("tool_call_id")
+        ),
+        None,
+    )
+    if call is None or call.name != payload.get("tool_name"):
+        raise PermissionError("OAuth proposal is unavailable")
+    return call
 
 
 class ApprovalClaimStore:
@@ -388,6 +426,66 @@ class ApprovalClaimStore:
             and expires <= time.time() * 1000
         )
 
+    @staticmethod
+    def _approved_action(state, edge, proof, call):
+        if state.get("actionProposals", {}).get(call.call_id) != proof:
+            raise PermissionError(
+                "Action version or proposal changed after admission"
+            )
+        claim = state.get("approvedToolBatch")
+        if (
+            not isinstance(claim, dict)
+            or claim.get("checkpointId") != proof["checkpointId"]
+        ):
+            raise PermissionError("Action requires explicit human approval")
+        ApprovalClaimStore._verify_requests(
+            edge, claim["payload"], allow_settled=True
+        )
+        batch = prepare_approval_batch(claim["payload"], claim["resolutions"])
+        entry = next(
+            (item for item in batch.entries if item.call_id == call.call_id),
+            None,
+        )
+        if (
+            entry is None
+            or entry.decision["type"] != "approve"
+            or entry.tool_call() != call
+        ):
+            raise PermissionError("Action must be approved without editing")
+
+    def _verify_oauth_pending(self, db, owner, row, state, pending, edge):
+        repository = ActionRepository(self.database)
+        call = _pending_call(db, row, state, pending, edge)
+        payload = pending["payload"]
+        agent = repository._bound(db, owner, row["agent_id"])
+        if agent is None or json.loads(agent["config"]).get(
+            "_version", 1
+        ) != state.get("agentRevision"):
+            raise PermissionError("OAuth Agent revision changed")
+        record = repository._get_for_tool(db, owner, row["agent_id"], call.name)
+        if record is None or record[0].get("auth", {}).get("type") != "oauth":
+            raise PermissionError("OAuth Action selection changed")
+        meta, creds, op = record
+        proof = {
+            "checkpointId": state["approvalCheckpointId"],
+            "agentId": row["agent_id"],
+            "actionId": op["action_id"],
+            "version": op["action_version"],
+            "fingerprint": _digest([asdict(call), meta, op]),
+        }
+        if (
+            payload.get("action_id") != proof["actionId"]
+            or payload.get("action_version") != proof["version"]
+        ):
+            raise PermissionError("OAuth Action version changed")
+        self._approved_action(state, edge, proof, call)
+        if db.execute(
+            "SELECT 1 FROM agent_native_effect_calls WHERE run_id=? AND call_id=?",
+            (row["id"], call.call_id),
+        ).fetchone():
+            raise PermissionError("OAuth Action has already been claimed")
+        return meta, creds, op
+
     def _pending_edge(
         self, db, saver: SQLiteCheckpointSaver, row, state: dict, pending: dict
     ) -> dict:
@@ -450,6 +548,10 @@ class ApprovalClaimStore:
             )
             if _json(expected) != _json(payload):
                 raise ValueError("Question differs from saved proposal")
+        elif payload.get("type") == "action_oauth" and not namespace:
+            self._verify_oauth_pending(
+                db, saver.owner, row, state, pending, edge
+            )
         else:
             raise ValueError("Unknown pending human action")
         return edge
