@@ -334,14 +334,19 @@ class NativeLoopToolNode:
         self.current_grant()
         return with_agent_context(messages, documents)
 
-    def project_file_messages(self, messages: list[dict]) -> list[dict]:
+    def require_file_grant(self, messages: list[dict]) -> bool:
         if not any(
             message.get("role") == "user" and message.get("files")
             for message in messages
         ):
-            return messages
+            return False
         scopes, expires = self.current_grant()
         require_machine_scope(scopes, "read", expires=expires)
+        return True
+
+    def project_file_messages(self, messages: list[dict]) -> list[dict]:
+        if not self.require_file_grant(messages):
+            return messages
         lease = self.checkpoint.lease
         with lease.database.read_snapshot() as db:
             lease.assert_current(db)

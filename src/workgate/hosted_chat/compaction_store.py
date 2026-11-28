@@ -16,6 +16,7 @@ from .context_budget import message_token_count, split_recent_turns
 from .generation_actor_lease import ActorLease
 from .generation_protocol import EVENT_LIMIT
 from .generations import GenerationStore, generation_model_history
+from .message_media import project_message_media
 from .tokenizer import count_tokens
 
 _MAX_SUMMARY_BYTES = 64 * 1024
@@ -43,6 +44,7 @@ class CompactionPlan:
     fingerprint: str
     scope: str
     retain_turns: int
+    canonical_fingerprint: str | None = None
 
 
 def _provider_messages(history: list[dict]) -> list[dict]:
@@ -115,16 +117,25 @@ def _plan(
     if (
         not source
         or (not tail and retain_turns != 0)
-        # Attachment bytes must not enter a durable summary until its
-        # fingerprint also binds live file availability and integrity.
-        or any(message.get("files") for message in source)
         or len(_encode(source).encode()) > _MAX_PREFIX_BYTES
     ):
         return None
     _validate_content(source, filters)
-    return CompactionPlan(
-        _provider_messages(source), _digest(source), scope, retain_turns
-    )
+    canonical = _digest(source)
+    projected = _provider_messages(source)
+    if any(message.get("files") for message in source):
+        projected = project_message_media(
+            lease.database, db, lease.owner, projected
+        )
+        _validate_content(projected, filters)
+        return CompactionPlan(
+            projected,
+            _digest([canonical, projected]),
+            scope,
+            retain_turns,
+            canonical,
+        )
+    return CompactionPlan(projected, canonical, scope, retain_turns)
 
 
 def plan_compaction(
@@ -169,6 +180,11 @@ def commit_compaction(
             "boundary": len(plan.source),
             "summary": summary,
             "tokenCount": tokens,
+            **(
+                {"sourceFingerprint": plan.canonical_fingerprint}
+                if plan.canonical_fingerprint
+                else {}
+            ),
             **({"manual": True} if state.get("manualCompaction") else {}),
         }
         prior = state.get("compaction")
@@ -238,6 +254,7 @@ def project_compaction(
         ):
             leading += 1
         best = None
+        verified = {}
         for candidate in candidates:
             if (
                 not isinstance(candidate, dict)
@@ -251,9 +268,29 @@ def project_compaction(
             ):
                 continue
             prefix = history[:boundary]
-            if _digest(prefix) != candidate["fingerprint"] or messages[
-                leading : leading + boundary
-            ] != _provider_messages(prefix):
+            canonical = _digest(prefix)
+            provider_prefix = _provider_messages(prefix)
+            if messages[leading : leading + boundary] != provider_prefix:
+                continue
+            if any(message.get("files") for message in prefix):
+                if canonical != candidate.get("sourceFingerprint"):
+                    continue
+                if boundary not in verified:
+                    projection = project_message_media(
+                        lease.database, db, lease.owner, provider_prefix
+                    )
+                    verified[boundary] = (
+                        _digest([canonical, projection]),
+                        inspect_content(
+                            model_message_fragments(projection), filters
+                        ),
+                    )
+                fingerprint, finding = verified[boundary]
+                if fingerprint != candidate["fingerprint"]:
+                    continue
+                if finding is not None:
+                    raise finding
+            elif canonical != candidate["fingerprint"]:
                 continue
             carrier = build_summary_carrier_text(candidate["summary"])
             # Validate both the hidden original source and the derived
