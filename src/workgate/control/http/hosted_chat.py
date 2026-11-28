@@ -13,6 +13,7 @@ from starlette.routing import Route
 
 from ...hosted_chat.approval_claims import ApprovalClaimStore
 from ...hosted_chat.ask_user_tools import ASK_USER_QUESTION_TOOL_NAME
+from ...hosted_chat.attachment_recovery import recover_private_attachments
 from ...hosted_chat.content_filters import ContentFilterBlocked
 from ...hosted_chat.database import DB_NAME, SQLiteDatabase
 from ...hosted_chat.durable_tasks import DurableTaskRepository
@@ -115,14 +116,26 @@ def _body(generation: Generation, *, protocol: int | None = None) -> dict:
 def hosted_chat_generation_routes(runtime: ControlRuntime) -> list[Route]:
     """Use the same protected /api/ui boundary as other native UI routes."""
 
+    next_attachment_recovery = 0.0
+
     async def cleanup() -> None:
+        nonlocal next_attachment_recovery
         # Only existing ledgers require cleanup. An idle, unconfigured host
         # must not initialize storage or acquire any new execution grant.
         if (runtime.config.state_dir / "hosted-chat" / DB_NAME).is_file():
-            await sweep_native_cancellations(
-                runtime,
-                DurableTaskRepository(SQLiteDatabase(runtime.config.state_dir)),
-            )
+            database = SQLiteDatabase(runtime.config.state_dir)
+            try:
+                await sweep_native_cancellations(
+                    runtime, DurableTaskRepository(database)
+                )
+            finally:
+                if time.monotonic() >= next_attachment_recovery:
+                    # Reuse the shielded, shutdown-drained cleanup worker;
+                    # frequent generation wakeups do not rescan attachment journals.
+                    next_attachment_recovery = time.monotonic() + 60
+                    await asyncio.to_thread(
+                        recover_private_attachments, database
+                    )
 
     runtime.configure_generation_cleanup(cleanup)
 
