@@ -3,6 +3,7 @@
 Adapted from final v6.0.3 approval_settings.py (0630dbfa0d...).
 """
 
+import json
 from collections.abc import Mapping
 from typing import Any
 
@@ -31,12 +32,26 @@ def save_mode(
     conversation_id: str | None = None,
 ) -> str:
     mode = validate_mode(value, inherit=conversation_id is not None)
-    if conversation_id is not None:
-        if repo.conversation(owner, conversation_id) is None:
+    with repo.database.connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        if (
+            conversation_id is not None
+            and not db.execute(
+                "SELECT 1 FROM conversations WHERE owner=? AND id=?",
+                (owner, conversation_id),
+            ).fetchone()
+        ):
             raise KeyError("Conversation not found")
-        repo.save_setting(owner, CHAT_PREFIX + conversation_id, mode)
-    else:
-        repo.save_setting(owner, GLOBAL_KEY, mode)
+        key = (
+            CHAT_PREFIX + conversation_id
+            if conversation_id is not None
+            else GLOBAL_KEY
+        )
+        db.execute(
+            "INSERT INTO settings(owner,key,value) VALUES(?,?,?) "
+            "ON CONFLICT(owner,key) DO UPDATE SET value=excluded.value",
+            (owner, key, json.dumps(mode)),
+        )
     return mode
 
 
