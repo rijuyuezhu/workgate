@@ -161,31 +161,38 @@ class ManagedSkills:
 
     def create(self, owner: str, payload: dict) -> dict:
         record = validate_record(payload)
-        now = _now()
-        sid = str(uuid.uuid4())
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            if (
-                db.execute(
-                    "SELECT count(*) FROM webui_skills WHERE owner=?", (owner,)
-                ).fetchone()[0]
-                >= _MAX_SKILLS
-            ):
-                raise SkillConflict("Managed Skill limit reached")
-            enforce_policy(
-                db,
-                owner,
-                description=record["description"],
-                body=record["body"],
-            )
-            try:
-                db.execute(
-                    "INSERT INTO webui_skills(id,owner,name,record,created_at,updated_at) VALUES(?,?,?,?,?,?)",
-                    (sid, owner, record["name"], _json(record), now, now),
-                )
-            except sqlite3.IntegrityError as error:
-                raise SkillConflict("Skill name already exists") from error
+            sid = self._insert_locked(db, owner, record)
             return present_skill(owned_skill(db, owner, sid), detail=True)
+
+    def _insert_locked(
+        self, db, owner: str, record: dict, *, references=()
+    ) -> str:
+        now = _now()
+        sid = str(uuid.uuid4())
+        if (
+            db.execute(
+                "SELECT count(*) FROM webui_skills WHERE owner=?", (owner,)
+            ).fetchone()[0]
+            >= _MAX_SKILLS
+        ):
+            raise SkillConflict("Managed Skill limit reached")
+        enforce_policy(
+            db,
+            owner,
+            description=record["description"],
+            body=record["body"],
+            references=references,
+        )
+        try:
+            db.execute(
+                "INSERT INTO webui_skills(id,owner,name,record,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+                (sid, owner, record["name"], _json(record), now, now),
+            )
+        except sqlite3.IntegrityError as error:
+            raise SkillConflict("Skill name already exists") from error
+        return sid
 
     def list(self, owner: str) -> list[dict]:
         with self.database.read_snapshot() as db:

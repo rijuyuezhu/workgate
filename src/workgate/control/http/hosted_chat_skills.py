@@ -13,6 +13,7 @@ from ...hosted_chat.content_filters import ContentFilterBlocked
 from ...hosted_chat.database import SQLiteDatabase
 from ...hosted_chat.machine_permissions import require_machine_scope
 from ...hosted_chat.managed_skill_files import ManagedSkillFiles, skill_path
+from ...hosted_chat.managed_skill_import import import_skill
 from ...hosted_chat.managed_skills import ManagedSkills, SkillConflict
 from ...ui.http.routes import UI_API_PREFIX
 from ..runtime import ControlRuntime
@@ -147,6 +148,27 @@ def hosted_chat_skill_routes(runtime: ControlRuntime) -> list[Route]:
 
         check()
         return principal.owner, SQLiteDatabase(runtime.config.state_dir), check
+
+    async def import_bundle(request: Request):
+        try:
+            owner, db, check = context(request)
+            payload = await _body(request, check)
+            if set(payload) != {"filename", "base64"}:
+                raise ValueError("Invalid Skill import request")
+            result = import_skill(
+                db, owner, _text(payload["filename"]), _file_bytes(payload)
+            )
+            return JSONResponse(result, status_code=201, headers=_HEADERS)
+        except (
+            KeyError,
+            PermissionError,
+            ValueError,
+            TypeError,
+            RecursionError,
+            OSError,
+            binascii.Error,
+        ) as error:
+            return _failure(error)
 
     async def catalog(request: Request):
         try:
@@ -389,6 +411,7 @@ def hosted_chat_skill_routes(runtime: ControlRuntime) -> list[Route]:
 
     return [
         Route(_PREFIX, catalog, methods=["GET", "POST"]),
+        Route(_PREFIX + "/import", import_bundle, methods=["POST"]),
         Route(_PREFIX + "/states", states, methods=["GET", "POST"]),
         Route(
             _PREFIX + "/{skill_id}", catalog, methods=["GET", "PATCH", "DELETE"]
