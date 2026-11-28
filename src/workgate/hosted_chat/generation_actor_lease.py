@@ -37,7 +37,12 @@ class ActorLease:
 
     @classmethod
     def claim(
-        cls, database: SQLiteDatabase, owner: str, run_id: str
+        cls,
+        database: SQLiteDatabase,
+        owner: str,
+        run_id: str,
+        *,
+        schedule_occurrence_id: str | None = None,
     ) -> ActorLease | None:
         token = secrets.token_hex(24)
         with database.connect() as db:
@@ -47,11 +52,29 @@ class ActorLease:
                 "SELECT 1 FROM runs r JOIN conversations c ON c.id=r.conversation_id "
                 "WHERE r.id=? AND c.owner=? AND r.status='running' "
                 "AND NOT EXISTS(SELECT 1 FROM active_subagent_threads a WHERE a.owner=c.owner AND a.thread_id=c.id) "
-                "AND json_extract(r.state,'$.completionWakeupTaskId') IS NULL",
-                (run_id, owner),
+                "AND json_extract(r.state,'$.completionWakeupTaskId') IS NULL "
+                "AND json_extract(r.state,'$.scheduleOccurrenceId') IS ?",
+                (run_id, owner, schedule_occurrence_id),
             ).fetchone()
             if match is None:
                 return None
+            if schedule_occurrence_id is not None:
+                claimed = db.execute(
+                    "UPDATE webui_schedule_runs SET status='started',updated_at=? "
+                    "WHERE id=? AND owner=? AND run_id=? AND status='claimed' "
+                    "AND conversation_id=(SELECT conversation_id FROM runs WHERE id=?) "
+                    "AND NOT EXISTS(SELECT 1 FROM generation_actor_leases WHERE run_id=?)",
+                    (
+                        time.time_ns() // 1000,
+                        schedule_occurrence_id,
+                        owner,
+                        run_id,
+                        run_id,
+                        run_id,
+                    ),
+                )
+                if not claimed.rowcount:
+                    return None
             db.execute(
                 "INSERT INTO generation_actor_leases(run_id,owner,token,expires_at) "
                 "VALUES(?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET "

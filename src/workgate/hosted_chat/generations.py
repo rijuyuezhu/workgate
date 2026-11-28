@@ -324,6 +324,7 @@ class GenerationStore:
         *,
         protocol_version: int = 2,
         wakeup_task_id: str | None = None,
+        schedule_occurrence_id: str | None = None,
         native_admission: dict | None = None,
     ) -> tuple[Generation, bool]:
         """Internal admission seam for the atomic completion transaction."""
@@ -337,16 +338,34 @@ class GenerationStore:
             ):
                 raise ValueError("Invalid client request id")
             if client_request_id.startswith(
-                ("subagent:", "subagent-wakeup:", "trigger_")
+                ("subagent:", "subagent-wakeup:", "trigger_", "schedule:")
             ) and not (
-                wakeup_task_id is not None
-                and client_request_id.startswith(
-                    "subagent-wakeup:" + wakeup_task_id + ":"
+                (
+                    wakeup_task_id is not None
+                    and client_request_id.startswith(
+                        "subagent-wakeup:" + wakeup_task_id + ":"
+                    )
+                )
+                or (
+                    schedule_occurrence_id is not None
+                    and client_request_id
+                    == "schedule:" + schedule_occurrence_id
                 )
             ):
                 raise ValueError(
                     "Internal generation request id cannot be submitted"
                 )
+        if schedule_occurrence_id is not None and (
+            client_request_id != "schedule:" + schedule_occurrence_id
+            or native_admission is not None
+            or wakeup_task_id is not None
+            or not db.execute(
+                "SELECT 1 FROM webui_schedule_runs r JOIN webui_schedules s ON s.id=r.schedule_id AND s.owner=r.owner "
+                "WHERE r.id=? AND r.owner=? AND r.status='claimed' AND r.run_id IS NULL",
+                (schedule_occurrence_id, owner),
+            ).fetchone()
+        ):
+            raise PermissionError("Invalid scheduled occurrence")
         raw_id = payload.get("conversationId")
         if raw_id is not None and not isinstance(raw_id, str):
             raise ValueError("Invalid conversation id")
@@ -538,7 +557,9 @@ class GenerationStore:
             "sampling": sampling,
             "artifactsMode": (
                 ""
-                if manual or wakeup_task_id is not None
+                if manual
+                or wakeup_task_id is not None
+                or schedule_occurrence_id is not None
                 else artifact_mode(payload, agent)
             ),
         }
@@ -559,6 +580,8 @@ class GenerationStore:
             state["agentRevision"] = agent.get("_version", 1)
         if wakeup_task_id is not None:
             state["completionWakeupTaskId"] = wakeup_task_id
+        if schedule_occurrence_id is not None:
+            state["scheduleOccurrenceId"] = schedule_occurrence_id
         parent_id = payload.get("parentMessageId")
         if parent_id in (None, _ROOT_MESSAGE):
             parent_id = None

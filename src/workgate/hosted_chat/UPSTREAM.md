@@ -847,3 +847,11 @@ non-timing edits preserve the current due occurrence. Dependencies are
 checked against owned live resources; disabled schedules can be paused even
 after their dependencies have disappeared. Dispatch and worker activation
 are separate from configuration storage.
+
+The schedule occurrence and its tool-free generation admission are committed
+together; request IDs are reserved to the internal path. The first actor
+lease transaction marks the occurrence started, preventing replay after
+the execution boundary even if the lease is later released or expires.
+Terminal accounting is idempotent. Active occurrences must settle before
+deleting their schedule. No scheduler or automatic generation launch is
+enabled by this repository slice.

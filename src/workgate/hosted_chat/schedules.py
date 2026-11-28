@@ -237,6 +237,13 @@ class ScheduleRepository:
 
     def delete(self, owner: str, sid: str) -> None:
         with self.database.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            _find(db, owner, sid)
+            if db.execute(
+                "SELECT 1 FROM webui_schedule_runs WHERE owner=? AND schedule_id=? AND status IN ('claimed','started')",
+                (owner, sid),
+            ).fetchone():
+                raise ScheduleConflict("Schedule has an active occurrence")
             if not db.execute(
                 "DELETE FROM webui_schedules WHERE owner=? AND id=?",
                 (owner, sid),
