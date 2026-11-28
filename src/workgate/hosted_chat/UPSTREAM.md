@@ -836,3 +836,14 @@ the same persisted root admission and live composer policy. Fetch arguments
 are validated before approval/dispatch, and cached results are subject to
 the same live-grant and disclosure checks as search. Browser rendering is
 not enabled by this slice.
+
+### M6 scheduled chats
+
+The recurrence engine and owner-scoped schedule records adapt pinned
+`webui/schedule_routes.py` (blob `e48b09e15135c66f1d5f35dc5d3a8e5c28086a51`).
+Calendar recurrence preserves timezone gaps and repeated folds, including
+sparse cron dates. Configuration edits are transactional and revision-checked;
+non-timing edits preserve the current due occurrence. Dependencies are
+checked against owned live resources; disabled schedules can be paused even
+after their dependencies have disappeared. Dispatch and worker activation
+are separate from configuration storage.
