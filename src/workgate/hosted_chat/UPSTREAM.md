@@ -709,3 +709,11 @@ and projected schemas, rejects YAML merge-key expansion, malformed
 and ambiguous parameter layouts, non-JSON values, and unsafe path syntax.
 The schema module does not authorize network requests; Agent-bound
 credential storage and transport are separate integration boundaries.
+
+The Action repository maps pinned `webui/actions.py` (blob
+`70c9c60616457103ebfe981131eebe51d18a7fda`) onto native Agent revisions
+and the existing private credential envelope. Credentials are bound to
+owner, Agent, Action ID and version; target/authentication changes require
+fresh credentials, and inactive records participate in collision checks.
+Agent selection and live Action references are both required. Invocation
+and external OAuth flow handling are separate layers.
