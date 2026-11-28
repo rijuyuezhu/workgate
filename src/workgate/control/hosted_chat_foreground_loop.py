@@ -19,6 +19,7 @@ from ..hosted_chat.agent_runtime import (
 from ..hosted_chat.context_usage import record_root_context_usage
 from ..hosted_chat.generation_actor_lease import ActorLeaseLost
 from ..hosted_chat.generations import GenerationStore
+from ..hosted_chat.model_history import completed_model_steps
 from ..hosted_chat.provider_common import (
     ModelFinish,
     ModelThought,
@@ -209,8 +210,20 @@ async def run_foreground_native_loop(
         if before_finish is not None:
             await before_finish()
         node.current_grant()
+        # The loop checkpoint contains the original canonical messages, not
+        # provider-only projections (memory, references, fading or compaction).
+        # Wakeup turns have a separate admitted input and are not public roots.
+        steps = (
+            completed_model_steps(history, state.messages)
+            if lease.wakeup_task_id is None and checkpoint.scope is None
+            else None
+        )
         store.finish(
-            lease.owner, lease.run_id, status="complete", actor_lease=lease
+            lease.owner,
+            lease.run_id,
+            status="complete",
+            actor_lease=lease,
+            model_steps=steps,
         )
         return state
     except ActorLeaseLost, AgentSuspended, asyncio.CancelledError:

@@ -637,6 +637,7 @@ class GenerationStore:
         text: str = "",
         error: str | None = None,
         actor_lease: ActorLease,
+        model_steps: list[dict] | None = None,
     ) -> bool:
         """Persist the final message, unread revision and terminal event atomically."""
         if actor_lease.detached_task_id is not None:
@@ -653,7 +654,12 @@ class GenerationStore:
                 return False
             self._assert_actor(db, owner, run_id, actor_lease)
             return self._finish_locked(
-                db, row, status=status, text=text, error=error
+                db,
+                row,
+                status=status,
+                text=text,
+                error=error,
+                model_steps=model_steps,
             )
 
     def _finish_locked(
@@ -664,6 +670,7 @@ class GenerationStore:
         status: str,
         text: str = "",
         error: str | None = None,
+        model_steps: list[dict] | None = None,
     ) -> bool:
         """Finalize after the caller has checked the exact transition authority."""
         if status not in _TERMINAL:
@@ -727,7 +734,7 @@ class GenerationStore:
             "content": content,
             **metadata,
         }
-        if content:
+        if content or model_steps:
             db.execute(
                 "INSERT INTO messages(id,conversation_id,parent_id,role,text,content,metadata,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
                 (
@@ -751,6 +758,12 @@ class GenerationStore:
                 "SELECT state FROM runs WHERE id=?", (run_id,)
             ).fetchone()[0]
         )
+        if model_steps is not None:
+            if status != "complete" or state.get("manualCompaction"):
+                raise ValueError(
+                    "Only completed model turns can save canonical steps"
+                )
+            state["modelSteps"] = model_steps
         pending_steers = SteeringStore.settle_leftovers(state)
         db.execute(
             "UPDATE runs SET status=?,state=?,updated_at=? WHERE id=?",
