@@ -15,6 +15,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from .content_filters import filters_from_snapshot, validate_message_submission
 from .database import SQLiteDatabase
 from .generation_actor_lease import ActorLease, ActorLeaseLost
 from .generation_protocol import EVENT_LIMIT, MAX_EVENT_BYTES, public_content
@@ -166,7 +167,8 @@ class SteeringStore:
         body: dict,
         *,
         preempt_capable: bool,
-        validate_submission: Callable[[str], None],
+        validate_submission: Callable[[str], None] | None = None,
+        expected_run_id: str | None = None,
     ) -> dict:
         cid = body.get("conversationId")
         if not isinstance(cid, str) or not cid or cid == "new":
@@ -192,19 +194,18 @@ class SteeringStore:
             raise SteerRejection(400, "INVALID_FILES")
         files: list[dict] = []
         quotes = _quotes(body.get("quotes"))
-        # Private admission requires the caller's content policy; no public route
-        # can use this text-only store before the policy is integrated.
-        for part in [
-            text,
-            *quotes,
-            merged_text({"text": text, "quotes": quotes}),
-        ]:
-            validate_submission(part)
+        parts = [text, *quotes, merged_text({"text": text, "quotes": quotes})]
+        if validate_submission is not None:
+            for part in parts:
+                validate_submission(part)
         desired_preempt = body.get("preempt") is True
         fingerprint = _fingerprint(text, files, desired_preempt, quotes)
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = self._latest(db, owner, cid)
+            filters = filters_from_snapshot(db, owner)
+            for part in parts:
+                validate_message_submission(part, filters)
             # Receipt must be read BEFORE current-run epoch fencing: a lost
             # ACK from a previous run must replay even if this chat moved on.
             if row is None:
@@ -215,7 +216,7 @@ class SteeringStore:
             if client_id:
                 # Replay includes terminal runs and survives a newly created run.
                 past = db.execute(
-                    "SELECT r.state FROM runs r WHERE r.conversation_id=? "
+                    "SELECT r.id,r.state FROM runs r WHERE r.conversation_id=? "
                     "ORDER BY r.created_at DESC,r.id DESC LIMIT 200",
                     (cid,),
                 ).fetchall()
@@ -232,6 +233,11 @@ class SteeringStore:
                         <= int(time.time() * 1000)
                     ):
                         continue
+                    if (
+                        expected_run_id is not None
+                        and previous["id"] != expected_run_id
+                    ):
+                        raise SteerRejection(409, "RUN_REPLACED")
                     if receipt["fingerprint"] != fingerprint:
                         raise SteerRejection(409, "STEER_IDEMPOTENCY_CONFLICT")
                     self._ensure_epoch(
@@ -244,6 +250,8 @@ class SteeringStore:
                     replay["replayed"] = True
                     return replay
             self._ensure_epoch(row, body.get("generationCreatedAt"))
+            if expected_run_id is not None and row["id"] != expected_run_id:
+                raise SteerRejection(409, "RUN_REPLACED")
             if row["status"] not in {"running", "requires_action"}:
                 raise SteerRejection(404, "NO_ACTIVE_RUN")
             if row["status"] == "requires_action":
@@ -328,7 +336,15 @@ class SteeringStore:
             **({"quotesAccepted": True} if item.get("quotes") else {}),
         }
 
-    def mutate(self, owner, body, *, arm: bool, preempt_capable: bool):
+    def mutate(
+        self,
+        owner,
+        body,
+        *,
+        arm: bool,
+        preempt_capable: bool,
+        expected_run_id: str | None = None,
+    ):
         cid = body.get("conversationId")
         sid = body.get("steerId")
         if not isinstance(cid, str) or not cid or cid == "new":
@@ -356,6 +372,11 @@ class SteeringStore:
                     )
                     if not receipt or receipt["item"]["steerId"] != sid:
                         continue
+                    if (
+                        expected_run_id is not None
+                        and previous["id"] != expected_run_id
+                    ):
+                        raise SteerRejection(409, "RUN_REPLACED")
                     self._ensure_epoch(
                         previous, body.get("generationCreatedAt")
                     )
@@ -378,6 +399,8 @@ class SteeringStore:
             self._ensure_epoch(row, body.get("generationCreatedAt"))
             if row is None:
                 return {"armed" if arm else "removed": False}
+            if expected_run_id is not None and row["id"] != expected_run_id:
+                raise SteerRejection(409, "RUN_REPLACED")
             state = self._state(row)
             steer = self._active_steers(state)
             result: dict = {"armed" if arm else "removed": False}

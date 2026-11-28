@@ -22,6 +22,7 @@ from ...hosted_chat.generations import (
     GenerationConflict,
     GenerationStore,
 )
+from ...hosted_chat.steering import SteeringStore, SteerRejection
 from ...oauth.core.context import current_oauth_claims
 from ...oauth.core.scopes import SUPPORTED_OAUTH_SCOPE_SET, scope_set
 from ...oauth.http.middleware import revalidate_browser_session
@@ -365,6 +366,58 @@ def hosted_chat_generation_routes(runtime: ControlRuntime) -> list[Route]:
         except (KeyError, ValueError, TypeError, PermissionError) as error:
             return failure(error)
 
+    async def steering(request: Request):
+        try:
+            principal = _principal(runtime, request)
+            repo = store()
+            generation, admission = owned(request, principal, repo)
+            require_admission(principal, admission)
+            steers = SteeringStore(repo.database)
+            if request.method == "GET":
+                return JSONResponse(
+                    {
+                        "pendingSteers": steers.pending(
+                            principal.owner, generation.run_id
+                        )
+                    },
+                    headers=_HEADERS,
+                )
+            payload = await request.json()
+            if not isinstance(payload, dict):
+                raise ValueError("Expected steering object")
+            for key, value in (
+                ("conversationId", generation.conversation_id),
+                ("generationCreatedAt", generation.generation_created_at),
+            ):
+                if key in payload and payload[key] != value:
+                    raise SteerRejection(409, "RUN_REPLACED")
+                payload[key] = value
+            operation = request.path_params.get("operation")
+            if operation is None:
+                result = steers.enqueue(
+                    principal.owner,
+                    payload,
+                    preempt_capable=True,
+                    expected_run_id=generation.run_id,
+                )
+            elif operation in {"arm", "cancel"}:
+                result = steers.mutate(
+                    principal.owner,
+                    payload,
+                    arm=operation == "arm",
+                    preempt_capable=True,
+                    expected_run_id=generation.run_id,
+                )
+            else:
+                raise KeyError("Unknown steering operation")
+            return JSONResponse(result, headers=_HEADERS)
+        except SteerRejection as error:
+            return JSONResponse(
+                error.body, status_code=error.status, headers=_HEADERS
+            )
+        except (KeyError, ValueError, TypeError, PermissionError) as error:
+            return failure(error)
+
     async def events(request: Request):
         try:
             principal = _principal(runtime, request)
@@ -425,4 +478,12 @@ def hosted_chat_generation_routes(runtime: ControlRuntime) -> list[Route]:
         Route(_PREFIX + "/{run_id}/events", events, methods=["GET"]),
         Route(_PREFIX + "/{run_id}/action", pending_action, methods=["GET"]),
         Route(_PREFIX + "/{run_id}/action", resolve_action, methods=["POST"]),
+        Route(
+            _PREFIX + "/{run_id}/steering", steering, methods=["GET", "POST"]
+        ),
+        Route(
+            _PREFIX + "/{run_id}/steering/{operation}",
+            steering,
+            methods=["POST"],
+        ),
     ]

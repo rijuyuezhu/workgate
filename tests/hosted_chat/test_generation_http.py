@@ -519,3 +519,135 @@ async def test_generation_http_approval_scope_and_edited_policy(
                 await client.post(path, json=body, headers=alice)
             ).status_code == 404
             assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_generation_http_steering_exact_run_and_policy(
+    tmp_path, monkeypatch
+):
+    runtime = runtime_for(tmp_path, auth_mode="oauth")
+    db = provider(runtime)
+    pause = asyncio.Event()
+    fake_stream(monkeypatch, pause=pause)
+    async with runtime.lifespan():
+        with control_execution_context(
+            config=runtime.config,
+            state_store=runtime.state_store,
+            oauth_state=runtime.oauth_state,
+        ):
+
+            def token(owner, scopes):
+                return {
+                    "Authorization": "Bearer "
+                    + issue_access_token(
+                        client_id="chat-test",
+                        scope=scopes,
+                        resource=resource_url(),
+                        subject=owner,
+                    )
+                }
+
+            alice = token("alice", "shell:read shell:write")
+            bob = token("bob", "shell:read shell:write")
+            narrow = token("alice", "shell:read")
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=build_http_app(runtime=runtime)),
+            base_url="http://testserver",
+        ) as client:
+            first = await client.post(
+                PREFIX,
+                json={
+                    "text": "question",
+                    "provider": "test-provider",
+                    "model": "test-model",
+                },
+                headers=alice,
+            )
+            assert first.status_code == 202, first.text
+            run = first.json()["runId"]
+            path = PREFIX + "/" + run + "/steering"
+            steer = {"text": "new direction", "clientSteerId": "one"}
+            assert (
+                await client.post(path, json=steer, headers=bob)
+            ).status_code == 404
+            assert (
+                await client.post(path, json=steer, headers=narrow)
+            ).status_code == 403
+            assert (
+                await client.post(
+                    path,
+                    json={**steer, "conversationId": "wrong"},
+                    headers=alice,
+                )
+            ).status_code == 409
+            workspace = WorkspaceRepository(db)
+            workspace.save_setting(
+                "alice",
+                "webui.filters.config",
+                {"messages": {"pii": {"starterPatterns": ["bearer_header"]}}},
+            )
+            blocked = await client.post(
+                path, json={**steer, "quotes": ["Bearer secret"]}, headers=alice
+            )
+            assert (
+                blocked.status_code == 400
+                and blocked.json()["error"] == "content_filter_block"
+            )
+            assert (await client.get(path, headers=alice)).json()[
+                "pendingSteers"
+            ] == []
+            queued = await client.post(path, json=steer, headers=alice)
+            assert queued.status_code == 200, queued.text
+            sid = queued.json()["steerId"]
+            assert (await client.post(path, json=steer, headers=alice)).json()[
+                "replayed"
+            ]
+            assert (
+                await client.post(
+                    path + "/arm", json={"steerId": sid}, headers=alice
+                )
+            ).json()["armed"]
+            assert (
+                await client.post(
+                    path + "/cancel",
+                    json={"steerId": sid, "clientSteerId": "one"},
+                    headers=alice,
+                )
+            ).json()["removed"]
+            assert (await client.get(path, headers=alice)).json()[
+                "pendingSteers"
+            ] == []
+            pause.set()
+            assert (
+                "test answer"
+                in (
+                    await client.get(
+                        PREFIX + "/" + run + "/events", headers=alice
+                    )
+                ).text
+            )
+            successor = await client.post(
+                PREFIX,
+                json={
+                    "text": "next",
+                    "conversationId": first.json()["conversationId"],
+                    "provider": "test-provider",
+                    "model": "test-model",
+                },
+                headers=alice,
+            )
+            assert successor.status_code == 202, successor.text
+            assert (
+                await client.post(
+                    path,
+                    json={"text": "stale direction", "clientSteerId": "two"},
+                    headers=alice,
+                )
+            ).status_code == 409
+            assert (
+                await client.post(
+                    PREFIX + "/" + successor.json()["runId"] + "/steering",
+                    json=steer,
+                    headers=alice,
+                )
+            ).status_code == 409
