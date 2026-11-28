@@ -82,6 +82,9 @@ class ForegroundCompaction:
         # Compact only the admitted conversation prefix, not provider-only
         # reference documents. Insert live references after prefix projection.
         messages = self.node.project_messages(state, include_resources=False)
+        # A summary may carry information from earlier attachment bytes.
+        # Do not let prefix replacement bypass the current read grant.
+        self.node.require_file_grant(messages)
         if (
             self.lease.detached_task_id is not None
             or self.lease.wakeup_task_id is not None
@@ -119,6 +122,7 @@ class ForegroundCompaction:
             raise InterruptedError("Compaction preempted")
 
     async def manual(self, state: AgentLoopState) -> None:
+        self.node.require_file_grant(state.messages)
         with self.lease.database.read_snapshot() as db:
             self.lease.assert_current(db)
             row = db.execute(

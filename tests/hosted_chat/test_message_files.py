@@ -212,7 +212,7 @@ def test_unadmitted_metadata_is_not_provider_evidence(store):
         }
 
 
-def test_attachment_prefix_not_compacted_without_live_proof(store):
+def test_attachment_prefix_binds_missing_projection(store):
     job, _ = store.begin(
         "alice", {"text": "long " * 100, "files": [{"file_id": "own"}]}
     )
@@ -227,4 +227,7 @@ def test_attachment_prefix_not_compacted_without_live_proof(store):
     )
     next_lease = ActorLease.claim(store.database, "alice", next_job.run_id)
     assert next_lease is not None
-    assert plan_compaction(next_lease, retain_turns=1) is None
+    plan = plan_compaction(next_lease, retain_turns=1)
+    assert plan is not None and plan.canonical_fingerprint is not None
+    assert "cannot be inlined" in str(plan.source)
+    assert "private contents" not in str(plan.source)
