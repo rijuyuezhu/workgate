@@ -78,6 +78,24 @@ class AgentRepository:
         ):
             build_graph_topology(graph, members)
 
+    @staticmethod
+    def _validate_resources(db, owner: str, config: dict) -> None:
+        # Validate live references in the same write transaction as every
+        # revision, including clones and restores. A prepared deletion owns
+        # the file until its journal is reconciled.
+        for identity in (
+            config.get("tool_resources", {})
+            .get("context", {})
+            .get("file_ids", [])
+        ):
+            row = db.execute(
+                "SELECT 1 FROM attachments WHERE id=? AND owner=? "
+                "AND NOT EXISTS (SELECT 1 FROM attachment_deletions WHERE file_id=?)",
+                (identity, owner, identity),
+            ).fetchone()
+            if row is None:
+                raise ValueError("Context attachment is not available")
+
     def create(self, owner: str, body: dict) -> dict:
         return self._create(owner, clean_agent_config(body, create=True))
 
@@ -101,6 +119,7 @@ class AgentRepository:
             db.execute("BEGIN IMMEDIATE")
             validate_agent_submission(values, filters_from_snapshot(db, owner))
             self._validate_graph(db, owner, agent_id, values)
+            self._validate_resources(db, owner, values)
             db.execute(
                 "INSERT INTO agents(id,owner,name,description,config,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
                 (
@@ -225,6 +244,7 @@ class AgentRepository:
             "subagents",
         }:
             self._validate_graph(db, owner, agent_id, config)
+        self._validate_resources(db, owner, config)
         validate_agent_submission(config, filters_from_snapshot(db, owner))
         version = int(config.get("_version", 1)) + 1
         config["_version"] = version
@@ -249,6 +269,92 @@ class AgentRepository:
                 "SELECT * FROM agents WHERE id=?", (agent_id,)
             ).fetchone()
         )
+
+    def add_resource_file(
+        self,
+        owner: str,
+        agent_id: str,
+        resource: str,
+        file_id: str,
+        *,
+        db: Any = None,
+    ) -> dict:
+        """Adapt the upstream add-to-set operator to native Agent revisions."""
+        if resource != "context" or not isinstance(file_id, str) or not file_id:
+            raise ValueError("Invalid context resource")
+        if db is None:
+            with self.database.connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                return self.add_resource_file(
+                    owner, agent_id, resource, file_id, db=connection
+                )
+        if not db.in_transaction:
+            raise ValueError("Resource binding requires an active transaction")
+        row = db.execute(
+            "SELECT * FROM agents WHERE id=? AND owner=?", (agent_id, owner)
+        ).fetchone()
+        if row is None:
+            raise KeyError("Agent not found")
+        config = json.loads(row["config"])
+        resources = config.setdefault("tool_resources", {})
+        ids = resources.setdefault("context", {}).setdefault("file_ids", [])
+        if file_id not in ids:
+            ids.append(file_id)
+        tools = config.setdefault("tools", [])
+        if "context" not in tools:
+            tools.append("context")
+        values = clean_agent_config(
+            {"tools": tools, "tool_resources": resources}
+        )
+        updated = self._update_locked(db, owner, agent_id, values)
+        assert updated is not None
+        return updated
+
+    def remove_resource_files(
+        self, owner: str, agent_id: str, files: list[dict], *, db: Any = None
+    ) -> dict:
+        """Detach shared references, preserving bytes and fencing stale runs."""
+        if not isinstance(files, list) or len(files) > 100:
+            raise ValueError("Invalid context resource file list")
+        removed = set()
+        for value in files:
+            if (
+                not isinstance(value, dict)
+                or set(value) != {"tool_resource", "file_id"}
+                or value["tool_resource"] != "context"
+                or not isinstance(value["file_id"], str)
+                or not value["file_id"]
+                or len(value["file_id"]) > 128
+            ):
+                raise ValueError("Invalid context resource file")
+            removed.add(value["file_id"])
+        if db is None:
+            with self.database.connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                return self.remove_resource_files(
+                    owner, agent_id, files, db=connection
+                )
+        if not db.in_transaction:
+            raise ValueError("Resource binding requires an active transaction")
+        row = db.execute(
+            "SELECT * FROM agents WHERE id=? AND owner=?", (agent_id, owner)
+        ).fetchone()
+        if row is None:
+            raise KeyError("Agent not found")
+        config = json.loads(row["config"])
+        resources = config.get("tool_resources", {})
+        context = resources.get("context", {})
+        ids = context.get("file_ids", [])
+        remaining = [identity for identity in ids if identity not in removed]
+        if remaining == ids:
+            return self._from_row(row)
+        context["file_ids"] = remaining
+        # Unlike the upstream unversioned pull, the native admitted Agent
+        # revision is an execution fence: detaching must invalidate it.
+        values = clean_agent_config({"tool_resources": resources})
+        updated = self._update_locked(db, owner, agent_id, values)
+        assert updated is not None
+        return updated
 
     def versions(self, owner: str, agent_id: str) -> list[dict] | None:
         with self.database.read_snapshot() as db:
