@@ -71,8 +71,18 @@ from ..hosted_chat.subagent_scope import (
     detached_root_scope,
 )
 from ..hosted_chat.subagents import SUBAGENT_TOOL_NAME
+from ..hosted_chat.tool_attachment_publication import (
+    TOOL_NAME as ATTACHMENT_TOOL,
+)
+from ..hosted_chat.tool_attachment_publication import ToolAttachmentPublication
 from .hosted_chat_native_creation import _grant, _registered
 from .hosted_chat_native_dispatch import NativeToolDispatcher, _selected_tools
+from .hosted_chat_tool_attachments import (
+    PublishAttachmentRequest,
+    attachment_definition,
+    publication_result,
+    publish_native_attachment,
+)
 from .runtime import ControlRuntime
 
 _DELEGATION_TOOLS = frozenset({SUBAGENT_TOOL_NAME, CHECK_BACKGROUND_TASK})
@@ -282,6 +292,76 @@ class NativeLoopToolNode:
             return []
         return memory_definitions(self.checkpoint)
 
+    def _attachment_enabled(self) -> bool:
+        lease = self.checkpoint.lease
+        if (
+            self.checkpoint.scope is not None
+            or lease.wakeup_task_id is not None
+            or lease.detached_task_id is not None
+            or ATTACHMENT_TOOL not in self.allowed_tools
+        ):
+            return False
+        scopes, expires = self.current_grant()
+        _, agents = self.repository.tool_context_chain(lease)
+        try:
+            require_machine_scope(scopes, "write", expires=expires)
+        except PermissionError:
+            return False
+        return ATTACHMENT_TOOL in _selected_tools(agents, self.allowed_tools)
+
+    def _attachment_request(
+        self, call: ModelToolCall
+    ) -> tuple[PublishAttachmentRequest, Callable[[], None]]:
+        if not self._attachment_enabled():
+            raise PermissionError(
+                "Private attachment publication is not selected"
+            )
+        request = PublishAttachmentRequest.model_validate(call.arguments)
+        lease = self.checkpoint.lease
+        machine = self.repository.resolve_session_executor(
+            lease, request.session_id
+        )
+
+        def authorize() -> None:
+            if not self._attachment_enabled():
+                raise PermissionError(
+                    "Private attachment publication is no longer selected"
+                )
+            scopes, expires = self.current_grant()
+            self.repository.authorize_session_read(
+                lease,
+                request.session_id,
+                machine=machine,
+                scopes=scopes,
+                expires=expires,
+                registered=_registered(self.runtime),
+            )
+            record = self.runtime.session_coordinator.require_session_status(
+                request.session_id, {"active"}
+            )
+            if str(record.executor_id) != machine:
+                raise PermissionError(
+                    "Native attachment Session binding mismatch"
+                )
+            self._validate_calls([call])
+
+        authorize()
+        return request, authorize
+
+    def _attachment_replay_request(self, call: ModelToolCall) -> ModelToolCall:
+        claim = ApprovalClaimStore(self.repository.database).approved_batch(
+            self.checkpoint
+        )
+        if claim is not None:
+            for entry in claim.entries:
+                if entry.call_id == call.call_id:
+                    if entry.decision["type"] not in {"approve", "edit"}:
+                        raise PermissionError(
+                            "Attachment publication was not approved"
+                        )
+                    return entry.tool_call()
+        return call
+
     def _resource_agent(self, db, state: AgentLoopState) -> dict:
         """Recheck the exact admitted Agent revision before reading documents."""
         lease = self.checkpoint.lease
@@ -433,6 +513,8 @@ class NativeLoopToolNode:
         for call in calls:
             if is_transfer_tool(call.name):
                 self._transfer(call, [])
+            elif call.name == ATTACHMENT_TOOL:
+                self._attachment_request(call)
             elif call.name in MEMORY_TOOLS:
                 if not self._memory_tools():
                     raise PermissionError(
@@ -452,7 +534,7 @@ class NativeLoopToolNode:
                 if not is_transfer_tool(call.name)
                 and call.name
                 not in (
-                    {ASK_USER_QUESTION_TOOL_NAME}
+                    {ASK_USER_QUESTION_TOOL_NAME, ATTACHMENT_TOOL}
                     | _DELEGATION_TOOLS
                     | MEMORY_TOOLS
                 )
@@ -477,6 +559,8 @@ class NativeLoopToolNode:
         if self._question_enabled(agent):
             state.context.tools.extend(copy.deepcopy(ASK_USER_TOOLS))
         state.context.tools.extend(self._memory_tools())
+        if self._attachment_enabled():
+            state.context.tools.append(attachment_definition())
         state.context.tools.extend(copy.deepcopy(self._handoffs()[1]))
         if self.delegation is not None:
             state.context.tools.extend(self.delegation.definitions())
@@ -588,6 +672,21 @@ class NativeLoopToolNode:
                 != receipt["result"]
             ):
                 raise PermissionError("Memory receipt changed")
+        if (
+            call.name == ATTACHMENT_TOOL
+            and receipt["result"].get("isError") is not True
+        ):
+            effective = self._attachment_replay_request(call)
+            _, authorize = self._attachment_request(effective)
+            binder = ToolAttachmentPublication(
+                self.checkpoint, call, effective, check_grant=authorize
+            )
+            record = binder.lookup()
+            if (
+                record is None
+                or publication_result(record) != receipt["result"]
+            ):
+                raise PermissionError("Native attachment receipt changed")
         access = receipt["access"]
         if not isinstance(access, dict) or set(access) != {
             "scopes",
@@ -646,7 +745,11 @@ class NativeLoopToolNode:
             _, agents = self.repository.tool_context_chain(
                 self.checkpoint.lease
             )
-            enabled = _selected_tools(agents, self.allowed_tools)
+            enabled = _selected_tools(agents, self.allowed_tools) - {
+                ATTACHMENT_TOOL
+            }
+            if self._attachment_enabled():
+                enabled = enabled | {ATTACHMENT_TOOL}
             enabled |= {
                 tool["function"]["name"] for tool in self._memory_tools()
             }
@@ -719,6 +822,14 @@ class NativeLoopToolNode:
                 child_scopes[call.call_id] = scope
                 return result
             scopes, expires = self.current_grant()
+            if prepared.name == ATTACHMENT_TOOL:
+                request, authorize = self._attachment_request(prepared)
+                binder = ToolAttachmentPublication(
+                    self.checkpoint, call, prepared, check_grant=authorize
+                )
+                return await publish_native_attachment(
+                    self.runtime, binder, request, check_grant=authorize
+                )
             if prepared.name in MEMORY_TOOLS:
                 try:
                     return execute_memory_call(

@@ -6,6 +6,7 @@ import hashlib
 import mimetypes
 import secrets
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -441,14 +442,49 @@ class ControlDownloadService:
                 link_id, session_id, settings=self._settings
             )
 
-    async def _export_snapshot(
-        self, record: ControlSessionRecord, path: str
+    async def export_private_snapshot(
+        self,
+        *,
+        session_id: str,
+        path: str,
+        maximum: int,
+        check_grant: Callable[[], None],
     ) -> DownloadSnapshot:
+        """Reuse checksum-verified native transfer without issuing a bearer link."""
+        if maximum <= 0:
+            raise ValueError("Private snapshot requires a positive byte limit")
+        snapshot = None
+        try:
+            check_grant()
+            async with self._sessions.session_admission(
+                (session_id,)
+            ) as records:
+                check_grant()
+                snapshot = await self._export_snapshot(
+                    records[0], path, maximum=maximum, check_grant=check_grant
+                )
+                check_grant()
+            return snapshot
+        except BaseException:
+            if snapshot is not None:
+                snapshot.staging_path.unlink(missing_ok=True)
+            raise
+
+    async def _export_snapshot(
+        self,
+        record: ControlSessionRecord,
+        path: str,
+        *,
+        maximum: int | None = None,
+        check_grant: Callable[[], None] = lambda: None,
+    ) -> DownloadSnapshot:
+        check_grant()
         stat = TransferStatOutput.model_validate(
             await self._call(
                 record, "transfer_stat", {"path": path, "sha256": True}
             )
         )
+        check_grant()
         if stat.type != "file" or stat.size is None or stat.sha256 is None:
             raise ValueError(f"Not a regular file: {path}")
         expected_size = int(stat.size)
@@ -457,6 +493,10 @@ class ControlDownloadService:
             maximum=self._settings.file_download_max_file_bytes,
         )
 
+        if maximum is not None:
+            if expected_size <= 0:
+                raise ValueError("Private attachment must not be empty")
+            assert_shareable_size(expected_size, maximum=maximum)
         staging = new_staging_path(data_dir=self._settings.data_dir)
         digest = hashlib.sha256()
         offset = 0
@@ -466,6 +506,7 @@ class ControlDownloadService:
                 staging, data_dir=self._settings.data_dir
             ) as destination:
                 while offset < expected_size:
+                    check_grant()
                     requested = min(chunk_size, expected_size - offset)
                     try:
                         response = await self._call(
@@ -484,6 +525,7 @@ class ControlDownloadService:
                         # successful size for all subsequent requests.
                         chunk_size = max(1, requested // 2)
                         continue
+                    check_grant()
                     chunk = TransferReadChunkOutput.model_validate(response)
                     decoded = self._decode_chunk(
                         chunk,
@@ -516,6 +558,7 @@ class ControlDownloadService:
             source_name = remote_path_name(
                 stat.path or path
             ) or remote_path_name(path)
+            check_grant()
             return DownloadSnapshot(
                 staging_path=staging,
                 display_path=stat.path,

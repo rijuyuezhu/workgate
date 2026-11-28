@@ -29,6 +29,9 @@ from ..hosted_chat.native_tool_kinds import (
 )
 from ..hosted_chat.provider_common import ModelToolCall, complete_tool_batch
 from ..hosted_chat.storage import WorkspaceRepository
+from ..hosted_chat.tool_attachment_publication import (
+    TOOL_NAME as ATTACHMENT_TOOL,
+)
 from ..protocol.ids import ExecutorId, TaskId
 from ..schemas.input_models.session import (
     SessionLabelArg,
@@ -60,6 +63,7 @@ SESSION_TOOLS = (
     }
 )
 NATIVE_TOOLS = TASK_TOOLS | SESSION_TOOLS
+ROOT_NATIVE_TOOLS = NATIVE_TOOLS | {ATTACHMENT_TOOL}
 
 
 class _CreateTask(BaseModel):
@@ -95,7 +99,7 @@ def _envelope(result: dict[str, Any]) -> dict[str, Any]:
 def _selected_tools(
     agents: Sequence[dict | None], allowed: Collection[str]
 ) -> frozenset[str]:
-    selected = NATIVE_TOOLS.intersection(allowed)
+    selected = ROOT_NATIVE_TOOLS.intersection(allowed)
     for agent in agents:
         if agent is not None and agent_access_policy(agent) is None:
             # Each inherited legacy selection is an independent ceiling.
@@ -147,7 +151,7 @@ class NativeToolDispatcher:
         conversation_id, agents = repository.tool_context_chain(
             lease, authorization=True
         )
-        selected = _selected_tools(agents, allowed_tools)
+        selected = _selected_tools(agents, allowed_tools) & NATIVE_TOOLS
         policy, _ = effective_machine_access(
             lease.owner,
             conversation_id,
@@ -256,7 +260,10 @@ class NativeToolDispatcher:
         calls = copy.deepcopy(complete_tool_batch(calls))
         conversation_id, agents = repository.tool_context_chain(lease)
         selected = _selected_tools(agents, allowed_tools)
-        if any(call.name not in selected for call in calls):
+        if any(
+            call.name not in selected or call.name not in NATIVE_TOOLS
+            for call in calls
+        ):
             raise PermissionError("Native tool is not selected and adapted")
         prepared = []
         for call in calls:
