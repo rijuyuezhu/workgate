@@ -177,6 +177,7 @@ async def run_foreground_native_loop(
             on_thought=thought,
             save_state=save,
             before_model=node.refresh_tools,
+            validate_model_input=node.validate_model_input,
             preflight_calls=node.preflight,
             on_stream_chunk=check_stream,
             on_boundary=boundary,

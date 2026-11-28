@@ -668,3 +668,65 @@ def test_missing_optional_regex_fails_closed_without_affecting_unconfigured_chat
         ) == [{"key": "", "value": "", "contentFilterBlocked": True}]
     finally:
         _compile.cache_clear()
+
+
+def test_owned_admission_checks_policy_inside_transaction(tmp_path):
+    from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.database import SQLiteDatabase
+    from workgate.hosted_chat.generations import GenerationStore
+    from workgate.hosted_chat.storage import WorkspaceRepository
+
+    db = SQLiteDatabase(tmp_path)
+    workspace = WorkspaceRepository(db)
+    agents = AgentRepository(db)
+    owner = "alice"
+    good = agents.create(
+        owner, {"provider": "openai", "model": "test", "instructions": "safe"}
+    )
+    config = {
+        **_policy("messages"),
+        **_policy("agentInstructions"),
+        **_policy("modelParameters"),
+        **_policy("conversationStarters"),
+    }
+    workspace.save_setting(owner, "webui.filters.config", config)
+    with pytest.raises(ContentFilterBlocked):
+        GenerationStore(db).begin(owner, {"text": "Bearer secret"})
+    with pytest.raises(ContentFilterBlocked):
+        agents.create(
+            owner,
+            {
+                "provider": "openai",
+                "model": "test",
+                "instructions": "Bearer secret",
+            },
+        )
+    with pytest.raises(ContentFilterBlocked):
+        agents.update(
+            owner, good["id"], {"conversation_starters": ["Bearer secret"]}
+        )
+    with pytest.raises(ContentFilterBlocked):
+        agents.update(
+            owner, good["id"], {"model_parameters": {"stop": ["Bearer secret"]}}
+        )
+    assert agents.get(owner, good["id"]) == good
+    with db.read_snapshot() as conn:
+        assert conn.execute("SELECT count(*) FROM runs").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM agents").fetchone()[0] == 1
+    GenerationStore(db).begin("bob", {"text": "Bearer secret"})
+    # A fresh policy blocks legacy instructions at admission, too.
+    workspace.save_setting(owner, "webui.filters.config", {})
+    old = agents.create(
+        owner,
+        {
+            "provider": "openai",
+            "model": "test",
+            "instructions": "Bearer secret",
+        },
+    )
+    workspace.save_setting(owner, "endpoints", {"filters": config})
+    workspace.save_setting(owner, "webui.filters.config", None)
+    with pytest.raises(ContentFilterBlocked):
+        GenerationStore(db).begin(
+            owner, {"text": "safe", "agent_id": old["id"]}
+        )

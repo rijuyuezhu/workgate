@@ -7,11 +7,11 @@ See LICENSE.upstream.
 Regex compilation reuses the existing fail-closed memory policy engine; it is
 not advertised as an exact RE2JS runtime or a substitute for file scanners.
 
-Pinned v6.0.3 source blob 88d962820ceeb25bd382d1b1a4310454a3772759.
-See LICENSE.upstream.
 """
 
+import json
 import logging
+import sqlite3
 import time
 from collections import Counter
 from collections.abc import Callable, Iterable
@@ -70,6 +70,40 @@ class ContentFilterBlocked(ValueError):
             "source": self.source,
             "field": self.field,
         }
+
+
+def filters_from_snapshot(db: sqlite3.Connection, owner: str) -> dict | None:
+    """Read owner policy in the same snapshot as a durable admission."""
+
+    def setting(key: str):
+        row = db.execute(
+            "SELECT value FROM settings WHERE owner=? AND key=?", (owner, key)
+        ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    configured = setting("webui.filters.config")
+    if not isinstance(configured, dict):
+        endpoints = setting("endpoints")
+        configured = (
+            endpoints.get("filters") if isinstance(endpoints, dict) else None
+        )
+    return configured if isinstance(configured, dict) else None
+
+
+def validate_agent_submission(agent: dict, filters: dict | None) -> None:
+    validate_agent_instructions(agent.get("instructions") or "", filters)
+    blocked = inspect_content(
+        [
+            ContentFragment(
+                "conversation_starter", "text", text, "administrator"
+            )
+            for text in agent.get("conversation_starters", [])
+        ],
+        filters,
+    )
+    if blocked is not None:
+        raise blocked
+    validate_model_parameters(agent, filters)
 
 
 def _policies(filters: dict | None, source: str) -> dict | None:

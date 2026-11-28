@@ -21,6 +21,16 @@ from ..hosted_chat.ask_user_tools import (
     ask_user_requested,
     build_ask_user_payload,
 )
+from ..hosted_chat.content_filters import (
+    filtered_tool_output,
+    filters_from_snapshot,
+    inspect_content,
+    model_message_fragments,
+    tool_fragments,
+    validate_agent_instructions,
+    validate_model_parameters,
+    validate_tool_arguments,
+)
 from ..hosted_chat.detached_task_controls import CHECK_BACKGROUND_TASK
 from ..hosted_chat.durable_tasks import DurableTaskRepository
 from ..hosted_chat.graph_human_request import (
@@ -244,6 +254,54 @@ class NativeLoopToolNode:
             raise ValueError("Conditional handoff did not select a destination")
         return command
 
+    def _filters(self) -> dict | None:
+        with self.repository.database.read_snapshot() as db:
+            return filters_from_snapshot(db, self.checkpoint.lease.owner)
+
+    def _validate_calls(self, calls: list[ModelToolCall]) -> None:
+        filters = self._filters()
+        for call in calls:
+            validate_tool_arguments(call.name, call.arguments, filters)
+
+    def validate_model_input(
+        self, state: AgentLoopState, messages: list[dict]
+    ) -> None:
+        self.current_grant()
+        filters = self._filters()
+        if filters is None:
+            return
+        validate_agent_instructions(
+            (state.context.agent or {}).get("instructions") or "", filters
+        )
+        validate_model_parameters(state.context.parameters, filters)
+        # A restored checkpoint may contain a result disclosed before a policy
+        # change. Never send that old result under the new protection policy.
+        names = {}
+        history_fragments = []
+        for message in messages:
+            for call in message.get("tool_calls") or []:
+                if not isinstance(call, dict):
+                    continue
+                function = call.get("function") or {}
+                if isinstance(function, dict):
+                    names[call.get("id")] = function.get("name", "")
+            if message.get("role") == "tool":
+                name = names.get(message.get("tool_call_id"), "")
+                output = {
+                    key: message[key]
+                    for key in ("content", "artifact")
+                    if key in message
+                }
+                history_fragments.extend(
+                    tool_fragments(name, {}, output=output)
+                )
+        finding = inspect_content(history_fragments, filters)
+        if finding is not None:
+            raise finding
+        finding = inspect_content(model_message_fragments(messages), filters)
+        if finding is not None:
+            raise finding
+
     def _prepare(self, calls: list[ModelToolCall]) -> list[ModelToolCall]:
         # Validate every transfer and native target before releasing siblings.
         for call in calls:
@@ -294,6 +352,7 @@ class NativeLoopToolNode:
         shown = {tool["function"]["name"] for tool in state.context.tools}
         if any(call.name not in shown for call in calls):
             raise PermissionError("Native tool was not advertised")
+        self._validate_calls(calls)
         self._validate_question_batch(calls)
         if calls and calls[0].name == ASK_USER_QUESTION_TOOL_NAME:
             _, agent = self.repository.tool_context(self.checkpoint.lease)
@@ -472,6 +531,7 @@ class NativeLoopToolNode:
             if call.call_id in blocked:
                 return rejected(blocked[call.call_id])
             prepared = effective[call.call_id]
+            self._validate_calls([prepared])
             if prepared.name == ASK_USER_QUESTION_TOOL_NAME:
                 answer = claim_store.answered_question(self.checkpoint)
                 if answer is None:
@@ -578,6 +638,7 @@ class NativeLoopToolNode:
                     "Native approval policy changed after review"
                 )
             candidates = [*effective.values(), *ask]
+            self._validate_calls(candidates)
             self._validate_question_batch(candidates)
             self._prepare(candidates)
             if authorize_effects is not None and candidates:
@@ -619,6 +680,16 @@ class NativeLoopToolNode:
         commands = []
         for call, output in zip(calls, outputs, strict=True):
             result = output["result"]
+            filtered = filtered_tool_output(call.name, result, self._filters())
+            if isinstance(filtered, str):
+                if is_transfer_tool(call.name) and "graphCommand" in result:
+                    raise PermissionError(
+                        "Graph handoff output blocked by content policy"
+                    )
+                result = {
+                    "content": [{"type": "text", "text": filtered}],
+                    "isError": True,
+                }
             if is_transfer_tool(call.name) and "graphCommand" in result:
                 # StateGraph owns transfer acknowledgement projection and
                 # parallel metadata. Do not emit a duplicate ordinary result.

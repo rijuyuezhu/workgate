@@ -14,6 +14,7 @@ from .agent_validation import (
     replace_graph_self,
     sanitize_model_parameters,
 )
+from .content_filters import filters_from_snapshot, validate_agent_submission
 from .database import SQLiteDatabase
 from .graph_topology import build_graph_topology, graph_members
 from .storage import _cursor_decode, _cursor_encode, _like_pattern, _now
@@ -98,6 +99,7 @@ class AgentRepository:
         values["_version"] = 1
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            validate_agent_submission(values, filters_from_snapshot(db, owner))
             self._validate_graph(db, owner, agent_id, values)
             db.execute(
                 "INSERT INTO agents(id,owner,name,description,config,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
@@ -223,6 +225,7 @@ class AgentRepository:
             "subagents",
         }:
             self._validate_graph(db, owner, agent_id, config)
+        validate_agent_submission(config, filters_from_snapshot(db, owner))
         version = int(config.get("_version", 1)) + 1
         config["_version"] = version
         now = _now()

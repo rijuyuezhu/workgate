@@ -263,6 +263,7 @@ async def run_detached_subagent(
             on_thought=discard,
             save_state=save,
             before_model=node.refresh_tools,
+            validate_model_input=node.validate_model_input,
             preflight_calls=node.preflight,
             on_stream_chunk=stream_boundary,
             inject_controls=inject_controls,
