@@ -87,14 +87,18 @@ class ForegroundCompaction:
             or self.lease.wakeup_task_id is not None
             or self.node.checkpoint.scope is not None
         ):
-            return self.node.project_resource_messages(state, messages)
+            return self.node.project_file_messages(
+                self.node.project_resource_messages(state, messages)
+            )
         with self.lease.database.read_snapshot() as db:
             config = self._settings(db)
         if config.get("enabled") is not False:
             messages = project_compaction(
                 self.lease, messages, manual_only=not self._enabled(config)
             )
-        return self.node.project_resource_messages(state, messages)
+        return self.node.project_file_messages(
+            self.node.project_resource_messages(state, messages)
+        )
 
     def project_for_provider(self, state: AgentLoopState) -> list[dict]:
         # Policy must see original arguments and outputs even when the
