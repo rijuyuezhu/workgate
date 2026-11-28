@@ -880,3 +880,10 @@ are high-entropy bearer credentials stored only as SHA-256 hashes,
 owner-scoped and restricted to event modes. Revocation invalidates
 pending/leased deliveries in the same transaction. An event credential
 is never a Controller OAuth principal or a native machine grant.
+
+External delivery admission reconstructs the principal, source and
+continuation target inside a single owner/source-bound SQLite transaction.
+It preserves pinned delivery identity, ordered lanes and bounded child
+batch coalescing, includes the effective lane in retry fingerprints, and
+rejects expected machine actions or steering into native-granted runs.
+The queue is not an execution authority; no worker is activated here.
