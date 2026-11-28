@@ -179,6 +179,7 @@ def test_rich_compaction_matches_exact_full_tool_result(branch):
     plan = plan_compaction(lease, retain_turns=1)
     assert plan is not None
     assert plan.source[1:] == steps
+    assert "tool_outcome: exact tool result" in plan.semantic_appendix
     commit_compaction(
         lease, plan, "Prior discussion.", check_grant=lambda: None
     )

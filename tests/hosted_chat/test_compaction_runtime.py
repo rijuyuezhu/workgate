@@ -270,3 +270,116 @@ def test_manual_compaction_anchored_http(tmp_path, monkeypatch, mode):
             message.get("role") == "assistant" and not message.get("content")
             for message in primary[-1]
         )
+
+
+def test_canonical_semantic_hints_only_reach_summary_request(
+    tmp_path, monkeypatch
+):
+    from workgate.hosted_chat.generation_actor_lease import ActorLease
+    from workgate.hosted_chat.generations import GenerationStore
+
+    runtime = runtime_for(tmp_path)
+    db = provider(runtime)
+    ProviderRepository(db, CredentialCipher(db)).save(
+        {
+            "name": "test-provider",
+            "provider": "openai",
+            "models": ["test-model"],
+            "model_contexts": {"test-model": 8192},
+            "base_url": "https://models.invalid/v1",
+            "api_key": "test-secret",
+        }
+    )
+    WorkspaceRepository(db).save_setting(
+        "local-user",
+        "endpoints",
+        {
+            "summarization": {
+                "enabled": True,
+                "retainRecent": {"turns": 1},
+                "trigger": {"type": "messages_to_refine", "value": 2},
+                "parameters": {"maxSummaryTokens": 128},
+            }
+        },
+    )
+    store = GenerationStore(db)
+    first, _ = store.begin("local-user", {"text": "question " * 200})
+    lease = ActorLease.claim(db, "local-user", first.run_id)
+    assert lease
+    steps = [
+        {
+            "role": "assistant",
+            "content": "Checking",
+            "tool_calls": [
+                {
+                    "id": "task",
+                    "type": "function",
+                    "function": {
+                        "name": "subagent",
+                        "arguments": json.dumps(
+                            {
+                                "intent": "Checking inventory",
+                                "description": "Check inventory",
+                                "subagent_type": "worker",
+                            }
+                        ),
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "task",
+            "content": "Exact inventory <result>",
+        },
+        {"role": "assistant", "content": "Found entries. " * 100},
+    ]
+    assert store.finish(
+        "local-user",
+        first.run_id,
+        status="complete",
+        text="Found entries.",
+        model_steps=steps,
+        actor_lease=lease,
+    )
+    lease.release()
+    original = hosted_chat.run_authenticated_generation
+    requests = []
+
+    async def stream(profile, messages, **kwargs):
+        requests.append((kwargs.get("emit_finish_reason"), messages))
+        if kwargs.get("emit_finish_reason"):
+            yield "Earlier context."
+            yield ModelFinish("openai", "stop")
+        else:
+            yield "Answer."
+
+    async def execute(*args, **kwargs):
+        return await original(
+            *args, **kwargs, stream_tools=stream, stream_text=stream
+        )
+
+    monkeypatch.setattr(hosted_chat, "run_authenticated_generation", execute)
+    with TestClient(build_http_app(runtime=runtime)) as client:
+        result = client.post(
+            "/api/ui/chat/generations",
+            json={
+                "text": "Next question",
+                "conversationId": first.conversation_id,
+                "parentMessageId": first.response_message_id,
+                "provider": "test-provider",
+                "model": "test-model",
+            },
+        )
+        assert result.status_code == 202
+        events = client.get(
+            f"/api/ui/chat/generations/{result.json()['runId']}/events"
+        ).text
+        assert len(requests) == 2
+        prompt = requests[0][1][-1]["content"]
+        assert "<compaction-semantic-index>" in prompt
+        assert "tool_intent: Checking inventory" in prompt
+        assert "tool_outcome: Exact inventory &lt;result&gt;" in prompt
+        assert "Earlier context." in str(requests[1][1])
+        assert "compaction-semantic-index" not in str(requests[1][1])
+        assert "compaction-semantic-index" not in events
