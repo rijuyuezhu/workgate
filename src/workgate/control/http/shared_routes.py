@@ -22,6 +22,7 @@ from .hosted_chat_memory import hosted_chat_memory_routes
 from .hosted_chat_policy import hosted_chat_policy_routes
 from .hosted_chat_providers import hosted_chat_provider_routes
 from .hosted_chat_schedules import hosted_chat_schedule_routes
+from .hosted_chat_skills import hosted_chat_skill_routes
 from .hosted_chat_workspace import hosted_chat_workspace_routes
 from .integration_oauth import browser_mcp_oauth_routes
 from .stream_routes import desktop_stream_routes, terminal_stream_routes
@@ -69,6 +70,7 @@ def control_http_routes(
             ui_routes.extend(hosted_chat_policy_routes(runtime))
             ui_routes.extend(hosted_chat_provider_routes(runtime))
             ui_routes.extend(hosted_chat_schedule_routes(runtime))
+            ui_routes.extend(hosted_chat_skill_routes(runtime))
             event_admin, event_ingress = hosted_chat_event_routes(runtime)
             ui_routes.extend([*event_admin, *event_ingress])
             ui_public_routes.extend(event_ingress)
