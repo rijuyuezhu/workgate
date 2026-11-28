@@ -92,27 +92,77 @@ def resolve_access(
     identities = tuple(
         _validate_executor_id(identity) for identity in registered
     )
-    policy = dict.fromkeys(identities, "write")
     with repo.database.read_snapshot() as db:
-        policy.update(_stored(db, owner, _GLOBAL))
-        if conversation_id is not None:
-            convo = db.execute(
-                "SELECT project_id FROM conversations WHERE id=? AND owner=?",
-                (conversation_id, owner),
-            ).fetchone()
-            if convo is None:
-                raise KeyError("Conversation not found")
-            project_id = convo["project_id"]
-        if project_id is not None:
-            if not db.execute(
-                "SELECT 1 FROM projects WHERE id=? AND owner=?",
-                (project_id, owner),
-            ).fetchone():
-                raise KeyError("Project not found")
-            policy.update(_stored(db, owner, _PROJECT + project_id))
-        if conversation_id is not None:
-            policy.update(_stored(db, owner, _CONVERSATION + conversation_id))
+        return _resolve_access(
+            db, owner, conversation_id, project_id, identities
+        )
+
+
+def _resolve_access(db, owner, conversation_id, project_id, identities):
+    policy = dict.fromkeys(identities, "write")
+    policy.update(_stored(db, owner, _GLOBAL))
+    if conversation_id is not None:
+        convo = db.execute(
+            "SELECT project_id FROM conversations WHERE id=? AND owner=?",
+            (conversation_id, owner),
+        ).fetchone()
+        if convo is None:
+            raise KeyError("Conversation not found")
+        project_id = convo["project_id"]
+    if project_id is not None:
+        if not db.execute(
+            "SELECT 1 FROM projects WHERE id=? AND owner=?",
+            (project_id, owner),
+        ).fetchone():
+            raise KeyError("Project not found")
+        policy.update(_stored(db, owner, _PROJECT + project_id))
+    if conversation_id is not None:
+        policy.update(_stored(db, owner, _CONVERSATION + conversation_id))
     return {identity: policy[identity] for identity in identities}
+
+
+def machine_policy(
+    owner: str,
+    *,
+    repo: WorkspaceRepository,
+    registered: Collection[str],
+    conversation_id: str | None = None,
+    project_id: str | None = None,
+    changes: dict[str, str] | None = None,
+) -> dict:
+    """Read or replace a single owner policy in an ownership-fenced transaction."""
+    if conversation_id is not None and project_id is not None:
+        raise ValueError("Choose one policy target")
+    identities = tuple(
+        _validate_executor_id(identity) for identity in registered
+    )
+    key = (
+        _CONVERSATION + conversation_id
+        if conversation_id is not None
+        else _PROJECT + project_id
+        if project_id is not None
+        else _GLOBAL
+    )
+    with repo.database.connect() as db:
+        db.execute("BEGIN IMMEDIATE" if changes is not None else "BEGIN")
+        effective = _resolve_access(
+            db, owner, conversation_id, project_id, identities
+        )
+        if changes is not None:
+            value = validate_access_map(changes)
+            if not value.keys() <= set(identities):
+                raise ValueError("Unregistered Executor in policy")
+            db.execute(
+                "INSERT INTO settings(owner,key,value) VALUES(?,?,?) "
+                "ON CONFLICT(owner,key) DO UPDATE SET value=excluded.value",
+                (owner, key, json.dumps(value, separators=(",", ":"))),
+            )
+            effective = _resolve_access(
+                db, owner, conversation_id, project_id, identities
+            )
+        else:
+            value = _stored(db, owner, key)
+    return {"machines": value, "effective": effective}
 
 
 _RANK = {"none": 0, "read": 1, "write": 2}
