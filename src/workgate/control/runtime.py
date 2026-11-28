@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 
@@ -97,6 +97,14 @@ class ControlRuntime:
     _closed: bool = field(default=False, init=False, repr=False)
     _close_complete: bool = field(default=False, init=False, repr=False)
 
+    def configure_generation_cleanup(
+        self, cleanup: Callable[[], Awaitable[None]]
+    ) -> None:
+        """Configure cleanup from the HTTP composition without importing drivers."""
+        self.generation_supervisor.configure_cleanup(cleanup)
+        if self._started:
+            self.generation_supervisor.start_cleanup()
+
     async def start(self) -> None:
         """Start services owned by this control runtime."""
         if self._closed:
@@ -152,6 +160,7 @@ class ControlRuntime:
             raise
 
         self._started = True
+        self.generation_supervisor.start_cleanup()
         if (
             self.config.task_idle_block_after_s
             or self.config.agent_session_retention_s

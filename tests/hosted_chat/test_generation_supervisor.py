@@ -97,3 +97,34 @@ async def test_wait_idle_does_not_cancel_suspending_driver():
     assert await supervisor.wait_idle("alice", "run")
     assert not supervisor.active("alice", "run")
     await supervisor.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_wakes_and_drains_inflight_sweep():
+    supervisor = GenerationSupervisor()
+    first = asyncio.Event()
+    second = asyncio.Event()
+    release = asyncio.Event()
+    count = 0
+
+    async def cleanup():
+        nonlocal count
+        count += 1
+        if count == 1:
+            first.set()
+        else:
+            second.set()
+            await release.wait()
+
+    supervisor.configure_cleanup(cleanup)
+    supervisor.start_cleanup()
+    supervisor.start_cleanup()
+    await first.wait()
+    supervisor.wake_cleanup()
+    await second.wait()
+    closing = asyncio.create_task(supervisor.aclose())
+    await asyncio.sleep(0)
+    assert not closing.done()
+    release.set()
+    await closing
+    assert count == 2

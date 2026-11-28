@@ -6,6 +6,7 @@ credentials or launches a task from persisted state.
 """
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 
@@ -24,6 +25,54 @@ class GenerationSupervisor:
         self._owner_limit = owner_limit
         self._tasks: dict[tuple[str, str], asyncio.Task[bool]] = {}
         self._closed = False
+        self._cleanup: Callable[[], Awaitable[None]] | None = None
+        self._cleanup_task: asyncio.Task[None] | None = None
+        self._cleanup_wake = asyncio.Event()
+
+    def configure_cleanup(self, cleanup: Callable[[], Awaitable[None]]) -> None:
+        """Install the bounded cleanup-only callback from Control composition."""
+        if self._closed:
+            raise RuntimeError("Generation supervisor is closed")
+        if self._cleanup is None:
+            self._cleanup = cleanup
+
+    def start_cleanup(self) -> None:
+        if (
+            self._cleanup is not None
+            and self._cleanup_task is None
+            and not self._closed
+        ):
+            self._cleanup_task = asyncio.create_task(
+                self._run_cleanup(self._cleanup), name="workgate-chat-cleanup"
+            )
+
+    def wake_cleanup(self) -> None:
+        self._cleanup_wake.set()
+
+    async def _run_cleanup(
+        self, cleanup: Callable[[], Awaitable[None]]
+    ) -> None:
+        while True:
+            self._cleanup_wake.clear()
+            sweep = asyncio.ensure_future(cleanup())
+            try:
+                await asyncio.shield(sweep)
+            except asyncio.CancelledError:
+                # Let in-flight cleanup finish its bounded native operation
+                # before the Control-owned transport is shut down.
+                try:
+                    await sweep
+                except Exception as error:
+                    logger.warning(
+                        "Hosted Chat cleanup failed (%s)", type(error).__name__
+                    )
+                raise
+            except Exception as error:
+                logger.warning(
+                    "Hosted Chat cleanup failed (%s)", type(error).__name__
+                )
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._cleanup_wake.wait(), timeout=10)
 
     def active(self, owner: str, run_id: str) -> bool:
         task = self._tasks.get((owner, run_id))
@@ -38,6 +87,11 @@ class GenerationSupervisor:
             return True
         _, pending = await asyncio.wait({task}, timeout=timeout)
         return not pending
+
+    def cancel(self, owner: str, run_id: str) -> bool:
+        """Stop only the local driver; caller must first commit durable abort."""
+        task = self._tasks.get((owner, run_id))
+        return task.cancel() if task is not None and not task.done() else False
 
     def start(
         self, owner: str, run_id: str, execute: Callable[[], Awaitable[bool]]
@@ -85,3 +139,7 @@ class GenerationSupervisor:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()
+        if self._cleanup_task is not None:
+            self._cleanup_task.cancel()
+            await asyncio.gather(self._cleanup_task, return_exceptions=True)
+            self._cleanup_task = None

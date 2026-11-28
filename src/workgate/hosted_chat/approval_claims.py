@@ -469,24 +469,59 @@ class ApprovalClaimStore:
                 DurableTaskRepository._cancel_run(db, owner, run_id)
                 status = "aborted"
                 error = None
-            for key in (
-                "pendingAction",
-                "approvalCheckpointId",
-                "approvedToolBatch",
-                "answeredQuestion",
-                "approvalGraphInterrupt",
-                "graphHumanClaims",
+            return self._finish_action_locked(
+                db, row, state, status=status, error=error
+            )
+
+    def _finish_action_locked(
+        self, db, row, state, *, status, error=None
+    ) -> bool:
+        for key in (
+            "pendingAction",
+            "approvalCheckpointId",
+            "approvedToolBatch",
+            "answeredQuestion",
+            "approvalGraphInterrupt",
+            "graphHumanClaims",
+        ):
+            state.pop(key, None)
+        db.execute(
+            "UPDATE runs SET state=? WHERE id=?", (_json(state), row["id"])
+        )
+        db.execute(
+            "DELETE FROM generation_actor_leases WHERE run_id=?", (row["id"],)
+        )
+        return GenerationStore(self.database)._finish_locked(
+            db, row, status=status, error=error
+        )
+
+    def abort_root(self, owner: str, run_id: str) -> bool:
+        """Latch exact-root native cancellation and terminal state atomically."""
+        with self.database.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT r.* FROM runs r JOIN conversations c ON c.id=r.conversation_id WHERE r.id=? AND c.owner=?",
+                (run_id, owner),
+            ).fetchone()
+            if row is None:
+                raise KeyError("Generation not found")
+            state = json.loads(row["state"])
+            if (
+                not isinstance(state.get("nativeAdmission"), dict)
+                or state.get("detachedTaskId")
+                or state.get("completionWakeupTaskId")
             ):
-                state.pop(key, None)
+                raise PermissionError("Not a public root generation")
+            if row["status"] not in {"running", "requires_action"}:
+                return False
+            DurableTaskRepository._cancel_run(db, owner, run_id)
+            # Detached tasks have their own explicit cancellation controls.
+            # An aborted parent cannot receive an automatic completion wakeup.
             db.execute(
-                "UPDATE runs SET state=? WHERE id=?", (_json(state), run_id)
+                "UPDATE subagent_wakeups SET status='retired',error='Original parent aborted',updated_at=? WHERE owner=? AND parent_run_id=? AND status='pending'",
+                (_now(), owner, run_id),
             )
-            db.execute(
-                "DELETE FROM generation_actor_leases WHERE run_id=?", (run_id,)
-            )
-            return GenerationStore(self.database)._finish_locked(
-                db, row, status=status, error=error
-            )
+            return self._finish_action_locked(db, row, state, status="aborted")
 
     def claim(
         self, owner: str, run_id: str, action_id: str, resolutions: list[dict]

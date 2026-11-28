@@ -651,3 +651,143 @@ async def test_generation_http_steering_exact_run_and_policy(
                     headers=alice,
                 )
             ).status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_generation_http_abort_cancels_native_effect_and_driver(
+    tmp_path, monkeypatch
+):
+    from tests.support.paired import build_paired_control_harness
+    from workgate.hosted_chat.durable_tasks import DurableTaskRepository
+    from workgate.hosted_chat.generation_actor_lease import ActorLease
+    from workgate.hosted_chat.provider_common import ModelToolCall
+
+    harness = build_paired_control_harness(
+        Settings(
+            default_workdir=tmp_path,
+            state_dir=tmp_path / ".state",
+            auth_mode="none",
+            hosted_chat_enabled=True,
+            agent_bridge_enabled=False,
+        )
+    )
+    runtime = harness.control
+    db = provider(runtime)
+    entered = asyncio.Event()
+    stopped = asyncio.Event()
+    original = hosted_chat.run_authenticated_generation
+
+    async def stream(profile, messages, **kwargs):
+        if not any(message["role"] == "tool" for message in messages):
+            yield ModelToolCall(
+                "create", "task", {"action": "create", "label": "owned work"}
+            )
+        else:
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
+            yield "unexpected"
+
+    async def execute(*args, **kwargs):
+        return await original(
+            *args, **kwargs, stream_tools=stream, stream_text=stream
+        )
+
+    monkeypatch.setattr(hosted_chat, "run_authenticated_generation", execute)
+    app = build_http_app(runtime=runtime)
+    async with (
+        runtime.lifespan(),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+        ) as client,
+    ):
+        response = await client.post(
+            PREFIX,
+            json={
+                "text": "work",
+                "provider": "test-provider",
+                "model": "test-model",
+                "taskMachine": harness.executor_id,
+            },
+        )
+        assert response.status_code == 202, response.text
+        run = response.json()["runId"]
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        [task] = await runtime.task_service.list_tasks()
+        path = PREFIX + "/" + run
+        queued = await client.post(
+            path + "/steering",
+            json={"text": "later", "clientSteerId": "queued"},
+        )
+        assert queued.status_code == 200
+        aborted = await client.post(path + "/abort")
+        assert (
+            aborted.status_code == 200 and aborted.json()["status"] == "aborted"
+        )
+        assert DurableTaskRepository(db).is_run_cancelled(run)
+        assert ActorLease.claim(db, "local-user", run) is None
+        await asyncio.wait_for(stopped.wait(), timeout=5)
+        assert await runtime.generation_supervisor.wait_idle("local-user", run)
+
+        async def cleaned():
+            while (
+                await runtime.task_service.read_task(task.task_id)
+            ).status != "cancelled":
+                await asyncio.sleep(0.01)
+
+        await asyncio.wait_for(cleaned(), timeout=5)
+        final = (await client.get(path + "/events")).text
+        assert '"aborted":true' in final and '"pendingSteers"' in final
+        assert (await client.post(path + "/abort")).status_code == 409
+        assert (await client.post(path + "/attach")).status_code == 202
+        assert not runtime.generation_supervisor.active("local-user", run)
+
+
+def test_generation_http_abort_pending_question(tmp_path, monkeypatch):
+    from workgate.hosted_chat.provider_common import ModelToolCall
+
+    runtime = runtime_for(tmp_path)
+    provider(runtime)
+    original = hosted_chat.run_authenticated_generation
+
+    async def stream(profile, messages, **kwargs):
+        yield ModelToolCall(
+            "question", "ask_user_question", {"question": "Choose?"}
+        )
+
+    async def execute(*args, **kwargs):
+        return await original(
+            *args, **kwargs, stream_tools=stream, stream_text=stream
+        )
+
+    monkeypatch.setattr(hosted_chat, "run_authenticated_generation", execute)
+    with TestClient(build_http_app(runtime=runtime)) as client:
+        response = client.post(
+            PREFIX,
+            json={
+                "text": "choose",
+                "provider": "test-provider",
+                "model": "test-model",
+                "ephemeralAgent": {"ask_user_question": True},
+            },
+        )
+        assert response.status_code == 202
+        path = PREFIX + "/" + response.json()["runId"]
+        assert "on_pending_action" in client.get(path + "/events").text
+        pending = client.get(path + "/action").json()["pendingAction"]
+        assert client.post(path + "/abort").status_code == 200
+        assert client.get(path + "/action").json()["pendingAction"] is None
+        assert (
+            client.post(
+                path + "/action",
+                json={
+                    "actionId": pending["actionId"],
+                    "type": "ask_user_question",
+                    "answer": "yes",
+                },
+            ).status_code
+            == 404
+        )
+        assert '"aborted":true' in client.get(path + "/events").text
