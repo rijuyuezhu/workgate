@@ -293,3 +293,187 @@ def test_manual_review_and_protected_input_prevent_extraction(tmp_path):
             (json.dumps(state), generation.run_id),
         )
     assert plan_extraction(lease) is None
+
+
+@pytest.mark.asyncio
+async def test_apply_memory_batch_once_without_disclosing_values(tmp_path):
+    from workgate.hosted_chat.memory_application import apply_memory_proposals
+
+    repo, generation, lease = setup(
+        tmp_path, agent_config={"memory_scope": "agent"}
+    )
+    aid = generation.agent_id
+    assert aid is not None
+    memory = MemoryRepository(lease.database)
+    memory.write("alice", "old", "Remove old", agent_id=aid)
+    memory.write("alice", "old", "Personal stays")
+    configure(repo, validKeys=["style", "old"])
+
+    async def stream(*args, **kwargs):
+        yield ModelToolCall(
+            "one", "set_memory", {"key": "style", "value": "Private value."}
+        )
+        yield ModelToolCall("two", "delete_memory", {"key": "old"})
+
+    proposals = await extract_memory_proposals(
+        lease, check_grant=lambda: None, stream_tools=stream
+    )
+    assert proposals is not None
+    assert apply_memory_proposals(
+        lease, proposals, expires=None, check_grant=lambda: None
+    ) == {
+        "updated": 1,
+        "deleted": 1,
+    }
+    assert [entry["key"] for entry in memory.list("alice", aid)] == ["style"]
+    assert memory.list("alice", "")[0]["value"] == "Personal stays"
+    assert plan_extraction(lease) is None
+    events = GenerationStore(lease.database).events("alice", generation.run_id)
+    assert events[-1][1]["event"] == "on_memory_update"
+    assert "Private value." not in repr(events)
+    memory.write("alice", "style", "Manual change.", agent_id=aid)
+    assert apply_memory_proposals(
+        lease, proposals, expires=None, check_grant=lambda: None
+    ) == {
+        "updated": 1,
+        "deleted": 1,
+    }
+    assert memory.list("alice", aid)[0]["value"] == "Manual change."
+    assert (
+        GenerationStore(lease.database).events("alice", generation.run_id)
+        == events
+    )
+    from dataclasses import replace
+
+    with pytest.raises(PermissionError, match="already settled"):
+        apply_memory_proposals(
+            lease,
+            replace(proposals, calls=()),
+            expires=None,
+            check_grant=lambda: None,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mode",
+    ["quota", "optout", "stale", "channel", "expired", "duplicate", "too_many"],
+)
+async def test_apply_memory_atomic_denials(tmp_path, mode):
+    from dataclasses import replace
+
+    from workgate.hosted_chat.credential_cipher import CredentialCipher
+    from workgate.hosted_chat.memory_application import apply_memory_proposals
+    from workgate.hosted_chat.provider_profiles import ProviderRepository
+
+    repo, generation, lease = setup(tmp_path)
+    memory = MemoryRepository(lease.database)
+    configure(
+        repo,
+        validKeys=["style", "other"],
+        charLimit=10 if mode == "quota" else 10000,
+    )
+
+    async def stream(*args, **kwargs):
+        yield ModelToolCall(
+            "one", "set_memory", {"key": "style", "value": "Short."}
+        )
+        yield ModelToolCall(
+            "two",
+            "set_memory",
+            {
+                "key": "style" if mode == "duplicate" else "other",
+                "value": "A longer value.",
+            },
+        )
+
+    proposals = await extract_memory_proposals(
+        lease, check_grant=lambda: None, stream_tools=stream
+    )
+    assert proposals is not None
+    if mode == "optout":
+        repo.save_setting("alice", "user.memories", False)
+    elif mode == "stale":
+        memory.write("alice", "other", "Manual update.")
+    elif mode == "channel":
+        ProviderRepository(
+            lease.database, CredentialCipher(lease.database)
+        ).save(
+            {
+                "name": "test-provider",
+                "provider": "openai",
+                "models": ["test-model"],
+                "base_url": "https://different.invalid/v1",
+                "api_key": "new-key",
+            }
+        )
+    elif mode == "too_many":
+        proposals = replace(
+            proposals,
+            calls=tuple(
+                ModelToolCall(str(i), "delete_memory", {"key": "style"})
+                for i in range(9)
+            ),
+        )
+    before = memory.list("alice")
+    events = GenerationStore(lease.database).events("alice", generation.run_id)
+    expected = (
+        ValueError
+        if mode in {"quota", "duplicate", "too_many"}
+        else PermissionError
+    )
+    with pytest.raises(expected):
+        apply_memory_proposals(
+            lease,
+            proposals,
+            expires=1 if mode == "expired" else None,
+            check_grant=lambda: None,
+        )
+    assert memory.list("alice") == before
+    assert (
+        GenerationStore(lease.database).events("alice", generation.run_id)
+        == events
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail_at", ["events", "grant"])
+async def test_memory_apply_rolls_back_on_late_failure(
+    tmp_path, monkeypatch, fail_at
+):
+    from workgate.hosted_chat import memory_application
+
+    repo, generation, lease = setup(tmp_path)
+    configure(repo)
+
+    async def stream(*args, **kwargs):
+        yield ModelToolCall(
+            "one", "set_memory", {"key": "style", "value": "Short."}
+        )
+
+    proposals = await extract_memory_proposals(
+        lease, check_grant=lambda: None, stream_tools=stream
+    )
+    assert proposals is not None
+    checked = 0
+
+    def check():
+        nonlocal checked
+        checked += 1
+        if fail_at == "grant" and checked == 3:
+            raise PermissionError("Revoked at commit")
+
+    if fail_at == "events":
+        monkeypatch.setattr(memory_application, "EVENT_LIMIT", 0)
+    with pytest.raises(ValueError if fail_at == "events" else PermissionError):
+        memory_application.apply_memory_proposals(
+            lease, proposals, expires=None, check_grant=check
+        )
+    assert MemoryRepository(lease.database).list("alice") == []
+    assert not any(
+        event.get("event") == "on_memory_update"
+        for _, event in GenerationStore(lease.database).events(
+            "alice", generation.run_id
+        )
+    )
+    assert plan_extraction(lease) is not None
