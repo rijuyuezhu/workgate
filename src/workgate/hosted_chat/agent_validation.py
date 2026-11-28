@@ -319,6 +319,10 @@ def clean_agent_config(payload: Any, *, create: bool = False) -> dict:
 
         _, default = agent_access_policy(obj) or ({}, "write")
         result["machine_default_permission"] = default
+    if "memory_scope" in obj:
+        if obj["memory_scope"] not in ("user", "agent"):
+            raise ValueError("Invalid memory scope")
+        result["memory_scope"] = obj["memory_scope"]
     if "approval_mode" in obj:
         from .approval_settings import validate_mode
 
