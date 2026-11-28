@@ -1,6 +1,7 @@
 """Authenticated execution of one admitted native generation and its children."""
 
 import asyncio
+import logging
 import time
 from collections.abc import Awaitable, Callable, Collection
 from contextlib import suppress
@@ -17,6 +18,8 @@ from ..hosted_chat.generation_context import GenerationContextResolver
 from ..hosted_chat.generations import GenerationStore
 from ..hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
 from ..hosted_chat.machine_permissions import effective_machine_access
+from ..hosted_chat.memory_application import apply_memory_proposals
+from ..hosted_chat.memory_extraction import extract_memory_proposals
 from ..hosted_chat.provider_common import ModelToolCall
 from ..hosted_chat.providers import stream_model, stream_model_with_tools
 from ..hosted_chat.storage import WorkspaceRepository
@@ -158,6 +161,29 @@ async def run_authenticated_generation(
         async def resolve_child(agent: dict) -> AgentContext:
             return await resolver.child(generation, agent)
 
+        async def automatic_memory() -> None:
+            # Run before finishing the owned root; never create a separate
+            # unattended actor. Isolate an optional memory model failure.
+            try:
+                check_root()
+                if not lease.renew():
+                    raise ActorLeaseLost("Memory root lease lost")
+                proposals = await extract_memory_proposals(
+                    lease, check_grant=check_root, stream_tools=stream_tools
+                )
+                if proposals is not None:
+                    _, deadline = live_grant()
+                    apply_memory_proposals(
+                        lease,
+                        proposals,
+                        expires=deadline,
+                        check_grant=check_root,
+                    )
+            except Exception as error:
+                logging.getLogger(__name__).warning(
+                    "Automatic memory skipped (%s)", type(error).__name__
+                )
+
         async def graph_turn() -> None:
             assert root_agent is not None
             await run_native_graph(
@@ -179,6 +205,7 @@ async def run_authenticated_generation(
                 stream_text=stream_text,
                 publish_output=True,
             )
+            await automatic_memory()
             check_root()
             store.finish(owner, run_id, status="complete", actor_lease=lease)
 
@@ -216,6 +243,7 @@ async def run_authenticated_generation(
                     context,
                     history,
                     authorize_batch=authorize_batch,
+                    before_finish=automatic_memory,
                     stream_tools=stream_tools,
                     stream_text=stream_text,
                 )

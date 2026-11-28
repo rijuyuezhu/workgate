@@ -51,6 +51,7 @@ async def run_foreground_native_loop(
     authorize_batch: Callable[
         [list[ModelToolCall], AgentLoopState], Awaitable[None]
     ],
+    before_finish: Callable[[], Awaitable[None]] | None = None,
     stream_tools: Callable[
         ...,
         AsyncIterator[
@@ -183,6 +184,9 @@ async def run_foreground_native_loop(
             on_stream_chunk=check_stream,
             on_boundary=boundary,
         )
+        node.current_grant()
+        if before_finish is not None:
+            await before_finish()
         node.current_grant()
         store.finish(
             lease.owner, lease.run_id, status="complete", actor_lease=lease

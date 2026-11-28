@@ -163,3 +163,88 @@ async def test_memory_http_filter_redaction_and_rename(tmp_path):
         assert (await client.get(PREFIX)).json()["memories"][0][
             "key"
         ] == "cleaned"
+
+
+@pytest.mark.asyncio
+async def test_automatic_memory_preferences_owner_and_validation(tmp_path):
+    runtime = runtime_for(tmp_path, auth_mode="oauth")
+    db = provider(runtime)
+    repo = WorkspaceRepository(db)
+    aid = AgentRepository(db).create(
+        "alice", {"provider": "test-provider", "model": "test-model"}
+    )["id"]
+    path = PREFIX + "/automatic"
+    async with (
+        runtime.lifespan(),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=build_http_app(runtime=runtime)),
+            base_url="http://testserver",
+        ) as client,
+    ):
+        with control_execution_context(
+            config=runtime.config,
+            state_store=runtime.state_store,
+            oauth_state=runtime.oauth_state,
+        ):
+
+            def headers(owner):
+                return {
+                    "Authorization": "Bearer "
+                    + issue_access_token(
+                        client_id="memory-test",
+                        scope="shell:read",
+                        resource=resource_url(),
+                        subject=owner,
+                    )
+                }
+
+            alice, bob = headers("alice"), headers("bob")
+        assert (await client.get(path)).status_code == 401
+        assert (await client.get(path, headers=alice)).json()[
+            "enabled"
+        ] is False
+        assert (
+            await client.patch(
+                path, json={"enabled": True, "id": aid}, headers=bob
+            )
+        ).status_code == 404
+        assert (
+            await client.patch(
+                path,
+                json={"enabled": True, "id": aid, "provider": "test-provider"},
+                headers=alice,
+            )
+        ).status_code == 400
+        assert (
+            await client.patch(
+                path,
+                json={"enabled": True, "id": aid, "maxInputTokens": 1},
+                headers=alice,
+            )
+        ).status_code == 400
+        assert (
+            await client.patch(path, json={"enabled": "true"}, headers=alice)
+        ).status_code == 400
+        repo.save_setting("alice", "webui.memory.config", {"charLimit": 300})
+        enabled = await client.patch(
+            path,
+            json={"enabled": True, "id": aid, "messageWindowSize": 7},
+            headers=alice,
+        )
+        assert enabled.status_code == 200, enabled.text
+        assert (
+            enabled.json()["id"] == aid
+            and enabled.json()["messageWindowSize"] == 7
+        )
+        assert repo.setting("alice", "webui.memory.config")["charLimit"] == 300
+        assert (await client.get(path, headers=bob)).json()["enabled"] is False
+        assert (
+            await client.patch(path, json={"enabled": False}, headers=alice)
+        ).json()["enabled"] is False
+        repo.save_setting("alice", "webui.memory.config", {"disabled": True})
+        assert (await client.get(path, headers=alice)).json()[
+            "available"
+        ] is False
+        assert (
+            await client.patch(path, json={"enabled": False}, headers=alice)
+        ).status_code == 403

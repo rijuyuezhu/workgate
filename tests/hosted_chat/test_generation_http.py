@@ -861,3 +861,99 @@ def test_memory_tool_requires_confirmation(tmp_path, monkeypatch):
             MemoryRepository(db).list("local-user")[0]["value"]
             == "Use concise answers."
         )
+
+
+@pytest.mark.parametrize(
+    "mode", ["success", "failure", "reject_manual", "optout"]
+)
+def test_automatic_memory_root_completion(tmp_path, monkeypatch, mode):
+    from workgate.hosted_chat.memory import MemoryRepository
+    from workgate.hosted_chat.provider_common import ModelToolCall
+
+    runtime = runtime_for(tmp_path)
+    db = provider(runtime)
+    original = hosted_chat.run_authenticated_generation
+    calls = []
+
+    async def stream(profile, messages, **kwargs):
+        extracting = any(
+            "Propose only memory changes" in str(message.get("content"))
+            for message in messages
+            if message["role"] == "system"
+        )
+        calls.append(extracting)
+        if extracting:
+            if mode == "failure":
+                raise RuntimeError("private provider failure")
+            if mode == "optout":
+                WorkspaceRepository(db).save_setting(
+                    "local-user", "user.memories", False
+                )
+            yield ModelToolCall(
+                "auto",
+                "set_memory",
+                {"key": "style", "value": "private automatic value"},
+            )
+        elif mode == "reject_manual" and not any(
+            message["role"] == "tool" for message in messages
+        ):
+            yield ModelToolCall(
+                "manual",
+                "set_memory",
+                {"key": "style", "value": "manual value"},
+            )
+        else:
+            yield "Primary answer."
+
+    async def execute(*args, **kwargs):
+        return await original(
+            *args, **kwargs, stream_tools=stream, stream_text=stream
+        )
+
+    monkeypatch.setattr(hosted_chat, "run_authenticated_generation", execute)
+    with TestClient(build_http_app(runtime=runtime)) as client:
+        config = client.patch(
+            "/api/ui/chat/memories/automatic",
+            json={
+                "enabled": True,
+                "provider": "test-provider",
+                "model": "test-model",
+            },
+        )
+        assert config.status_code == 200, config.text
+        response = client.post(
+            PREFIX,
+            json={
+                "text": "Remember short answers.",
+                "provider": "test-provider",
+                "model": "test-model",
+            },
+        )
+        assert response.status_code == 202
+        path = PREFIX + "/" + response.json()["runId"]
+        if mode == "reject_manual":
+            assert "on_pending_action" in client.get(path + "/events").text
+            action = client.get(path + "/action").json()["pendingAction"]
+            assert (
+                client.post(
+                    path + "/action",
+                    json={
+                        "actionId": action["actionId"],
+                        "type": "tool_approval",
+                        "resolutions": [
+                            {"tool_call_id": "manual", "decision": "reject"}
+                        ],
+                    },
+                ).status_code
+                == 202
+            )
+        result = client.get(path + "/events")
+        assert "Primary answer." in result.text
+        assert (
+            "private automatic value" not in result.text
+            and "private provider failure" not in result.text
+        )
+        memory = MemoryRepository(db).list("local-user")
+        assert bool(memory) == (mode == "success")
+        assert ("on_memory_update" in result.text) == (mode == "success")
+        assert calls.count(True) == (0 if mode == "reject_manual" else 1)

@@ -6,6 +6,7 @@ from starlette.routing import Route
 
 from ...hosted_chat.database import SQLiteDatabase
 from ...hosted_chat.memory import MemoryRepository, memory_config
+from ...hosted_chat.memory_preferences import automatic_memory_preferences
 from ...hosted_chat.memory_protection import MemoryContentBlocked
 from ...hosted_chat.storage import WorkspaceRepository
 from ...ui.http.routes import UI_API_PREFIX
@@ -151,12 +152,47 @@ def hosted_chat_memory_routes(runtime: ControlRuntime) -> list[Route]:
                 headers=_HEADERS,
             )
 
+    async def automatic(request: Request):
+        try:
+            changes = (
+                await request.json() if request.method == "PATCH" else None
+            )
+            if request.method == "PATCH" and not isinstance(changes, dict):
+                raise ValueError("Invalid automatic memory preference")
+            principal = _principal(runtime, request)
+            result = automatic_memory_preferences(
+                SQLiteDatabase(runtime.config.state_dir),
+                principal.owner,
+                changes=changes,
+                check_grant=principal.check,
+            )
+            return JSONResponse(result, headers=_HEADERS)
+        except KeyError:
+            return JSONResponse(
+                {"error": "Memory Agent not found"},
+                status_code=404,
+                headers=_HEADERS,
+            )
+        except PermissionError:
+            return JSONResponse(
+                {"error": "Memory operation denied"},
+                status_code=403,
+                headers=_HEADERS,
+            )
+        except ValueError:
+            return JSONResponse(
+                {"error": "Invalid automatic memory preference"},
+                status_code=400,
+                headers=_HEADERS,
+            )
+
     async def preference(request: Request):
         return await handle(request, preferences=True)
 
     return [
         Route(_PREFIX, handle, methods=["GET", "POST"]),
         Route(_PREFIX + "/preferences", preference, methods=["GET", "PATCH"]),
+        Route(_PREFIX + "/automatic", automatic, methods=["GET", "PATCH"]),
         Route(_PREFIX + "/id/{entry_id}", handle, methods=["PATCH", "DELETE"]),
         Route(_PREFIX + "/{key}", handle, methods=["PATCH", "DELETE"]),
     ]
