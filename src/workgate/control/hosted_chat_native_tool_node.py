@@ -20,6 +20,10 @@ from ..hosted_chat.agent_runtime import (
 from ..hosted_chat.agents import AgentRepository
 from ..hosted_chat.approval_claims import ApprovalClaimStore
 from ..hosted_chat.approval_settings import call_decision, effective_mode
+from ..hosted_chat.artifact_prompts import (
+    artifact_mode,
+    generate_artifacts_prompt,
+)
 from ..hosted_chat.ask_user_tools import (
     ASK_USER_QUESTION_TOOL_NAME,
     ASK_USER_TOOLS,
@@ -42,6 +46,7 @@ from ..hosted_chat.graph_human_request import (
     GraphHumanActionRequested,
     GraphHumanRequest,
 )
+from ..hosted_chat.graph_member_scope import GraphMemberScope
 from ..hosted_chat.graph_runtime import GraphActivation
 from ..hosted_chat.handoff import (
     build_handoff_command,
@@ -440,14 +445,49 @@ class NativeLoopToolNode:
         self.current_grant()
         return projected
 
+    def _project_scoped_artifact_prompt(
+        self, state: AgentLoopState, agent: dict | None
+    ) -> list[dict]:
+        scope = self.checkpoint.scope
+        # Foreground root instructions already include the immutable admitted
+        # mode. Never inherit that root override into another Agent.
+        if scope is None or (
+            isinstance(scope, GraphMemberScope)
+            and scope.member_id == scope.root_id
+        ):
+            return state.messages
+        mode = artifact_mode({}, state.context.agent)
+        live_mode = artifact_mode({}, agent)
+        if mode != live_mode:
+            raise PermissionError("Scoped Agent artifact mode changed")
+        if not mode:
+            return state.messages
+        prompt = generate_artifacts_prompt(state.context.profile.provider, mode)
+        if prompt is None:
+            return state.messages
+        # Keep the canonical transcript and graph prefix immutable. Only
+        # the provider sees the generated system instruction.
+        index = 0
+        while (
+            index < len(state.messages)
+            and state.messages[index].get("role") == "system"
+        ):
+            index += 1
+        return [
+            *state.messages[:index],
+            {"role": "system", "content": prompt},
+            *state.messages[index:],
+        ]
+
     def project_messages(
         self, state: AgentLoopState, *, include_resources: bool = True
     ) -> list[dict]:
         self.current_grant()
         lease = self.checkpoint.lease
-        conversation, _ = self.repository.tool_context_chain(
+        conversation, agents = self.repository.tool_context_chain(
             lease, authorization=True
         )
+        messages = self._project_scoped_artifact_prompt(state, agents[-1])
         memory = MemoryRepository(self.repository.database).provider_context(
             lease.owner, conversation, state.context.agent
         )
@@ -456,9 +496,9 @@ class NativeLoopToolNode:
                 memory + "\n\n" if memory else ""
             ) + MEMORY_TOOL_USAGE_GUARD
         messages = (
-            state.messages
+            messages
             if memory is None
-            else [{"role": "system", "content": memory}, *state.messages]
+            else [{"role": "system", "content": memory}, *messages]
         )
         return (
             self.project_file_messages(
