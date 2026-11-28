@@ -31,7 +31,7 @@ def file_record(row):
         "file_id": row["id"],
         "filename": row["name"],
         "type": row["content_type"],
-        "filepath": "/api/files/download/" + row["id"],
+        "filepath": "/api/ui/chat/files/download/" + row["id"],
         "source": "local",
         "createdAt": row["created_at"],
         "conversationId": row["conversation_id"],
