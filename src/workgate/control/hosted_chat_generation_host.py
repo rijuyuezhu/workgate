@@ -1,6 +1,7 @@
 """Authenticated execution of one admitted native generation and its children."""
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import Awaitable, Callable, Collection
@@ -22,9 +23,11 @@ from ..hosted_chat.memory_application import apply_memory_proposals
 from ..hosted_chat.memory_extraction import extract_memory_proposals
 from ..hosted_chat.provider_common import ModelToolCall
 from ..hosted_chat.providers import stream_model, stream_model_with_tools
+from ..hosted_chat.steering import SteeringStore
 from ..hosted_chat.storage import WorkspaceRepository
 from ..hosted_chat.subagents import build_subagent_configs, chat_subagent_config
 from .hosted_chat_child_host import AuthenticatedChildHost
+from .hosted_chat_compaction import ForegroundCompaction
 from .hosted_chat_foreground_loop import (
     ObservableStreamInterrupted,
     run_foreground_native_loop,
@@ -103,6 +106,38 @@ async def run_authenticated_generation(
         def check_root() -> None:
             live_grant()
             resolver.root_agent(generation)
+
+        with database.read_snapshot() as db:
+            manual = (
+                json.loads(
+                    db.execute(
+                        "SELECT state FROM runs WHERE id=?", (run_id,)
+                    ).fetchone()[0]
+                ).get("manualCompaction")
+                is True
+            )
+        if manual:
+            node = NativeLoopToolNode(
+                runtime,
+                DurableTaskRepository(database),
+                OwnedLoopCheckpoint(lease),
+                allowed_tools=set(),
+                scopes=scopes,
+                expires=expires,
+                task_machine=None,
+                check_grant=check_root,
+            )
+            compaction = ForegroundCompaction(
+                node,
+                stream_text,
+                preempt=lambda: SteeringStore(database).has_preempt(
+                    owner, run_id
+                ),
+            )
+            await compaction.manual(AgentLoopState(context, history))
+            check_root()
+            store.finish(owner, run_id, status="complete", actor_lease=lease)
+            return True
 
         def current_access() -> dict:
             live, deadline = live_grant()

@@ -150,3 +150,123 @@ def test_automatic_compaction_http(tmp_path, monkeypatch, mode):
         assert "Earlier context." not in json.dumps(
             repo.messages("local-user", cid)
         )
+
+
+@pytest.mark.parametrize("mode", ["success", "disabled", "truncated"])
+def test_manual_compaction_anchored_http(tmp_path, monkeypatch, mode):
+    runtime = runtime_for(tmp_path)
+    db = provider(runtime)
+    repo = WorkspaceRepository(db)
+    config: dict = {"parameters": {"maxSummaryTokens": 128}}
+    if mode == "disabled":
+        config["enabled"] = False
+    repo.save_setting("local-user", "endpoints", {"summarization": config})
+    original = hosted_chat.run_authenticated_generation
+    summaries = []
+    primary = []
+
+    async def stream(profile, messages, **kwargs):
+        if kwargs.get("emit_finish_reason"):
+            summaries.append(messages)
+            assert not kwargs.get("tools")
+            yield "Earlier context."
+            yield ModelFinish(
+                "openai", "length" if mode == "truncated" else "stop"
+            )
+        else:
+            primary.append(messages)
+            yield "Answer " * 100
+
+    async def execute(*args, **kwargs):
+        return await original(
+            *args, **kwargs, stream_tools=stream, stream_text=stream
+        )
+
+    monkeypatch.setattr(hosted_chat, "run_authenticated_generation", execute)
+    prefix = "/api/ui/chat/generations"
+    with TestClient(build_http_app(runtime=runtime)) as client:
+        first = client.post(
+            prefix,
+            json={
+                "text": "Question " + "detail " * 160,
+                "provider": "test-provider",
+                "model": "test-model",
+            },
+        )
+        assert first.status_code == 202
+        cid = first.json()["conversationId"]
+        client.get(f"{prefix}/{first.json()['runId']}/events")
+        before = repo.messages("local-user", cid)["messages"]
+        anchor = before[-1]["messageId"]
+        assert client.post(prefix, json={"compact": True}).status_code == 400
+        assert (
+            client.post(
+                prefix,
+                json={
+                    "compact": True,
+                    "conversationId": cid,
+                    "parentMessageId": "not-owned",
+                },
+            ).status_code
+            == 404
+        )
+        body = {
+            "compact": True,
+            "conversationId": cid,
+            "parentMessageId": anchor,
+            "clientRequestId": "manual",
+        }
+        response = client.post(prefix, json=body)
+        assert response.status_code == 202, response.text
+        run_id = response.json()["runId"]
+        events = [
+            json.loads(line[6:])
+            for line in client.get(
+                f"{prefix}/{run_id}/events"
+            ).text.splitlines()
+            if line.startswith("data: ")
+        ]
+        assert events[0]["message"]["compact"] is True
+        assert events[0]["message"]["messageId"] == anchor
+        final = events[-1]["responseMessage"]
+        assert len(primary) == 1
+        assert len(summaries) == (0 if mode == "disabled" else 1)
+        after = repo.messages("local-user", cid)["messages"]
+        assert after[:2] == before
+        assert len(after) == 3
+        assert after[-1]["parentMessageId"] == anchor
+        assert after[-1]["manualCompaction"] is True
+        if mode == "success":
+            assert final["content"][0]["type"] == "summary"
+            assert final["content"][0]["initiatedBy"] == "user"
+            assert (
+                final["content"][0]["content"][0]["text"] == "Earlier context."
+            )
+        else:
+            assert final["content"][0]["type"] == "error"
+        replay = client.post(prefix, json=body)
+        assert replay.json()["runId"] == run_id and replay.json()["resumed"]
+        assert (
+            client.post(
+                prefix, json={**body, "parentMessageId": before[0]["messageId"]}
+            ).status_code
+            == 400
+        )
+        next_run = client.post(
+            prefix,
+            json={
+                "text": "Next",
+                "conversationId": cid,
+                "parentMessageId": after[-1]["messageId"],
+            },
+        )
+        assert next_run.status_code == 202
+        client.get(f"{prefix}/{next_run.json()['runId']}/events")
+        assert len(primary) == 2
+        assert any(
+            "Earlier context." in str(message) for message in primary[-1]
+        ) == (mode == "success")
+        assert not any(
+            message.get("role") == "assistant" and not message.get("content")
+            for message in primary[-1]
+        )

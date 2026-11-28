@@ -78,14 +78,48 @@ class ForegroundCompaction:
 
     def project(self, state: AgentLoopState) -> list[dict]:
         messages = self.node.project_messages(state)
+        if (
+            self.lease.detached_task_id is not None
+            or self.lease.wakeup_task_id is not None
+            or self.node.checkpoint.scope is not None
+        ):
+            return messages
         with self.lease.database.read_snapshot() as db:
-            enabled = self._enabled(self._settings(db))
-        return project_compaction(self.lease, messages) if enabled else messages
+            config = self._settings(db)
+        if config.get("enabled") is False:
+            return messages
+        return project_compaction(
+            self.lease, messages, manual_only=not self._enabled(config)
+        )
 
     def _check(self) -> None:
         self.node.current_grant()
         if self.preempt():
             raise InterruptedError("Compaction preempted")
+
+    async def manual(self, state: AgentLoopState) -> None:
+        with self.lease.database.read_snapshot() as db:
+            self.lease.assert_current(db)
+            row = db.execute(
+                "SELECT state FROM runs WHERE id=?", (self.lease.run_id,)
+            ).fetchone()
+            run = json.loads(row[0])
+        if (
+            run.get("manualCompaction") is not True
+            or self.node.checkpoint.scope is not None
+        ):
+            raise PermissionError("Manual compaction is not admitted")
+        if run.get("compaction"):
+            plan = plan_compaction(self.lease, retain_turns=0)
+            record = run["compaction"]
+            if (
+                plan is None
+                or record["fingerprint"] != plan.fingerprint
+                or record["scope"] != plan.scope
+            ):
+                raise PermissionError("Manual compaction checkpoint changed")
+            return
+        await self._compact(state, manual=True)
 
     async def before_model(self, state: AgentLoopState) -> None:
         await self.node.refresh_tools(state)
@@ -98,10 +132,15 @@ class ForegroundCompaction:
             # failed summary. The ordinary model path rechecks its own grant.
             log.warning("Compaction skipped (%s)", type(error).__name__)
 
-    async def _compact(self, state: AgentLoopState) -> None:
+    async def _compact(
+        self, state: AgentLoopState, *, manual: bool = False
+    ) -> None:
         with self.lease.database.read_snapshot() as db:
             config = self._settings(db)
-            if not self._enabled(config):
+            if manual:
+                if config.get("enabled") is False:
+                    raise ValueError("Compaction is disabled")
+            elif not self._enabled(config):
                 return
             self.lease.assert_current(db)
             limit, reserve = _context_options(db, self.lease.owner, state)
@@ -112,7 +151,9 @@ class ForegroundCompaction:
                 json.loads(row[0]).get("contextCalibration")
             )
         if limit is None:
-            return
+            if not manual:
+                return
+            limit = 32768
         messages = self.project(state)
         budget = calculate_budget(
             messages,
@@ -122,27 +163,33 @@ class ForegroundCompaction:
             calibration_ratio=calibration.ratio,
         )
         trigger = config.get("trigger")
-        if budget.remaining_context_tokens > 0 and not isinstance(
-            trigger, dict
+        if (
+            not manual
+            and budget.remaining_context_tokens > 0
+            and not isinstance(trigger, dict)
         ):
             return
         retain = config.get("retainRecent")
         turns = retain.get("turns", 2) if isinstance(retain, dict) else 2
-        plan = plan_compaction(self.lease, retain_turns=turns)
+        plan = plan_compaction(self.lease, retain_turns=0 if manual else turns)
         if (
             plan is None
             or plan.fingerprint in self.attempted
             or len(self.attempted) >= 3
         ):
+            if manual:
+                raise ValueError("Nothing to compact")
             return
         # A compatible prior checkpoint already covering this prefix needs
         # no new provider request, even with an explicit message trigger.
         original = self.node.project_messages(state)
-        if messages is not original and len(original) - len(
-            messages
-        ) + 1 >= len(plan.source):
+        if (
+            not manual
+            and messages is not original
+            and len(original) - len(messages) + 1 >= len(plan.source)
+        ):
             return
-        if not should_trigger_summarization(
+        if not manual and not should_trigger_summarization(
             messages_to_refine_count=len(plan.source),
             trigger=trigger,
             max_context_tokens=limit,
@@ -150,7 +197,10 @@ class ForegroundCompaction:
             remaining_context_tokens=budget.remaining_context_tokens,
         ):
             return
-        if budget.instruction_tokens + budget.tool_schema_tokens >= limit:
+        if (
+            not manual
+            and budget.instruction_tokens + budget.tool_schema_tokens >= limit
+        ):
             return
         self.attempted.add(plan.fingerprint)
         options = config.get("parameters")
@@ -174,6 +224,8 @@ class ForegroundCompaction:
             + max_tokens
             > limit
         ):
+            if manual:
+                raise ValueError("Compaction source exceeds model context")
             return
         self._check()
         self.node.validate_model_input(state, summary_messages)
