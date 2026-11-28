@@ -164,6 +164,8 @@ async def run_agent_loop(
     on_model_usage: Callable[[ModelUsage, AgentLoopState], Awaitable[None]]
     | None = None,
     project_messages: Callable[[AgentLoopState], list[dict]] | None = None,
+    validate_model_input: Callable[[AgentLoopState, list[dict]], None]
+    | None = None,
     preflight_calls: Callable[
         [list[ModelToolCall], AgentLoopState], list[ModelToolCall]
     ]
@@ -304,6 +306,8 @@ async def run_agent_loop(
         # A new model attempt keeps the graph turn and completed tool results.
         for attempt in range(len(_MODEL_RETRY_DELAYS) + 1):
             received_event = False
+            if validate_model_input is not None:
+                validate_model_input(state, projected)
             source = (
                 stream_tools(
                     context.profile, projected, tools=context.tools, **sampling

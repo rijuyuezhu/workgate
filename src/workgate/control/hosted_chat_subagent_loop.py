@@ -264,6 +264,7 @@ class ForegroundDelegation:
                 on_thought=discard,
                 save_state=save,
                 before_model=child_node.refresh_tools,
+                validate_model_input=child_node.validate_model_input,
                 preflight_calls=child_node.preflight,
                 on_stream_chunk=check_stream,
             )

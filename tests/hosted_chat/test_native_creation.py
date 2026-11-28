@@ -8326,3 +8326,131 @@ async def test_authenticated_root_graph_output(bound, monkeypatch, mode):
             (generation.conversation_id,),
         ).fetchone()
         assert reply["text"] == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "mode", ["context", "argument", "live", "output", "replay", "history"]
+)
+async def test_live_content_policy_native_loop(bound, mode):
+    from workgate.control.hosted_chat_foreground_loop import (
+        run_foreground_native_loop,
+    )
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.hosted_chat.agent_runtime import AgentContext
+    from workgate.hosted_chat.content_filters import ContentFilterBlocked
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+
+    harness, repo, lease, generation = bound
+    workspace = WorkspaceRepository(repo.database)
+    context = AgentContext(
+        ProviderConfig("openai", "test", "https://example.invalid", "fake"), []
+    )
+    checkpoint = OwnedLoopCheckpoint(lease)
+    node = NativeLoopToolNode(
+        harness.control,
+        repo,
+        checkpoint,
+        allowed_tools={"task"},
+        scopes=SCOPES,
+        expires=None,
+        task_machine=harness.executor_id,
+        check_grant=lambda: None,
+    )
+
+    def configure(source, field, pattern):
+        workspace.save_setting(
+            lease.owner,
+            "webui.filters.config",
+            {
+                source: {
+                    "pii": {
+                        "action": "block",
+                        "fields": [field],
+                        "starterPatterns": [],
+                        "customPatterns": [
+                            {
+                                "id": "test",
+                                "label": "protected",
+                                "regex": pattern,
+                            }
+                        ],
+                    }
+                }
+            },
+        )
+
+    if mode == "context":
+        configure("messages", "assembled_context", "protected-context")
+    elif mode == "argument":
+        configure("toolArguments", "arguments", "protected-argument")
+    elif mode == "output":
+        configure("toolArguments", "output", "task_id")
+    turns = []
+
+    async def stream(profile, messages, **kwargs):
+        turns.append(1)
+        if len(turns) == 1:
+            yield ModelToolCall(
+                "policy-call",
+                "task",
+                {"action": "create", "label": "protected-argument"},
+            )
+        else:
+            assert "Tool output withheld" in messages[-1]["content"]
+            assert "task_id" not in messages[-1]["content"]
+            yield "complete"
+
+    async def authorize(calls, state):
+        if mode == "live":
+            configure("toolArguments", "arguments", "protected-argument")
+
+    async def dispatch(calls, state, **kwargs):
+        result = await original(calls, state, **kwargs)
+        if mode == "history":
+            configure("toolArguments", "output", "task_id")
+        if mode == "replay":
+            assert "task_id" in result.messages[0]["content"]
+            configure("toolArguments", "output", "task_id")
+            return await original(calls, state, **kwargs)
+        return result
+
+    original = node.dispatch
+    node.dispatch = dispatch  # type: ignore[method-assign]
+
+    async def no_text(*args, **kwargs):
+        pytest.fail("Expected native tools")
+        yield ""
+
+    async def run():
+        return await run_foreground_native_loop(
+            node,
+            context,
+            [{"role": "user", "content": "protected-context"}],
+            authorize_batch=authorize,
+            stream_tools=stream,
+            stream_text=no_text,
+        )
+
+    if mode in {"context", "argument", "live"}:
+        with pytest.raises(ContentFilterBlocked):
+            await run()
+        assert not await harness.control.task_service.list_tasks()
+        assert len(turns) == (0 if mode == "context" else 1)
+    elif mode == "history":
+        with pytest.raises(ContentFilterBlocked):
+            await run()
+        assert len(await harness.control.task_service.list_tasks()) == 1
+        assert len(turns) == 1
+    else:
+        await run()
+        assert len(await harness.control.task_service.list_tasks()) == 1
+        assert len(turns) == 2
+    current = GenerationStore(repo.database).get(lease.owner, generation.run_id)
+    assert current is not None
+    assert current.status == (
+        "error"
+        if mode in {"context", "argument", "live", "history"}
+        else "complete"
+    )

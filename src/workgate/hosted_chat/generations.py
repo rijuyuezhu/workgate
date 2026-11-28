@@ -11,6 +11,12 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from .content_filters import (
+    filters_from_snapshot,
+    validate_agent_submission,
+    validate_message_submission,
+    validate_model_parameters,
+)
 from .database import SQLiteDatabase
 from .generation_actor_lease import ActorLease, ActorLeaseLost
 from .generation_protocol import (
@@ -267,6 +273,12 @@ class GenerationStore:
                     (agent_id, owner),
                 ).fetchone()[0]
             )
+        filters = filters_from_snapshot(db, owner)
+        validate_message_submission(prompt, filters)
+        if agent is not None:
+            validate_agent_submission(agent, filters)
+        else:
+            validate_model_parameters(payload, filters)
         selection = dict(payload)
         if convo:
             selection.setdefault("endpoint", convo["endpoint"])
