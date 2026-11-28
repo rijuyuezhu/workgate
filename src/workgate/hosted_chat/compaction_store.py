@@ -12,10 +12,10 @@ from .content_filters import (
     inspect_content,
     model_message_fragments,
 )
-from .context_budget import split_recent_turns
+from .context_budget import message_token_count, split_recent_turns
 from .generation_actor_lease import ActorLease
 from .generation_protocol import EVENT_LIMIT
-from .generations import GenerationStore, generation_text_history
+from .generations import GenerationStore, generation_model_history
 from .tokenizer import count_tokens
 
 _MAX_SUMMARY_BYTES = 64 * 1024
@@ -47,7 +47,7 @@ class CompactionPlan:
 
 def _provider_messages(history: list[dict]) -> list[dict]:
     return [
-        {"role": message["role"], "content": message["content"]}
+        {key: value for key, value in message.items() if key != "messageId"}
         for message in history
     ]
 
@@ -76,7 +76,7 @@ def _admitted_history(db: sqlite3.Connection, lease: ActorLease):
         ) != state.get("agentRevision"):
             raise PermissionError("Compaction Agent revision changed")
     generation = GenerationStore._run(row)
-    history = generation_text_history(
+    history = generation_model_history(
         db, lease.owner, generation, include_message_ids=True
     )
     filters = filters_from_snapshot(db, lease.owner)
@@ -150,9 +150,7 @@ def commit_compaction(
     carrier = build_summary_carrier_text(summary)
     tokens = count_tokens(carrier, exact=False)
     # Replacing history with a larger summary would defeat compaction.
-    if tokens >= sum(
-        count_tokens(message["content"], exact=False) for message in plan.source
-    ):
+    if tokens >= sum(message_token_count(message) for message in plan.source):
         raise ValueError("Compaction summary does not reduce context")
     with lease.database.connect() as db:
         db.execute("BEGIN IMMEDIATE")

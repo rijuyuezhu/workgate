@@ -7,7 +7,7 @@ from .agent_runtime import AgentContext
 from .agents import AgentRepository
 from .credential_cipher import CredentialCipher
 from .database import SQLiteDatabase
-from .generations import Generation, GenerationStore, generation_text_history
+from .generations import Generation, GenerationStore, generation_model_history
 from .provider_profiles import ProviderRepository
 from .providers import provider_config, selected_provider
 from .sampling import merge_sampling
@@ -166,7 +166,7 @@ class GenerationContextResolver:
     ) -> list[dict]:
         with self.database.read_snapshot() as db:
             self._row(db, generation)
-            history = generation_text_history(db, self.owner, generation)
+            history = generation_model_history(db, self.owner, generation)
         if context.agent != self.root_agent(generation):
             raise PermissionError("Generation history Agent identity changed")
         return with_agent_instructions(history, context.agent)

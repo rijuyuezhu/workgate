@@ -45,6 +45,7 @@ def message_token_count(message: dict) -> int:
             "function_call",
             "tool_call_id",
             "reasoning_content",
+            "reasoning",
             "thinking",
             "name",
         )
