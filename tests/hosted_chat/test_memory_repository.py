@@ -121,3 +121,85 @@ def test_concurrent_memory_quota_serialized(tmp_path):
         results = list(pool.map(write, range(8)))
     assert sum(results) == 2
     assert store.formatted("alice")["totalTokens"] <= token_limit
+
+
+def test_memory_capabilities_and_quota_diagnostics(tmp_path, monkeypatch):
+    import json
+    import sqlite3
+
+    from workgate.hosted_chat.memory import (
+        format_memory_context,
+        tool_definitions,
+    )
+
+    database = SQLiteDatabase(tmp_path)
+    repo = WorkspaceRepository(database)
+    store = MemoryRepository(database)
+    assert memory_enabled(repo, "alice", tools=True)
+    repo.save_setting("alice", "endpoints", {"agents": {"capabilities": []}})
+    assert memory_enabled(repo, "alice")
+    assert not memory_enabled(repo, "alice", tools=True)
+    repo.save_setting(
+        "alice",
+        "endpoints",
+        {"agents": {"capabilities": ["memory"]}, "memory": {"charLimit": 100}},
+    )
+    assert memory_config(repo, "alice") == {"charLimit": 100}
+    assert memory_enabled(repo, "alice", tools=True)
+    assert agent_partition(None) == ""
+    assert agent_partition({"memory_scope": "agent", "id": 7}) == ""
+    assert (
+        agent_partition({"memory_scope": "agent", "id": "agent_a____1"})
+        == "agent_a"
+    )
+    assert format_memory_context(None) is None
+    assert format_memory_context("")
+    assert (format_memory_context("known") or "").endswith("known")
+    assert [item["function"]["name"] for item in tool_definitions()] == [
+        "set_memory",
+        "delete_memory",
+    ]
+    assert (
+        "Must be one of: style"
+        in tool_definitions(["style"])[0]["function"]["parameters"][
+            "properties"
+        ]["key"]["description"]
+    )
+    first = store.write("alice", "first", "Short.")
+    with pytest.raises(MemoryLimitExceeded) as rejected:
+        store.write(
+            "alice",
+            "second",
+            "Longer phrase.",
+            token_limit=first["tokenCount"] + 1,
+        )
+    artifact = rejected.value.artifact()["memory"]
+    assert artifact["type"] == "error"
+    assert json.loads(artifact["value"])["errorType"] == "would_exceed"
+    with pytest.raises(ValueError):
+        store.delete("alice")
+    assert store.delete("alice", key="first")
+
+    def broken(*args, **kwargs):
+        raise sqlite3.OperationalError("private database error")
+
+    monkeypatch.setattr(store, "list", broken)
+    failed = store.formatted("alice")
+    assert failed["readFailed"] and failed["withKeys"] is None
+    assert "private database error" not in repr(failed)
+
+
+@pytest.mark.parametrize(
+    "key,value,kwargs",
+    [
+        ("Invalid", "value", {}),
+        ("nothing", "value", {}),
+        ("valid", "", {}),
+        ("valid", "value", {"char_limit": 0}),
+        ("valid", "value", {"token_limit": -1}),
+    ],
+)
+def test_memory_invalid_input(tmp_path, key, value, kwargs):
+    store = MemoryRepository(SQLiteDatabase(tmp_path))
+    with pytest.raises(ValueError):
+        store.write("alice", key, value, **kwargs)
