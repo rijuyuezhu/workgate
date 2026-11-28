@@ -729,3 +729,10 @@ denied. The transport enforces a total deadline, bounded JSON requests and
 uncompressed responses, disables redirects and ambient proxies, and scrubs
 credential echoes. External effects still require the foreground approval
 and durable receipt adapter.
+
+Action authoring maps pinned `webui/action_routes.py` (blob
+`79a70ed280faa1fef357624870662e8a010e52b3`) to the protected native Chat
+Agent routes. List requires a live read grant; save/delete require write,
+including a final authorization check inside the Agent/Action transaction.
+The request body is capped and errors do not expose submitted credentials.
+No public Action invocation endpoint is provided.
