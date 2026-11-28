@@ -26,6 +26,7 @@ from ...hosted_chat.generations import (
     GenerationConflict,
     GenerationStore,
 )
+from ...hosted_chat.machine_permissions import require_machine_scope
 from ...hosted_chat.memory_tools import MEMORY_TOOLS
 from ...hosted_chat.steering import SteeringStore, SteerRejection
 from ...hosted_chat.web_research import WEB_SEARCH_CAPABILITY
@@ -155,6 +156,30 @@ def hosted_chat_generation_routes(runtime: ControlRuntime) -> list[Route]:
         if generation is None or admission is None:
             raise KeyError("Generation not found")
         return generation, admission
+
+    def observable(
+        request: Request, principal: _Principal, repo: GenerationStore
+    ):
+        run_id = request.path_params["run_id"]
+        generation = repo.get(principal.owner, run_id)
+        if generation is None:
+            raise KeyError("Generation not found")
+        if repo.native_admission(principal.owner, run_id) is not None:
+            return generation
+        require_machine_scope(
+            set(principal.scopes), "read", expires=principal.expires
+        )
+        with repo.database.read_snapshot() as db:
+            row = db.execute(
+                "SELECT 1 FROM runs r JOIN conversations c ON c.id=r.conversation_id "
+                "WHERE r.id=? AND c.owner=? AND json_type(r.state,'$.scheduleOccurrenceId')='text' "
+                "AND json_extract(r.state,'$.detachedTaskId') IS NULL "
+                "AND json_extract(r.state,'$.completionWakeupTaskId') IS NULL",
+                (run_id, principal.owner),
+            ).fetchone()
+        if row is None:
+            raise KeyError("Generation not found")
+        return generation
 
     def require_admission(principal: _Principal, admission: dict) -> set[str]:
         principal.check()
@@ -313,7 +338,7 @@ def hosted_chat_generation_routes(runtime: ControlRuntime) -> list[Route]:
     async def status(request: Request):
         try:
             principal = _principal(runtime, request)
-            generation, _ = owned(request, principal, store())
+            generation = observable(request, principal, store())
             return JSONResponse(_body(generation), headers=_HEADERS)
         except (KeyError, ValueError, PermissionError) as error:
             return failure(error)
@@ -483,7 +508,7 @@ def hosted_chat_generation_routes(runtime: ControlRuntime) -> list[Route]:
         try:
             principal = _principal(runtime, request)
             repo = store()
-            generation, _ = owned(request, principal, repo)
+            generation = observable(request, principal, repo)
             after = int(
                 request.query_params.get(
                     "after", request.headers.get("last-event-id", "0")
