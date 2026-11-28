@@ -5,9 +5,11 @@ A committed claim with no receipt is uncertain forever; never retry it.
 """
 
 import json
+import time
 from collections.abc import Callable
 from dataclasses import asdict
 
+from .action_oauth_tokens import _REFRESH_KIND, ActionOAuthTokens
 from .action_runtime import _full_url, _request, execute_action
 from .actions import ActionRepository
 from .agent_runtime import RuntimeSafetyError
@@ -23,16 +25,22 @@ ACTION_CAPABILITY = "chat_actions"
 _MAX_PROPOSALS = 128
 
 
+class OAuthAuthorizationRequired(Exception):
+    pass
+
+
 class ActionEffects:
     def __init__(
         self,
         checkpoint: OwnedLoopCheckpoint,
         *,
         current_grant: Callable[[], tuple[set[str], int | None]],
+        oauth_enabled: bool = False,
     ):
         self.checkpoint = checkpoint
         self.lease = checkpoint.lease
         self.current_grant = current_grant
+        self.oauth_enabled = oauth_enabled
         self.repo = ActionRepository(self.lease.database)
 
     def _grant(self):
@@ -88,15 +96,20 @@ class ActionEffects:
             except PermissionError:
                 return []
         return self.repo.tool_schemas(
-            self.lease.owner, agent, non_oauth_only=True
+            self.lease.owner, agent, non_oauth_only=not self.oauth_enabled
         )
 
     def _record(self, db, run, call: ModelToolCall):
         record = self.repo._get_for_tool(
             db, self.lease.owner, run["agent_id"], call.name
         )
-        if record is None:
-            raise PermissionError("Action no longer selected")
+        if record is None or (
+            record[0].get("auth", {}).get("type") == "oauth"
+            and not self.oauth_enabled
+        ):
+            raise PermissionError(
+                "Action no longer selected or OAuth unavailable"
+            )
         _, _, op = record
         path, _, _, _ = _request(op, call.arguments)
         destination = _full_url(op["server"], path)
@@ -167,7 +180,37 @@ class ActionEffects:
 
     _approved = staticmethod(ApprovalClaimStore._approved_action)
 
-    def _claim(self, call, *, result=None, replay_only=False):
+    async def prepare_oauth(self, call: ModelToolCall) -> str | None:
+        # Resolve OAuth before releasing any sibling effects. A settled prior
+        # claim never refreshes credentials; an uncertain claim never retries.
+        with self.lease.database.read_snapshot() as db:
+            state, edge, proof, record = self._context(db, call)
+            self._approved(state, edge, proof, call)
+            prior = db.execute(
+                "SELECT 1 FROM agent_native_effect_calls WHERE run_id=? AND call_id=?",
+                (self.lease.run_id, call.call_id),
+            ).fetchone()
+        if prior is not None:
+            self.receipt(call)
+            return None
+        if record[0].get("auth", {}).get("type") != "oauth":
+            return None
+        token = await ActionOAuthTokens(self.repo).access_token(
+            self.lease.owner,
+            proof["actionId"],
+            proof["version"],
+            check_grant=self._grant,
+        )
+        self._grant()
+        if token is None:
+            raise OAuthAuthorizationRequired(
+                "Waiting for Action OAuth authorization"
+            )
+        return token
+
+    def _claim(
+        self, call, *, result=None, replay_only=False, oauth_access=None
+    ):
         lease = self.lease
         with lease.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -227,8 +270,22 @@ class ActionEffects:
             if replay_only:
                 raise PermissionError("Missing settled Action receipt")
             if record[0].get("auth", {}).get("type") == "oauth":
-                raise PermissionError(
-                    "Action OAuth requires its authorization flow"
+                tokens = ActionOAuthTokens(self.repo)
+                action = tokens._action(
+                    db, lease.owner, proof["actionId"], proof["version"]
+                )
+                if (
+                    oauth_access is None
+                    or tokens._row(db, action, _REFRESH_KIND) is not None
+                    or tokens._token(db, action, "access", int(time.time()))
+                    != oauth_access
+                ):
+                    raise PermissionError("Action OAuth authorization changed")
+                meta, creds, op = record
+                record = (
+                    meta,
+                    {**creds, "oauth_access_token": oauth_access},
+                    op,
                 )
             db.execute(
                 "INSERT INTO agent_native_effect_calls(run_id,call_id,fingerprint,machine,scopes,grant_expires) VALUES(?,?,?,?,?,?)",
@@ -264,8 +321,10 @@ class ActionEffects:
         elif result.get("isError") is not True:
             raise PermissionError("Missing settled Action receipt")
 
-    async def execute(self, call: ModelToolCall) -> dict:
-        result, record = self._claim(call)
+    async def execute(
+        self, call: ModelToolCall, *, oauth_access: str | None = None
+    ) -> dict:
+        result, record = self._claim(call, oauth_access=oauth_access)
         if result is not None:
             return result
         assert record is not None

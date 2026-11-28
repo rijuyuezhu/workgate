@@ -784,3 +784,11 @@ the callback checks the configured host, bounded query and flow-specific
 HttpOnly, SameSite=Lax cookie (Secure for HTTPS). It returns static
 no-store/no-referrer HTML without provider data. Successful authorization
 does not launch execution; the caller must reattach with a fresh grant.
+
+Interactive root OAuth tools are advertised only with a valid configured
+Control callback origin. An exact approved batch acquires required live
+tokens before any sibling effect is released. Missing authorization pauses
+the saved proposal; reattachment rechecks the native grant and approval.
+A settled effect is replayed without token acquisition, an uncertain
+claim is never retried, and a replaced or expired access token cannot
+create a new effect claim. Credentials stay inside the transport.

@@ -67,7 +67,7 @@ async def started(tmp_path):
         job,
         context,
         call,
-        ActionEffects(checkpoint, current_grant=grant),
+        ActionEffects(checkpoint, current_grant=grant, oauth_enabled=True),
     )
 
 
@@ -86,7 +86,7 @@ def approve(started, decision="approve"):
     assert lease is not None
     checkpoint = OwnedLoopCheckpoint(lease)
     assert checkpoint.restore(context) is not None
-    return ActionEffects(checkpoint, current_grant=grant)
+    return ActionEffects(checkpoint, current_grant=grant, oauth_enabled=True)
 
 
 def pause(started):
@@ -296,3 +296,68 @@ def test_loopback_callback_origin():
         oauth.callback_uri("http://127.0.0.1:1234/")
         == "http://127.0.0.1:1234/api/ui/chat/actions/oauth/callback"
     )
+
+
+@pytest.mark.asyncio
+async def test_changed_token_cannot_claim_external_effect(started, monkeypatch):
+    db, repo, _, saved, _, _, call, _ = started
+    effects = approve(started)
+    tokens = oauth.ActionOAuthFlows(repo).tokens
+    args = ("alice", saved["action_id"], 1)
+    tokens.store_code_tokens(*args, {"access_token": "old-test"})
+    token = await effects.prepare_oauth(call)
+    assert token == "old-test"
+    tokens.store_code_tokens(*args, {"access_token": "new-test"})
+    with pytest.raises(PermissionError, match="authorization changed"):
+        await effects.execute(call, oauth_access=token)
+    with db.read_snapshot() as conn:
+        assert (
+            conn.execute(
+                "SELECT count(*) FROM agent_native_effect_calls"
+            ).fetchone()[0]
+            == 0
+        )
+
+
+@pytest.mark.asyncio
+async def test_refresh_revocation_clears_uncertain_rotation(
+    started, monkeypatch
+):
+    db, repo, _, saved, _, _, call, _ = started
+    effects = approve(started)
+    tokens = oauth.ActionOAuthFlows(repo).tokens
+    args = ("alice", saved["action_id"], 1)
+    tokens.store_code_tokens(
+        *args,
+        {
+            "access_token": "old-test",
+            "expires_in": 0,
+            "refresh_token": "test-refresh",
+        },
+    )
+    from workgate.hosted_chat import action_oauth_tokens
+
+    revoked = False
+
+    async def exchange(*unused):
+        nonlocal revoked
+        revoked = True
+        return {"access_token": "new-test"}
+
+    def current_grant():
+        if revoked:
+            raise PermissionError("revoked")
+        return grant()
+
+    effects.current_grant = current_grant
+    monkeypatch.setattr(action_oauth_tokens, "exchange", exchange)
+    with pytest.raises(PermissionError, match="revoked"):
+        await effects.prepare_oauth(call)
+    assert await tokens.access_token(*args) is None
+    with db.read_snapshot() as conn:
+        assert (
+            conn.execute(
+                "SELECT count(*) FROM agent_native_effect_calls"
+            ).fetchone()[0]
+            == 0
+        )
