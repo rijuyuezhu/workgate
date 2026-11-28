@@ -753,3 +753,52 @@ def test_generation_http_abort_pending_question(tmp_path, monkeypatch):
             == 404
         )
         assert '"aborted":true' in client.get(path + "/events").text
+
+
+def test_memory_reaches_provider_only(tmp_path, monkeypatch):
+    from workgate.hosted_chat.memory import MemoryRepository
+
+    runtime = runtime_for(tmp_path)
+    db = provider(runtime)
+    store = MemoryRepository(db)
+    store.write("local-user", "preference", "private memory marker")
+    original = hosted_chat.run_authenticated_generation
+    calls = []
+
+    async def stream(profile, messages, **kwargs):
+        calls.append(json.dumps(messages))
+        yield "ordinary response"
+
+    async def execute(*args, **kwargs):
+        return await original(
+            *args, **kwargs, stream_tools=stream, stream_text=stream
+        )
+
+    monkeypatch.setattr(hosted_chat, "run_authenticated_generation", execute)
+    payload = {
+        "text": "question",
+        "provider": "test-provider",
+        "model": "test-model",
+        "generationProtocolVersion": 2,
+    }
+    with TestClient(build_http_app(runtime=runtime)) as client:
+        for enabled in (True, False):
+            WorkspaceRepository(db).save_setting(
+                "local-user", "user.memories", enabled
+            )
+            result = client.post(PREFIX, json=payload)
+            assert result.status_code == 202, result.text
+            run = result.json()["runId"]
+            response = client.get(PREFIX + "/" + run + "/events")
+            assert response.status_code == 200
+            assert "private memory marker" not in response.text
+            assert "ordinary response" in response.text
+            assert ("private memory marker" in calls[-1]) is enabled
+        # Only the memory table contains the stored value. It was not
+        # copied into any conversation history or execution checkpoint.
+        with db.read_snapshot() as connection:
+            for table in ("messages", "runs"):
+                rows = connection.execute(f"SELECT * FROM {table}").fetchall()
+                assert "private memory marker" not in repr(
+                    [dict(row) for row in rows]
+                )

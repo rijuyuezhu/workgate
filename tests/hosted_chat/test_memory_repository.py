@@ -203,3 +203,55 @@ def test_memory_invalid_input(tmp_path, key, value, kwargs):
     store = MemoryRepository(SQLiteDatabase(tmp_path))
     with pytest.raises(ValueError):
         store.write("alice", key, value, **kwargs)
+
+
+def test_provider_projection_is_scoped_live_and_bounded(tmp_path):
+    database = SQLiteDatabase(tmp_path)
+    store = MemoryRepository(database)
+    repo = WorkspaceRepository(database)
+    conversation = repo.create_conversation("alice", {})["conversationId"]
+    agent = AgentRepository(database).create(
+        "alice",
+        {"provider": "openai", "model": "test", "memory_scope": "agent"},
+    )
+    store.write("alice", "personal", "Personal value")
+    store.write(
+        "alice", "scoped", "Agent value", agent_id=agent_partition(agent)
+    )
+    store.write("bob", "other", "Wrong owner")
+    store.write("alice", "secret", "Bearer private-token")
+    repo.save_setting(
+        "alice",
+        "webui.filters.config",
+        {
+            "memories": {
+                "pii": {"action": "block", "starterPatterns": ["bearer_header"]}
+            }
+        },
+    )
+    assert "Personal value" in (
+        store.provider_context("alice", conversation, None) or ""
+    )
+    assert "private-token" not in (
+        store.provider_context("alice", conversation, None) or ""
+    )
+    assert "Agent value" not in (
+        store.provider_context("alice", conversation, None) or ""
+    )
+    scoped = store.provider_context("alice", conversation, agent) or ""
+    assert "Agent value" in scoped and "Personal value" not in scoped
+    with pytest.raises(PermissionError):
+        store.provider_context("bob", conversation, None)
+    for key in ("first", "second", "third"):
+        store.write("alice", key, "x" * 9000)
+    projected = store.provider_context("alice", conversation, None) or ""
+    assert 9000 < len(projected.encode()) <= 16384
+    repo.save_setting(
+        "alice", "conversation.permissions." + conversation, {"memory": False}
+    )
+    assert store.provider_context("alice", conversation, None) is None
+    repo.save_setting(
+        "alice", "conversation.permissions." + conversation, {"memory": True}
+    )
+    repo.save_setting("alice", "user.memories", False)
+    assert store.provider_context("alice", conversation, agent) is None
