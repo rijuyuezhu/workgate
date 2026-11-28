@@ -8,7 +8,14 @@ from dataclasses import dataclass, field
 
 from ..config.control import ControlConfig, resolve_control_config
 from ..config.settings import Settings
+from ..hosted_chat.credential_cipher import CredentialCipher
+from ..hosted_chat.database import DB_NAME, SQLiteDatabase
 from ..hosted_chat.generation_supervisor import GenerationSupervisor
+from ..hosted_chat.model_discovery import (
+    REFRESH_INTERVAL,
+    refresh_model_channels,
+)
+from ..hosted_chat.provider_profiles import ProviderRepository
 from ..jobs.managed import (
     ManagedJobsRuntime,
     managed_jobs_last_activity_for_sessions,
@@ -93,6 +100,9 @@ class ControlRuntime:
     _idle_sweep_task: asyncio.Task[None] | None = field(
         default=None, init=False, repr=False
     )
+    _model_refresh_task: asyncio.Task[None] | None = field(
+        default=None, init=False, repr=False
+    )
     _started: bool = field(default=False, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
     _close_complete: bool = field(default=False, init=False, repr=False)
@@ -161,6 +171,10 @@ class ControlRuntime:
 
         self._started = True
         self.generation_supervisor.start_cleanup()
+        if self.config.ui_enabled and self.config.hosted_chat_enabled:
+            self._model_refresh_task = asyncio.create_task(
+                self._run_model_refresh(), name="workgate-chat-model-refresh"
+            )
         if (
             self.config.task_idle_block_after_s
             or self.config.agent_session_retention_s
@@ -168,6 +182,22 @@ class ControlRuntime:
             self._idle_sweep_task = asyncio.create_task(
                 self._run_idle_sweep(), name="workgate-task-idle-sweep"
             )
+
+    async def _run_model_refresh(self) -> None:
+        while True:
+            try:
+                # An enabled but unused Chat must not create its database.
+                if (self.config.state_dir / "hosted-chat" / DB_NAME).is_file():
+                    database = SQLiteDatabase(self.config.state_dir)
+                    await refresh_model_channels(
+                        ProviderRepository(database, CredentialCipher(database))
+                    )
+            except Exception as error:
+                # Network or storage failures must neither leak keys nor stop Control.
+                logger.warning(
+                    "Chat model refresh failed: %s", type(error).__name__
+                )
+            await asyncio.sleep(REFRESH_INTERVAL)
 
     async def _run_idle_sweep(self) -> None:
         while True:
@@ -215,6 +245,12 @@ class ControlRuntime:
             return
         self._closed = True
         errors: list[BaseException] = []
+
+        if self._model_refresh_task is not None:
+            self._model_refresh_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._model_refresh_task
+            self._model_refresh_task = None
 
         if self._idle_sweep_task is not None:
             self._idle_sweep_task.cancel()
