@@ -14,7 +14,8 @@ from starlette.routing import Route
 from ...hosted_chat.approval_claims import ApprovalClaimStore
 from ...hosted_chat.ask_user_tools import ASK_USER_QUESTION_TOOL_NAME
 from ...hosted_chat.content_filters import ContentFilterBlocked
-from ...hosted_chat.database import SQLiteDatabase
+from ...hosted_chat.database import DB_NAME, SQLiteDatabase
+from ...hosted_chat.durable_tasks import DurableTaskRepository
 from ...hosted_chat.generation_protocol import request_protocol
 from ...hosted_chat.generation_supervisor import GenerationCapacityExceeded
 from ...hosted_chat.generations import (
@@ -28,6 +29,7 @@ from ...oauth.core.scopes import SUPPORTED_OAUTH_SCOPE_SET, scope_set
 from ...oauth.http.middleware import revalidate_browser_session
 from ...oauth.protocol.token_codec import validate_bearer_token
 from ...ui.http.routes import UI_API_PREFIX
+from ..hosted_chat_cancellation import sweep_native_cancellations
 from ..hosted_chat_generation_host import run_authenticated_generation
 from ..hosted_chat_native_creation import _registered
 from ..hosted_chat_native_dispatch import NATIVE_TOOLS
@@ -111,6 +113,17 @@ def _body(generation: Generation, *, protocol: int | None = None) -> dict:
 
 def hosted_chat_generation_routes(runtime: ControlRuntime) -> list[Route]:
     """Use the same protected /api/ui boundary as other native UI routes."""
+
+    async def cleanup() -> None:
+        # Only existing ledgers require cleanup. An idle, unconfigured host
+        # must not initialize storage or acquire any new execution grant.
+        if (runtime.config.state_dir / "hosted-chat" / DB_NAME).is_file():
+            await sweep_native_cancellations(
+                runtime,
+                DurableTaskRepository(SQLiteDatabase(runtime.config.state_dir)),
+            )
+
+    runtime.configure_generation_cleanup(cleanup)
 
     def store() -> GenerationStore:
         # No database creation on disabled or unauthenticated requests.
@@ -366,6 +379,33 @@ def hosted_chat_generation_routes(runtime: ControlRuntime) -> list[Route]:
         except (KeyError, ValueError, TypeError, PermissionError) as error:
             return failure(error)
 
+    async def abort(request: Request):
+        try:
+            principal = _principal(runtime, request)
+            repo = store()
+            generation, admission = owned(request, principal, repo)
+            require_admission(principal, admission)
+            if not ApprovalClaimStore(repo.database).abort_root(
+                principal.owner, generation.run_id
+            ):
+                return JSONResponse(
+                    {"error": "Generation is not active"},
+                    status_code=409,
+                    headers=_HEADERS,
+                )
+            runtime.generation_supervisor.wake_cleanup()
+            runtime.generation_supervisor.cancel(
+                principal.owner, generation.run_id
+            )
+            current = repo.get(principal.owner, generation.run_id)
+            if current is None:
+                raise KeyError("Generation not found")
+            return JSONResponse(
+                {**_body(current), "success": True}, headers=_HEADERS
+            )
+        except (KeyError, ValueError, PermissionError) as error:
+            return failure(error)
+
     async def steering(request: Request):
         try:
             principal = _principal(runtime, request)
@@ -478,6 +518,7 @@ def hosted_chat_generation_routes(runtime: ControlRuntime) -> list[Route]:
         Route(_PREFIX + "/{run_id}/events", events, methods=["GET"]),
         Route(_PREFIX + "/{run_id}/action", pending_action, methods=["GET"]),
         Route(_PREFIX + "/{run_id}/action", resolve_action, methods=["POST"]),
+        Route(_PREFIX + "/{run_id}/abort", abort, methods=["POST"]),
         Route(
             _PREFIX + "/{run_id}/steering", steering, methods=["GET", "POST"]
         ),
