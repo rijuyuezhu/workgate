@@ -35,7 +35,7 @@ from ...ui.http.routes import UI_API_PREFIX
 from ..hosted_chat_cancellation import sweep_native_cancellations
 from ..hosted_chat_generation_host import run_authenticated_generation
 from ..hosted_chat_native_creation import _registered
-from ..hosted_chat_native_dispatch import NATIVE_TOOLS
+from ..hosted_chat_native_dispatch import ROOT_NATIVE_TOOLS
 from ..runtime import ControlRuntime
 
 _PREFIX = UI_API_PREFIX + "/chat/generations"
@@ -171,9 +171,9 @@ def hosted_chat_generation_routes(runtime: ControlRuntime) -> list[Route]:
             return False
         scopes = require_admission(principal, admission)
         tools = (
-            NATIVE_TOOLS | MEMORY_TOOLS | {ASK_USER_QUESTION_TOOL_NAME}
+            ROOT_NATIVE_TOOLS | MEMORY_TOOLS | {ASK_USER_QUESTION_TOOL_NAME}
             if admission.get("ask_user") is True
-            else NATIVE_TOOLS | MEMORY_TOOLS
+            else ROOT_NATIVE_TOOLS | MEMORY_TOOLS
         )
 
         async def authorize_batch(_calls, _state):

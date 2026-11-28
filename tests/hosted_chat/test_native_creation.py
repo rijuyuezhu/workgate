@@ -8508,3 +8508,179 @@ async def test_live_content_policy_native_loop(bound, mode):
         if mode in {"context", "argument", "live", "history"}
         else "complete"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["success", "receipt_lost", "revoked"])
+async def test_native_chat_attachment_publication_uses_owned_snapshot(
+    bound, tmp_path, monkeypatch, mode
+):
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.hosted_chat.agent_runtime import AgentContext, AgentLoopState
+    from workgate.hosted_chat.attachment_deletion import AttachmentDeletionStore
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+    from workgate.hosted_chat.tool_attachment_publication import TOOL_NAME
+
+    harness, repo, lease, generation = bound
+    runtime = harness.control
+    _, sid = await native_session(harness, repo, lease)
+    path = tmp_path / "report.txt"
+    path.write_bytes(b"original report")
+    checkpoint = OwnedLoopCheckpoint(lease)
+    node = NativeLoopToolNode(
+        runtime,
+        repo,
+        checkpoint,
+        allowed_tools={TOOL_NAME},
+        scopes=SCOPES,
+        expires=None,
+        task_machine=harness.executor_id,
+        check_grant=lambda: None,
+    )
+    state = AgentLoopState(
+        AgentContext(
+            ProviderConfig("openai", "m", "https://example.invalid", "fake"), []
+        ),
+        [{"role": "user", "content": "publish report"}],
+    )
+    await node.refresh_tools(state)
+    assert [item["function"]["name"] for item in state.context.tools] == [
+        TOOL_NAME
+    ]
+    call = ModelToolCall(
+        "publish", TOOL_NAME, {"session_id": sid, "path": str(path)}
+    )
+    node.preflight([call], state)
+    state.step = state.model_turn = 1
+    state.pending_calls = [call]
+    state.tool_step_started = True
+    await checkpoint.save(state, [call])
+    original = runtime.executor_transport.call
+    transfers = []
+
+    async def transfer(executor_id, op, args=None, **kwargs):
+        result = await original(executor_id, op, args, **kwargs)
+        if op in {"transfer_stat", "transfer_read_chunk"}:
+            transfers.append(op)
+            if mode == "revoked":
+                WorkspaceRepository(repo.database).save_setting(
+                    lease.owner,
+                    "agent.machine_policy.conversation."
+                    + generation.conversation_id,
+                    {harness.executor_id: "none"},
+                )
+        return result
+
+    monkeypatch.setattr(runtime.executor_transport, "call", transfer)
+    if mode == "revoked":
+        with pytest.raises(PermissionError):
+            await node.dispatch([call], state)
+        with repo.database.read_snapshot() as db:
+            assert (
+                db.execute("SELECT count(*) FROM attachments").fetchone()[0]
+                == 0
+            )
+            assert (
+                db.execute(
+                    "SELECT count(*) FROM tool_attachment_links"
+                ).fetchone()[0]
+                == 0
+            )
+        return
+
+    if mode == "receipt_lost":
+        original_put = checkpoint.saver.put_writes
+
+        def lost(*args, **kwargs):
+            raise OSError("lost outer receipt")
+
+        monkeypatch.setattr(checkpoint.saver, "put_writes", lost)
+        with pytest.raises(OSError, match="lost outer receipt"):
+            await node.dispatch([call], state)
+        monkeypatch.setattr(checkpoint.saver, "put_writes", original_put)
+        path.write_bytes(b"replacement report")
+    result = await node.dispatch([call], state)
+    payload = json.loads(
+        result.messages[0]["content"].split("Structured content: ", 1)[1]
+    )
+    assert payload["filename"] == "report.txt"
+    assert payload["filepath"].startswith("/api/ui/chat/files/download/")
+    assert payload["bytes"] == len(b"original report")
+    with repo.database.read_snapshot() as db:
+        from pathlib import Path
+
+        row = db.execute("SELECT * FROM attachments").fetchone()
+        assert Path(row["path"]).read_bytes() == b"original report"
+        assert (
+            db.execute("SELECT count(*) FROM tool_attachment_links").fetchone()[
+                0
+            ]
+            == 1
+        )
+    assert transfers == ["transfer_stat", "transfer_read_chunk"]
+    assert not (runtime.config.state_dir / "downloads.json").exists()
+    assert (await node.dispatch([call], state)).messages == result.messages
+    assert transfers == ["transfer_stat", "transfer_read_chunk"]
+    AttachmentDeletionStore(repo.database).delete(
+        lease.owner, [payload["file_id"]], check_grant=lambda: None
+    )
+    with pytest.raises(PermissionError):
+        await node.dispatch([call], state)
+
+
+@pytest.mark.asyncio
+async def test_native_chat_attachment_requires_write_scope_and_owned_session(
+    bound,
+):
+    from workgate.control.hosted_chat_native_tool_node import NativeLoopToolNode
+    from workgate.hosted_chat.agent_runtime import AgentContext, AgentLoopState
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+    from workgate.hosted_chat.tool_attachment_publication import TOOL_NAME
+    from workgate.protocol.ids import new_session_id
+
+    harness, repo, lease, generation = bound
+    checkpoint = OwnedLoopCheckpoint(lease)
+    state = AgentLoopState(
+        AgentContext(
+            ProviderConfig("openai", "m", "https://example.invalid", "fake"), []
+        ),
+        [],
+    )
+
+    def node(scopes):
+        return NativeLoopToolNode(
+            harness.control,
+            repo,
+            checkpoint,
+            allowed_tools={TOOL_NAME},
+            scopes=scopes,
+            expires=None,
+            task_machine=harness.executor_id,
+            check_grant=lambda: None,
+        )
+
+    await node({"shell:read"}).refresh_tools(state)
+    assert state.context.tools == []
+    writer = node(SCOPES)
+    await writer.refresh_tools(state)
+    with pytest.raises(PermissionError, match="does not belong"):
+        writer.preflight(
+            [
+                ModelToolCall(
+                    "x",
+                    TOOL_NAME,
+                    {"session_id": new_session_id(), "path": "file.txt"},
+                )
+            ],
+            state,
+        )
+
+    WorkspaceRepository(repo.database).save_setting(
+        lease.owner,
+        "agent.machine_policy.conversation." + generation.conversation_id,
+        {harness.executor_id: "none"},
+    )
+    await writer.refresh_tools(state)
+    assert state.context.tools == []
