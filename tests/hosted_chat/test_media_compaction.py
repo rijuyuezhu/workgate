@@ -121,7 +121,9 @@ def test_media_compaction_real_provider_boundary(tmp_path, monkeypatch):
             "name": "test-provider",
             "provider": "openai",
             "models": ["test-model"],
-            "model_contexts": {"test-model": 8192},
+            # Leave room for the default tool catalog even with the
+            # optional-tokenizer UTF-8 byte upper bound.
+            "model_contexts": {"test-model": 16384},
             "base_url": "https://models.invalid/v1",
             "api_key": "test-secret",
         }

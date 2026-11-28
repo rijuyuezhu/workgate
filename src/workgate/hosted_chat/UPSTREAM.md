@@ -804,3 +804,11 @@ transport, no ambient proxies, no credentials, standard ports, bounded
 responses and a total deadline. Each redirect is checked independently.
 Results are bounded and untrusted; search does not retrieve result URLs.
 External MCP search providers remain independent.
+
+Native search follows the pinned generation request precedence and live
+global/conversation composer preferences (default on for newly admitted
+interactive roots). The protected preferences patch preserves other
+feature fields. The model-loop node requires a live read grant, validates
+the query before dispatch, respects native approval policy, and checks
+selection again before disclosing or replaying a result. Manual
+compaction and unattended or member actors receive no new capability.

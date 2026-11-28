@@ -7,6 +7,7 @@ native document downloads use the shared origin-pinned socket transport.
 import asyncio
 import html
 import ipaddress
+import json
 import re
 import socket
 import xml.etree.ElementTree as ET
@@ -17,6 +18,7 @@ import httpx
 
 from .network import ProviderHTTPTransport
 
+WEB_SEARCH_CAPABILITY = "web_search"
 WEB_SEARCH_TOOL = {
     "type": "function",
     "function": {
@@ -334,3 +336,30 @@ async def web_search(query: str) -> dict:
             else {"message": "No search results returned; try another query"}
         ),
     }
+
+
+def web_search_requested(agent: dict | None, payload: dict) -> bool:
+    """Pinned request precedence; explicit saved composer preferences are live."""
+    ephemeral = payload.get("ephemeralAgent")
+    options = (agent or {}).get("model_parameters")
+    for value in (ephemeral, payload, options):
+        if isinstance(value, dict) and type(value.get("web_search")) is bool:
+            return value["web_search"]
+    return True
+
+
+def effective_web_preference(
+    db, owner: str, conversation_id: str | None, *, default: bool = True
+) -> bool:
+    keys = ["conversation.features.global"]
+    if conversation_id is not None:
+        keys.append("conversation.permissions." + conversation_id)
+    for key in keys:
+        saved = db.execute(
+            "SELECT value FROM settings WHERE owner=? AND key=?", (owner, key)
+        ).fetchone()
+        if saved is not None:
+            value = json.loads(saved[0])
+            if isinstance(value, dict) and type(value.get("web")) is bool:
+                default = value["web"]
+    return default
