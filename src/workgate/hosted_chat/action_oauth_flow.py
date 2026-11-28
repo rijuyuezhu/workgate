@@ -7,15 +7,14 @@ import secrets
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from .action_effects import ActionEffects, _digest
+from .action_effects import ActionEffects
 from .action_oauth_tokens import ActionOAuthTokens, exchange
 from .action_runtime import _allowed_domain
 from .actions import ActionRepository
 from .approval_claims import ApprovalClaimStore
-from .checkpoint_types import LoopSnapshot
 from .checkpoints import SQLiteCheckpointSaver
 from .credential_cipher import CredentialUnavailable
 from .generation_protocol import EVENT_LIMIT, MAX_EVENT_BYTES
@@ -80,33 +79,6 @@ def _cookie_binding(flow) -> str:
     )
 
 
-def _pending_call(db, row, state, pending, edge):
-    payload = pending["payload"]
-    if (
-        payload.get("type") != "action_oauth"
-        or pending["namespace"] != ""
-        or row["agent_id"] is None
-        or state.get("manualCompaction")
-        or db.execute(
-            "SELECT 1 FROM agent_run_cancellations WHERE run_id=?", (row["id"],)
-        ).fetchone()
-    ):
-        raise PermissionError("OAuth run is unavailable")
-    call = next(
-        (
-            c
-            for c in LoopSnapshot.model_validate(
-                edge["checkpoint"]["channel_values"]
-            ).calls()
-            if c.call_id == payload.get("tool_call_id")
-        ),
-        None,
-    )
-    if call is None or call.name != payload.get("tool_name"):
-        raise PermissionError("OAuth proposal is unavailable")
-    return call
-
-
 @dataclass(frozen=True)
 class BrowserFlow:
     authorization_url: str = field(repr=False)
@@ -134,38 +106,6 @@ class ActionOAuthFlows:
         self.database = repository.database
         self.tokens = ActionOAuthTokens(repository)
         self.approvals = ApprovalClaimStore(self.database)
-
-    def _verify(self, db, owner, row, state, pending, edge):
-        call = _pending_call(db, row, state, pending, edge)
-        payload = pending["payload"]
-        agent = self.repo._bound(db, owner, row["agent_id"])
-        if agent is None or json.loads(agent["config"]).get(
-            "_version", 1
-        ) != state.get("agentRevision"):
-            raise PermissionError("OAuth Agent revision changed")
-        record = self.repo._get_for_tool(db, owner, row["agent_id"], call.name)
-        if record is None or record[0].get("auth", {}).get("type") != "oauth":
-            raise PermissionError("OAuth Action selection changed")
-        meta, creds, op = record
-        proof = {
-            "checkpointId": state["approvalCheckpointId"],
-            "agentId": row["agent_id"],
-            "actionId": op["action_id"],
-            "version": op["action_version"],
-            "fingerprint": _digest([asdict(call), meta, op]),
-        }
-        if (
-            payload.get("action_id") != proof["actionId"]
-            or payload.get("action_version") != proof["version"]
-        ):
-            raise PermissionError("OAuth Action version changed")
-        ActionEffects._approved(state, edge, proof, call)
-        if db.execute(
-            "SELECT 1 FROM agent_native_effect_calls WHERE run_id=? AND call_id=?",
-            (row["id"], call.call_id),
-        ).fetchone():
-            raise PermissionError("OAuth Action has already been claimed")
-        return meta, creds, op
 
     def pause(self, effects: ActionEffects, call: ModelToolCall) -> dict:
         lease = effects.lease
@@ -198,7 +138,9 @@ class ActionOAuthFlows:
                 },
             }
             state["approvalCheckpointId"] = proof["checkpointId"]
-            self._verify(db, lease.owner, row, state, pending, edge)
+            self.approvals._verify_oauth_pending(
+                db, lease.owner, row, state, pending, edge
+            )
             event = _json({"event": "on_pending_action", "data": pending})
             if (
                 len(event.encode()) > MAX_EVENT_BYTES
@@ -244,7 +186,9 @@ class ActionOAuthFlows:
         if not isinstance(pending, dict) or self.approvals._expired(pending):
             raise PermissionError("OAuth authorization is unavailable")
         edge = self.approvals._pending_edge(db, saver, row, state, pending)
-        record = self._verify(db, owner, row, state, pending, edge)
+        record = self.approvals._verify_oauth_pending(
+            db, owner, row, state, pending, edge
+        )
         return state, pending, record
 
     def begin(

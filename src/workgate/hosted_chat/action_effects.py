@@ -4,7 +4,6 @@ An Action's exact version and original proposal are bound before approval.
 A committed claim with no receipt is uncertain forever; never retry it.
 """
 
-import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import asdict
@@ -12,8 +11,7 @@ from dataclasses import asdict
 from .action_runtime import _full_url, _request, execute_action
 from .actions import ActionRepository
 from .agent_runtime import RuntimeSafetyError
-from .approval_claims import ApprovalClaimStore
-from .approval_runtime import prepare_approval_batch
+from .approval_claims import ApprovalClaimStore, _digest
 from .checkpoint_types import LoopSnapshot
 from .content_filters import filtered_tool_output, filters_from_snapshot
 from .durable_tasks import DurableTaskRepository
@@ -23,14 +21,6 @@ from .provider_common import ModelToolCall
 
 ACTION_CAPABILITY = "chat_actions"
 _MAX_PROPOSALS = 128
-
-
-def _digest(value: object) -> str:
-    return hashlib.sha256(
-        json.dumps(
-            value, sort_keys=True, separators=(",", ":"), allow_nan=False
-        ).encode()
-    ).hexdigest()
 
 
 class ActionEffects:
@@ -175,32 +165,7 @@ class ActionEffects:
             self._grant()
             return description
 
-    @staticmethod
-    def _approved(state, edge, proof, call):
-        if state.get("actionProposals", {}).get(call.call_id) != proof:
-            raise PermissionError(
-                "Action version or proposal changed after admission"
-            )
-        claim = state.get("approvedToolBatch")
-        if (
-            not isinstance(claim, dict)
-            or claim.get("checkpointId") != proof["checkpointId"]
-        ):
-            raise PermissionError("Action requires explicit human approval")
-        ApprovalClaimStore._verify_requests(
-            edge, claim["payload"], allow_settled=True
-        )
-        batch = prepare_approval_batch(claim["payload"], claim["resolutions"])
-        entry = next(
-            (item for item in batch.entries if item.call_id == call.call_id),
-            None,
-        )
-        if (
-            entry is None
-            or entry.decision["type"] != "approve"
-            or entry.tool_call() != call
-        ):
-            raise PermissionError("Action must be approved without editing")
+    _approved = staticmethod(ApprovalClaimStore._approved_action)
 
     def _claim(self, call, *, result=None, replay_only=False):
         lease = self.lease
