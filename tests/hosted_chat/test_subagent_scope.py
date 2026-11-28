@@ -123,7 +123,7 @@ async def invocation(
             int(time.time()) + 600,
         ),
         owner=lease.owner,
-        conversation_id="chat",
+        conversation_id=checkpoint.active["configurable"]["thread_id"],
         parent_run_id=lease.run_id,
         database=lease.database,
         parent_agent_id=source["id"] if source else None,
@@ -2391,3 +2391,135 @@ async def test_detached_team_graph_saver_and_member_activation_are_isolated(
     repo.update("alice", child["id"], {"instructions": "changed"})
     with pytest.raises(PermissionError, match="target revision changed"):
         fresh.get_tuple(saved)
+
+
+@pytest.mark.asyncio
+async def test_nested_foreground_beneath_detached_actor_keeps_authority(setup):
+    from workgate.hosted_chat.detached_task_lease import DetachedTaskLease
+    from workgate.hosted_chat.storage import WorkspaceRepository
+    from workgate.protocol.ids import new_executor_id
+
+    lease, parent, child, leaf = setup
+    db = lease.database
+    root = OwnedLoopCheckpoint(lease)
+    call = await edge(root, parent, child["id"], background=True)
+    scopes = {"shell:read", "shell:write", "shell:execute"}
+    value = await invocation(root, parent, call, scopes=scopes)
+    machine = new_executor_id()
+    access = {
+        "scopes": sorted(scopes),
+        "machines": {machine: "read"},
+        "task_machine": machine,
+    }
+    reservation = reserve_detached_child(
+        root, call, value, disclosure_access=access
+    )
+    grant = {
+        "scopes": scopes,
+        "expires": value.grant_expires,
+        "disclosure_access": access,
+    }
+    worker = DetachedTaskLease.claim(
+        db, "alice", "chat", reservation.task_id, **grant
+    )
+    assert worker is not None
+    generation, actor = worker.materialize(**grant)
+    detached = DetachedExecutionScope.from_actor(actor)
+    checkpoint = OwnedLoopCheckpoint(actor, scope=detached)
+    nested = await edge(checkpoint, child, leaf["id"])
+    nested_value = await invocation(
+        checkpoint,
+        child,
+        nested,
+        configs=list(value.child_configs),
+        max_depth=detached.admission.remaining_depth,
+        scopes=scopes,
+    )
+    with pytest.raises(PermissionError, match="nesting budget"):
+        SubagentScope.admit(
+            checkpoint,
+            nested,
+            replace(
+                nested_value, remaining_depth=detached.admission.remaining_depth
+            ),
+        )
+    with pytest.raises(PermissionError, match="nesting budget"):
+        SubagentScope.admit(
+            checkpoint,
+            nested,
+            replace(nested_value, scopes=frozenset(scopes | {"admin"})),
+        )
+    scope = SubagentScope.admit(checkpoint, nested, nested_value)
+    assert SubagentScope.from_record(scope.record()) == scope
+    assert scope.parent_scope == detached
+    assert scope.grant_expires == detached.admission.grant_expires
+    owned = OwnedLoopCheckpoint(actor, scope=scope)
+    await owned.save(
+        AgentLoopState(
+            context(leaf),
+            [{"role": "assistant", "content": "private nested result"}],
+            completed=True,
+        ),
+        [],
+    )
+    ledger = DurableTaskRepository(db, scope=scope)
+    assert ledger.tool_context_chain(actor, authorization=True)[0] == "chat"
+    assert [
+        agent["id"] for agent in ledger.tool_context_chain(actor)[1] if agent
+    ] == [parent["id"], child["id"], leaf["id"]]
+    assert ledger.cap_machine_access({machine: "write"}) == {machine: "read"}
+    task = ModelToolCall("nested-native", "task", {"action": "create"})
+    intent = ledger.reserve(
+        actor,
+        task,
+        machine=machine,
+        scopes=scopes,
+        expires=None,
+        registered=(machine,),
+    )
+    assert ledger.claim(
+        actor, intent, task, scopes=scopes, expires=None, registered=(machine,)
+    )
+    ledger.bind(actor, intent, intent.key)
+    assert ledger.owned("alice", generation.conversation_id, "task", intent.key)
+    worker.release()
+    replacement = DetachedTaskLease.claim(
+        db, "alice", "chat", reservation.task_id, **grant
+    )
+    assert replacement is not None
+    _, next_actor = replacement.materialize(**grant)
+    with pytest.raises(ActorLeaseLost):
+        owned.restore(context(leaf))
+    owned = OwnedLoopCheckpoint(next_actor, scope=scope)
+    restored = owned.restore(context(leaf))
+    assert restored is not None and restored.state.completed
+    next_checkpoint = OwnedLoopCheckpoint(next_actor, scope=detached)
+    assert next_checkpoint.restore(context(child)) is not None
+    background = await edge(
+        next_checkpoint, child, leaf["id"], background=True, call_id="nested-bg"
+    )
+    background_value = await invocation(
+        next_checkpoint,
+        child,
+        background,
+        configs=list(value.child_configs),
+        max_depth=detached.admission.remaining_depth,
+        scopes=scopes,
+    )
+    with pytest.raises(PermissionError, match="Nested background"):
+        reserve_detached_child(next_checkpoint, background, background_value)
+    with pytest.raises(PermissionError, match="parent tool edge"):
+        owned.restore(context(leaf))
+    replacement.complete(
+        value.messages + [{"role": "assistant", "content": "final"}], **grant
+    )
+    workspace = WorkspaceRepository(db)
+    workspace.save_setting(
+        "alice", "agent.machine_policy.conversation.chat", {machine: "none"}
+    )
+    with db.connect() as conn:
+        conn.execute("UPDATE agent_durable_tasks SET next_attempt_at=NULL")
+    assert [
+        row["id"]
+        for row in DurableTaskRepository(db).cancellation_batch((machine,))
+    ] == [intent.id]

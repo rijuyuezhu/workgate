@@ -336,34 +336,29 @@ class DurableTaskRepository:
         ).fetchone()
         if row is None:
             raise PermissionError("Native child generation no longer exists")
-        if json.loads(row["state"]).get("detachedTaskId") is not None:
-            detached = DetachedExecutionScope.load(db, run["owner"], run_id)
-            child_namespace, separator, activation = namespace.partition(
-                ":graph:team:member:"
-            )
-            if detached.team_definition_hash is not None and not separator:
-                raise PermissionError(
-                    "Detached team native effect requires a member scope"
-                )
-            scope = (
-                SubagentGraphScope(detached, run["member_agent_id"], activation)
-                if separator
-                else detached
-            )
-            if (
-                scope.checkpoint_namespace != namespace
-                or scope.member_id != run["member_agent_id"]
-            ):
-                raise PermissionError("Detached native scope identity changed")
-            return scope
+        state = json.loads(row["state"])
+        detached = (
+            DetachedExecutionScope.load(db, run["owner"], run_id)
+            if state.get("detachedTaskId") is not None
+            else None
+        )
+        child_namespace, separator, activation = namespace.partition(
+            ":graph:team:member:"
+        )
         try:
-            child_namespace, separator, activation = namespace.partition(
-                ":graph:team:member:"
-            )
-            record = json.loads(row["state"])["ownedSubagentScopes"][
-                child_namespace
-            ]
-            child = SubagentScope.from_record(record)
+            if (
+                detached is not None
+                and child_namespace == detached.checkpoint_namespace
+            ):
+                if detached.team_definition_hash is not None and not separator:
+                    raise PermissionError(
+                        "Detached team native effect requires a member scope"
+                    )
+                child = detached
+            else:
+                child = SubagentScope.from_record(
+                    state["ownedSubagentScopes"][child_namespace]
+                )
             scope = (
                 SubagentGraphScope(child, run["member_agent_id"], activation)
                 if separator
@@ -373,6 +368,7 @@ class DurableTaskRepository:
                 child.run_id != run_id
                 or scope.checkpoint_namespace != namespace
                 or scope.member_id != run["member_agent_id"]
+                or detached_root_scope(scope) != detached
             ):
                 raise PermissionError("Native child scope identity changed")
             return scope
