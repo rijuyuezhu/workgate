@@ -27,6 +27,7 @@ from ..hosted_chat.provider_common import (
 )
 from ..hosted_chat.providers import stream_model, stream_model_with_tools
 from ..hosted_chat.steering import SteeringStore, reconcile_applied_steers
+from .hosted_chat_compaction import ForegroundCompaction
 from .hosted_chat_native_tool_node import NativeLoopToolNode
 
 
@@ -169,6 +170,11 @@ async def run_foreground_native_loop(
         node.current_grant()
         return steering.has_preempt(lease.owner, lease.run_id)
 
+    compaction = ForegroundCompaction(
+        node,
+        stream_text,
+        preempt=lambda: steering.has_preempt(lease.owner, lease.run_id),
+    )
     try:
         restored = checkpoint.restore(context)
         if restored is None:
@@ -191,10 +197,10 @@ async def run_foreground_native_loop(
             on_text=text,
             on_thought=thought,
             save_state=save,
-            before_model=node.refresh_tools,
+            before_model=compaction.before_model,
             on_model_usage=on_model_usage,
             validate_model_input=node.validate_model_input,
-            project_messages=node.project_messages,
+            project_messages=compaction.project,
             preflight_calls=node.preflight,
             on_stream_chunk=check_stream,
             on_boundary=boundary,

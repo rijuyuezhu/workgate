@@ -80,6 +80,14 @@ def _admitted_history(db: sqlite3.Connection, lease: ActorLease):
         db, lease.owner, generation, include_message_ids=True
     )
     filters = filters_from_snapshot(db, lease.owner)
+    settings = db.execute(
+        "SELECT value FROM settings WHERE owner=? AND key='endpoints'",
+        (lease.owner,),
+    ).fetchone()
+    endpoints = json.loads(settings[0]) if settings else {}
+    summarization = (
+        endpoints.get("summarization") if isinstance(endpoints, dict) else None
+    )
     scope = _digest(
         [
             lease.owner,
@@ -89,6 +97,7 @@ def _admitted_history(db: sqlite3.Connection, lease: ActorLease):
             generation.provider,
             generation.model,
             filters,
+            summarization,
         ]
     )
     return generation, state, history, filters, scope
