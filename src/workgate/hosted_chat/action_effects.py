@@ -9,7 +9,7 @@ import json
 from collections.abc import Callable
 from dataclasses import asdict
 
-from .action_runtime import _request, execute_action
+from .action_runtime import _full_url, _request, execute_action
 from .actions import ActionRepository
 from .agent_runtime import RuntimeSafetyError
 from .approval_claims import ApprovalClaimStore
@@ -21,6 +21,7 @@ from .loop_checkpoint import OwnedLoopCheckpoint
 from .machine_permissions import require_machine_scope
 from .provider_common import ModelToolCall
 
+ACTION_CAPABILITY = "chat_actions"
 _MAX_PROPOSALS = 128
 
 
@@ -49,7 +50,7 @@ class ActionEffects:
         require_machine_scope(scopes, "write", expires=expires)
         return scopes, expires
 
-    def _context(self, db, call: ModelToolCall):
+    def _root(self, db):
         self._grant()
         cp, lease = self.checkpoint, self.lease
         lease.assert_current(db)
@@ -75,18 +76,56 @@ class ActionEffects:
         ):
             raise PermissionError("Action run unavailable")
         state = json.loads(run["state"])
-        if (
-            state.get("manualCompaction")
-            or state.get("ownedLoopCheckpoint") is not True
-        ):
+        if state.get("manualCompaction"):
             raise PermissionError(
-                "Action requires an owned foreground checkpoint"
+                "Action requires interactive foreground generation"
             )
         agent = self.repo._bound(db, lease.owner, run["agent_id"])
         if agent is None or json.loads(agent["config"]).get(
             "_version", 1
         ) != state.get("agentRevision"):
             raise PermissionError("Action Agent revision changed")
+        return (
+            run,
+            state,
+            {**json.loads(agent["config"]), "id": run["agent_id"]},
+        )
+
+    def definitions(self) -> list[dict]:
+        with self.lease.database.read_snapshot() as db:
+            try:
+                _, _, agent = self._root(db)
+            except PermissionError:
+                return []
+        return self.repo.tool_schemas(
+            self.lease.owner, agent, non_oauth_only=True
+        )
+
+    def _record(self, db, run, call: ModelToolCall):
+        record = self.repo._get_for_tool(
+            db, self.lease.owner, run["agent_id"], call.name
+        )
+        if record is None or record[0].get("auth", {}).get("type") == "oauth":
+            raise PermissionError("Action no longer selected or requires OAuth")
+        _, _, op = record
+        path, _, _, _ = _request(op, call.arguments)
+        destination = _full_url(op["server"], path)
+        if len(destination) > 2048:
+            raise ValueError("Action destination exceeds approval limit")
+        return record
+
+    def validate(self, call: ModelToolCall) -> None:
+        with self.lease.database.read_snapshot() as db:
+            run, _, _ = self._root(db)
+            self._record(db, run, call)
+
+    def _context(self, db, call: ModelToolCall):
+        run, state, _ = self._root(db)
+        if state.get("ownedLoopCheckpoint") is not True:
+            raise PermissionError(
+                "Action requires an owned foreground checkpoint"
+            )
+        cp = self.checkpoint
         identity = cp.active["configurable"].get("checkpoint_id")
         if not isinstance(identity, str):
             raise PermissionError("Missing Action checkpoint")
@@ -102,13 +141,8 @@ class ActionEffects:
             raise PermissionError(
                 "Action proposal is not the saved started call"
             )
-        record = self.repo._get_for_tool(
-            db, lease.owner, run["agent_id"], call.name
-        )
-        if record is None:
-            raise PermissionError("Action no longer selected")
+        record = self._record(db, run, call)
         meta, creds, op = record
-        _request(op, call.arguments)
         proof = {
             "checkpointId": identity,
             "agentId": run["agent_id"],
@@ -118,16 +152,19 @@ class ActionEffects:
         }
         return state, edge, proof, (meta, creds, op)
 
-    def bind(self, call: ModelToolCall) -> None:
+    def bind(self, call: ModelToolCall) -> str:
         """Commit the live version before displaying a human approval."""
         with self.lease.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            state, _, proof, _ = self._context(db, call)
+            state, _, proof, record = self._context(db, call)
+            meta, _, op = record
+            path, _, _, _ = _request(op, call.arguments)
+            description = f"{op['method'].upper()} {_full_url(op['server'], path)} (authentication: {meta.get('auth', {}).get('type', 'none')})"
             proposals = state.setdefault("actionProposals", {})
             if call.call_id in proposals:
                 if proposals[call.call_id] != proof:
                     raise PermissionError("Action proposal changed")
-                return
+                return description
             if len(proposals) >= _MAX_PROPOSALS:
                 raise OverflowError("Action proposal limit reached")
             proposals[call.call_id] = proof
@@ -136,6 +173,7 @@ class ActionEffects:
                 (json.dumps(state, separators=(",", ":")), self.lease.run_id),
             )
             self._grant()
+            return description
 
     def _approved(self, state, edge, proof, call):
         if state.get("actionProposals", {}).get(call.call_id) != proof:
@@ -244,6 +282,21 @@ class ActionEffects:
         result, _ = self._claim(call, replay_only=True)
         assert result is not None
         return result
+
+    def authorize_receipt(self, call: ModelToolCall, result: dict) -> None:
+        with self.lease.database.read_snapshot() as db:
+            claimed = (
+                db.execute(
+                    "SELECT 1 FROM agent_native_effect_calls WHERE run_id=? AND call_id=?",
+                    (self.lease.run_id, call.call_id),
+                ).fetchone()
+                is not None
+            )
+        if claimed:
+            if self.receipt(call) != result:
+                raise PermissionError("Action receipt changed")
+        elif result.get("isError") is not True:
+            raise PermissionError("Missing settled Action receipt")
 
     async def execute(self, call: ModelToolCall) -> dict:
         result, record = self._claim(call)

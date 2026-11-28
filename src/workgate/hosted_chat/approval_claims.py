@@ -8,6 +8,7 @@ import json
 import sqlite3
 import time
 import uuid
+from collections.abc import Collection, Mapping
 
 from .approval_runtime import (
     ApprovalBatch,
@@ -166,9 +167,20 @@ class ApprovalClaimStore:
         return build_ask_user_payload(effective.arguments, call_id)
 
     def pause(
-        self, checkpoint: OwnedLoopCheckpoint, calls: list[ModelToolCall]
+        self,
+        checkpoint: OwnedLoopCheckpoint,
+        calls: list[ModelToolCall],
+        *,
+        exact_tools: Collection[str] = (),
+        descriptions: Mapping[str, str] | None = None,
     ) -> dict:
-        return self._pause(checkpoint, calls, question=False)
+        return self._pause(
+            checkpoint,
+            calls,
+            question=False,
+            exact_tools=exact_tools,
+            descriptions=descriptions,
+        )
 
     def pause_question(
         self, checkpoint: OwnedLoopCheckpoint, call: ModelToolCall
@@ -182,6 +194,8 @@ class ApprovalClaimStore:
         *,
         question: bool,
         graph_interrupt: tuple[str, GraphHumanRequest] | None = None,
+        exact_tools: Collection[str] = (),
+        descriptions: Mapping[str, str] | None = None,
     ) -> dict:
         if checkpoint.scope is not None and graph_interrupt is None:
             raise PermissionError(
@@ -199,7 +213,9 @@ class ApprovalClaimStore:
             decisions_by_tool_name={
                 "set_memory": ("approve", "reject"),
                 "delete_memory": ("approve", "reject"),
+                **{name: ("approve", "reject") for name in exact_tools},
             },
+            descriptions=descriptions,
         )
         identity = checkpoint.active["configurable"].get("checkpoint_id")
         if not isinstance(identity, str):
