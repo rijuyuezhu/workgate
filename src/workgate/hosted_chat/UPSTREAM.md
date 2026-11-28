@@ -776,3 +776,11 @@ release of the saved interruption share a transaction; abort, Action
 edits, expiration, and superseding flows prevent late settlement.
 The callback cannot create an execution lease. Route wiring and resumed
 OAuth execution remain separate.
+
+The OAuth browser adapter uses the native protected UI start route and a
+single OAuth-exempt GET callback. The explicit configured Control origin,
+fresh owner write grant and exact pending identity are checked at start;
+the callback checks the configured host, bounded query and flow-specific
+HttpOnly, SameSite=Lax cookie (Secure for HTTPS). It returns static
+no-store/no-referrer HTML without provider data. Successful authorization
+does not launch execution; the caller must reattach with a fresh grant.
