@@ -2,23 +2,20 @@
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any, cast
+from typing import cast
 
 from mcp.server.mcpserver import MCPServer
 from starlette.applications import Starlette
 from starlette.routing import BaseRoute, Mount
 
-from ... import __version__
 from ...audit import audit
 from ...config.control import ControlConfig, resolve_control_config
 from ...config.settings import get_settings
 from ...http.request_limits import install_request_body_limit
 from ...oauth.core.security import validate_public_oauth_configuration
 from ...oauth.http.middleware import AuthMiddleware
-from ...persistence import FileStateStore
 from ...protocol.executor import EXECUTOR_TRANSFER_PREFIX
 from ...tools.catalog import ToolCatalog
-from ...tools.contracts import McpToolContext
 from ..execution_context import (
     ControlExecutionContextMiddleware,
     control_execution_context,
@@ -27,22 +24,9 @@ from ..http.shared_routes import control_http_routes
 from ..runtime import ControlRuntime, build_control_runtime
 from ..server import run_uvicorn
 from ..tool_timeouts import tool_timeout_s
-from .config_management import register_config_management
-from .image_preview import register_image_preview
-from .instructions import SERVER_INSTRUCTIONS
-from .live_workspace import register_live_workspace
+from .composition import _control_state_store
+from .composition import build_mcp as _compose_mcp
 from .transport_security import transport_security_settings
-from .watchdogs import WorkgateMCPServer
-
-
-def _control_state_store(
-    runtime: ControlRuntime | None, settings: ControlConfig
-) -> FileStateStore:
-    return (
-        runtime.state_store
-        if runtime is not None
-        else FileStateStore(lambda: settings.state_dir)
-    )
 
 
 def build_mcp(
@@ -52,67 +36,21 @@ def build_mcp(
     own_runtime_lifespan: bool = False,
     audit_transport: str = "mcp",
 ) -> MCPServer:
-    """Create the MCP server from a routed control runtime or explicit catalog."""
-    auto_runtime = runtime is None and tool_catalog is None
-    if auto_runtime:
+    """Resolve bootstrap configuration, then compose the transport-free server."""
+    if runtime is None and tool_catalog is None:
         runtime = build_control_runtime(get_settings())
     settings = (
         runtime.config
         if runtime is not None
         else resolve_control_config(get_settings())
     )
-    if tool_catalog is not None:
-        catalog = tool_catalog
-    elif runtime is not None:
-        catalog = runtime.tool_catalog
-    else:  # pragma: no cover - guarded above.
-        raise RuntimeError(
-            "control MCP requires a routed runtime or explicit catalog"
-        )
-
-    @asynccontextmanager
-    async def runtime_lifespan(_mcp: MCPServer) -> AsyncGenerator[None]:
-        if runtime is None:
-            yield
-            return
-        async with runtime.lifespan():
-            yield
-
-    state_store = _control_state_store(runtime, settings)
-    mcp = WorkgateMCPServer(
-        name="workgate",
-        config=settings,
+    return _compose_mcp(
+        settings=settings,
+        tool_catalog=tool_catalog,
+        runtime=runtime,
+        own_runtime_lifespan=own_runtime_lifespan,
         audit_transport=audit_transport,
-        state_store=state_store,
-        oauth_state=None
-        if runtime is None
-        else getattr(runtime, "oauth_state", None),
-        managed_jobs_runtime=(
-            None
-            if runtime is None
-            else getattr(runtime, "managed_jobs_runtime", None)
-        ),
-        agent_activity_observer=(
-            None
-            if runtime is None or getattr(runtime, "task_service", None) is None
-            else runtime.task_service.observe_agent_activity
-        ),
-        version=__version__,
-        instructions=SERVER_INSTRUCTIONS,
-        lifespan=(
-            runtime_lifespan
-            if runtime is not None and own_runtime_lifespan
-            else None
-        ),
     )
-    cast(Any, mcp)._workgate_runtime = runtime
-    cast(Any, mcp)._workgate_runtime_lifespan_owned = own_runtime_lifespan
-    context = McpToolContext(settings=settings)
-    catalog.register_mcp(mcp, context)
-    register_live_workspace(mcp, runtime)
-    register_image_preview(mcp, runtime)
-    register_config_management(mcp, runtime)
-    return mcp
 
 
 def _add_public_routes_to_mcp_http_app(

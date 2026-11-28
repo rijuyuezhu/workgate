@@ -18,6 +18,8 @@ forwarded_allow_ips: "127.0.0.1"
 # WebUI.
 # Mount the browser WebUI and its authenticated API on the HTTP server.
 ui_enabled: true
+# Enable development-stage Hosted Chat routes; off pending acceptance.
+hosted_chat_enabled: false
 # Non-root URL path where the browser WebUI is mounted.
 ui_path: "/ui"
 # Default WebUI Task page size; requests have a fixed safety cap of 100.

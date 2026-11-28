@@ -40,7 +40,7 @@ from .hosted_chat_job_dispatch import dispatch_native_job
 from .hosted_chat_native_creation import _grant, _registered, create_native
 from .hosted_chat_session_tools import NativeSessionDispatcher
 from .hosted_chat_task_tools import NativeTaskDispatcher
-from .mcp.app import build_mcp
+from .mcp.composition import build_mcp
 from .runtime import ControlRuntime
 
 TASK_TOOLS = frozenset({"task", "task_plan", "read_todos", "write_todos"})
