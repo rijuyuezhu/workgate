@@ -78,3 +78,22 @@ async def test_supervisor_releases_completed_and_failed_slots(caplog):
 def test_invalid_supervisor_capacity(global_limit, owner_limit):
     with pytest.raises(ValueError, match="capacity"):
         GenerationSupervisor(global_limit=global_limit, owner_limit=owner_limit)
+
+
+@pytest.mark.asyncio
+async def test_wait_idle_does_not_cancel_suspending_driver():
+    supervisor = GenerationSupervisor()
+    release = asyncio.Event()
+
+    async def execute():
+        await release.wait()
+        return True
+
+    assert supervisor.start("alice", "run", execute)
+    assert await supervisor.wait_idle("bob", "run", timeout=0)
+    assert not await supervisor.wait_idle("alice", "run", timeout=0)
+    assert supervisor.active("alice", "run")
+    release.set()
+    assert await supervisor.wait_idle("alice", "run")
+    assert not supervisor.active("alice", "run")
+    await supervisor.aclose()

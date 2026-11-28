@@ -29,6 +29,16 @@ class GenerationSupervisor:
         task = self._tasks.get((owner, run_id))
         return task is not None and not task.done()
 
+    async def wait_idle(
+        self, owner: str, run_id: str, *, timeout: float = 5
+    ) -> bool:
+        """Wait for a suspended driver to release its local slot, without cancelling it."""
+        task = self._tasks.get((owner, run_id))
+        if task is None or task.done():
+            return True
+        _, pending = await asyncio.wait({task}, timeout=timeout)
+        return not pending
+
     def start(
         self, owner: str, run_id: str, execute: Callable[[], Awaitable[bool]]
     ) -> bool:
