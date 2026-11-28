@@ -736,3 +736,12 @@ Agent routes. List requires a live read grant; save/delete require write,
 including a final authorization check inside the Agent/Action transaction.
 The request body is capped and errors do not expose submitted credentials.
 No public Action invocation endpoint is provided.
+
+The foreground Action effect adapter binds the exact original checkpoint
+proposal and Action version before human review. It uses the existing
+finite-effect ledger with a distinct Action identity, requires an exact
+approval and live write grant, and commits the claim before HTTP execution.
+A missing response, HTTP failure, or interrupted settlement is permanently
+uncertain; recovery does not offer the request again. This slice initially
+supports only an interactive root; no child, scheduled or external-event
+actor inherits Action authority. OAuth activation remains separate.
