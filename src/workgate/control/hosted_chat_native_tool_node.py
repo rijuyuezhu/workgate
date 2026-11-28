@@ -6,6 +6,11 @@ import time
 from collections.abc import Awaitable, Callable, Collection
 from typing import Protocol
 
+from ..hosted_chat.agent_resources import (
+    agent_context_messages,
+    context_file_ids,
+    with_agent_context,
+)
 from ..hosted_chat.agent_runtime import (
     AgentContext,
     AgentLoopState,
@@ -46,7 +51,10 @@ from ..hosted_chat.handoff import (
 )
 from ..hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
 from ..hosted_chat.loop_receipts import execute_checkpointed_batch
-from ..hosted_chat.machine_permissions import effective_machine_access
+from ..hosted_chat.machine_permissions import (
+    effective_machine_access,
+    require_machine_scope,
+)
 from ..hosted_chat.mcp_projection import native_tool_history_message
 from ..hosted_chat.memory import MEMORY_TOOL_USAGE_GUARD, MemoryRepository
 from ..hosted_chat.memory_protection import MemoryContentBlocked
@@ -273,7 +281,61 @@ class NativeLoopToolNode:
             return []
         return memory_definitions(self.checkpoint)
 
-    def project_messages(self, state: AgentLoopState) -> list[dict]:
+    def _resource_agent(self, db, state: AgentLoopState) -> dict:
+        """Recheck the exact admitted Agent revision before reading documents."""
+        lease = self.checkpoint.lease
+        context = state.context.agent or {}
+        scope = self.checkpoint.scope
+        if scope is not None:
+            live = scope.resolve(db, lease)[-1]
+            identity = scope.member_id
+            admitted_revision = (live or {}).get("_version", 1)
+        else:
+            lease.assert_current(db)
+            run = db.execute(
+                "SELECT r.agent_id,r.state FROM runs r JOIN conversations c ON c.id=r.conversation_id "
+                "WHERE r.id=? AND c.owner=?",
+                (lease.run_id, lease.owner),
+            ).fetchone()
+            if run is None:
+                raise PermissionError("Resource generation is no longer owned")
+            identity = run["agent_id"]
+            admitted_revision = json.loads(run["state"]).get("agentRevision")
+            row = db.execute(
+                "SELECT config FROM agents WHERE id=? AND owner=?",
+                (identity, lease.owner),
+            ).fetchone()
+            live = json.loads(row["config"]) if row else None
+        version = context.get("version", context.get("_version", 1))
+        if (
+            live is None
+            or identity != context.get("id")
+            or version != admitted_revision
+            or live.get("_version", 1) != version
+            or context_file_ids(live) != context_file_ids(context)
+        ):
+            raise PermissionError("Agent resource revision changed")
+        return live
+
+    def project_resource_messages(
+        self, state: AgentLoopState, messages: list[dict]
+    ) -> list[dict]:
+        if not context_file_ids(state.context.agent):
+            return messages
+        scopes, expires = self.current_grant()
+        require_machine_scope(scopes, "read", expires=expires)
+        lease = self.checkpoint.lease
+        with lease.database.read_snapshot() as db:
+            agent = self._resource_agent(db, state)
+            documents = agent_context_messages(
+                lease.database, db, lease.owner, agent
+            )
+        self.current_grant()
+        return with_agent_context(messages, documents)
+
+    def project_messages(
+        self, state: AgentLoopState, *, include_resources: bool = True
+    ) -> list[dict]:
         self.current_grant()
         lease = self.checkpoint.lease
         conversation, _ = self.repository.tool_context_chain(
@@ -286,15 +348,27 @@ class NativeLoopToolNode:
             memory = (
                 memory + "\n\n" if memory else ""
             ) + MEMORY_TOOL_USAGE_GUARD
-        if memory is None:
-            return state.messages
-        return [{"role": "system", "content": memory}, *state.messages]
+        messages = (
+            state.messages
+            if memory is None
+            else [{"role": "system", "content": memory}, *state.messages]
+        )
+        return (
+            self.project_resource_messages(state, messages)
+            if include_resources
+            else messages
+        )
 
     def validate_model_input(
         self, state: AgentLoopState, messages: list[dict]
     ) -> None:
         self.current_grant()
-        filters = self._filters()
+        if context_file_ids(state.context.agent):
+            with self.repository.database.read_snapshot() as db:
+                self._resource_agent(db, state)
+                filters = filters_from_snapshot(db, self.checkpoint.lease.owner)
+        else:
+            filters = self._filters()
         if filters is None:
             return
         validate_agent_instructions(

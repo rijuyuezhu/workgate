@@ -79,20 +79,22 @@ class ForegroundCompaction:
         )
 
     def project(self, state: AgentLoopState) -> list[dict]:
-        messages = self.node.project_messages(state)
+        # Compact only the admitted conversation prefix, not provider-only
+        # reference documents. Insert live references after prefix projection.
+        messages = self.node.project_messages(state, include_resources=False)
         if (
             self.lease.detached_task_id is not None
             or self.lease.wakeup_task_id is not None
             or self.node.checkpoint.scope is not None
         ):
-            return messages
+            return self.node.project_resource_messages(state, messages)
         with self.lease.database.read_snapshot() as db:
             config = self._settings(db)
-        if config.get("enabled") is False:
-            return messages
-        return project_compaction(
-            self.lease, messages, manual_only=not self._enabled(config)
-        )
+        if config.get("enabled") is not False:
+            messages = project_compaction(
+                self.lease, messages, manual_only=not self._enabled(config)
+            )
+        return self.node.project_resource_messages(state, messages)
 
     def project_for_provider(self, state: AgentLoopState) -> list[dict]:
         # Policy must see original arguments and outputs even when the
