@@ -79,21 +79,31 @@ def generation_text_history(
             raise PermissionError("Generation history has a cyclic branch")
         seen.add(message_id)
         message = db.execute(
-            "SELECT parent_id,role,text FROM messages WHERE id=? AND conversation_id=?",
+            "SELECT m.parent_id,m.role,m.text,EXISTS("
+            "SELECT 1 FROM runs r WHERE r.conversation_id=m.conversation_id "
+            "AND json_extract(r.state,'$.responseMessageId')=m.id "
+            "AND json_extract(r.state,'$.manualCompaction')=1) AS manual_summary "
+            "FROM messages m WHERE m.id=? AND m.conversation_id=?",
             (message_id, generation.conversation_id),
         ).fetchone()
         if message is None or message["role"] not in {"user", "assistant"}:
             raise PermissionError("Generation history branch is unavailable")
-        history.append(
-            {
-                "role": message["role"],
-                "content": message["text"],
-                **({"messageId": message_id} if include_message_ids else {}),
-            }
-        )
+        if not (message["role"] == "assistant" and message["manual_summary"]):
+            history.append(
+                {
+                    "role": message["role"],
+                    "content": message["text"],
+                    **(
+                        {"messageId": message_id} if include_message_ids else {}
+                    ),
+                }
+            )
         message_id = message["parent_id"]
     history.reverse()
-    if not history or history[-1]["role"] != "user":
+    if not history or (
+        not json.loads(row["state"]).get("manualCompaction")
+        and history[-1]["role"] != "user"
+    ):
         raise PermissionError("Generation user message is unavailable")
     return history
 
@@ -218,8 +228,21 @@ class GenerationStore:
         new_conversation = raw_id in (None, "", "new", "new_conversation")
         conversation_id = str(uuid.uuid4()) if new_conversation else raw_id
         assert conversation_id is not None
-        prompt = payload.get("text")
-        if (
+        manual = payload.get("compact") is True
+        if "compact" in payload and type(payload["compact"]) is not bool:
+            raise ValueError("Invalid compaction flag")
+        if manual and (
+            new_conversation
+            or wakeup_task_id is not None
+            or not isinstance(payload.get("parentMessageId"), str)
+            or not payload["parentMessageId"]
+            or payload["parentMessageId"] == _ROOT_MESSAGE
+        ):
+            raise ValueError(
+                "Compaction requires an existing conversation and anchor"
+            )
+        prompt = "" if manual else payload.get("text")
+        if not manual and (
             not isinstance(prompt, str)
             or not prompt.strip()
             or len(prompt.encode("utf-8")) > _MAX_PROMPT_BYTES
@@ -230,7 +253,6 @@ class GenerationStore:
         if any(
             payload.get(key)
             for key in (
-                "compact",
                 "isContinued",
                 "isRegenerate",
                 "editedContent",
@@ -241,7 +263,12 @@ class GenerationStore:
             )
         ):
             raise ValueError("Unsupported generation request")
-        user_message_id = payload.get("messageId")
+        assert isinstance(prompt, str)
+        user_message_id = (
+            payload.get("parentMessageId")
+            if manual
+            else payload.get("messageId")
+        )
         if user_message_id is None:
             user_message_id = str(uuid.uuid4())
         if (
@@ -276,6 +303,11 @@ class GenerationStore:
                     raise ValueError(
                         "Request id belongs to another conversation"
                     )
+                previous = json.loads(prior["state"])
+                if bool(previous.get("manualCompaction")) != manual or (
+                    manual and previous["userMessageId"] != user_message_id
+                ):
+                    raise ValueError("Request id belongs to another operation")
                 return self._run(prior), False
         now = _now()
         convo = None
@@ -314,7 +346,8 @@ class GenerationStore:
                 ).fetchone()[0]
             )
         filters = filters_from_snapshot(db, owner)
-        validate_message_submission(prompt, filters)
+        if not manual:
+            validate_message_submission(prompt, filters)
         if agent is not None:
             validate_agent_submission(agent, filters)
         else:
@@ -367,6 +400,8 @@ class GenerationStore:
             "model": model,
             "sampling": sampling,
         }
+        if manual:
+            state["manualCompaction"] = True
         if native_admission is not None:
             state["nativeAdmission"] = {**native_admission}
             if ask_user_requested(agent, payload):
@@ -392,7 +427,7 @@ class GenerationStore:
             ).fetchone()
         ):
             raise KeyError("Parent message not found")
-        if (
+        if not manual and (
             db.execute(
                 "SELECT 1 FROM messages WHERE id=?", (user_message_id,)
             ).fetchone()
@@ -438,20 +473,21 @@ class GenerationStore:
             "endpoint": provider,
             "files": [],
         }
-        db.execute(
-            "INSERT INTO messages(id,conversation_id,parent_id,role,text,content,metadata,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
-            (
-                user_message_id,
-                conversation_id,
-                parent_id,
-                "user",
-                prompt,
-                "{}",
-                _json(user_metadata),
-                now,
-                now,
-            ),
-        )
+        if not manual:
+            db.execute(
+                "INSERT INTO messages(id,conversation_id,parent_id,role,text,content,metadata,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                (
+                    user_message_id,
+                    conversation_id,
+                    parent_id,
+                    "user",
+                    prompt,
+                    "{}",
+                    _json(user_metadata),
+                    now,
+                    now,
+                ),
+            )
         db.execute(
             "INSERT INTO runs(id,conversation_id,agent_id,status,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
             (
@@ -483,6 +519,13 @@ class GenerationStore:
                 **user_metadata,
             },
         }
+        if manual:
+            created["message"] = {
+                "messageId": user_message_id,
+                "conversationId": conversation_id,
+                "text": "",
+                "compact": True,
+            }
         db.execute(
             "INSERT INTO generation_events(run_id,data) VALUES(?,?)",
             (run_id, _json(created)),
@@ -653,11 +696,27 @@ class GenerationStore:
             "isCreatedByUser": False,
             "unfinished": status != "complete",
         }
-        usage = json.loads(
+        run_state = json.loads(
             db.execute(
                 "SELECT state FROM runs WHERE id=?", (run_id,)
             ).fetchone()[0]
-        ).get("contextUsage")
+        )
+        usage = run_state.get("contextUsage")
+        if run_state.get("manualCompaction"):
+            metadata["manualCompaction"] = True
+        if run_state.get("manualCompaction") and status == "complete":
+            record = run_state.get("compaction")
+            if not isinstance(record, dict):
+                raise ValueError("Manual compaction result is missing")
+            content.append(
+                {
+                    "type": "summary",
+                    "boundary": {"messageIndex": record["boundary"]},
+                    "tokenCount": record["tokenCount"],
+                    "initiatedBy": "user",
+                    "content": [{"type": "text", "text": record["summary"]}],
+                }
+            )
         if isinstance(usage, dict):
             metadata["metadata"] = {"contextUsage": usage}
         response_message = {

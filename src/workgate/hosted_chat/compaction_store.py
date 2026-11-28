@@ -106,13 +106,15 @@ def _admitted_history(db: sqlite3.Connection, lease: ActorLease):
 def _plan(
     db: sqlite3.Connection, lease: ActorLease, retain_turns: int
 ) -> CompactionPlan | None:
-    if type(retain_turns) is not int or not 1 <= retain_turns <= 32:
+    if type(retain_turns) is not int or not 0 <= retain_turns <= 32:
         raise ValueError("Invalid compaction retained turn count")
-    _, _, history, filters, scope = _admitted_history(db, lease)
+    _, state, history, filters, scope = _admitted_history(db, lease)
+    if retain_turns == 0 and state.get("manualCompaction") is not True:
+        raise ValueError("Invalid compaction retained turn count")
     source, tail = split_recent_turns(history, turns=retain_turns)
     if (
         not source
-        or not tail
+        or (not tail and retain_turns != 0)
         or len(_encode(source).encode()) > _MAX_PREFIX_BYTES
     ):
         return None
@@ -166,6 +168,7 @@ def commit_compaction(
             "boundary": len(plan.source),
             "summary": summary,
             "tokenCount": tokens,
+            **({"manual": True} if state.get("manualCompaction") else {}),
         }
         prior = state.get("compaction")
         if prior == record:
@@ -208,7 +211,9 @@ def commit_compaction(
         return record
 
 
-def project_compaction(lease: ActorLease, messages: list[dict]) -> list[dict]:
+def project_compaction(
+    lease: ActorLease, messages: list[dict], *, manual_only: bool = False
+) -> list[dict]:
     """Reuse the longest exact prefix on this branch, preserving the input list."""
     with lease.database.read_snapshot() as db:
         generation, state, history, filters, scope = _admitted_history(
@@ -236,6 +241,7 @@ def project_compaction(lease: ActorLease, messages: list[dict]) -> list[dict]:
             if (
                 not isinstance(candidate, dict)
                 or candidate.get("scope") != scope
+                or (manual_only and candidate.get("manual") is not True)
             ):
                 continue
             boundary = candidate["boundary"]
