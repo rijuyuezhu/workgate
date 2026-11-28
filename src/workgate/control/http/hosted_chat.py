@@ -23,6 +23,7 @@ from ...hosted_chat.generations import (
     GenerationConflict,
     GenerationStore,
 )
+from ...hosted_chat.memory_tools import MEMORY_TOOLS
 from ...hosted_chat.steering import SteeringStore, SteerRejection
 from ...oauth.core.context import current_oauth_claims
 from ...oauth.core.scopes import SUPPORTED_OAUTH_SCOPE_SET, scope_set
@@ -156,9 +157,9 @@ def hosted_chat_generation_routes(runtime: ControlRuntime) -> list[Route]:
             return False
         scopes = require_admission(principal, admission)
         tools = (
-            NATIVE_TOOLS | {ASK_USER_QUESTION_TOOL_NAME}
+            NATIVE_TOOLS | MEMORY_TOOLS | {ASK_USER_QUESTION_TOOL_NAME}
             if admission.get("ask_user") is True
-            else NATIVE_TOOLS
+            else NATIVE_TOOLS | MEMORY_TOOLS
         )
 
         async def authorize_batch(_calls, _state):

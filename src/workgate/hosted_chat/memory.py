@@ -10,6 +10,7 @@ import re
 import secrets
 import sqlite3
 import time
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import Any
 
@@ -396,6 +397,7 @@ class MemoryRepository:
         existing_id: str | None = None,
         existing_key: str | None = None,
         filters: dict | None = None,
+        _connection: sqlite3.Connection | None = None,
     ) -> dict:
         """Serialized limit validation + upsert/rename; rollback on every conflict."""
         if type(char_limit) is not int or not 1 <= char_limit <= 262144:
@@ -420,8 +422,17 @@ class MemoryRepository:
         if key is not None:
             self._check(key)
         token_count = count_tokens(value, exact=False)
-        with self.database.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
+        with (
+            self.database.connect()
+            if _connection is None
+            else nullcontext(_connection)
+        ) as db:
+            if _connection is None:
+                db.execute("BEGIN IMMEDIATE")
+            elif not db.in_transaction:
+                raise ValueError(
+                    "Memory mutation requires an active transaction"
+                )
             config = _memory_config_snapshot(db, owner)
             if config is None:
                 raise PermissionError("Memory is disabled")

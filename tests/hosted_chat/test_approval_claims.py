@@ -16,15 +16,31 @@ from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
 from workgate.hosted_chat.provider_common import ModelToolCall, ProviderConfig
 
 
-async def started(tmp_path, calls=None):
+async def started(tmp_path, calls=None, *, agent_config=None):
     database = SQLiteDatabase(tmp_path)
     store = GenerationStore(database)
-    job, _ = store.begin("alice", {"text": "hello", "model": "m"})
+    agent = None
+    if agent_config is not None:
+        from workgate.hosted_chat.agents import AgentRepository
+
+        agent = AgentRepository(database).create(
+            "alice", {"provider": "openai", "model": "m", **agent_config}
+        )
+    job, _ = store.begin(
+        "alice",
+        {
+            "text": "hello",
+            "model": "m",
+            **({"agent_id": agent["id"]} if agent is not None else {}),
+        },
+    )
     lease = ActorLease.claim(database, "alice", job.run_id)
     assert lease is not None
     checkpoint = OwnedLoopCheckpoint(lease)
     context = AgentContext(
-        ProviderConfig("openai", "m", "https://provider.invalid", "secret"), []
+        ProviderConfig("openai", "m", "https://provider.invalid", "secret"),
+        [],
+        agent=agent,
     )
     calls = (
         calls
@@ -477,3 +493,145 @@ async def test_question_requires_lone_exact_proposal_and_expires_without_dispatc
     assert store.expire_pending("alice", job.run_id, pending["actionId"])
     current = generations.get("alice", job.run_id)
     assert current is not None and current.status == "interrupted"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["set_memory", "delete_memory"])
+async def test_memory_tool_exact_approval_atomic_replay(tmp_path, name):
+    from workgate.hosted_chat.memory import MemoryRepository
+    from workgate.hosted_chat.memory_tools import (
+        definitions,
+        execute_memory_call,
+    )
+    from workgate.hosted_chat.storage import WorkspaceRepository
+
+    args = (
+        {"key": "style", "value": "Original."}
+        if name == "set_memory"
+        else {"key": "style"}
+    )
+    call = ModelToolCall("memory-call", name, args)
+    db, _, job, checkpoint, context, _, _ = await started(tmp_path, [call])
+    memories = MemoryRepository(db)
+    if name == "delete_memory":
+        memories.write("alice", "style", "Original.")
+    assert len(definitions(checkpoint)) == 2
+    with pytest.raises(PermissionError, match="approval"):
+        execute_memory_call(checkpoint, call, expires=None)
+    approvals = ApprovalClaimStore(db)
+    pending = approvals.pause(checkpoint, [call])
+    assert pending["payload"]["review_configs"][0]["allowed_decisions"] == [
+        "approve",
+        "reject",
+    ]
+    approvals.claim(
+        "alice",
+        job.run_id,
+        pending["actionId"],
+        [{"tool_call_id": call.call_id, "decision": "approve"}],
+    )
+    lease = ActorLease.claim(db, "alice", job.run_id)
+    assert lease is not None
+    resumed = OwnedLoopCheckpoint(lease)
+    assert resumed.restore(context) is not None
+    with pytest.raises(PermissionError, match="expired"):
+        execute_memory_call(resumed, call, expires=1)
+    with pytest.raises(PermissionError, match="receipt missing"):
+        execute_memory_call(resumed, call, expires=None, replay_only=True)
+    with pytest.raises(PermissionError, match="differs"):
+        execute_memory_call(
+            resumed,
+            ModelToolCall(call.call_id, name, {**args, "key": "other"}),
+            expires=None,
+        )
+    receipt = execute_memory_call(resumed, call, expires=None)
+    assert receipt.get("isError") is not True
+    assert bool(memories.list("alice")) == (name == "set_memory")
+    memories.write("alice", "style", "Changed after commit.")
+    assert execute_memory_call(resumed, call, expires=None) == receipt
+    assert (
+        execute_memory_call(resumed, call, expires=None, replay_only=True)
+        == receipt
+    )
+    assert memories.list("alice")[0]["value"] == "Changed after commit."
+    repo = WorkspaceRepository(db)
+    repo.save_setting("alice", "user.memories", False)
+    assert definitions(resumed) == []
+    with pytest.raises(PermissionError, match="disabled"):
+        execute_memory_call(resumed, call, expires=None, replay_only=True)
+    assert memories.list("alice")[0]["value"] == "Changed after commit."
+
+
+@pytest.mark.asyncio
+async def test_memory_saved_agent_partition_and_live_capabilities(tmp_path):
+    from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.memory import MemoryRepository
+    from workgate.hosted_chat.memory_tools import (
+        definitions,
+        execute_memory_call,
+        validate_call,
+    )
+    from workgate.hosted_chat.storage import WorkspaceRepository
+
+    call = ModelToolCall(
+        "memory", "set_memory", {"key": "style", "value": "Scoped value."}
+    )
+    db, _, job, checkpoint, context, _, _ = await started(
+        tmp_path,
+        [call],
+        agent_config={"tools": ["memory"], "memory_scope": "agent"},
+    )
+    assert context.agent is not None
+    aid = context.agent["id"]
+    repo = WorkspaceRepository(db)
+    repo.save_setting("alice", "endpoints", {"agents": {"capabilities": []}})
+    assert definitions(checkpoint) == []
+    repo.save_setting(
+        "alice", "endpoints", {"agents": {"capabilities": ["memory"]}}
+    )
+    repo.save_setting(
+        "alice",
+        "conversation.permissions." + job.conversation_id,
+        {"memory": False},
+    )
+    assert definitions(checkpoint) == []
+    repo.save_setting(
+        "alice",
+        "conversation.permissions." + job.conversation_id,
+        {"memory": True},
+    )
+    repo.save_setting("alice", "webui.memory.config", {"validKeys": ["other"]})
+    assert "other" in repr(definitions(checkpoint))
+    for bad in (
+        ModelToolCall("x", "unknown", {}),
+        ModelToolCall("x", "set_memory", {"key": "style"}),
+    ):
+        with pytest.raises(ValueError):
+            validate_call(bad)
+    approvals = ApprovalClaimStore(db)
+    pending = approvals.pause(checkpoint, [call])
+    approvals.claim(
+        "alice",
+        job.run_id,
+        pending["actionId"],
+        [{"tool_call_id": call.call_id, "decision": "approve"}],
+    )
+    lease = ActorLease.claim(db, "alice", job.run_id)
+    assert lease is not None
+    resumed = OwnedLoopCheckpoint(lease)
+    assert resumed.restore(context) is not None
+    with pytest.raises(ValueError, match="not allowed"):
+        execute_memory_call(resumed, call, expires=None)
+    repo.save_setting("alice", "webui.memory.config", {"validKeys": ["style"]})
+    assert (
+        execute_memory_call(resumed, call, expires=None)["content"][0]["text"]
+        == "Memory saved."
+    )
+    assert MemoryRepository(db).list("alice", "") == []
+    assert (
+        MemoryRepository(db).list("alice", aid)[0]["value"] == "Scoped value."
+    )
+    AgentRepository(db).update("alice", aid, {"instructions": "changed"})
+    assert definitions(resumed) == []
+    with pytest.raises(PermissionError, match="selection changed"):
+        execute_memory_call(resumed, call, expires=None, replay_only=True)
