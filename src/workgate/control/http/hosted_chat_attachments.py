@@ -1,6 +1,7 @@
 """Authenticated native private attachment transport."""
 
 import asyncio
+import json
 import os
 import sqlite3
 import stat
@@ -78,6 +79,33 @@ def _read_bytes(database: SQLiteDatabase, path: Path) -> bytes:
         if len(data) != info.st_size or len(data) > MAX_ATTACHMENT_BYTES:
             raise OSError("Attachment changed")
     return data
+
+
+def _agent_files(database: SQLiteDatabase, owner: str, agent_id: str):
+    """Read the owned Agent and its live file records from one snapshot."""
+    with database.read_snapshot() as db:
+        agent = db.execute(
+            "SELECT config FROM agents WHERE id=? AND owner=?",
+            (agent_id, owner),
+        ).fetchone()
+        if agent is None:
+            raise KeyError("Agent not found")
+        identities = (
+            json.loads(agent["config"])
+            .get("tool_resources", {})
+            .get("context", {})
+            .get("file_ids", [])
+        )
+        records = []
+        for ident in dict.fromkeys(identities):
+            row = db.execute(
+                "SELECT * FROM attachments WHERE id=? AND owner=? "
+                "AND NOT EXISTS (SELECT 1 FROM attachment_deletions WHERE file_id=?)",
+                (ident, owner, ident),
+            ).fetchone()
+            if row is not None:
+                records.append(_record(row))
+        return records
 
 
 async def _upload(request: Request, database: SQLiteDatabase, owner, check):
@@ -168,9 +196,10 @@ def hosted_chat_attachment_routes(runtime: ControlRuntime) -> list[Route]:
             database = SQLiteDatabase(runtime.config.state_dir)
             owner = principal.owner
             ident = request.path_params.get("file_id")
+            agent_id = request.path_params.get("agent_id")
             if request.method == "POST":
                 result = await _upload(request, database, owner, check)
-                if request.path_params.get("agent_id") is not None:
+                if agent_id is not None:
                     runtime.generation_supervisor.wake_cleanup()
                 return JSONResponse(
                     result, status_code=201, headers=_FILE_HEADERS
@@ -183,6 +212,27 @@ def hosted_chat_attachment_routes(runtime: ControlRuntime) -> list[Route]:
                     or not isinstance(payload["file_ids"], list)
                 ):
                     raise ValueError("Invalid attachment deletion request")
+                if agent_id is not None:
+                    with database.connect() as db:
+                        db.execute("BEGIN IMMEDIATE")
+                        check()
+                        result = AgentRepository(
+                            database
+                        ).remove_resource_files(
+                            owner,
+                            agent_id,
+                            [
+                                {"tool_resource": "context", "file_id": item}
+                                for item in payload["file_ids"]
+                            ],
+                            db=db,
+                        )
+                        check()
+                    runtime.generation_supervisor.wake_cleanup()
+                    return JSONResponse(
+                        {"success": True, "version": result["version"]},
+                        headers=_FILE_HEADERS,
+                    )
                 outcome = await asyncio.to_thread(
                     AttachmentDeletionStore(database).delete,
                     owner,
@@ -190,6 +240,10 @@ def hosted_chat_attachment_routes(runtime: ControlRuntime) -> list[Route]:
                     check_grant=check,
                 )
                 return JSONResponse(outcome, headers=_FILE_HEADERS)
+            if agent_id is not None:
+                records = _agent_files(database, owner, agent_id)
+                check()
+                return JSONResponse(records, headers=_FILE_HEADERS)
             with database.connect() as db:
                 if ident is None:
                     rows = db.execute(
@@ -259,5 +313,9 @@ def hosted_chat_attachment_routes(runtime: ControlRuntime) -> list[Route]:
     return [
         Route(_PREFIX, handle, methods=["GET", "POST", "DELETE"]),
         Route(_PREFIX + "/download/{file_id}", handle, methods=["GET"]),
-        Route(_PREFIX + "/agent/{agent_id}", handle, methods=["POST"]),
+        Route(
+            _PREFIX + "/agent/{agent_id}",
+            handle,
+            methods=["GET", "POST", "DELETE"],
+        ),
     ]
