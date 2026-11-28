@@ -699,3 +699,13 @@ checksum-verified original bytes, not embedded in event payloads or passed
 to a model. The read route rechecks live authorization and attachment identity
 after conversion, serves generated HTML under a sandboxed no-network CSP,
 and preserves the original binary download if conversion is unavailable.
+
+### M1 OpenAPI Action import
+
+The pinned `webui/action_spec.py` (blob
+`1b85a5be3506b98014403a34075bda4332d9cdb1`) defines operation projection,
+names and domain binding. WorkGate additionally bounds expanded YAML trees
+and projected schemas, rejects YAML merge-key expansion, malformed
+and ambiguous parameter layouts, non-JSON values, and unsafe path syntax.
+The schema module does not authorize network requests; Agent-bound
+credential storage and transport are separate integration boundaries.
