@@ -309,7 +309,7 @@ class MemoryRepository:
     def write(
         self,
         owner: str,
-        key: str,
+        key: str | None,
         value: str,
         *,
         agent_id: str = "",
@@ -317,6 +317,7 @@ class MemoryRepository:
         token_limit: int | None = None,
         create: bool = False,
         existing_id: str | None = None,
+        existing_key: str | None = None,
         filters: dict | None = None,
     ) -> dict:
         """Serialized limit validation + upsert/rename; rollback on every conflict."""
@@ -326,7 +327,21 @@ class MemoryRepository:
             type(token_limit) is not int or not 1 <= token_limit <= 2**53 - 1
         ):
             raise ValueError("Invalid memory token limit")
-        self._check(key, value, char_limit=char_limit)
+        if (
+            not isinstance(value, str)
+            or not value.strip()
+            or _utf16_length(value) > char_limit
+        ):
+            raise ValueError("Invalid memory value")
+        if (
+            existing_id is not None
+            and existing_key is not None
+            or create
+            and (existing_id is not None or existing_key is not None)
+        ):
+            raise ValueError("Invalid memory identity")
+        if key is not None:
+            self._check(key)
         token_count = count_tokens(value, exact=False)
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -345,9 +360,7 @@ class MemoryRepository:
                 or not 1 <= configured_tokens <= 2**53 - 1
             ):
                 raise ValueError("Invalid configured memory token limit")
-            self._check(
-                key, value, char_limit=min(char_limit, configured_chars)
-            )
+
             if configured_tokens is not None:
                 token_limit = (
                     min(token_limit, configured_tokens)
@@ -362,6 +375,28 @@ class MemoryRepository:
                 ).fetchone()
             ):
                 raise KeyError("Agent not found")
+            previous = None
+            if existing_id is not None or existing_key is not None:
+                if existing_id is not None:
+                    previous = db.execute(
+                        "SELECT * FROM webui_memories WHERE id=? AND owner=? AND agent_id=?",
+                        (existing_id, owner, agent_id),
+                    ).fetchone()
+                else:
+                    previous = db.execute(
+                        "SELECT * FROM webui_memories WHERE key=? AND owner=? AND agent_id=?",
+                        (existing_key, owner, agent_id),
+                    ).fetchone()
+                if previous is None:
+                    raise KeyError("Memory not found")
+            if key is None:
+                if previous is None:
+                    raise ValueError("Memory key required")
+                key = previous["key"]
+            assert isinstance(key, str)
+            self._check(
+                key, value, char_limit=min(char_limit, configured_chars)
+            )
             assert_memory_content_allowed(
                 key, value, filters_from_snapshot(db, owner)
             )
@@ -370,17 +405,13 @@ class MemoryRepository:
                 "SELECT * FROM webui_memories WHERE owner=? AND agent_id=? AND key=?",
                 (owner, agent_id, key),
             ).fetchone()
-            previous = None
-            if existing_id is not None:
-                previous = db.execute(
-                    "SELECT * FROM webui_memories WHERE id=? AND owner=? AND agent_id=?",
-                    (existing_id, owner, agent_id),
-                ).fetchone()
-                if previous is None:
-                    raise KeyError("Memory not found")
             if create and existing:
                 raise FileExistsError("Memory with this key already exists")
-            if existing_id and existing and existing["id"] != existing_id:
+            if (
+                previous is not None
+                and existing
+                and existing["id"] != previous["id"]
+            ):
                 raise FileExistsError("Memory with this key already exists")
             old = previous if previous is not None else existing
             if (
