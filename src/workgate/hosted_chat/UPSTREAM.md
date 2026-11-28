@@ -642,3 +642,10 @@ its existing child-run state, without a database schema change. Interrupt
 recipients are elected before preemption; steer/queue use the existing model
 loop boundaries. The exact member checkpoint must contain the reserved
 message before acknowledgment; replacement workers retain the election.
+
+Detached single-Agent execution restores only the admitted foreground child
+catalogue, with immutable depth, original task-actor and native authority.
+The pinned background-deny rule still prohibits a detached worker from
+launching another detached task; isolated teams carry no nested catalogue.
+Executed descendant revisions are checked again before task settlement,
+manual result disclosure, thread continuation, and completion wakeup.
