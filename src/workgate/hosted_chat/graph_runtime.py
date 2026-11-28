@@ -35,6 +35,7 @@ from .handoff import (
     receive_handoff,
 )
 from .message_reducers import agent_messages_reducer, messages_state_reducer
+from .model_history import completed_model_steps
 from .subagent_scope import (
     DetachedExecutionScope,
     SubagentGraphScope,
@@ -47,6 +48,79 @@ def _merge_prompt_inputs(current: dict | None, updates: dict | None) -> dict:
     return {**(current or {}), **(updates or {})}
 
 
+def _merge_public_proofs(
+    current: dict[str, dict[str, str] | None] | None,
+    updates: dict[str, dict[str, str] | None] | None,
+) -> dict[str, dict[str, str] | None]:
+    merged = dict(current or {})
+    for identity, proof in (updates or {}).items():
+        merged[identity] = (
+            None if identity in merged and merged[identity] != proof else proof
+        )
+    return merged
+
+
+def _step_digest(message: dict) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            message, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode()
+    ).hexdigest()
+
+
+def _public_step_proofs(
+    before: list[dict],
+    messages: list[dict],
+    updates: list[dict],
+    *,
+    visible: bool,
+    current: list[dict],
+) -> dict[str, str] | None:
+    """Prove new public steps without duplicating their payloads in checkpoints."""
+    if messages[: len(before)] != before:
+        return None
+    prior = {m.get("id") for m in [*before, *current]}
+    proofs = {}
+    for message in updates:
+        identity = message.get("id")
+        if not isinstance(identity, str) or identity in prior:
+            return None
+        if message.get("role") == "user" and message.get("source") == "steer":
+            pass
+        elif not visible:
+            continue
+        elif message.get("role") not in {"assistant", "tool"}:
+            return None
+        if identity in proofs:
+            return None
+        proofs[identity] = _step_digest(message)
+    return proofs
+
+
+def _public_graph_steps(outcome: dict) -> list[dict]:
+    """Replay only hash-bound public graph steps in canonical graph order."""
+    if outcome.get("publicHistoryReady") is not True:
+        return []
+    proofs = {}
+    for activation in outcome.get("publicStepProofs", {}).values():
+        if activation is None or proofs.keys() & activation.keys():
+            return []
+        proofs.update(activation)
+    result = []
+    for message in outcome["messages"]:
+        identity = message.get("id")
+        if identity in proofs:
+            if _step_digest(message) != proofs.pop(identity):
+                return []
+            result.append(message)
+    if proofs:
+        return []
+    try:
+        return completed_model_steps([], result)
+    except ValueError:
+        return []
+
+
 class MultiAgentState(TypedDict, total=False):
     messages: Annotated[list[dict], messages_state_reducer]
     agentMessages: Annotated[list[dict], agent_messages_reducer]
@@ -56,6 +130,10 @@ class MultiAgentState(TypedDict, total=False):
     initialInputCount: int
     initialSystem: list[dict]
     handoffState: Annotated[dict | None, merge_handoff_state]
+    publicHistoryReady: bool
+    publicStepProofs: Annotated[
+        dict[str, dict[str, str] | None], _merge_public_proofs
+    ]
 
 
 def _graph_imports():
@@ -188,6 +266,7 @@ async def run_multi_agent_graph(
 
     This private seam does not grant access to providers or native tools.
     The callback owns activation-scoped effect receipts and current grants.
+    Public foreground mode returns only proven new public model steps.
     """
     if type(recursion_limit) is not int or not 0 < recursion_limit <= 2**31 - 1:
         raise ValueError("A finite positive graph recursion limit is required")
@@ -473,6 +552,19 @@ async def run_multi_agent_graph(
                 "agentId": agent_id,
                 "message": replies[-1] if replies else None,
             }
+
+        def record_public_steps() -> None:
+            if public_output:
+                update["publicStepProofs"] = {
+                    activation_id: _public_step_proofs(
+                        before,
+                        messages,
+                        update["messages"],
+                        visible=activation.visible_output,
+                        current=current,
+                    )
+                }
+
         if result.commands:
             # The callback returns original transfer Commands. Recheck each
             # source/destination and scope before the SDK schedules recipients.
@@ -588,6 +680,7 @@ async def run_multi_agent_graph(
                             "initialInputCount", initial_count
                         )
             update["messages"].extend(copy.deepcopy(applied_steers))
+            record_public_steps()
             goto = _as_goto(commands, Send=Send)
             return Command(
                 update=update,
@@ -595,6 +688,7 @@ async def run_multi_agent_graph(
                 if len(goto) == 1 and not isinstance(goto[0], Send)
                 else goto,
             )
+        record_public_steps()
         if agent_id in handoff_sources and direct_destinations[agent_id]:
             direct = list(
                 dict.fromkeys(
@@ -705,6 +799,11 @@ async def run_multi_agent_graph(
             "messages": source_history,
             "agentMessages": [],
             "initialInputCount": initial_count,
+            **(
+                {"publicHistoryReady": True, "publicStepProofs": {}}
+                if public_output
+                else {}
+            ),
             "initialSystem": copy.deepcopy(initial_system),
             "handoffState": HandoffRouting(
                 entry, root.get("maxHandoffs"), topology.routing_parallel
@@ -750,6 +849,8 @@ async def run_multi_agent_graph(
             raise RuntimeSafetyError("Graph interrupt belongs to another graph")
         claims.publish_graph_interrupt(lease, item.id, request)
         raise AgentSuspended("Waiting for graph member human action")
+    if public_output:
+        return _public_graph_steps(outcome)
     if result_only and root.get("resultAgentId"):
         result = outcome.get("subagentResult") or {}
         message = (

@@ -139,7 +139,8 @@ def transfer(activation, root, targets):
 
 
 @pytest.mark.asyncio
-async def test_direct_fanout_join_barrier_and_resume(owned):
+@pytest.mark.parametrize("public_output", [False, True])
+async def test_direct_fanout_join_barrier_and_resume(owned, public_output):
     repo, agents, lease = owned
     configure(
         owned,
@@ -174,7 +175,15 @@ async def test_direct_fanout_join_barrier_and_resume(owned):
             } == {"root answered", "left answered", "right answered"}
         return reply(activation)
 
-    result = await run(owned, execute)
+    result = await run(owned, execute, public_output=public_output)
+    if public_output:
+        assert len(result) == 4
+        assert {m["content"] for m in result} == {
+            "root answered",
+            "left answered",
+            "right answered",
+            "join answered",
+        }
     assert [name for name, _ in seen[:1]] == ["root"]
     assert {name for name, _ in seen[1:3]} == {"left", "right"}
     assert seen[-1][0] == "join"
@@ -182,7 +191,13 @@ async def test_direct_fanout_join_barrier_and_resume(owned):
     lease.release()
     replacement = ActorLease.claim(repo.database, "alice", "run")
     assert replacement is not None
-    again = await run(owned, execute, history=[], lease=replacement)
+    again = await run(
+        owned,
+        execute,
+        history=[],
+        lease=replacement,
+        public_output=public_output,
+    )
     assert result == again
     assert len(seen) == 4
 
@@ -219,7 +234,10 @@ async def test_prompted_join_excludes_results_and_returns_designated_result(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("limit", [1, 2])
-async def test_parallel_transfers_and_shared_budget(owned, limit):
+@pytest.mark.parametrize("public_output", [False, True])
+async def test_parallel_transfers_and_shared_budget(
+    owned, limit, public_output
+):
     _, agents, _ = owned
     root = configure(
         owned,
@@ -250,10 +268,18 @@ async def test_parallel_transfers_and_shared_budget(owned, limit):
 
     if limit == 1:
         with pytest.raises(HandoffLimitError):
-            await run(owned, execute)
+            await run(owned, execute, public_output=public_output)
         assert seen == ["root"]
     else:
-        result = await run(owned, execute)
+        result = await run(owned, execute, public_output=public_output)
+        if public_output:
+            assert [m["role"] for m in result] == [
+                "assistant",
+                "tool",
+                "tool",
+                "assistant",
+                "assistant",
+            ]
         assert seen[0] == "root" and set(seen[1:]) == {"left", "right"}
         assert sum(m["role"] == "tool" for m in result) == 2
         assert {m["content"] for m in result if m["role"] == "assistant"} >= {
@@ -631,3 +657,127 @@ async def test_member_checkpoint_and_receipts_are_isolated_and_recover_exact_act
         right.assert_current()
     with pytest.raises(PermissionError, match="definition"):
         right.saver.put_writes(right.active, [("messages", {})], "stale")
+
+
+@pytest.mark.asyncio
+async def test_public_graph_history_excludes_route_prompts_and_preserves_steers(
+    owned,
+):
+    configure(
+        owned,
+        [
+            {
+                "from": "root",
+                "to": "left",
+                "edgeType": "direct",
+                "prompt": "internal route {results}",
+            }
+        ],
+    )
+
+    async def execute(activation):
+        result = reply(activation)
+        if activation.agent["model"] == "left":
+            assert any(
+                "internal route" in m.get("content", "")
+                for m in activation.history
+            )
+            result.messages.insert(
+                len(activation.history),
+                {
+                    "role": "user",
+                    "source": "steer",
+                    "steerId": "actual",
+                    "id": "steer:actual",
+                    "content": "user steering",
+                },
+            )
+        return result
+
+    result = await run(owned, execute, public_output=True)
+    assert [(m["role"], m["content"]) for m in result] == [
+        ("assistant", "root answered"),
+        ("user", "user steering"),
+        ("assistant", "left answered"),
+    ]
+
+
+def test_public_graph_proofs_reject_missing_changed_and_orphaned_steps():
+    from workgate.hosted_chat.graph_runtime import (
+        _merge_public_proofs,
+        _public_graph_steps,
+        _public_step_proofs,
+    )
+
+    before = [{"id": "old", "role": "user", "content": "prompt"}]
+    step = {"id": "new", "role": "assistant", "content": "answer"}
+    proof = _public_step_proofs(
+        before, before + [step], [step], visible=True, current=before
+    )
+    assert proof
+    assert _merge_public_proofs(None, {"a": proof}) == {"a": proof}
+    assert _merge_public_proofs({"a": proof}, {"a": proof, "b": {}}) == {
+        "a": proof,
+        "b": {},
+    }
+    assert _merge_public_proofs({"a": proof}, {"a": {}}) == {"a": None}
+    outcome = {
+        "publicHistoryReady": True,
+        "publicStepProofs": {"activation": proof},
+        "messages": before + [step],
+    }
+    assert _public_graph_steps(outcome) == [step]
+    assert _public_graph_steps({**outcome, "publicHistoryReady": False}) == []
+    assert _public_graph_steps({**outcome, "messages": before}) == []
+    assert (
+        _public_graph_steps(
+            {**outcome, "messages": before + [{**step, "content": "changed"}]}
+        )
+        == []
+    )
+    assert (
+        _public_graph_steps(
+            {**outcome, "publicStepProofs": {"a": proof, "b": proof}}
+        )
+        == []
+    )
+    assert (
+        _public_graph_steps({**outcome, "publicStepProofs": {"a": None}}) == []
+    )
+    assert (
+        _public_step_proofs(
+            before, [step], [step], visible=True, current=before
+        )
+        is None
+    )
+    assert (
+        _public_step_proofs(
+            before, before, before, visible=True, current=before
+        )
+        is None
+    )
+    assert (
+        _public_step_proofs(
+            before, before + [step], [step], visible=False, current=before
+        )
+        == {}
+    )
+    orphan = {
+        "id": "tool",
+        "role": "tool",
+        "tool_call_id": "missing",
+        "content": "result",
+    }
+    orphan_proof = _public_step_proofs(
+        before, before + [orphan], [orphan], visible=True, current=before
+    )
+    assert (
+        _public_graph_steps(
+            {
+                **outcome,
+                "messages": before + [orphan],
+                "publicStepProofs": {"a": orphan_proof},
+            }
+        )
+        == []
+    )
