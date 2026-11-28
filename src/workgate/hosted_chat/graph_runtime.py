@@ -117,6 +117,7 @@ class GraphActivation:
     handoff_tools: list[dict]
     handoff_state: dict
     graph_root: dict | None = None
+    visible_output: bool = True
 
     @property
     def activation_id(self) -> str:
@@ -179,6 +180,7 @@ async def run_multi_agent_graph(
     namespace: str = "foreground",
     result_only: bool = False,
     human_actions: bool = False,
+    public_output: bool = False,
     team_scope: SubagentScope | DetachedExecutionScope | None = None,
     team_root: dict | None = None,
 ) -> list[dict]:
@@ -210,6 +212,8 @@ async def run_multi_agent_graph(
         raise PermissionError("Team graph requires an admitted definition")
     if team_scope is not None and human_actions:
         raise PermissionError("Team graph human actions are not enabled")
+    if team_scope is not None and public_output:
+        raise PermissionError("Private team cannot publish public output")
     if namespace == "foreground" and team_scope is None:
         with lease.database.read_snapshot() as db:
             lease.assert_current(db)
@@ -254,6 +258,7 @@ async def run_multi_agent_graph(
                 recursion_limit,
                 result_only,
                 human_actions,
+                *([True] if public_output else []),
             ],
             sort_keys=True,
             separators=(",", ":"),
@@ -420,6 +425,12 @@ async def run_multi_agent_graph(
             tools,
             route.snapshot(),
             copy.deepcopy(root) if team_scope is not None else None,
+            visible_output=not (
+                root.get("hide_sequential_outputs") is True
+                and root.get("resultAgentId") is not None
+                and agent_id != root["resultAgentId"]
+                and not topology.routing_parallel
+            ),
         )
         if human_actions:
             assert isinstance(activation.scope, GraphMemberScope)

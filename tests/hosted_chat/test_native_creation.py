@@ -8188,3 +8188,141 @@ async def test_authenticated_generation_host(bound, monkeypatch, mode):
     assert authorized == (
         ["delegate", "child-task"] if mode == "detached" else []
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["visible", "hidden", "interrupt"])
+async def test_authenticated_root_graph_output(bound, monkeypatch, mode):
+    from workgate.control import hosted_chat_child_host
+    from workgate.control.hosted_chat_foreground_loop import (
+        ObservableStreamInterrupted,
+    )
+    from workgate.control.hosted_chat_generation_host import (
+        run_authenticated_generation,
+    )
+    from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.credential_cipher import CredentialCipher
+    from workgate.hosted_chat.provider_common import ModelThought
+    from workgate.hosted_chat.provider_profiles import ProviderRepository
+
+    pytest.importorskip("langgraph")
+    monkeypatch.setattr(hosted_chat_child_host, "_POLL_SECONDS", 0.02)
+    harness, repo, lease, _ = bound
+    db = repo.database
+    ProviderRepository(db, CredentialCipher(db)).save(
+        {
+            "name": "graph-models",
+            "provider": "openai",
+            "base_url": "https://models.invalid/v1",
+            "api_key": "test-key",
+            "models": ["root", "member"],
+        }
+    )
+    agents = AgentRepository(db)
+    member = agents.create(
+        lease.owner,
+        {
+            "provider": "graph-models",
+            "model": "member",
+            "instructions": "member only",
+        },
+    )
+    root = agents.create(
+        lease.owner,
+        {
+            "provider": "graph-models",
+            "model": "root",
+            "instructions": "root only",
+        },
+    )
+    agents.update(
+        lease.owner,
+        root["id"],
+        {
+            "edges": [
+                {"from": root["id"], "to": member["id"], "edgeType": "direct"}
+            ],
+            "resultAgentId": member["id"],
+            "hide_sequential_outputs": mode == "hidden",
+        },
+    )
+    store = GenerationStore(db)
+    generation, _ = store.begin(
+        lease.owner, {"text": "graph question", "agent_id": root["id"]}
+    )
+    visible = asyncio.Event()
+    turns = []
+
+    async def stream(profile, messages, **kwargs):
+        turns.append(profile.model)
+        assert profile.token == "test-key"
+        assert [m["content"] for m in messages if m["role"] == "system"] == [
+            profile.model + " only"
+        ]
+        if profile.model == "root":
+            yield ModelThought("thinking", text="root reasoning")
+            yield "root visible/"
+            if mode == "interrupt":
+                visible.set()
+                await asyncio.Event().wait()
+        else:
+            assert any(m.get("content") == "root visible/" for m in messages)
+            yield "member answer"
+
+    async def authorize(calls, state):
+        pytest.fail("Text-only graph must not authorize tools")
+
+    async def execute():
+        return await run_authenticated_generation(
+            harness.control,
+            db,
+            lease.owner,
+            generation.run_id,
+            scopes=SCOPES,
+            expires=None,
+            allowed_tools={"task"},
+            task_machine=harness.executor_id,
+            check_grant=lambda: None,
+            authorize_batch=authorize,
+            stream_tools=stream,
+            stream_text=stream,
+        )
+
+    if mode == "interrupt":
+        task = asyncio.create_task(execute())
+        await asyncio.wait_for(visible.wait(), 30)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        with pytest.raises(ObservableStreamInterrupted):
+            await execute()
+        expected = "root visible/"
+    else:
+        assert await asyncio.wait_for(execute(), 30)
+        expected = (
+            "member answer"
+            if mode == "hidden"
+            else "root visible/member answer"
+        )
+    current = store.get(lease.owner, generation.run_id)
+    assert current is not None
+    assert current.status == (
+        "interrupted" if mode == "interrupt" else "complete"
+    )
+    assert turns == (["root"] if mode == "interrupt" else ["root", "member"])
+    events = [
+        event for _, event in store.events(lease.owner, generation.run_id)
+    ]
+    deltas = [e["data"] for e in events if e.get("event") == "on_message_delta"]
+    assert "".join(d["delta"]["content"]["text"] for d in deltas) == expected
+    assert len({d["graphActivationId"] for d in deltas}) == (
+        2 if mode == "visible" else 1
+    )
+    reasoning = [e for e in events if e.get("event") == "on_reasoning_delta"]
+    assert bool(reasoning) == (mode != "hidden")
+    with db.read_snapshot() as conn:
+        reply = conn.execute(
+            "SELECT text FROM messages WHERE conversation_id=? AND role='assistant'",
+            (generation.conversation_id,),
+        ).fetchone()
+        assert reply["text"] == expected
