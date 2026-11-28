@@ -349,29 +349,11 @@ class EventDeliveryQueue:
             ):
                 raise PermissionError("Event target Agent is unavailable")
             if mode == "steer":
-                # Never feed remote input into a foreground run with native
-                # grants. Later dispatch must also recheck the exact epoch.
-                row = db.execute(
-                    "SELECT r.state,r.agent_id,r.status FROM runs r JOIN conversations c ON c.id=r.conversation_id "
-                    "WHERE c.id=? AND c.owner=? ORDER BY r.created_at DESC,r.id DESC LIMIT 1",
-                    (target["conversationId"], owner),
-                ).fetchone()
-                if (
-                    row is None
-                    or row["agent_id"] != target["agentId"]
-                    or row["status"] != "running"
-                ):
-                    raise PermissionError("Event steer target unavailable")
-                state = json.loads(row["state"])
-                if (
-                    state.get("generationCreatedAt")
-                    != target["generationCreatedAt"]
-                    or state.get("eventSourceKeyId") != source_key_id
-                    or state.get("nativeAdmission") is not None
-                ):
-                    raise PermissionError(
-                        "Event steer requires a source-owned model-only run"
-                    )
+                # The unattended host has no interactive steering protocol.
+                # Reject rather than accept a delivery that cannot execute.
+                raise PermissionError(
+                    "Event steering is unavailable for model-only runs"
+                )
             filters = filters_from_snapshot(db, owner)
             validate_message_submission(envelope["input"], filters)
             coalesce_key = _coalescing_key(envelope, body.get("coalesce"))
