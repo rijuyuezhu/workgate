@@ -681,3 +681,14 @@ responses carry user-submitted path markers and are excluded from inferred
 model-origin semantic provenance. Active conversations and private child
 threads are read-only. Inconsistent legacy text/content representations
 or artifacts split across incompatible content parts fail closed.
+
+### L7 static Office previews
+
+Renderer and binary/hostile-input test vectors are ported from pinned
+`src/local_shell_mcp/webui/office_preview.py` (blob
+`d80b1d1ef18af14765829d0d469e68bcdd0f3f20`) and the upstream
+`test_webui_office_preview.py` and `test_webui_office_boundary_regressions.py`.
+Only escaped static HTML is generated, with optional xlrd for legacy XLS.
+WorkGate additionally rejects duplicate ZIP members, excessive member/sheet
+counts and aggregate rendered cell counts. Publication and browser isolation
+are separate adapters; no model-facing or public route is introduced here.
