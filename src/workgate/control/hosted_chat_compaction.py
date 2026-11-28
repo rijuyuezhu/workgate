@@ -6,6 +6,7 @@ import logging
 from collections.abc import Callable
 
 from ..hosted_chat.agent_runtime import AgentLoopState
+from ..hosted_chat.compaction import build_summarization_instruction
 from ..hosted_chat.compaction_store import (
     commit_compaction,
     plan_compaction,
@@ -239,7 +240,14 @@ class ForegroundCompaction:
             raise ValueError("Invalid compaction output limit")
         summary_messages = [
             *plan.source,
-            {"role": "user", "content": _SUMMARY_PROMPT},
+            {
+                "role": "user",
+                "content": build_summarization_instruction(
+                    _SUMMARY_PROMPT,
+                    None,
+                    semantic_index_appendix=plan.semantic_appendix,
+                ),
+            },
         ]
         summary_budget = calculate_budget(
             summary_messages, [], limit, reserve_ratio=0

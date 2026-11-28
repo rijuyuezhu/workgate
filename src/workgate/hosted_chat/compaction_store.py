@@ -17,6 +17,8 @@ from .generation_actor_lease import ActorLease
 from .generation_protocol import EVENT_LIMIT
 from .generations import GenerationStore, generation_model_history
 from .message_media import project_message_media
+from .semantic_index_source import canonical_semantic_appendix
+from .subagents import SUBAGENT_TOOL_NAME
 from .tokenizer import count_tokens
 
 _MAX_SUMMARY_BYTES = 64 * 1024
@@ -45,6 +47,7 @@ class CompactionPlan:
     scope: str
     retain_turns: int
     canonical_fingerprint: str | None = None
+    semantic_appendix: str = field(default="", repr=False)
 
 
 def _provider_messages(history: list[dict]) -> list[dict]:
@@ -121,6 +124,9 @@ def _plan(
     ):
         return None
     _validate_content(source, filters)
+    appendix = canonical_semantic_appendix(
+        source, intent_tool_names=frozenset({SUBAGENT_TOOL_NAME})
+    )
     canonical = _digest(source)
     projected = _provider_messages(source)
     if any(message.get("files") for message in source):
@@ -134,8 +140,11 @@ def _plan(
             scope,
             retain_turns,
             canonical,
+            appendix,
         )
-    return CompactionPlan(projected, canonical, scope, retain_turns)
+    return CompactionPlan(
+        projected, canonical, scope, retain_turns, semantic_appendix=appendix
+    )
 
 
 def plan_compaction(

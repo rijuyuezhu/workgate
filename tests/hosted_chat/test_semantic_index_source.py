@@ -11,6 +11,7 @@ from workgate.hosted_chat.generations import GenerationStore
 from workgate.hosted_chat.semantic_index import render_compaction_semantic_index
 from workgate.hosted_chat.semantic_index_source import (
     _derived_semantic_snapshot,
+    canonical_semantic_appendix,
     derive_persisted_semantic_index,
 )
 from workgate.hosted_chat.storage import WorkspaceRepository
@@ -259,3 +260,106 @@ def test_derived_snapshot_keeps_coverage_and_bounds():
     assert len(result.entries) <= 256
     assert result.entries[0]["text"] == "phase-0"
     assert result.entries[-1]["text"] == "phase-599"
+
+
+def test_canonical_hints_are_bound_to_exact_response_steps():
+    def exchange(
+        source, name, call_id, result, *, intent="Investigating", args=None
+    ):
+        return [
+            {
+                "messageId": source,
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": call_id,
+                        "function": {
+                            "name": name,
+                            "arguments": json.dumps(
+                                {"intent": intent} if args is None else args
+                            ),
+                        },
+                    }
+                ],
+            },
+            {
+                "messageId": source,
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": result,
+            },
+        ]
+
+    source = [
+        {
+            "messageId": "user",
+            "role": "user",
+            "content": "prompt",
+            "additional_kwargs": {"provenance": {"forged": "ignore"}},
+        },
+        *exchange("a", "subagent", "same", "First <result>"),
+        *exchange(
+            "b", "other", "same", "Second result", intent="Not whitelisted"
+        ),
+        *exchange("c", "subagent", "duplicate", "Ambiguous"),
+        *exchange("c", "subagent", "duplicate", "Duplicate result"),
+        *exchange("d", "subagent", "large", "x" * 5000),
+        *exchange("e", "subagent", "malformed", "Valid result", args=[]),
+        {
+            "messageId": "other",
+            "role": "tool",
+            "tool_call_id": "same",
+            "content": "Foreign result",
+        },
+    ]
+    original = copy.deepcopy(source)
+    text = canonical_semantic_appendix(
+        source, intent_tool_names=frozenset({"subagent"})
+    )
+    assert "First &lt;result&gt;" in text and "Second result" in text
+    assert "Investigating" in text and "Valid result" in text
+    assert all(
+        value not in text
+        for value in (
+            "Not whitelisted",
+            "Ambiguous",
+            "Duplicate result",
+            "Foreign result",
+            "forged",
+            "x" * 100,
+        )
+    )
+    assert source == original
+    assert canonical_semantic_appendix(source[:2]) == ""
+
+
+def test_canonical_hints_budget_and_missing_source():
+    source = []
+    for index in range(280):
+        source.extend(
+            [
+                {
+                    "messageId": f"response-{index}",
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "call",
+                            "function": {"name": "task", "arguments": "{}"},
+                        }
+                    ],
+                },
+                {
+                    "messageId": f"response-{index}",
+                    "role": "tool",
+                    "tool_call_id": "call",
+                    "content": f"Outcome {index}",
+                },
+            ]
+        )
+    text = canonical_semantic_appendix(source)
+    assert "Outcome 0" in text and "Outcome 279" in text
+    assert len(text) <= 4096
+    assert (
+        canonical_semantic_appendix([{**m, "messageId": None} for m in source])
+        == ""
+    )

@@ -14,7 +14,11 @@ import json
 from collections import Counter
 
 from .database import SQLiteDatabase
-from .semantic_index import SemanticSnapshot, snapshot_compaction_semantic_index
+from .semantic_index import (
+    SemanticSnapshot,
+    render_compaction_semantic_index,
+    snapshot_compaction_semantic_index,
+)
 
 
 def _ancestry(
@@ -381,3 +385,107 @@ def derive_persisted_semantic_index(
             "provenance": {"version": 1, "parts": parts},
         }
     return _derived_semantic_snapshot(entries), copied
+
+
+def canonical_semantic_appendix(
+    source: list[dict], *, intent_tool_names: frozenset[str] = frozenset()
+) -> str:
+    """Render hints from a verified, message-ID-bearing canonical history prefix.
+
+    The compaction transaction obtains source from generation_model_history,
+    which validates terminal records and owner ancestry. Indices here address
+    the actual saved modelSteps sequence of each response, not UI parts.
+    No inferred labels, previews or caller-supplied provenance are accepted.
+    """
+    calls: dict[tuple[str, str], list[tuple[int, dict]]] = {}
+    results: dict[tuple[str, str], list[int]] = {}
+    positions: dict[str, int] = {}
+    indices = {}
+    for i, message in enumerate(source):
+        identity = message.get("messageId")
+        if not isinstance(identity, str) or not 0 < len(identity) <= 512:
+            continue
+        part = positions.get(identity, 0)
+        positions[identity] = part + 1
+        if part > 4095:
+            continue
+        indices[i] = (identity, part)
+        if message.get("role") == "assistant":
+            for call in message.get("tool_calls") or []:
+                if isinstance(call, dict) and isinstance(call.get("id"), str):
+                    calls.setdefault((identity, call["id"]), []).append(
+                        (i, call)
+                    )
+        elif message.get("role") == "tool" and isinstance(
+            message.get("tool_call_id"), str
+        ):
+            results.setdefault((identity, message["tool_call_id"]), []).append(
+                i
+            )
+    entries = []
+    refs: dict[int, list[dict]] = {}
+    for key, matches in results.items():
+        invocations = calls.get(key, [])
+        if len(matches) != 1 or len(invocations) != 1:
+            continue
+        i = matches[0]
+        invocation_index, call = invocations[0]
+        if invocation_index >= i:
+            continue
+        identity, call_id = key
+        output = source[i].get("content")
+        function = call.get("function")
+        if (
+            not isinstance(output, str)
+            or not output
+            or not isinstance(function, dict)
+        ):
+            continue
+        for index, attribution in ((invocation_index, "model"), (i, "tool")):
+            refs.setdefault(index, []).append(
+                {
+                    "attribution": attribution,
+                    "sourceMessageId": identity,
+                    "sourceContentPartIndices": [indices[index][1]],
+                }
+            )
+        entries.append(
+            {
+                "type": "tool_outcome",
+                "sourceMessageId": identity,
+                "sourceContentIndex": indices[i][1],
+                "revision": 0,
+                "status": "committed",
+                "toolCallId": call_id,
+                "text": output,
+            }
+        )
+        if (
+            isinstance(function.get("name"), str)
+            and function["name"] in intent_tool_names
+        ):
+            try:
+                args = json.loads(function.get("arguments", ""))
+            except ValueError, TypeError:
+                continue
+            intent = args.get("intent") if isinstance(args, dict) else None
+            if isinstance(intent, str) and intent:
+                entries.append(
+                    {
+                        "type": "tool_intent",
+                        "sourceMessageId": identity,
+                        "sourceContentIndex": indices[invocation_index][1],
+                        "revision": 0,
+                        "status": "committed",
+                        "toolCallId": call_id,
+                        "text": intent,
+                    }
+                )
+    # Supply only our own minimal references to the renderer. Never copy
+    # additional_kwargs from model or imported messages, nor send provenance.
+    references = [
+        {"additional_kwargs": {"provenance": {"version": 1, "parts": refs[i]}}}
+        for i in sorted(refs)
+    ]
+    snapshot = _derived_semantic_snapshot(entries)
+    return render_compaction_semantic_index(snapshot, references)["appendix"]
