@@ -15,6 +15,7 @@ from ..hosted_chat.agent_runtime import (
 from ..hosted_chat.detached_task_lease import DetachedTaskLease
 from ..hosted_chat.durable_tasks import DurableTaskRepository
 from ..hosted_chat.generation_actor_lease import ActorLease
+from ..hosted_chat.generations import GenerationStore
 from ..hosted_chat.graph_member_scope import GraphMemberScope
 from ..hosted_chat.graph_runtime import (
     GraphActivation,
@@ -30,6 +31,7 @@ from ..hosted_chat.subagent_scope import (
     SubagentGraphScope,
     SubagentScope,
 )
+from .hosted_chat_foreground_loop import ObservableStreamInterrupted
 from .hosted_chat_native_creation import _grant
 from .hosted_chat_native_tool_node import NativeLoopToolNode
 from .runtime import ControlRuntime
@@ -55,6 +57,7 @@ async def run_native_graph(
     stream_tools=stream_model_with_tools,
     stream_text=stream_model,
     result_only: bool = False,
+    publish_output: bool = False,
     team_scope: SubagentScope | DetachedExecutionScope | None = None,
     team_root: dict | None = None,
     detached_controls: DetachedTaskLease | None = None,
@@ -73,6 +76,14 @@ async def run_native_graph(
         )
     if team_scope is None and authorize_batch is None:
         raise PermissionError("Foreground graph requires content authorization")
+    if publish_output and team_scope is not None:
+        raise PermissionError("Private team graph cannot publish public output")
+    store = GenerationStore(lease.database)
+    generation = (
+        store.get(lease.owner, lease.run_id) if publish_output else None
+    )
+    if publish_output and generation is None:
+        raise PermissionError("Graph generation is no longer owned")
     steering = SteeringStore(lease.database)
     if (team_scope is None) != (team_root is None):
         raise PermissionError("Team graph requires an admitted definition")
@@ -147,8 +158,55 @@ async def run_native_graph(
             else AgentLoopState(context, copy.deepcopy(activation.history))
         )
 
-        async def discard_delta(_value: str) -> None:
+        visible = publish_output and activation.visible_output
+        partial_text = recovered.partial_text if recovered is not None else ""
+        cursor = recovered.public_delta_cursor if recovered is not None else 0
+        if visible:
+            if (
+                store.public_delta_cursor(
+                    lease, activation=scope.checkpoint_namespace
+                )
+                != cursor
+            ):
+                raise ObservableStreamInterrupted(
+                    "Uncheckpointed graph member delta"
+                )
+        elif partial_text or cursor:
+            raise ObservableStreamInterrupted(
+                "Private graph member contains public output"
+            )
+
+        async def emit(value: str, kind: str) -> None:
+            nonlocal cursor, partial_text
             node.current_grant()
+            if not visible or not value:
+                return
+            assert generation is not None
+            part = {"type": kind, kind: value}
+            if kind == "text":
+                partial_text += value
+                part["phase"] = "final_answer"
+            cursor = store.append(
+                lease.owner,
+                lease.run_id,
+                {
+                    "event": "on_message_delta"
+                    if kind == "text"
+                    else "on_reasoning_delta",
+                    "data": {
+                        "id": generation.response_message_id,
+                        "graphActivationId": scope.checkpoint_namespace,
+                        "delta": {"content": part},
+                    },
+                },
+                actor_lease=lease,
+            )
+
+        async def text(value: str) -> None:
+            await emit(value, "text")
+
+        async def thought(value: str) -> None:
+            await emit(value, "think")
 
         async def stream_boundary() -> bool:
             node.current_grant()
@@ -178,6 +236,12 @@ async def run_native_graph(
         async def boundary(loop: AgentLoopState, kind: str) -> bool:
             node.current_grant()
             if isinstance(scope, GraphMemberScope):
+                if (
+                    visible
+                    and kind in {"stream", "terminal"}
+                    and steering.pending(lease.owner, lease.run_id)
+                ):
+                    await save(loop, [])
                 steering.drain(lease, boundary=kind, scope=scope)
             return reconcile(loop)
 
@@ -185,7 +249,12 @@ async def run_native_graph(
             loop: AgentLoopState, calls: list[ModelToolCall]
         ) -> None:
             node.current_grant()
-            await checkpoint.save(loop, calls)
+            await checkpoint.save(
+                loop,
+                calls,
+                partial_text=partial_text,
+                public_delta_cursor=cursor,
+            )
             if detached_controls is not None:
                 assert (
                     isinstance(scope, SubagentGraphScope)
@@ -243,8 +312,8 @@ async def run_native_graph(
             stream_tools=stream_tools,
             stream_text=stream_text,
             dispatch=dispatch,
-            on_text=discard_delta,
-            on_thought=discard_delta,
+            on_text=text,
+            on_thought=thought,
             save_state=save,
             before_model=node.refresh_tools,
             preflight_calls=node.preflight,
@@ -271,6 +340,7 @@ async def run_native_graph(
             recursion_limit=recursion_limit,
             result_only=result_only,
             human_actions=team_scope is None,
+            public_output=publish_output,
             team_scope=team_scope,
             team_root=team_root,
         )

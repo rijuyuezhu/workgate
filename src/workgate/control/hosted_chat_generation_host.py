@@ -23,9 +23,11 @@ from ..hosted_chat.storage import WorkspaceRepository
 from ..hosted_chat.subagents import build_subagent_configs, chat_subagent_config
 from .hosted_chat_child_host import AuthenticatedChildHost
 from .hosted_chat_foreground_loop import (
+    ObservableStreamInterrupted,
     run_foreground_native_loop,
     safe_generation_error,
 )
+from .hosted_chat_graph_loop import run_native_graph
 from .hosted_chat_native_creation import _grant, _registered
 from .hosted_chat_native_tool_node import NativeLoopToolNode
 from .hosted_chat_root_delegation import RootDelegation
@@ -90,10 +92,9 @@ async def run_authenticated_generation(
             raise ActorLeaseLost("Generation no longer available")
         context = await resolver.root(generation)
         root_agent = context.agent
-        if root_agent is not None and (
+        is_graph = root_agent is not None and bool(
             root_agent.get("edges") or root_agent.get("graphAgentIds")
-        ):
-            raise ValueError("Root graph generation requires its graph driver")
+        )
         history = resolver.history(generation, context)
 
         def check_root() -> None:
@@ -157,41 +158,68 @@ async def run_authenticated_generation(
         async def resolve_child(agent: dict) -> AgentContext:
             return await resolver.child(generation, agent)
 
-        configs = (
-            [chat_subagent_config(owner)]
-            if root_agent is None
-            else build_subagent_configs(owner, root_agent, database)
-        )
-        delegation = RootDelegation(
-            configs,
-            resolve_child,
-            on_reserved=host.on_reserved,
-            stream_tools=stream_tools,
-            stream_text=stream_text,
-        )
-        node = NativeLoopToolNode(
-            runtime,
-            DurableTaskRepository(database),
-            OwnedLoopCheckpoint(lease),
-            allowed_tools=allowed_tools,
-            scopes=scopes,
-            expires=expires,
-            task_machine=task_machine,
-            check_grant=check_root,
-            delegation=delegation,
-        )
+        async def graph_turn() -> None:
+            assert root_agent is not None
+            await run_native_graph(
+                runtime,
+                lease,
+                root_agent["id"],
+                history,
+                resolve_context=resolve_child,
+                authorize_batch=authorize_batch,
+                allowed_tools=allowed_tools,
+                scopes=scopes,
+                expires=expires,
+                task_machine=task_machine,
+                check_grant=check_root,
+                recursion_limit=min(
+                    context.recursion_limit or 2**31 - 1, 2**31 - 1
+                ),
+                stream_tools=stream_tools,
+                stream_text=stream_text,
+                publish_output=True,
+            )
+            check_root()
+            store.finish(owner, run_id, status="complete", actor_lease=lease)
+
         child_task = asyncio.create_task(host.serve())
         tasks.append(child_task)
-        foreground = asyncio.create_task(
-            run_foreground_native_loop(
-                node,
-                context,
-                history,
-                authorize_batch=authorize_batch,
+        if is_graph:
+            foreground = asyncio.create_task(graph_turn())
+        else:
+            configs = (
+                [chat_subagent_config(owner)]
+                if root_agent is None
+                else build_subagent_configs(owner, root_agent, database)
+            )
+            delegation = RootDelegation(
+                configs,
+                resolve_child,
+                on_reserved=host.on_reserved,
                 stream_tools=stream_tools,
                 stream_text=stream_text,
             )
-        )
+            node = NativeLoopToolNode(
+                runtime,
+                DurableTaskRepository(database),
+                OwnedLoopCheckpoint(lease),
+                allowed_tools=allowed_tools,
+                scopes=scopes,
+                expires=expires,
+                task_machine=task_machine,
+                check_grant=check_root,
+                delegation=delegation,
+            )
+            foreground = asyncio.create_task(
+                run_foreground_native_loop(
+                    node,
+                    context,
+                    history,
+                    authorize_batch=authorize_batch,
+                    stream_tools=stream_tools,
+                    stream_text=stream_text,
+                )
+            )
         tasks.append(foreground)
         done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         if child_task in done and foreground not in done:
@@ -213,7 +241,9 @@ async def run_authenticated_generation(
             store.finish(
                 owner,
                 run_id,
-                status="error",
+                status="interrupted"
+                if isinstance(error, ObservableStreamInterrupted)
+                else "error",
                 error=safe_generation_error(error),
                 actor_lease=lease,
             )
