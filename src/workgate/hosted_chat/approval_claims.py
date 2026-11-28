@@ -233,6 +233,10 @@ class ApprovalClaimStore:
                 raise ValueError(
                     "Approval for this edge has already been claimed"
                 )
+            if any(
+                call.name in {"set_memory", "delete_memory"} for call in calls
+            ):
+                state["memoryManualReview"] = True
             pending = {
                 "actionId": "action_" + uuid.uuid4().hex,
                 "streamId": row["conversation_id"],
