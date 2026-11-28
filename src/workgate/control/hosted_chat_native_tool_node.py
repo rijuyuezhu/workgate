@@ -48,6 +48,7 @@ from ..hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
 from ..hosted_chat.loop_receipts import execute_checkpointed_batch
 from ..hosted_chat.machine_permissions import effective_machine_access
 from ..hosted_chat.mcp_projection import native_tool_history_message
+from ..hosted_chat.memory import MemoryRepository
 from ..hosted_chat.provider_common import ModelToolCall, complete_tool_batch
 from ..hosted_chat.storage import WorkspaceRepository
 from ..hosted_chat.subagent_scope import (
@@ -262,6 +263,19 @@ class NativeLoopToolNode:
         filters = self._filters()
         for call in calls:
             validate_tool_arguments(call.name, call.arguments, filters)
+
+    def project_messages(self, state: AgentLoopState) -> list[dict]:
+        self.current_grant()
+        lease = self.checkpoint.lease
+        conversation, _ = self.repository.tool_context_chain(
+            lease, authorization=True
+        )
+        memory = MemoryRepository(self.repository.database).provider_context(
+            lease.owner, conversation, state.context.agent
+        )
+        if memory is None:
+            return state.messages
+        return [{"role": "system", "content": memory}, *state.messages]
 
     def validate_model_input(
         self, state: AgentLoopState, messages: list[dict]

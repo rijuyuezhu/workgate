@@ -296,16 +296,16 @@ async def run_agent_loop(
         calls: list[ModelToolCall] = []
         text_parts: list[str] = []
         reasoning: list[dict] = []
-        projected = (
-            project_messages(state) if project_messages else state.messages
-        )
-        state.provider_projection = projected
         preempted = False
         # Retry only an *empty* model attempt. Text and complete tool proposals
         # are observable, so replaying them could duplicate output or actions.
         # A new model attempt keeps the graph turn and completed tool results.
         for attempt in range(len(_MODEL_RETRY_DELAYS) + 1):
             received_event = False
+            projected = (
+                project_messages(state) if project_messages else state.messages
+            )
+            state.provider_projection = projected
             if validate_model_input is not None:
                 validate_model_input(state, projected)
             source = (
