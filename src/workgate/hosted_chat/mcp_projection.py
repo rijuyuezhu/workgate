@@ -118,16 +118,17 @@ def project_artifact_messages(
     messages[-1] would silently lose all earlier images on SQLite replay.
     The stored DTO is never mutated.
     """
-    projected = []
-    changed = False
+    # Discover completed batches first so the latest rich results receive
+    # the request-wide budget, while the wire order remains chronological.
+    batches: list[tuple[int, int]] = []
     index = 0
     while index < len(messages):
         message = messages[index]
-        projected.append(message)
         index += 1
         if message.get("role") != "assistant" or not message.get("tool_calls"):
             continue
         call_ids = {call.get("id") for call in message["tool_calls"]}
+        start = index
         batch = []
         while (
             index < len(messages)
@@ -147,10 +148,17 @@ def project_artifact_messages(
             or len(batch) != len(call_ids)
             or {item.get("tool_call_id") for item in batch} != call_ids
         ):
-            projected.extend(batch)
             continue
-        changed = True
-        aggregate = _Accumulator(max_chars)
+        batches.append((start, index))
+    if not batches:
+        return messages
+
+    remaining = max(0, min(HARD_MAX_TOOL_RESULT_CHARS, int(max_chars)))
+    replacements: dict[int, tuple[int, list[dict]]] = {}
+    for start, end in reversed(batches):
+        batch = messages[start:end]
+        projected: list[dict] = []
+        aggregate = _Accumulator(remaining)
         for item in batch:
             artifact = item.get("artifact")
             if not isinstance(artifact, dict) or not artifact.get("content"):
@@ -158,13 +166,14 @@ def project_artifact_messages(
                 continue
             clone = {**item, "artifact": {**artifact, "content": []}}
             if provider == "anthropic":
-                current = _Accumulator(max_chars)
+                current = _Accumulator(remaining)
                 base = item.get("content", "")
                 # Anthropic rejects empty text blocks in tool_result content.
                 if base:
                     current.append(base)
                 current.append(artifact["content"])
                 clone["content"] = current.blocks or "[Omitted tool content]"
+                remaining = current.remaining
             else:
                 before = aggregate.remaining
                 aggregate.append(item.get("content", ""))
@@ -177,7 +186,20 @@ def project_artifact_messages(
             projected.append(clone)
         if provider != "anthropic" and aggregate.has_content:
             projected.append({"role": "user", "content": aggregate.blocks})
-    return projected if changed else messages
+        if provider != "anthropic":
+            remaining = aggregate.remaining
+        replacements[start] = (end, projected)
+
+    result = []
+    index = 0
+    while index < len(messages):
+        if index in replacements:
+            index, batch = replacements[index]
+            result.extend(batch)
+        else:
+            result.append(messages[index])
+            index += 1
+    return result
 
 
 def mcp_tool_history_message(

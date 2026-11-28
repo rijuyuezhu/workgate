@@ -454,3 +454,70 @@ def test_native_envelope_projection_is_bounded_and_keeps_structured_content():
         "call", {"content": [{"type": "text", "text": "x" * 410000}]}, "openai"
     )
     assert len(large["content"]) <= 400000 and "truncated" in large["content"]
+
+
+@pytest.mark.parametrize(
+    "provider", ["openai", "openai-responses", "google", "anthropic"]
+)
+def test_rich_history_budget_is_shared_and_prioritizes_recent_batch(provider):
+    def tool(ident):
+        return {
+            "role": "tool",
+            "tool_call_id": ident,
+            "content": "",
+            "artifact": {"content": [copy.deepcopy(_IMAGE)]},
+        }
+
+    original = [
+        _anchor("old"),
+        tool("old"),
+        {"role": "assistant", "content": "earlier"},
+        {"role": "user", "content": "next"},
+        _anchor("new"),
+        tool("new"),
+        {"role": "user", "content": "continue"},
+    ]
+    before = copy.deepcopy(original)
+    projected = project_artifact_messages(
+        original, provider, max_chars=_count([_IMAGE])
+    )
+    assert original == before
+    assert projected[1]["content"] == "[Omitted tool content]"
+    assert [m["tool_call_id"] for m in projected if m["role"] == "tool"] == [
+        "old",
+        "new",
+    ]
+    assert json.dumps(projected).count(_IMAGE["image_url"]["url"]) == 1
+    assert projected[-1] == original[-1]
+    if provider == "anthropic":
+        assert projected[-2]["content"] == [_IMAGE]
+    else:
+        assert projected[-2] == {"role": "user", "content": [_IMAGE]}
+        assert (
+            projected[-3]["content"]
+            == "Tool response is included in the next message as a Human message"
+        )
+
+
+def test_anthropic_parallel_artifacts_share_budget():
+    original = [
+        _anchor("one", "two"),
+        {
+            "role": "tool",
+            "tool_call_id": "one",
+            "content": "",
+            "artifact": {"content": [_IMAGE]},
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "two",
+            "content": "",
+            "artifact": {"content": [_IMAGE]},
+        },
+    ]
+    projected = project_artifact_messages(
+        original, "anthropic", max_chars=_count([_IMAGE])
+    )
+    assert projected[1]["content"] == [_IMAGE]
+    assert projected[2]["content"] == "[Omitted tool content]"
+    assert original[2]["artifact"]["content"] == [_IMAGE]
