@@ -52,15 +52,34 @@ async def run_scheduled_generation(
     )
     if lease is None:
         return False
+    return await run_model_only_generation(
+        runtime,
+        lease,
+        conversation_id=occurrence.conversation_id,
+        allow_files=True,
+        stream_text=stream_text,
+    )
+
+
+async def run_model_only_generation(
+    runtime: ControlRuntime,
+    lease: ActorLease,
+    *,
+    conversation_id: str | None = None,
+    allow_files: bool = False,
+    stream_text=stream_model,
+) -> bool:
+    """Run a server-admitted actor without an interactive authorization grant."""
+    database, owner, run_id = lease.database, lease.owner, lease.run_id
     store = GenerationStore(database)
     heartbeat = asyncio.create_task(lease.keep_alive())
     try:
         generation = store.get(owner, run_id)
-        if (
-            generation is None
-            or generation.conversation_id != occurrence.conversation_id
+        if generation is None or (
+            conversation_id is not None
+            and generation.conversation_id != conversation_id
         ):
-            raise PermissionError("Scheduled generation identity changed")
+            raise PermissionError("Unattended generation identity changed")
         resolver = GenerationContextResolver(
             database, owner, allow_account=False
         )
@@ -68,7 +87,7 @@ async def run_scheduled_generation(
         agent = context.agent
         if agent is None or agent.get("edges") or agent.get("graphAgentIds"):
             raise PermissionError(
-                "Scheduled execution requires a single saved Agent"
+                "Unattended execution requires a single saved Agent"
             )
         history = resolver.history(generation, context)
 
@@ -78,21 +97,31 @@ async def run_scheduled_generation(
                 not runtime.config.hosted_chat_enabled
                 or not runtime.config.ui_enabled
             ):
-                raise PermissionError("Scheduled chat disabled")
+                raise PermissionError("Hosted chat disabled")
             if resolver.root_agent(generation) != agent:
-                raise PermissionError("Scheduled Agent revision changed")
+                raise PermissionError("Unattended Agent revision changed")
 
         check()
         with database.read_snapshot() as db:
             lease.assert_current(db)
-            messages = project_message_media(
-                database,
-                db,
-                owner,
-                with_agent_context(
-                    history, agent_context_messages(database, db, owner, agent)
-                ),
-            )
+            if allow_files:
+                messages = project_message_media(
+                    database,
+                    db,
+                    owner,
+                    with_agent_context(
+                        history,
+                        agent_context_messages(database, db, owner, agent),
+                    ),
+                )
+            else:
+                # Source keys do not grant access to files or native context.
+                messages = [
+                    {"role": message["role"], "content": message["content"]}
+                    for message in history
+                    if message["role"] in {"system", "user", "assistant"}
+                    and isinstance(message.get("content"), str)
+                ]
             filters = filters_from_snapshot(db, owner)
         validate_agent_instructions(agent.get("instructions") or "", filters)
         validate_model_parameters(context.parameters, filters)
@@ -131,12 +160,12 @@ async def run_scheduled_generation(
                 elif isinstance(item, ModelUsage | ModelFinish):
                     continue
                 else:
-                    raise PermissionError("Unexpected scheduled model event")
+                    raise PermissionError("Unexpected unattended model event")
                 if not text:
                     continue
                 output_size += len(text.encode("utf-8"))
                 if output_size > _MAX_OUTPUT_BYTES:
-                    raise ValueError("Scheduled output exceeds limit")
+                    raise ValueError("Unattended output exceeds limit")
                 # Bounded chunks fit the generic event log envelope.
                 for offset in range(0, len(text), 16384):
                     part = {"type": kind, kind: text[offset : offset + 16384]}
@@ -167,7 +196,7 @@ async def run_scheduled_generation(
                 owner,
                 run_id,
                 status="interrupted",
-                error="Scheduled generation interrupted",
+                error="Unattended generation interrupted",
                 actor_lease=lease,
             )
         raise

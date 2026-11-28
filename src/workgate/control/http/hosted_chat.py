@@ -36,6 +36,7 @@ from ...oauth.http.middleware import revalidate_browser_session
 from ...oauth.protocol.token_codec import validate_bearer_token
 from ...ui.http.routes import UI_API_PREFIX
 from ..hosted_chat_cancellation import sweep_native_cancellations
+from ..hosted_chat_event_host import tick_event_generations
 from ..hosted_chat_generation_host import run_authenticated_generation
 from ..hosted_chat_native_creation import _registered
 from ..hosted_chat_native_dispatch import ROOT_NATIVE_TOOLS
@@ -134,6 +135,7 @@ def hosted_chat_generation_routes(runtime: ControlRuntime) -> list[Route]:
                     runtime, DurableTaskRepository(database)
                 )
                 await tick_scheduled_generations(runtime, database)
+                await tick_event_generations(runtime, database)
             finally:
                 if time.monotonic() >= next_attachment_recovery:
                     # Reuse the shielded, shutdown-drained cleanup worker;
@@ -172,7 +174,7 @@ def hosted_chat_generation_routes(runtime: ControlRuntime) -> list[Route]:
         with repo.database.read_snapshot() as db:
             row = db.execute(
                 "SELECT 1 FROM runs r JOIN conversations c ON c.id=r.conversation_id "
-                "WHERE r.id=? AND c.owner=? AND json_type(r.state,'$.scheduleOccurrenceId')='text' "
+                "WHERE r.id=? AND c.owner=? AND (json_type(r.state,'$.scheduleOccurrenceId')='text' OR json_type(r.state,'$.eventDeliveryId')='text') "
                 "AND json_extract(r.state,'$.detachedTaskId') IS NULL "
                 "AND json_extract(r.state,'$.completionWakeupTaskId') IS NULL",
                 (run_id, principal.owner),
