@@ -38,6 +38,7 @@ from ..hosted_chat_cancellation import sweep_native_cancellations
 from ..hosted_chat_generation_host import run_authenticated_generation
 from ..hosted_chat_native_creation import _registered
 from ..hosted_chat_native_dispatch import ROOT_NATIVE_TOOLS
+from ..hosted_chat_schedule_host import tick_scheduled_generations
 from ..runtime import ControlRuntime
 
 _PREFIX = UI_API_PREFIX + "/chat/generations"
@@ -131,6 +132,7 @@ def hosted_chat_generation_routes(runtime: ControlRuntime) -> list[Route]:
                 await sweep_native_cancellations(
                     runtime, DurableTaskRepository(database)
                 )
+                await tick_scheduled_generations(runtime, database)
             finally:
                 if time.monotonic() >= next_attachment_recovery:
                     # Reuse the shielded, shutdown-drained cleanup worker;
