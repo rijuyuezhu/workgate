@@ -177,6 +177,7 @@ async def run_foreground_native_loop(
         preempt=lambda: steering.has_preempt(lease.owner, lease.run_id),
     )
     try:
+        checkpoint.bind_public_history(history)
         restored = checkpoint.restore(context)
         if restored is None:
             state = AgentLoopState(context, copy.deepcopy(history))
