@@ -895,3 +895,12 @@ are inserted atomically with the binding. Subsequent delivery admission
 revalidates the source, marker and direct-child selection. Revoking the
 source releases the active binding deletion fence; ordinary child writes
 remain prohibited.
+
+### M8 managed Skills
+
+The owner-scoped managed Skill catalog adapts pinned `webui/skill_routes.py`
+(blob `2dfa445799184159db682ee8bc978ecbd2b65c39`). Inline records retain
+revisioned authoring and per-owner enabled states. Content policy is
+checked in the same transaction as the write. Deployment and Executor
+Skills retain their existing Agent Bridge authority; inline frontmatter
+tool names are descriptive metadata, not grants.
