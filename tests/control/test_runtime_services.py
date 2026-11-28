@@ -417,3 +417,40 @@ async def test_shutdown_waits_for_in_flight_opted_in_task_sweep(
     released.set()
     await asyncio.wait_for(closing, timeout=3)
     assert finished.is_set()
+
+
+@pytest.mark.asyncio
+async def test_control_shutdown_drains_generation_drivers_before_native_services(
+    tmp_path, monkeypatch
+):
+    import asyncio
+
+    runtime = build_control_runtime(
+        Settings(
+            default_workdir=tmp_path,
+            state_dir=tmp_path / "generation-shutdown",
+            auth_mode="none",
+        )
+    )
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+    original = runtime.managed_jobs_runtime.aclose
+
+    async def driver():
+        started.set()
+        try:
+            await asyncio.Event().wait()
+            return True
+        finally:
+            stopped.set()
+
+    async def close_native():
+        assert stopped.is_set()
+        await original()
+
+    monkeypatch.setattr(runtime.managed_jobs_runtime, "aclose", close_native)
+    async with runtime.lifespan():
+        assert runtime.generation_supervisor.start("local-user", "run", driver)
+        await started.wait()
+    assert stopped.is_set()
+    assert not runtime.generation_supervisor.active("local-user", "run")

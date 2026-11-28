@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 
 from ..config.control import ControlConfig, resolve_control_config
 from ..config.settings import Settings
+from ..hosted_chat.generation_supervisor import GenerationSupervisor
 from ..jobs.managed import (
     ManagedJobsRuntime,
     managed_jobs_last_activity_for_sessions,
@@ -85,6 +86,10 @@ class ControlRuntime:
     """Control-owned public tool catalog."""
     agent_bridge: ControlAgentBridgeService
     """Shared MCP discovery and management authority for tools and WebUI."""
+    generation_supervisor: GenerationSupervisor = field(
+        default_factory=GenerationSupervisor, init=False, repr=False
+    )
+    """Control-owned authenticated Hosted Chat drivers; idle until admitted."""
     _idle_sweep_task: asyncio.Task[None] | None = field(
         default=None, init=False, repr=False
     )
@@ -115,6 +120,8 @@ class ControlRuntime:
             await self.human_ui_runtime.start()
             human_ui_started = True
         except BaseException:
+            with suppress(BaseException):
+                await self.generation_supervisor.aclose()
             with suppress(BaseException):
                 await self.stream_hub.aclose()
             with suppress(BaseException):
@@ -212,6 +219,7 @@ class ControlRuntime:
             except BaseException as exc:
                 errors.append(exc)
 
+        await close_async(self.generation_supervisor.aclose)
         await close_async(self.managed_jobs_runtime.aclose)
         await close_async(self.stream_hub.aclose)
         await close_async(self.desktop_stream_hub.aclose)
