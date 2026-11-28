@@ -643,6 +643,13 @@ class GenerationStore:
             "isCreatedByUser": False,
             "unfinished": status != "complete",
         }
+        usage = json.loads(
+            db.execute(
+                "SELECT state FROM runs WHERE id=?", (run_id,)
+            ).fetchone()[0]
+        ).get("contextUsage")
+        if isinstance(usage, dict):
+            metadata["metadata"] = {"contextUsage": usage}
         response_message = {
             "messageId": generation.response_message_id,
             "conversationId": generation.conversation_id,

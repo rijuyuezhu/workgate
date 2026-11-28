@@ -2,6 +2,7 @@
 
 import asyncio
 import copy
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import suppress
 
@@ -15,6 +16,7 @@ from ..hosted_chat.agent_runtime import (
     ToolBatchOutput,
     run_agent_loop,
 )
+from ..hosted_chat.context_usage import record_root_context_usage
 from ..hosted_chat.generation_actor_lease import ActorLeaseLost
 from ..hosted_chat.generations import GenerationStore
 from ..hosted_chat.provider_common import (
@@ -151,6 +153,18 @@ async def run_foreground_native_loop(
         steering.drain(lease, boundary=kind)
         return reconcile_steers(state)
 
+    async def on_model_usage(usage: ModelUsage, state: AgentLoopState) -> None:
+        node.current_grant()
+        try:
+            record_root_context_usage(lease, state, usage)
+        except ActorLeaseLost:
+            raise
+        except Exception as error:
+            # Usage accounting is observational, not a generation effect.
+            logging.getLogger(__name__).warning(
+                "Provider context usage unavailable (%s)", type(error).__name__
+            )
+
     async def check_stream() -> bool:
         node.current_grant()
         return steering.has_preempt(lease.owner, lease.run_id)
@@ -178,6 +192,7 @@ async def run_foreground_native_loop(
             on_thought=thought,
             save_state=save,
             before_model=node.refresh_tools,
+            on_model_usage=on_model_usage,
             validate_model_input=node.validate_model_input,
             project_messages=node.project_messages,
             preflight_calls=node.preflight,
