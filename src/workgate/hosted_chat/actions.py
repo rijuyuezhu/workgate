@@ -168,49 +168,52 @@ class ActionRepository:
         self, owner: str, agent_id: str, name: str
     ) -> tuple[dict, dict, dict] | None:
         with self.database.read_snapshot() as db:
-            agent = self._bound(db, owner, agent_id)
-            if agent is None:
-                return None
-            config = json.loads(agent["config"])
-            if name not in {
-                normalize_action_tool_name(t) for t in config.get("tools", [])
-            }:
-                return None
-            rows = db.execute(
-                "SELECT * FROM action_records WHERE owner=? AND agent_id=?",
-                (owner, agent_id),
-            ).fetchall()
-            for row in rows:
-                metadata = json.loads(row["metadata"])
-                if encoded_domain(metadata["domain"]) + DELIMITER + row[
-                    "id"
-                ] not in config.get("actions", []):
-                    continue
-                op_id, _, suffix = name.rpartition(DELIMITER)
-                if suffix != encoded_domain(metadata["domain"]).replace(
-                    "---", "_"
-                ):
-                    continue
-                spec = parse_spec(metadata["raw_spec"])
-                operation = operations(spec).get(op_id)
-                if operation and operation["method"] in {
-                    "get",
-                    "post",
-                    "put",
-                    "patch",
-                    "delete",
-                }:
-                    return (
-                        metadata,
-                        self._credentials(row),
-                        {
-                            **operation,
-                            "server": spec["servers"][0]["url"],
-                            "action_id": row["id"],
-                            "action_version": row["version"],
-                        },
-                    )
+            return self._get_for_tool(db, owner, agent_id, name)
+
+    def _get_for_tool(
+        self, db, owner: str, agent_id: str, name: str
+    ) -> tuple[dict, dict, dict] | None:
+        agent = self._bound(db, owner, agent_id)
+        if agent is None:
             return None
+        config = json.loads(agent["config"])
+        if name not in {
+            normalize_action_tool_name(t) for t in config.get("tools", [])
+        }:
+            return None
+        rows = db.execute(
+            "SELECT * FROM action_records WHERE owner=? AND agent_id=?",
+            (owner, agent_id),
+        ).fetchall()
+        for row in rows:
+            metadata = json.loads(row["metadata"])
+            if encoded_domain(metadata["domain"]) + DELIMITER + row[
+                "id"
+            ] not in config.get("actions", []):
+                continue
+            op_id, _, suffix = name.rpartition(DELIMITER)
+            if suffix != encoded_domain(metadata["domain"]).replace("---", "_"):
+                continue
+            spec = parse_spec(metadata["raw_spec"])
+            operation = operations(spec).get(op_id)
+            if operation and operation["method"] in {
+                "get",
+                "post",
+                "put",
+                "patch",
+                "delete",
+            }:
+                return (
+                    metadata,
+                    self._credentials(row),
+                    {
+                        **operation,
+                        "server": spec["servers"][0]["url"],
+                        "action_id": row["id"],
+                        "action_version": row["version"],
+                    },
+                )
+        return None
 
     def tool_schemas(
         self, owner: str, agent: dict, *, selected_tools=None
