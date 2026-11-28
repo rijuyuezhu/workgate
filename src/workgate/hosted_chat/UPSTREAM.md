@@ -871,3 +871,12 @@ conversation and run identifiers. The generation status and event stream
 are readable under an owner read grant; attach, abort, steering and
 approval routes cannot reinterpret a scheduled occurrence as a native
 foreground generation.
+
+### M7 external Agent events
+
+The source-key repository adapts pinned `webui/event_triggers.py`
+(blob `4d5ba1cdd4c103916f6848ccfe6f457ef74aadda`). Source keys
+are high-entropy bearer credentials stored only as SHA-256 hashes,
+owner-scoped and restricted to event modes. Revocation invalidates
+pending/leased deliveries in the same transaction. An event credential
+is never a Controller OAuth principal or a native machine grant.
