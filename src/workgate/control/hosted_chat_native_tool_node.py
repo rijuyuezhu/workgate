@@ -87,6 +87,8 @@ from ..hosted_chat.tool_attachment_publication import (
     TOOL_NAME as ATTACHMENT_TOOL,
 )
 from ..hosted_chat.tool_attachment_publication import ToolAttachmentPublication
+from ..hosted_chat.web_document_cache import web_fetch
+from ..hosted_chat.web_documents import WEB_FETCH_TOOL, validate_fetch
 from ..hosted_chat.web_research import (
     WEB_SEARCH_CAPABILITY,
     WEB_SEARCH_TOOL,
@@ -105,6 +107,7 @@ from .hosted_chat_tool_attachments import (
 )
 from .runtime import ControlRuntime
 
+_WEB_TOOLS = frozenset({WEB_SEARCH_CAPABILITY, "web_fetch"})
 _DELEGATION_TOOLS = frozenset({SUBAGENT_TOOL_NAME, CHECK_BACKGROUND_TASK})
 
 
@@ -620,10 +623,13 @@ class NativeLoopToolNode:
         for call in calls:
             if is_transfer_tool(call.name):
                 self._transfer(call, [])
-            elif call.name == WEB_SEARCH_CAPABILITY:
+            elif call.name in _WEB_TOOLS:
                 if not self._web_enabled():
                     raise PermissionError("Web search is not enabled")
-                validate_search(call.arguments)
+                if call.name == WEB_SEARCH_CAPABILITY:
+                    validate_search(call.arguments)
+                else:
+                    validate_fetch(call.arguments)
             elif is_action_tool(call.name):
                 if ACTION_CAPABILITY not in self.allowed_tools:
                     raise PermissionError("Actions are not admitted")
@@ -653,7 +659,7 @@ class NativeLoopToolNode:
                     {
                         ASK_USER_QUESTION_TOOL_NAME,
                         ATTACHMENT_TOOL,
-                        WEB_SEARCH_CAPABILITY,
+                        *_WEB_TOOLS,
                     }
                     | _DELEGATION_TOOLS
                     | MEMORY_TOOLS
@@ -681,7 +687,9 @@ class NativeLoopToolNode:
         state.context.tools.extend(self._memory_tools())
         state.context.tools.extend(self._action_tools())
         if self._web_enabled():
-            state.context.tools.append(copy.deepcopy(WEB_SEARCH_TOOL))
+            state.context.tools.extend(
+                copy.deepcopy([WEB_SEARCH_TOOL, WEB_FETCH_TOOL])
+            )
         if self._attachment_enabled():
             state.context.tools.append(attachment_definition())
         state.context.tools.extend(copy.deepcopy(self._handoffs()[1]))
@@ -800,7 +808,7 @@ class NativeLoopToolNode:
                 != receipt["result"]
             ):
                 raise PermissionError("Memory receipt changed")
-        if call.name == WEB_SEARCH_CAPABILITY and not self._web_enabled():
+        if call.name in _WEB_TOOLS and not self._web_enabled():
             raise PermissionError("Web search is no longer enabled")
         if is_action_tool(call.name):
             if ACTION_CAPABILITY not in self.allowed_tools:
@@ -892,7 +900,7 @@ class NativeLoopToolNode:
                 tool["function"]["name"] for tool in self._action_tools()
             }
             if self._web_enabled():
-                enabled |= {WEB_SEARCH_CAPABILITY}
+                enabled |= _WEB_TOOLS
             if self._question_enabled(agents[-1]):
                 enabled = enabled | {ASK_USER_QUESTION_TOOL_NAME}
             enabled |= {
@@ -962,13 +970,20 @@ class NativeLoopToolNode:
                 child_scopes[call.call_id] = scope
                 return result
             scopes, expires = self.current_grant()
-            if prepared.name == WEB_SEARCH_CAPABILITY:
+            if prepared.name in _WEB_TOOLS:
                 if not self._web_enabled():
                     raise PermissionError("Web search is no longer enabled")
                 try:
-                    result = await web_search(
-                        validate_search(prepared.arguments)
-                    )
+                    if prepared.name == WEB_SEARCH_CAPABILITY:
+                        result = await web_search(
+                            validate_search(prepared.arguments)
+                        )
+                    else:
+                        result = await web_fetch(
+                            self.repository.database,
+                            self.checkpoint.lease.owner,
+                            prepared.arguments,
+                        )
                 except WebResearchError as error:
                     return rejected(str(error))
                 if not self._web_enabled():
