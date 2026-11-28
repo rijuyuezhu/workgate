@@ -6,7 +6,12 @@ import time
 from collections.abc import Awaitable, Callable, Collection
 from typing import Protocol
 
-from ..hosted_chat.action_effects import ACTION_CAPABILITY, ActionEffects
+from ..hosted_chat.action_effects import (
+    ACTION_CAPABILITY,
+    ActionEffects,
+    OAuthAuthorizationRequired,
+)
+from ..hosted_chat.action_oauth_flow import ActionOAuthFlows, callback_uri
 from ..hosted_chat.action_spec import is_action_tool
 from ..hosted_chat.agent_resources import (
     agent_context_messages,
@@ -164,8 +169,15 @@ class NativeLoopToolNode:
                 "Detached task machine differs from admission"
             )
         self.native = NativeToolDispatcher(runtime)
+        try:
+            callback_uri(runtime.config.base_url or "")
+            oauth_enabled = True
+        except ValueError:
+            oauth_enabled = False
         self.actions = ActionEffects(
-            checkpoint, current_grant=self.current_grant
+            checkpoint,
+            current_grant=self.current_grant,
+            oauth_enabled=oauth_enabled,
         )
 
     def current_grant(self) -> tuple[set[str], int | None]:
@@ -811,6 +823,7 @@ class NativeLoopToolNode:
         blocked: dict[str, str] = {}
         reviewed: set[str] = set()
         child_scopes: dict[str, dict] = {}
+        oauth_tokens: dict[str, str | None] = {}
 
         def check() -> None:
             self.current_grant()
@@ -898,7 +911,9 @@ class NativeLoopToolNode:
                 return result
             scopes, expires = self.current_grant()
             if is_action_tool(prepared.name):
-                return await self.actions.execute(prepared)
+                return await self.actions.execute(
+                    prepared, oauth_access=oauth_tokens.get(prepared.call_id)
+                )
             if prepared.name == ATTACHMENT_TOOL:
                 request, authorize = self._attachment_request(prepared)
                 binder = ToolAttachmentPublication(
@@ -1031,6 +1046,19 @@ class NativeLoopToolNode:
                 raise AgentSuspended("Waiting for native tool approval")
             for call in effective.values():
                 refresh_decision(call)
+            for call in effective.values():
+                if is_action_tool(call.name) and call.call_id not in blocked:
+                    try:
+                        oauth_tokens[
+                            call.call_id
+                        ] = await self.actions.prepare_oauth(call)
+                    except OAuthAuthorizationRequired:
+                        ActionOAuthFlows(self.actions.repo).pause(
+                            self.actions, call
+                        )
+                        raise AgentSuspended(
+                            "Waiting for Action OAuth authorization"
+                        ) from None
             if candidates and candidates[0].name == ASK_USER_QUESTION_TOOL_NAME:
                 original = unsettled[0]
                 if (

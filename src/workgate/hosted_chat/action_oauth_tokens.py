@@ -9,6 +9,7 @@ import base64
 import json
 import secrets
 import time
+from collections.abc import Callable
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -228,14 +229,21 @@ class ActionOAuthTokens:
             )
 
     async def access_token(
-        self, owner: str, action_id: str, version: int
+        self,
+        owner: str,
+        action_id: str,
+        version: int,
+        *,
+        check_grant: Callable[[], object] = lambda: None,
     ) -> str | None:
         """Serialize refreshes across processes and never replay uncertain rotation."""
         claim_id = secrets.token_urlsafe(24)
         deadline = time.monotonic() + _REFRESH_WAIT
         while True:
+            check_grant()
             with self.database.connect() as db:
                 db.execute("BEGIN IMMEDIATE")
+                check_grant()
                 action = self._action(db, owner, action_id, version)
                 now = int(time.time())
                 active = self._row(db, action, _REFRESH_KIND)
@@ -268,21 +276,25 @@ class ActionOAuthTokens:
         result = None
         accepted = False
         try:
-            auth = meta["auth"]
-            result = await exchange(
-                auth["client_url"],
-                {"grant_type": "refresh_token", "refresh_token": refresh},
-                creds,
-                auth["token_exchange_method"],
-            )
-        except (
-            ValueError,
-            PermissionError,
-            ConnectionError,
-            TimeoutError,
-            OSError,
-        ):
-            return None
+            check_grant()
+            try:
+                auth = meta["auth"]
+                received = await exchange(
+                    auth["client_url"],
+                    {"grant_type": "refresh_token", "refresh_token": refresh},
+                    creds,
+                    auth["token_exchange_method"],
+                )
+            except (
+                ValueError,
+                PermissionError,
+                ConnectionError,
+                TimeoutError,
+                OSError,
+            ):
+                return None
+            check_grant()
+            result = received
         finally:
             # Cancellation, process loss and a rejected exchange are all
             # unsafe to replay: the remote token may have rotated already.

@@ -15,6 +15,7 @@ def runtime_for(
     enabled=True,
     auth_mode: Literal["none", "oauth"] = "none",
     ui_enabled=True,
+    base_url=None,
 ):
     return build_control_runtime(
         Settings(
@@ -24,6 +25,7 @@ def runtime_for(
             auth_bypass_localhost=False,
             hosted_chat_enabled=enabled,
             ui_enabled=ui_enabled,
+            base_url=base_url,
             agent_bridge_enabled=False,
         )
     )
