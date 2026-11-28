@@ -11,6 +11,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
+from ...hosted_chat.approval_claims import ApprovalClaimStore
+from ...hosted_chat.ask_user_tools import ASK_USER_QUESTION_TOOL_NAME
 from ...hosted_chat.content_filters import ContentFilterBlocked
 from ...hosted_chat.database import SQLiteDatabase
 from ...hosted_chat.generation_protocol import request_protocol
@@ -121,20 +123,29 @@ def hosted_chat_generation_routes(runtime: ControlRuntime) -> list[Route]:
             raise KeyError("Generation not found")
         return generation, admission
 
+    def require_admission(principal: _Principal, admission: dict) -> set[str]:
+        principal.check()
+        scopes = set(admission["scopes"])
+        if not scopes.issubset(principal.scopes):
+            raise PermissionError(
+                "Reattachment requires the admitted scope ceiling"
+            )
+        return scopes
+
     def launch(
         principal: _Principal,
         repo: GenerationStore,
         generation: Generation,
         admission: dict,
     ) -> bool:
-        principal.check()
         if generation.status != "running":
             return False
-        scopes = set(admission["scopes"])
-        if not scopes.issubset(principal.scopes):
-            raise PermissionError(
-                "Reattachment requires the admitted scope ceiling"
-            )
+        scopes = require_admission(principal, admission)
+        tools = (
+            NATIVE_TOOLS | {ASK_USER_QUESTION_TOOL_NAME}
+            if admission.get("ask_user") is True
+            else NATIVE_TOOLS
+        )
 
         async def authorize_batch(_calls, _state):
             # The native node applies P4 to every effective tool argument
@@ -150,7 +161,7 @@ def hosted_chat_generation_routes(runtime: ControlRuntime) -> list[Route]:
                 generation.run_id,
                 scopes=scopes,
                 expires=principal.expires,
-                allowed_tools=NATIVE_TOOLS,
+                allowed_tools=tools,
                 task_machine=admission["task_machine"],
                 check_grant=principal.check,
                 authorize_batch=authorize_batch,
@@ -272,6 +283,88 @@ def hosted_chat_generation_routes(runtime: ControlRuntime) -> list[Route]:
         except (KeyError, ValueError, PermissionError) as error:
             return failure(error)
 
+    async def pending_action(request: Request):
+        try:
+            principal = _principal(runtime, request)
+            repo = store()
+            generation, admission = owned(request, principal, repo)
+            require_admission(principal, admission)
+            pending = ApprovalClaimStore(repo.database).pending(
+                principal.owner, generation.run_id
+            )
+            return JSONResponse({"pendingAction": pending}, headers=_HEADERS)
+        except (KeyError, ValueError, PermissionError) as error:
+            return failure(error)
+
+    async def resolve_action(request: Request):
+        try:
+            principal = _principal(runtime, request)
+            repo = store()
+            generation, admission = owned(request, principal, repo)
+            require_admission(principal, admission)
+            payload = await request.json()
+            if not isinstance(payload, dict) or not isinstance(
+                payload.get("actionId"), str
+            ):
+                raise ValueError("Expected action identity")
+            if generation.status != "requires_action":
+                raise KeyError("No pending human action")
+            if not await runtime.generation_supervisor.wait_idle(
+                principal.owner, generation.run_id
+            ):
+                return JSONResponse(
+                    {
+                        "error": "Generation is still suspending; retry the resolution"
+                    },
+                    status_code=409,
+                    headers=_HEADERS,
+                )
+            require_admission(principal, admission)
+            claims = ApprovalClaimStore(repo.database)
+            if payload.get("type") == "tool_approval":
+                resolutions = payload.get("resolutions")
+                if not isinstance(resolutions, list):
+                    raise ValueError("Expected approval resolutions")
+                claims.claim(
+                    principal.owner,
+                    generation.run_id,
+                    payload["actionId"],
+                    resolutions,
+                )
+            elif payload.get("type") == ASK_USER_QUESTION_TOOL_NAME:
+                claims.claim_question(
+                    principal.owner,
+                    generation.run_id,
+                    payload["actionId"],
+                    payload,
+                )
+            else:
+                raise ValueError("Unknown human action type")
+            current = repo.get(principal.owner, generation.run_id)
+            if current is None:
+                raise KeyError("Generation not found")
+            try:
+                launch(principal, repo, current, admission)
+            except GenerationCapacityExceeded:
+                # Resolution is committed exactly once. Explicit attach can
+                # resume it when capacity is available; do not replay a claim.
+                return JSONResponse(
+                    {
+                        **_body(current),
+                        "resolved": True,
+                        "error": "Generation host capacity reached; attach to resume",
+                    },
+                    status_code=429,
+                    headers=_HEADERS,
+                )
+            return JSONResponse(
+                {**_body(current), "resolved": True},
+                status_code=202,
+                headers=_HEADERS,
+            )
+        except (KeyError, ValueError, TypeError, PermissionError) as error:
+            return failure(error)
+
     async def events(request: Request):
         try:
             principal = _principal(runtime, request)
@@ -330,4 +423,6 @@ def hosted_chat_generation_routes(runtime: ControlRuntime) -> list[Route]:
         Route(_PREFIX + "/{run_id}", status, methods=["GET"]),
         Route(_PREFIX + "/{run_id}/attach", attach, methods=["POST"]),
         Route(_PREFIX + "/{run_id}/events", events, methods=["GET"]),
+        Route(_PREFIX + "/{run_id}/action", pending_action, methods=["GET"]),
+        Route(_PREFIX + "/{run_id}/action", resolve_action, methods=["POST"]),
     ]

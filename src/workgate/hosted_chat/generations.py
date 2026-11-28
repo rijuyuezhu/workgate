@@ -11,6 +11,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from .ask_user_tools import ask_user_requested
 from .content_filters import (
     filters_from_snapshot,
     validate_agent_submission,
@@ -357,7 +358,9 @@ class GenerationStore:
             "sampling": sampling,
         }
         if native_admission is not None:
-            state["nativeAdmission"] = native_admission
+            state["nativeAdmission"] = {**native_admission}
+            if ask_user_requested(agent, payload):
+                state["nativeAdmission"]["ask_user"] = True
         if agent is not None:
             state["agentRevision"] = agent.get("_version", 1)
         if wakeup_task_id is not None:

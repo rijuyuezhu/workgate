@@ -21,6 +21,11 @@ from .ask_user_tools import (
 )
 from .checkpoint_types import LoopSnapshot
 from .checkpoints import SQLiteCheckpointSaver
+from .content_filters import (
+    filters_from_snapshot,
+    validate_message_submission,
+    validate_tool_arguments,
+)
 from .database import SQLiteDatabase
 from .durable_tasks import DurableTaskRepository
 from .generation_actor_lease import ActorLease, ActorLeaseLost
@@ -507,15 +512,23 @@ class ApprovalClaimStore:
             batch = prepare_approval_batch(payload, resolutions)
             # Persist only source resolution fields; caller metadata is not replay evidence.
             clean = []
+            filters = filters_from_snapshot(db, owner)
             for entry in batch.entries:
                 decision = entry.decision
                 kind = decision["type"]
                 item = {"tool_call_id": entry.call_id, "decision": kind}
                 if kind == "edit":
+                    validate_tool_arguments(
+                        entry.name, decision["updatedInput"], filters
+                    )
                     item["editedArguments"] = decision["updatedInput"]
                 elif kind == "reject" and "reason" in decision:
+                    validate_message_submission(decision["reason"], filters)
                     item["reason"] = decision["reason"]
                 elif kind == "respond":
+                    validate_message_submission(
+                        decision["responseText"], filters
+                    )
                     item["responseText"] = decision["responseText"]
                 clean.append(item)
             claims = _claim_state(state, pending["namespace"], create=True)
@@ -596,6 +609,14 @@ class ApprovalClaimStore:
             if "error" in resolution:
                 raise ValueError(resolution["error"])
             answer = resolution["resumeValue"]
+            filters = filters_from_snapshot(db, owner)
+            texts = (
+                answer["answers"].values()
+                if "answers" in answer
+                else [answer["answer"]]
+            )
+            for text in texts:
+                validate_message_submission(text, filters)
             claims = _claim_state(state, pending["namespace"], create=True)
             claims["answeredQuestion"] = {
                 "actionId": action_id,

@@ -297,3 +297,225 @@ def test_generation_http_cookie_csrf_and_binding(tmp_path, monkeypatch):
             "test answer"
             in client.get(PREFIX + "/" + run + "/events", headers=headers).text
         )
+
+
+def test_generation_http_question_resolution_is_one_shot(tmp_path, monkeypatch):
+    from workgate.hosted_chat.provider_common import ModelToolCall
+
+    runtime = runtime_for(tmp_path)
+    db = provider(runtime)
+    original = hosted_chat.run_authenticated_generation
+    calls = []
+
+    async def stream(profile, messages, **kwargs):
+        calls.append(messages)
+        if not any(message["role"] == "tool" for message in messages):
+            yield ModelToolCall(
+                "question", "ask_user_question", {"question": "Which format?"}
+            )
+        else:
+            assert "JSON" in str(messages[-1])
+            yield "test answer"
+
+    async def execute(*args, **kwargs):
+        return await original(
+            *args, **kwargs, stream_tools=stream, stream_text=stream
+        )
+
+    monkeypatch.setattr(hosted_chat, "run_authenticated_generation", execute)
+    with TestClient(build_http_app(runtime=runtime)) as client:
+        payload = {
+            "text": "choose format",
+            "provider": "test-provider",
+            "model": "test-model",
+            "ephemeralAgent": {"ask_user_question": True},
+        }
+        first = client.post(PREFIX, json=payload)
+        assert first.status_code == 202
+        run = first.json()["runId"]
+        assert (
+            "on_pending_action"
+            in client.get(PREFIX + "/" + run + "/events").text
+        )
+        path = PREFIX + "/" + run + "/action"
+        pending = client.get(path).json()["pendingAction"]
+        assert pending["payload"]["type"] == "ask_user_question"
+        body = {"actionId": pending["actionId"], "type": "ask_user_question"}
+        assert (
+            client.post(
+                path, json={**body, "actionId": "wrong", "answer": "JSON"}
+            ).status_code
+            == 400
+        )
+        WorkspaceRepository(db).save_setting(
+            "local-user",
+            "webui.filters.config",
+            {"messages": {"pii": {"starterPatterns": ["bearer_header"]}}},
+        )
+        rejected = client.post(path, json={**body, "answer": "Bearer private"})
+        assert rejected.status_code == 400
+        assert rejected.json()["error"] == "content_filter_block"
+        assert client.get(path).json()["pendingAction"] == pending
+        result = client.post(path, json={**body, "answer": "JSON"})
+        assert result.status_code == 202, result.text
+        assert result.json()["resolved"]
+        assert "test answer" in client.get(PREFIX + "/" + run + "/events").text
+        assert client.get(path).json()["pendingAction"] is None
+        assert (
+            client.post(path, json={**body, "answer": "JSON"}).status_code
+            == 404
+        )
+        assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_generation_http_approval_scope_and_edited_policy(
+    tmp_path, monkeypatch
+):
+    from tests.support.paired import build_paired_control_harness
+    from workgate.hosted_chat.provider_common import ModelToolCall
+
+    harness = build_paired_control_harness(
+        Settings(
+            default_workdir=tmp_path,
+            state_dir=tmp_path / ".state",
+            auth_mode="oauth",
+            auth_bypass_localhost=False,
+            hosted_chat_enabled=True,
+            agent_bridge_enabled=False,
+        )
+    )
+    runtime = harness.control
+    db = provider(runtime)
+    workspace = WorkspaceRepository(db)
+    workspace.save_setting("alice", "approval.mode", "all")
+    original = hosted_chat.run_authenticated_generation
+    calls = []
+
+    async def stream(profile, messages, **kwargs):
+        calls.append(messages)
+        if not any(message["role"] == "tool" for message in messages):
+            yield ModelToolCall(
+                "task-create", "task", {"action": "create", "label": "original"}
+            )
+        else:
+            yield "test answer"
+
+    async def execute(*args, **kwargs):
+        return await original(
+            *args, **kwargs, stream_tools=stream, stream_text=stream
+        )
+
+    monkeypatch.setattr(hosted_chat, "run_authenticated_generation", execute)
+    async with runtime.lifespan():
+        with control_execution_context(
+            config=runtime.config,
+            state_store=runtime.state_store,
+            oauth_state=runtime.oauth_state,
+        ):
+
+            def token(owner, scopes):
+                return {
+                    "Authorization": "Bearer "
+                    + issue_access_token(
+                        client_id="chat-test",
+                        scope=scopes,
+                        resource=resource_url(),
+                        subject=owner,
+                    )
+                }
+
+            alice = token("alice", "shell:read shell:write shell:execute")
+            bob = token("bob", "shell:read shell:write shell:execute")
+            narrow = token("alice", "shell:read")
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=build_http_app(runtime=runtime)),
+            base_url="http://testserver",
+        ) as client:
+            first = await client.post(
+                PREFIX,
+                json={
+                    "text": "create task",
+                    "taskMachine": harness.executor_id,
+                    "provider": "test-provider",
+                    "model": "test-model",
+                },
+                headers=alice,
+            )
+            assert first.status_code == 202, first.text
+            run = first.json()["runId"]
+            path = PREFIX + "/" + run + "/action"
+            event = await client.get(
+                PREFIX + "/" + run + "/events", headers=alice
+            )
+            assert "on_pending_action" in event.text, event.text
+            pending = (await client.get(path, headers=alice)).json()[
+                "pendingAction"
+            ]
+            assert pending["payload"]["type"] == "tool_approval"
+            body = {
+                "actionId": pending["actionId"],
+                "type": "tool_approval",
+                "resolutions": [
+                    {
+                        "tool_call_id": "task-create",
+                        "decision": "edit",
+                        "editedArguments": {
+                            "action": "create",
+                            "label": "private_123",
+                        },
+                    }
+                ],
+            }
+            assert (await client.get(path, headers=bob)).status_code == 404
+            assert (await client.get(path, headers=narrow)).status_code == 403
+            assert (
+                await client.post(path, json=body, headers=bob)
+            ).status_code == 404
+            assert (
+                await client.post(path, json=body, headers=narrow)
+            ).status_code == 403
+            workspace.save_setting(
+                "alice",
+                "webui.filters.config",
+                {
+                    "toolArguments": {
+                        "pii": {
+                            "fields": ["arguments"],
+                            "customPatterns": [
+                                {
+                                    "id": "private",
+                                    "label": "private",
+                                    "regex": "private_[0-9]+",
+                                }
+                            ],
+                        }
+                    }
+                },
+            )
+            blocked = await client.post(path, json=body, headers=alice)
+            assert (
+                blocked.status_code == 400
+                and blocked.json()["error"] == "content_filter_block"
+            ), blocked.text
+            assert "private_123" not in blocked.text
+            assert (await client.get(path, headers=alice)).json()[
+                "pendingAction"
+            ] == pending
+            body["resolutions"] = [
+                {
+                    "tool_call_id": "task-create",
+                    "decision": "reject",
+                    "reason": "do not create",
+                }
+            ]
+            resolved = await client.post(path, json=body, headers=alice)
+            assert resolved.status_code == 202, resolved.text
+            response = await client.get(
+                PREFIX + "/" + run + "/events", headers=alice
+            )
+            assert "test answer" in response.text, response.text
+            assert (
+                await client.post(path, json=body, headers=alice)
+            ).status_code == 404
+            assert len(calls) == 2
