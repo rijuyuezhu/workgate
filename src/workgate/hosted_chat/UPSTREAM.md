@@ -822,3 +822,11 @@ and maps Unicode case-folded matches back to original character positions.
 The locked pypdf reader is used with context-local parsing limits. Access
 challenge pages and empty JavaScript shells are detected without bypassing
 them. Cache and fetch activation are separate.
+
+Public document reads reuse the DNS-pinned downloader, with the pinned
+arXiv HTML/PDF alternative. The optional cache uses private owner-hashed
+directories, atomic writes and a cross-process eviction lock. It validates
+owner/request bindings, URL, text, format and offsets before reuse, expires
+after 24 hours and enforces both count and byte quotas. Invalid or unavailable
+cache entries never prevent a fresh public read. Static security challenges
+are returned as unavailable, not bypassed.
