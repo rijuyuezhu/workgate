@@ -717,3 +717,15 @@ owner, Agent, Action ID and version; target/authentication changes require
 fresh credentials, and inactive records participate in collision checks.
 Agent selection and live Action references are both required. Invocation
 and external OAuth flow handling are separate layers.
+
+Action HTTP execution adapts pinned `webui/action_runtime.py` (blob
+`757d0bf2c48ebcb76712cd41ef8fa861a1b40eca`) and reuses the origin-bound
+DNS-pinned provider dialer without adopting its broader private-provider
+policy. Actions default to public destinations only. Operators may restrict
+domains with `WORKGATE_ACTION_ALLOWED_DOMAINS` and explicitly permit
+private host:port targets with `WORKGATE_ACTION_ALLOWED_ADDRESSES`.
+Cloud metadata, link-local, multicast and unspecified addresses remain
+denied. The transport enforces a total deadline, bounded JSON requests and
+uncompressed responses, disables redirects and ambient proxies, and scrubs
+credential echoes. External effects still require the foreground approval
+and durable receipt adapter.
