@@ -325,8 +325,15 @@ async def prepare_auto_save(
         ) from None
 
 
-async def save_discovered(repo: ProviderRepository, body: dict) -> dict:
+async def save_discovered(
+    repo: ProviderRepository,
+    body: dict,
+    *,
+    check: Callable[[], None] | None = None,
+) -> dict:
     """Probe outside the write transaction, then commit the exact snapshot."""
+    if check is not None:
+        check()
     value = _validate(body)
     if not value["auto_discover"]:
         return repo._save_validated(body, value)
@@ -345,11 +352,17 @@ async def save_discovered(repo: ProviderRepository, body: dict) -> dict:
             "Existing channel provider type cannot be changed"
         )
     catalog = await prepare_auto_save(repo, value, previous)
+    if check is not None:
+        check()
     return repo._save_validated(body, value, prepared=(raw, catalog))
 
 
 async def _refresh_snapshot(
-    repo: ProviderRepository, key: str, raw: str
+    repo: ProviderRepository,
+    key: str,
+    raw: str,
+    *,
+    check: Callable[[], None] | None = None,
 ) -> bool:
     """No network under write lock; compare exact prior row before updating."""
     value = json.loads(raw)
@@ -372,6 +385,8 @@ async def _refresh_snapshot(
         _apply_catalog(
             value, catalog, value.get("model_context_overrides") or {}
         )
+    if check is not None:
+        check()
     with repo.database.connect() as db:
         cursor = db.execute(
             "UPDATE settings SET value=? WHERE owner=? AND key=? AND value=?",
@@ -440,7 +455,10 @@ async def refresh_model_channel(
     channel: str,
     *,
     account_refresh: AccountRefresh | None = None,
+    check: Callable[[], None] | None = None,
 ) -> dict:
+    if check is not None:
+        check()
     if not isinstance(channel, str):
         raise ValueError("Specify a saved channel")
     key = (
@@ -457,6 +475,13 @@ async def refresh_model_channel(
         raise ValueError("Automatic model discovery is disabled")
     if value.get("oauth_id") and account_refresh is None:
         raise ValueError("Account discovery requires account authorization")
-    if not await _refresh_channel_snapshot(repo, key, row[0], account_refresh):
+    if check is not None and value.get("oauth_id"):
+        raise ValueError("Account discovery requires account authorization")
+    refreshed = (
+        await _refresh_snapshot(repo, key, row[0], check=check)
+        if check is not None
+        else await _refresh_channel_snapshot(repo, key, row[0], account_refresh)
+    )
+    if not refreshed:
         raise ValueError("Channel changed during refresh; retry")
     return repo.public_profiles()
