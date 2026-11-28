@@ -192,6 +192,13 @@ def check_detached_task(
             if action in ("steer", "queue", "interrupt", "cancel_message"):
                 if row["status"] != "running" or row["cancel_requested"]:
                     output = _snapshot(row, status="not_running")
+                elif (
+                    json.loads(row["execution_options"])["scope"].get(
+                        "team_definition_hash"
+                    )
+                    is not None
+                ):
+                    output = _snapshot(row, status="controls_not_enabled")
                 else:
                     _authorize_result(
                         db, row, scopes, expires, disclosure_access

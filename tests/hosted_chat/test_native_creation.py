@@ -7120,3 +7120,218 @@ async def test_authenticated_wakeup_reuses_foreground_loop(
             ).fetchone()
             assert reply["text"] == "continued answer"
             assert not await execute()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("interrupt", ["none", "restart", "revision"])
+async def test_detached_team_result_only_native_effects_and_recovery(
+    bound, interrupt
+):
+    pytest.importorskip("langgraph")
+    import asyncio
+
+    from workgate.control.hosted_chat_detached_worker import (
+        run_detached_subagent,
+    )
+    from workgate.hosted_chat.agent_runtime import AgentContext, AgentLoopState
+    from workgate.hosted_chat.agents import AgentRepository
+    from workgate.hosted_chat.detached_subagents import reserve_detached_child
+    from workgate.hosted_chat.loop_checkpoint import OwnedLoopCheckpoint
+    from workgate.hosted_chat.provider_common import ProviderConfig
+    from workgate.hosted_chat.subagents import (
+        build_subagent_configs,
+        invoke_subagent,
+    )
+
+    harness, original, lease, _ = bound
+    agents = AgentRepository(original.database)
+    entry = agents.create(lease.owner, {"provider": "openai", "model": "entry"})
+    final = agents.create(lease.owner, {"provider": "openai", "model": "final"})
+    root = agents.create(
+        lease.owner,
+        {
+            "provider": "openai",
+            "model": "parent",
+            "subagents": {
+                "enabled": True,
+                "allowSelf": False,
+                "graphs": [
+                    {
+                        "type": "team",
+                        "name": "Review team",
+                        "description": "Review",
+                        "agent_ids": [entry["id"], final["id"]],
+                        "entry_agent_id": entry["id"],
+                        "result_agent_id": final["id"],
+                        "edges": [
+                            {
+                                "from": entry["id"],
+                                "to": final["id"],
+                                "edgeType": "direct",
+                            }
+                        ],
+                    }
+                ],
+            },
+        },
+    )
+    generation, _ = GenerationStore(original.database).begin(
+        lease.owner,
+        {"text": "parent private", "agent_id": root["id"]},
+    )
+    actor = ActorLease.claim(original.database, lease.owner, generation.run_id)
+    assert actor is not None
+    models = []
+    blocked = asyncio.Event()
+    resume = asyncio.Event()
+    pause = interrupt != "none"
+
+    async def resolve(_generation, agent):
+        return AgentContext(
+            ProviderConfig(
+                "openai", agent["model"], "https://example.invalid", "fake"
+            ),
+            [],
+            agent=agent,
+        )
+
+    async def stream(profile, messages, *, tools, **_kwargs):
+        assert "parent private" not in str(messages)
+        assert "subagent" not in {tool["function"]["name"] for tool in tools}
+        models.append(profile.model)
+        if profile.model == "entry":
+            if not any(m["role"] == "tool" for m in messages):
+                yield ModelToolCall("same", "task", {"action": "create"})
+            else:
+                yield "intermediate team evidence"
+        else:
+            assert profile.model == "final"
+            assert "intermediate team evidence" in str(messages)
+            if not any(
+                m.get("role") == "tool"
+                and m.get("tool_call_id") == "final-call"
+                for m in messages
+            ):
+                yield ModelToolCall("final-call", "task", {"action": "create"})
+            else:
+                if pause:
+                    blocked.set()
+                    await resume.wait()
+                yield "designated team result"
+
+    checkpoint = OwnedLoopCheckpoint(actor)
+    context = await resolve(generation, root)
+    call = ModelToolCall(
+        "team-call",
+        "subagent",
+        {
+            "subagent_type": "team",
+            "description": "review",
+            "run_in_background": True,
+        },
+    )
+    await checkpoint.save(
+        AgentLoopState(
+            context,
+            [{"role": "user", "content": "parent private"}],
+            pending_calls=[call],
+            tool_step_started=True,
+        ),
+        [call],
+    )
+    access = {
+        "scopes": sorted(SCOPES),
+        "machines": {harness.executor_id: "write"},
+        "task_machine": harness.executor_id,
+        "allowed_tools": ["task"],
+    }
+
+    async def reserve(value):
+        return reserve_detached_child(
+            checkpoint, call, value, disclosure_access=access
+        ).task_id
+
+    async def no_foreground(_value):
+        pytest.fail("unexpected foreground call")
+
+    db = original.database
+    task_id = await invoke_subagent(
+        call,
+        build_subagent_configs(lease.owner, root, db),
+        execute_child=no_foreground,
+        execute_background=reserve,
+        current_grant=lambda: (set(SCOPES), None),
+        owner=lease.owner,
+        conversation_id=generation.conversation_id,
+        parent_run_id=actor.run_id,
+        database=db,
+        parent_agent_id=root["id"],
+    )
+    assert GenerationStore(db).finish(
+        lease.owner,
+        actor.run_id,
+        status="complete",
+        text="accepted",
+        actor_lease=actor,
+    )
+    actor.release()
+    authorized = []
+
+    async def authorize(calls, _state):
+        authorized.extend(c.call_id for c in calls)
+
+    async def execute():
+        return await run_detached_subagent(
+            harness.control,
+            db,
+            lease.owner,
+            generation.conversation_id,
+            task_id,
+            scopes=set(SCOPES),
+            expires=None,
+            disclosure_access=access,
+            allowed_tools={"task"},
+            check_grant=lambda: None,
+            resolve_context=resolve,
+            authorize_batch=authorize,
+            stream_tools=stream,
+        )
+
+    if interrupt == "none":
+        assert await execute()
+    else:
+        running = asyncio.create_task(execute())
+        await asyncio.wait_for(blocked.wait(), timeout=30)
+        running.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await running
+        if interrupt == "revision":
+            agents.update(lease.owner, final["id"], {"instructions": "changed"})
+            with pytest.raises(
+                PermissionError, match="target revision changed"
+            ):
+                await execute()
+            return
+        pause = False
+        assert await execute()
+    assert len(await harness.control.task_service.list_tasks()) == 2
+    assert authorized == ["same", "final-call"]
+    with db.read_snapshot() as conn:
+        task = conn.execute(
+            "SELECT status,result,child_run_id FROM subagent_tasks WHERE id=?",
+            (task_id,),
+        ).fetchone()
+        assert task["status"] == "completed"
+        assert task["result"] == "designated team result"
+        rows = conn.execute(
+            "SELECT member_agent_id,authorization_conversation_id FROM agent_durable_tasks WHERE run_id=?",
+            (task["child_run_id"],),
+        ).fetchall()
+        assert {row["member_agent_id"] for row in rows} == {
+            entry["id"],
+            final["id"],
+        }
+        assert {row["authorization_conversation_id"] for row in rows} == {
+            generation.conversation_id
+        }
+    assert not await execute()
