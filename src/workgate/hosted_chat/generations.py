@@ -11,6 +11,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from .artifact_prompts import artifact_mode
 from .ask_user_tools import ask_user_requested
 from .attachment_history import message_file_ids, resolve_message_files
 from .content_filters import (
@@ -60,6 +61,7 @@ class Generation:
     sampling: dict = field(default_factory=dict)
     provider: str = ""
     model: str = ""
+    artifacts_mode: str | None = None
 
 
 def _saved_model_steps(
@@ -254,6 +256,7 @@ class GenerationStore:
             provider=state["provider"],
             model=state["model"],
             sampling=state.get("sampling", {}),
+            artifacts_mode=state.get("artifactsMode"),
         )
 
     def latest(self, owner: str, conversation_id: str) -> Generation | None:
@@ -532,6 +535,11 @@ class GenerationStore:
             "provider": provider,
             "model": model,
             "sampling": sampling,
+            "artifactsMode": (
+                ""
+                if manual or wakeup_task_id is not None
+                else artifact_mode(payload, agent)
+            ),
         }
         if file_ids:
             state["messageFileIds"] = file_ids

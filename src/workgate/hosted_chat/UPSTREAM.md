@@ -649,3 +649,17 @@ The pinned background-deny rule still prohibits a detached worker from
 launching another detached task; isolated teams carry no nested catalogue.
 Executed descendant revisions are checked again before task settlement,
 manual result disclosure, thread continuation, and completion wakeup.
+
+### L6 artifact prompt selection
+
+| Workgate file | Upstream source at the pin | Git blob |
+| --- | --- | --- |
+| `artifact_prompts.py` | `src/local_shell_mcp/webui/artifact_prompts.py` | `4d5cf9ec2cfeaf71b1c5f96add17c679df2f6587` |
+| `artifact_prompt_snapshot.json` | `src/local_shell_mcp/webui/artifact_prompt_snapshot.json` | `d8af319e0268e8d546eb95ea893f1bb3fb383173` |
+| `tests/hosted_chat/test_artifact_prompts.py` | `tests/test_webui_artifact_prompts.py` (template oracle and admission cases) | `4e3a732891d40444bf8bd30cd41054e2e58280bb` |
+
+The packaged template data is unchanged. Foreground admission persists the
+effective mode; retries reuse the original mode and the actual resolved
+provider transport determines the template. Manual compaction and internal
+completion wakeups do not add artifact prompts. No artifact execution,
+preview, editing, or additional tool grant is introduced in this slice.

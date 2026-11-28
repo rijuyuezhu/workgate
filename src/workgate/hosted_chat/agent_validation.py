@@ -294,7 +294,7 @@ def clean_agent_config(payload: Any, *, create: bool = False) -> dict:
         "entryAgentId",
         "resultAgentId",
     }
-    strings = {"provider", "category"}
+    strings = {"provider", "category", "artifacts"}
     arrays = {"tools", "conversation_starters", "graphAgentIds"}
     for key in nullable_strings | strings | arrays:
         if key not in obj:
