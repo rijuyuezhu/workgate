@@ -296,8 +296,8 @@ class WorkspaceRepository:
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             if db.execute(
-                "SELECT 1 FROM active_subagent_threads WHERE thread_id=?",
-                (conversation_id,),
+                "SELECT 1 FROM active_subagent_threads WHERE thread_id=? AND owner=?",
+                (conversation_id, owner),
             ).fetchone():
                 raise PermissionError("Child conversation is read-only")
             row = db.execute(
@@ -336,9 +336,21 @@ class WorkspaceRepository:
                 ).fetchone()
             )
 
-    def delete_conversation(self, owner: str, conversation_id: str) -> bool:
+    def delete_conversation(
+        self, owner: str, conversation_id: str, *, require_idle: bool = False
+    ) -> bool:
         with self.database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            if (
+                require_idle
+                and db.execute(
+                    "SELECT 1 FROM runs r JOIN conversations c ON c.id=r.conversation_id WHERE c.owner=? AND c.id=? AND r.status IN ('running','requires_action')",
+                    (owner, conversation_id),
+                ).fetchone()
+            ):
+                raise PermissionError(
+                    "Abort the active generation before deleting its conversation"
+                )
             if db.execute(
                 "SELECT 1 FROM active_subagent_threads WHERE thread_id=? AND owner=? AND active=1",
                 (conversation_id, owner),
@@ -356,6 +368,44 @@ class WorkspaceRepository:
                 (owner, conversation_id),
             )
             return result.rowcount > 0
+
+    def unread(self, owner: str) -> dict[str, str]:
+        with self.database.read_snapshot() as db:
+            return {
+                row["id"]: row["unread_marker"]
+                for row in db.execute(
+                    "SELECT id,unread_marker FROM conversations WHERE owner=? AND unread_marker IS NOT NULL",
+                    (owner,),
+                )
+            }
+
+    def set_unread(
+        self,
+        owner: str,
+        conversation_id: str,
+        *,
+        unread: bool,
+        expected: str | None = None,
+    ) -> str | None:
+        """A read acknowledgment cannot erase a newer generation's marker."""
+        with self.database.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT unread_marker FROM conversations WHERE owner=? AND id=?",
+                (owner, conversation_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError("Conversation not found")
+            marker = row["unread_marker"]
+            if unread:
+                marker = "manual:" + uuid.uuid4().hex
+            elif marker == expected:
+                marker = None
+            db.execute(
+                "UPDATE conversations SET unread_marker=? WHERE owner=? AND id=?",
+                (marker, owner, conversation_id),
+            )
+            return marker
 
     def add_message(
         self, owner: str, conversation_id: str, payload: dict
