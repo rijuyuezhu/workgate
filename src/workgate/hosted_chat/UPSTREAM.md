@@ -887,3 +887,11 @@ It preserves pinned delivery identity, ordered lanes and bounded child
 batch coalescing, includes the effective lane in retry fingerprints, and
 rejects expected machine actions or steering into native-granted runs.
 The queue is not an execution authority; no worker is activated here.
+
+Continuation registration requires the source's continue permission,
+an owned authoritative completed parent reply and live direct-child
+selection. The archived child conversation and native read-only marker
+are inserted atomically with the binding. Subsequent delivery admission
+revalidates the source, marker and direct-child selection. Revoking the
+source releases the active binding deletion fence; ordinary child writes
+remain prohibited.

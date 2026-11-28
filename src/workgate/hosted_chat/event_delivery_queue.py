@@ -10,16 +10,13 @@ from typing import Any
 
 from .content_filters import filters_from_snapshot, validate_message_submission
 from .database import SQLiteDatabase
+from .event_bindings import live_binding
+from .event_envelope import _TOKEN, EventConflict, _string
 from .event_source_keys import _now, live_source
 
-_TOKEN = re.compile(r"^[A-Za-z0-9._~:/+=-]{1,256}$")
 _MAX_PROMPT_BYTES = 128 * 1024
 _MAX_PENDING = 256
 _NO_PARENT = "00000000-0000-0000-0000-000000000000"
-
-
-class EventConflict(ValueError):
-    pass
 
 
 def _iso(value: int) -> str:
@@ -212,18 +209,6 @@ def _lane(envelope: dict, ordering_key: str | None) -> str:
     )
 
 
-def _string(value: Any, label: str, limit: int = 131_072) -> str:
-    if (
-        not isinstance(value, str)
-        or not value.strip()
-        or len(value.encode()) > limit
-    ):
-        raise ValueError(
-            f"{label} must be a nonempty string of at most {limit} bytes"
-        )
-    return value
-
-
 def prepare_source_event(
     owner: str,
     source_key_id: str,
@@ -332,12 +317,7 @@ class EventDeliveryQueue:
                 binding_id = body.get("bindingId")
                 if not isinstance(binding_id, str):
                     raise ValueError("Continue requires an event binding")
-                binding = db.execute(
-                    "SELECT b.* FROM agent_event_bindings b JOIN conversations c ON c.id=b.conversation_id AND c.owner=b.owner "
-                    "JOIN conversations p ON p.id=b.parent_conversation_id AND p.owner=b.owner "
-                    "WHERE b.id=? AND b.owner=? AND b.source_key_id=?",
-                    (binding_id, owner, source_key_id),
-                ).fetchone()
+                binding = live_binding(db, owner, source_key_id, binding_id)
                 if binding is None:
                     raise PermissionError("Event binding unavailable")
                 body = {

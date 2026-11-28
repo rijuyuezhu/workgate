@@ -147,6 +147,11 @@ class EventSourceKeys:
                 (now, key_id, owner),
             ).rowcount
             if updated:
+                db.execute(
+                    "UPDATE active_subagent_threads SET active=0,updated_at=unixepoch() "
+                    "WHERE owner=? AND thread_id IN (SELECT conversation_id FROM agent_event_bindings WHERE owner=? AND source_key_id=?)",
+                    (owner, owner, key_id),
+                )
                 # Future event execution must check this source fence in the
                 # same transaction as claim/renewal. No native grants exist.
                 db.execute(
