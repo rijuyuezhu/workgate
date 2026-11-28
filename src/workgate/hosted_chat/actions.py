@@ -89,6 +89,9 @@ def _validate_auth(auth: dict) -> None:
                 "upgrade",
                 "te",
                 "trailer",
+                "accept-encoding",
+                "content-type",
+                "expect",
             }
         ):
             raise ValueError("Invalid custom authentication header")
@@ -189,7 +192,13 @@ class ActionRepository:
                     continue
                 spec = parse_spec(metadata["raw_spec"])
                 operation = operations(spec).get(op_id)
-                if operation:
+                if operation and operation["method"] in {
+                    "get",
+                    "post",
+                    "put",
+                    "patch",
+                    "delete",
+                }:
                     return (
                         metadata,
                         self._credentials(row),

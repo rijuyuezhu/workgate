@@ -7,6 +7,7 @@ The pinned dialer preserves the request hostname for HTTP Host and TLS SNI.
 import asyncio
 import ipaddress
 import socket
+from collections.abc import Callable
 from typing import cast
 from urllib.parse import urlsplit
 
@@ -126,7 +127,13 @@ class _ProviderNetworkBackend(httpcore.AsyncNetworkBackend):
     """Dial only vetted addresses for the single configured provider origin."""
 
     def __init__(
-        self, host: str, port: int, *, https: bool, allow_private_http: bool
+        self,
+        host: str,
+        port: int,
+        *,
+        https: bool,
+        allow_private_http: bool,
+        resolve: Callable[[str, int], list[str]] | None = None,
     ):
         self._backend = cast(
             httpcore.AsyncNetworkBackend, httpcore.AnyIOBackend()
@@ -136,6 +143,7 @@ class _ProviderNetworkBackend(httpcore.AsyncNetworkBackend):
         self.https = https
         self.loopback = host in _LOOPBACK_NAMES
         self.private_http = allow_private_http
+        self.resolve = resolve
 
     async def connect_tcp(
         self, host, port, timeout=None, local_address=None, socket_options=None
@@ -144,13 +152,17 @@ class _ProviderNetworkBackend(httpcore.AsyncNetworkBackend):
             raise httpcore.ConnectError("Provider origin changed")
         try:
             async with asyncio.timeout(timeout):
-                ips = await asyncio.to_thread(
-                    _resolved_ips,
-                    host,
-                    port,
-                    loopback=self.loopback,
-                    private_http=self.private_http,
-                    https=self.https,
+                ips = (
+                    await asyncio.to_thread(self.resolve, host, port)
+                    if self.resolve is not None
+                    else await asyncio.to_thread(
+                        _resolved_ips,
+                        host,
+                        port,
+                        loopback=self.loopback,
+                        private_http=self.private_http,
+                        https=self.https,
+                    )
                 )
                 failure = None
                 for ip in ips:
@@ -203,6 +215,15 @@ class ProviderHTTPTransport(httpx.AsyncHTTPTransport):
         validate_provider_endpoint(
             base_url, allow_private_http=allow_private_http
         )
+        self._initialize(base_url, allow_private_http=allow_private_http)
+
+    def _initialize(
+        self,
+        base_url: str,
+        *,
+        allow_private_http: bool = False,
+        resolve: Callable[[str, int], list[str]] | None = None,
+    ):
         url = httpx.URL(base_url)
         scheme, host, port = _origin(url)
         super().__init__(trust_env=False)
@@ -214,6 +235,7 @@ class ProviderHTTPTransport(httpx.AsyncHTTPTransport):
                 port,
                 https=scheme == "https",
                 allow_private_http=allow_private_http,
+                resolve=resolve,
             ),
         )
 
