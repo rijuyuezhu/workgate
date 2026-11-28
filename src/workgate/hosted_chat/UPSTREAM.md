@@ -812,3 +812,13 @@ feature fields. The model-loop node requires a live read grant, validates
 the query before dispatch, respects native approval policy, and checks
 selection again before disclosing or replaying a result. Manual
 compaction and unattended or member actors receive no new capability.
+
+### M4 static document extraction
+
+Pinned web research extraction and passage-window behavior is isolated in
+`web_documents.py`. It extracts readable HTML and PDF text (no OCR), keeps
+page/heading offsets, enforces incremental UTF-8 text and page budgets,
+and maps Unicode case-folded matches back to original character positions.
+The locked pypdf reader is used with context-local parsing limits. Access
+challenge pages and empty JavaScript shells are detected without bypassing
+them. Cache and fetch activation are separate.
