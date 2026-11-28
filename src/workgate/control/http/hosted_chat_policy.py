@@ -20,6 +20,7 @@ from ...hosted_chat.machine_permissions import (
     validate_access_map,
 )
 from ...hosted_chat.storage import WorkspaceRepository
+from ...hosted_chat.web_research import effective_web_preference
 from ...ui.http.routes import UI_API_PREFIX
 from ..hosted_chat_native_creation import _registered
 from ..runtime import ControlRuntime
@@ -75,6 +76,28 @@ def hosted_chat_policy_routes(runtime: ControlRuntime) -> list[Route]:
                     if cid is not None
                     else mode,
                 }
+            elif operation == "features" and pid is None:
+                require_machine_scope(
+                    scopes,
+                    "write" if request.method == "PUT" else "read",
+                    expires=principal.expires,
+                )
+                key = (
+                    "conversation.permissions." + cid
+                    if cid is not None
+                    else "conversation.features.global"
+                )
+                if request.method == "PUT":
+                    if (
+                        not isinstance(payload, dict)
+                        or set(payload) != {"web"}
+                        or type(payload["web"]) is not bool
+                    ):
+                        raise ValueError("Invalid web feature preference")
+                    principal.check()
+                    repo.merge_setting(owner, key, payload, max_bytes=64 * 1024)
+                with database.read_snapshot() as db:
+                    result = {"web": effective_web_preference(db, owner, cid)}
             elif operation == "permissions":
                 changes = None
                 if request.method == "PUT":

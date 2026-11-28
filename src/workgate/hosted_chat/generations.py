@@ -36,6 +36,7 @@ from .provider_profiles import ProviderRepository
 from .providers import selected_provider
 from .sampling import validate_sampling
 from .storage import WorkspaceRepository, _now
+from .web_research import web_search_requested
 
 _TERMINAL = frozenset({"complete", "aborted", "error", "interrupted"})
 _MAX_PROMPT_BYTES = 128 * 1024
@@ -546,7 +547,12 @@ class GenerationStore:
         if manual:
             state["manualCompaction"] = True
         if native_admission is not None:
-            state["nativeAdmission"] = {**native_admission}
+            state["nativeAdmission"] = {
+                **native_admission,
+                "web_search": not manual
+                and wakeup_task_id is None
+                and web_search_requested(agent, payload),
+            }
             if ask_user_requested(agent, payload):
                 state["nativeAdmission"]["ask_user"] = True
         if agent is not None:

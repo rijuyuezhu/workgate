@@ -196,6 +196,7 @@ async def test_generation_http_oauth_owner_and_scope_ceiling(
             assert GenerationStore(db).native_admission("alice", run) == {
                 "scopes": ["shell:read"],
                 "task_machine": None,
+                "web_search": True,
             }
             pause.set()
             response = await client.get(

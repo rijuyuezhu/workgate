@@ -87,6 +87,14 @@ from ..hosted_chat.tool_attachment_publication import (
     TOOL_NAME as ATTACHMENT_TOOL,
 )
 from ..hosted_chat.tool_attachment_publication import ToolAttachmentPublication
+from ..hosted_chat.web_research import (
+    WEB_SEARCH_CAPABILITY,
+    WEB_SEARCH_TOOL,
+    WebResearchError,
+    effective_web_preference,
+    validate_search,
+    web_search,
+)
 from .hosted_chat_native_creation import _grant, _registered
 from .hosted_chat_native_dispatch import NativeToolDispatcher, _selected_tools
 from .hosted_chat_tool_attachments import (
@@ -316,6 +324,36 @@ class NativeLoopToolNode:
         ):
             return []
         return self.actions.definitions()
+
+    def _web_enabled(self) -> bool:
+        lease = self.checkpoint.lease
+        if (
+            WEB_SEARCH_CAPABILITY not in self.allowed_tools
+            or self.checkpoint.scope is not None
+            or lease.detached_task_id is not None
+            or lease.wakeup_task_id is not None
+        ):
+            return False
+        try:
+            scopes, expires = self.current_grant()
+            require_machine_scope(scopes, "read", expires=expires)
+        except PermissionError:
+            return False
+        with lease.database.read_snapshot() as db:
+            row = db.execute(
+                "SELECT r.state,r.conversation_id FROM runs r JOIN conversations c ON c.id=r.conversation_id WHERE r.id=? AND c.owner=?",
+                (lease.run_id, lease.owner),
+            ).fetchone()
+            if row is None:
+                return False
+            state = json.loads(row["state"])
+            admission = state.get("nativeAdmission") or {}
+            enabled = admission.get("web_search")
+            if type(enabled) is not bool or state.get("manualCompaction"):
+                return False
+            return effective_web_preference(
+                db, lease.owner, row["conversation_id"], default=enabled
+            )
 
     def _memory_tools(self) -> list[dict]:
         if not self.allowed_tools >= MEMORY_TOOLS:
@@ -582,6 +620,10 @@ class NativeLoopToolNode:
         for call in calls:
             if is_transfer_tool(call.name):
                 self._transfer(call, [])
+            elif call.name == WEB_SEARCH_CAPABILITY:
+                if not self._web_enabled():
+                    raise PermissionError("Web search is not enabled")
+                validate_search(call.arguments)
             elif is_action_tool(call.name):
                 if ACTION_CAPABILITY not in self.allowed_tools:
                     raise PermissionError("Actions are not admitted")
@@ -608,7 +650,11 @@ class NativeLoopToolNode:
                 and not is_action_tool(call.name)
                 and call.name
                 not in (
-                    {ASK_USER_QUESTION_TOOL_NAME, ATTACHMENT_TOOL}
+                    {
+                        ASK_USER_QUESTION_TOOL_NAME,
+                        ATTACHMENT_TOOL,
+                        WEB_SEARCH_CAPABILITY,
+                    }
                     | _DELEGATION_TOOLS
                     | MEMORY_TOOLS
                 )
@@ -634,6 +680,8 @@ class NativeLoopToolNode:
             state.context.tools.extend(copy.deepcopy(ASK_USER_TOOLS))
         state.context.tools.extend(self._memory_tools())
         state.context.tools.extend(self._action_tools())
+        if self._web_enabled():
+            state.context.tools.append(copy.deepcopy(WEB_SEARCH_TOOL))
         if self._attachment_enabled():
             state.context.tools.append(attachment_definition())
         state.context.tools.extend(copy.deepcopy(self._handoffs()[1]))
@@ -752,6 +800,8 @@ class NativeLoopToolNode:
                 != receipt["result"]
             ):
                 raise PermissionError("Memory receipt changed")
+        if call.name == WEB_SEARCH_CAPABILITY and not self._web_enabled():
+            raise PermissionError("Web search is no longer enabled")
         if is_action_tool(call.name):
             if ACTION_CAPABILITY not in self.allowed_tools:
                 raise PermissionError("Actions are not admitted")
@@ -841,6 +891,8 @@ class NativeLoopToolNode:
             enabled |= {
                 tool["function"]["name"] for tool in self._action_tools()
             }
+            if self._web_enabled():
+                enabled |= {WEB_SEARCH_CAPABILITY}
             if self._question_enabled(agents[-1]):
                 enabled = enabled | {ASK_USER_QUESTION_TOOL_NAME}
             enabled |= {
@@ -910,6 +962,25 @@ class NativeLoopToolNode:
                 child_scopes[call.call_id] = scope
                 return result
             scopes, expires = self.current_grant()
+            if prepared.name == WEB_SEARCH_CAPABILITY:
+                if not self._web_enabled():
+                    raise PermissionError("Web search is no longer enabled")
+                try:
+                    result = await web_search(
+                        validate_search(prepared.arguments)
+                    )
+                except WebResearchError as error:
+                    return rejected(str(error))
+                if not self._web_enabled():
+                    raise PermissionError("Web search is no longer enabled")
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(result, ensure_ascii=False),
+                        }
+                    ]
+                }
             if is_action_tool(prepared.name):
                 return await self.actions.execute(
                     prepared, oauth_access=oauth_tokens.get(prepared.call_id)

@@ -28,6 +28,7 @@ from ...hosted_chat.generations import (
 )
 from ...hosted_chat.memory_tools import MEMORY_TOOLS
 from ...hosted_chat.steering import SteeringStore, SteerRejection
+from ...hosted_chat.web_research import WEB_SEARCH_CAPABILITY
 from ...oauth.core.context import current_oauth_claims
 from ...oauth.core.scopes import SUPPORTED_OAUTH_SCOPE_SET, scope_set
 from ...oauth.http.middleware import revalidate_browser_session
@@ -176,6 +177,8 @@ def hosted_chat_generation_routes(runtime: ControlRuntime) -> list[Route]:
             if admission.get("ask_user") is True
             else ROOT_NATIVE_TOOLS | MEMORY_TOOLS
         ) | {ACTION_CAPABILITY}
+        if type(admission.get("web_search")) is bool:
+            tools |= {WEB_SEARCH_CAPABILITY}
 
         async def authorize_batch(_calls, _state):
             # The native node applies P4 to every effective tool argument
