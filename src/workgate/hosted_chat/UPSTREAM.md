@@ -830,3 +830,9 @@ owner/request bindings, URL, text, format and offsets before reuse, expires
 after 24 hours and enforces both count and byte quotas. Invalid or unavailable
 cache entries never prevent a fresh public read. Static security challenges
 are returned as unavailable, not bypassed.
+
+The native web capability now exposes both search and static fetch under
+the same persisted root admission and live composer policy. Fetch arguments
+are validated before approval/dispatch, and cached results are subject to
+the same live-grant and disclosure checks as search. Browser rendering is
+not enabled by this slice.

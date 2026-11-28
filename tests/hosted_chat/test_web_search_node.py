@@ -64,7 +64,8 @@ def test_request_precedence(agent, payload, expected):
         "approve",
     ],
 )
-async def test_web_search_node(tmp_path, monkeypatch, mode):
+@pytest.mark.parametrize("tool", ["web_search", "web_fetch"])
+async def test_web_search_node(tmp_path, monkeypatch, mode, tool):
     runtime = runtime_for(tmp_path)
     db = SQLiteDatabase(runtime.config.state_dir)
     repo = WorkspaceRepository(db)
@@ -86,7 +87,13 @@ async def test_web_search_node(tmp_path, monkeypatch, mode):
     context = AgentContext(
         ProviderConfig("openai", "m", "https://model.invalid", "fake"), []
     )
-    call = ModelToolCall("search", "web_search", {"query": "test query"})
+    call = ModelToolCall(
+        "search",
+        tool,
+        {"query": "test query"}
+        if tool == "web_search"
+        else {"url": "https://example.org/"},
+    )
     seen = []
 
     async def search(query):
@@ -109,6 +116,13 @@ async def test_web_search_node(tmp_path, monkeypatch, mode):
         }
 
     monkeypatch.setattr(native, "web_search", search)
+
+    async def fetch(database, owner, arguments):
+        assert database.path == db.path and owner == OWNER
+        assert arguments == {"url": "https://example.org/"}
+        return await search("test query")
+
+    monkeypatch.setattr(native, "web_fetch", fetch)
 
     def node(actor):
         return native.NativeLoopToolNode(
@@ -133,7 +147,8 @@ async def test_web_search_node(tmp_path, monkeypatch, mode):
             current.preflight([call], state)
         return
     assert [tool["function"]["name"] for tool in state.context.tools] == [
-        "web_search"
+        "web_search",
+        "web_fetch",
     ]
     current.preflight([call], state)
     state.step = state.model_turn = 1
