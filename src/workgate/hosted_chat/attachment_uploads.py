@@ -1,5 +1,6 @@
 """Private attachment publication and recovery, adapted from pinned v6.0.3."""
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -145,6 +146,8 @@ async def publish_attachment(
     *,
     expected_size: int,
     check_grant: Callable[[], None],
+    process: Callable[[Path, str, str], dict] | None = None,
+    bind: Callable[[sqlite3.Connection, str], object] | None = None,
 ) -> dict:
     """Commit owner metadata only after durable, bounded, verified file bytes."""
     if not owner or not isinstance(name, str) or not 1 <= len(name) <= 200:
@@ -215,6 +218,16 @@ async def publish_attachment(
                 (identity, size, digest.hexdigest(), ident, owner, str(path)),
             ).rowcount:
                 raise OSError("Upload intent was reclaimed")
+        processed = {}
+        if process is not None:
+            check_grant()
+            if not _matches(
+                _safe_path(database, path), identity, size, digest.hexdigest()
+            ):
+                raise OSError("Upload bytes changed before processing")
+            processed = await asyncio.to_thread(
+                process, path, name, content_type
+            )
         with private_file_lock(lock, timeout_s=30), database.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             check_grant()
@@ -237,6 +250,7 @@ async def publish_attachment(
                     content_type,
                     json.dumps(
                         {
+                            **processed,
                             "bytes": size,
                             "machine": "local",
                             "sha256": digest.hexdigest(),
@@ -244,6 +258,9 @@ async def publish_attachment(
                     ),
                 ),
             )
+            if bind is not None:
+                bind(db, ident)
+                check_grant()
         return {
             "file_id": ident,
             "filename": name,

@@ -13,12 +13,18 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from ...hosted_chat.agents import AgentRepository
 from ...hosted_chat.attachment_deletion import AttachmentDeletionStore
 from ...hosted_chat.attachment_history import file_record
 from ...hosted_chat.attachment_uploads import (
     MAX_ATTACHMENT_BYTES,
     _safe_path,
     publish_attachment,
+)
+from ...hosted_chat.content_filters import ContentFilterBlocked
+from ...hosted_chat.context_extraction import (
+    ContextExtractionError,
+    extract_context_text,
 )
 from ...hosted_chat.database import SQLiteDatabase
 from ...hosted_chat.machine_permissions import require_machine_scope
@@ -43,6 +49,8 @@ def _record(row):
             "createdAt",
             "conversationId",
             "bytes",
+            "processed",
+            "extraction",
         )
         if key in record
     }
@@ -102,6 +110,20 @@ async def _upload(request: Request, database: SQLiteDatabase, owner, check):
             while chunk := await upload.read(65536):
                 yield chunk
 
+        agent_id = request.path_params.get("agent_id")
+        binder = None
+        if agent_id is not None:
+            repository = AgentRepository(database)
+            if repository.get(owner, agent_id) is None:
+                raise KeyError("Agent not found")
+
+            def bind(db, ident):
+                return repository.add_resource_file(
+                    owner, agent_id, "context", ident, db=db
+                )
+
+            binder = bind
+
         result = await publish_attachment(
             database,
             owner,
@@ -110,6 +132,8 @@ async def _upload(request: Request, database: SQLiteDatabase, owner, check):
             chunks(),
             expected_size=upload.size,
             check_grant=check,
+            process=extract_context_text if agent_id is not None else None,
+            bind=binder,
         )
         with database.connect() as db:
             row = db.execute(
@@ -146,6 +170,8 @@ def hosted_chat_attachment_routes(runtime: ControlRuntime) -> list[Route]:
             ident = request.path_params.get("file_id")
             if request.method == "POST":
                 result = await _upload(request, database, owner, check)
+                if request.path_params.get("agent_id") is not None:
+                    runtime.generation_supervisor.wake_cleanup()
                 return JSONResponse(
                     result, status_code=201, headers=_FILE_HEADERS
                 )
@@ -207,6 +233,16 @@ def hosted_chat_attachment_routes(runtime: ControlRuntime) -> list[Route]:
                 status_code=404,
                 headers=_FILE_HEADERS,
             )
+        except ContextExtractionError as error:
+            return JSONResponse(
+                {"error": str(error)},
+                status_code=error.status_code,
+                headers=_FILE_HEADERS,
+            )
+        except ContentFilterBlocked as error:
+            return JSONResponse(
+                error.response(), status_code=400, headers=_FILE_HEADERS
+            )
         except ValueError, MultiPartException:
             return JSONResponse(
                 {"error": "Invalid attachment request"},
@@ -223,4 +259,5 @@ def hosted_chat_attachment_routes(runtime: ControlRuntime) -> list[Route]:
     return [
         Route(_PREFIX, handle, methods=["GET", "POST", "DELETE"]),
         Route(_PREFIX + "/download/{file_id}", handle, methods=["GET"]),
+        Route(_PREFIX + "/agent/{agent_id}", handle, methods=["POST"]),
     ]
