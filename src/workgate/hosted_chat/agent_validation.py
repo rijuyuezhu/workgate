@@ -306,6 +306,25 @@ def clean_agent_config(payload: Any, *, create: bool = False) -> dict:
             result[key] = _require(value, str, key)
         else:
             result[key] = _strings(value, key)
+    if "tool_resources" in obj:
+        resources = _require(obj["tool_resources"], dict, "tool_resources")
+        if set(resources) - {"context"}:
+            raise ValueError("Unsupported Agent tool resource")
+        result["tool_resources"] = {}
+        if "context" in resources:
+            context = _require(
+                resources["context"], dict, "tool_resources.context"
+            )
+            if set(context) - {"file_ids"}:
+                raise ValueError("Invalid context resource fields")
+            ids = _strings(context.get("file_ids", []), "context.file_ids")
+            if len(ids) > 100 or any(
+                not item or len(item) > 128 for item in ids
+            ):
+                raise ValueError("Invalid context resource file IDs")
+            result["tool_resources"]["context"] = {
+                "file_ids": list(dict.fromkeys(ids))
+            }
     if "provider" in result and not result["provider"].strip():
         raise ValueError("Agent provider is required")
     if "machine_permissions" in obj:
