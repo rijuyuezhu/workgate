@@ -753,3 +753,16 @@ review with the exact HTTP target before releasing the saved batch.
 The existing policy's explicit deny still wins. Replayed Action receipts
 are checked against the finite-effect ledger. Manual compaction, graph
 members, subagents and unattended actors do not receive this capability.
+
+### M2 OAuth Action token ownership
+
+Pinned `webui/action_oauth.py` (blob
+`d281133840c5da926055b8754051a5c2e5778f55`) supplies the OAuth code
+and refresh exchange contract. The native adapter shares the Action
+DNS-pinned HTTPS transport and credential cipher, validates bounded token
+responses, and binds sealed tokens to the owner, Agent, Action revision
+and token kind. Refresh is claimed durably before exchange; interrupted
+or expired claims require fresh authorization rather than replaying an
+uncertain rotation. Editing any Action revision invalidates its tokens.
+Browser callback, saved authorization flow and foreground resume are
+separate slices and are not enabled here.

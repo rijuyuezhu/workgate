@@ -498,12 +498,13 @@ class ActionRepository:
                     now,
                 ),
             )
-            if previous and (target_changed or creds != old_creds):
+            # Tokens are sealed to the exact Action revision. Editing an
+            # Action requires a new OAuth authorization, even at the same URL.
+            if previous:
                 db.execute(
                     "DELETE FROM action_oauth_tokens WHERE action_id=?",
                     (action_id,),
                 )
-            if previous:
                 db.execute(
                     "DELETE FROM action_oauth_flows WHERE action_id=?",
                     (action_id,),
